@@ -507,17 +507,25 @@ def get_courses():
                    COALESCE(SUM(CASE WHEN cs.teaching_type='CM' AND cs.formation_type=0
                                      THEN cs.total_hours ELSE 0 END), 0) as cm_hours,
                    MAX(CASE WHEN cs.teaching_type='CM' AND cs.formation_type=0
+                            THEN cs.slot_duration END) as cm_slot_duration,
+                   MAX(CASE WHEN cs.teaching_type='CM' AND cs.formation_type=0
                             THEN cs.room_name END) as cm_room,
                    COALESCE(SUM(CASE WHEN cs.teaching_type='TD' AND cs.formation_type=0
                                      THEN cs.total_hours ELSE 0 END), 0) as td_hours,
+                   MAX(CASE WHEN cs.teaching_type='TD' AND cs.formation_type=0
+                            THEN cs.slot_duration END) as td_slot_duration,
                    MAX(CASE WHEN cs.teaching_type='TD' AND cs.formation_type=0
                             THEN cs.room_name END) as td_room,
                    COALESCE(SUM(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=0
                                      THEN cs.total_hours ELSE 0 END), 0) as tp_hours,
                    MAX(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=0
+                            THEN cs.slot_duration END) as tp_slot_duration,
+                   MAX(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=0
                             THEN cs.room_name END) as tp_room,
                    COALESCE(SUM(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=0
                                      THEN cs.total_hours ELSE 0 END), 0) as pt_hours,
+                   MAX(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=0
+                            THEN cs.slot_duration END) as pt_slot_duration,
                    MAX(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=0
                             THEN cs.room_name END) as pt_room,
                    COUNT(DISTINCT cs.id) as session_count
