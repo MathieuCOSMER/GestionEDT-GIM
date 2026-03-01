@@ -496,15 +496,37 @@ def delete_semester(semester_id):
 
 @app.route('/api/courses', methods=['GET'])
 def get_courses():
-    """Get all courses"""
+    """Get all courses with hours and rooms per teaching type"""
     try:
         db = get_db()
         cursor = db.cursor()
         cursor.execute('''
-            SELECT c.*, s.code as semester_code 
-            FROM courses c 
-            JOIN semesters s ON c.semester_id = s.id 
-            ORDER BY c.code
+            SELECT c.id, c.code, c.name, c.semester_id, c.course_type,
+                   c.created_at, c.updated_at,
+                   s.code as semester_code,
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='CM' AND cs.formation_type=0
+                                     THEN cs.total_hours ELSE 0 END), 0) as cm_hours,
+                   MAX(CASE WHEN cs.teaching_type='CM' AND cs.formation_type=0
+                            THEN cs.room_name END) as cm_room,
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='TD' AND cs.formation_type=0
+                                     THEN cs.total_hours ELSE 0 END), 0) as td_hours,
+                   MAX(CASE WHEN cs.teaching_type='TD' AND cs.formation_type=0
+                            THEN cs.room_name END) as td_room,
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=0
+                                     THEN cs.total_hours ELSE 0 END), 0) as tp_hours,
+                   MAX(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=0
+                            THEN cs.room_name END) as tp_room,
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=0
+                                     THEN cs.total_hours ELSE 0 END), 0) as pt_hours,
+                   MAX(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=0
+                            THEN cs.room_name END) as pt_room,
+                   COUNT(DISTINCT cs.id) as session_count
+            FROM courses c
+            JOIN semesters s ON c.semester_id = s.id
+            LEFT JOIN course_sessions cs ON cs.course_id = c.id
+            GROUP BY c.id, c.code, c.name, c.semester_id, c.course_type,
+                     c.created_at, c.updated_at, s.code
+            ORDER BY s.code, c.code
         ''')
         courses = rows_to_list(cursor.fetchall())
         db.close()
@@ -514,21 +536,20 @@ def get_courses():
 
 @app.route('/api/courses', methods=['POST'])
 def create_course():
-    """Create a new course"""
+    """Create a new course with optional teaching hours per type"""
     try:
         data = request.get_json()
-        if not data or not data.get('code') or not data.get('name') or not data.get('semester_id') or not data.get('course_type'):
-            return error_response('Course code, name, semester_id, and course_type are required')
-        
+        if not data or not data.get('code') or not data.get('name') or not data.get('semester_id'):
+            return error_response('code, name and semester_id are required')
+
         db = get_db()
         cursor = db.cursor()
-        
-        # Check if semester exists
+
         cursor.execute('SELECT * FROM semesters WHERE id = ?', (data['semester_id'],))
         if not cursor.fetchone():
             db.close()
             return error_response('Semester not found', 404)
-        
+
         cursor.execute('''
             INSERT INTO courses (code, name, semester_id, course_type)
             VALUES (?, ?, ?, ?)
@@ -536,19 +557,34 @@ def create_course():
             data['code'],
             data['name'],
             data['semester_id'],
-            data['course_type']
+            data.get('course_type', 'Ressource')
         ))
         db.commit()
         course_id = cursor.lastrowid
+
+        # Insert teaching hours per type (formation_type=0 = définition globale)
+        for ttype in ['CM', 'TD', 'TP', 'PT']:
+            info = (data.get('types') or {}).get(ttype, {})
+            hours = float(info.get('hours') or 0)
+            room = (info.get('room') or '').strip() or None
+            if hours > 0:
+                cursor.execute('''
+                    INSERT INTO course_sessions
+                        (course_id, formation_type, teaching_type, total_hours, room_name, nb_sessions)
+                    VALUES (?, 0, ?, ?, ?, 0)
+                ''', (course_id, ttype, hours, room))
+        db.commit()
+
         cursor.execute('''
-            SELECT c.*, s.code as semester_code 
-            FROM courses c 
-            JOIN semesters s ON c.semester_id = s.id 
+            SELECT c.*, s.code as semester_code
+            FROM courses c JOIN semesters s ON c.semester_id = s.id
             WHERE c.id = ?
         ''', (course_id,))
         course = row_to_dict(cursor.fetchone())
         db.close()
         return jsonify(course), 201
+    except sqlite3.IntegrityError:
+        return error_response('Un cours avec ce code existe déjà pour ce semestre')
     except Exception as e:
         return error_response(f'Error creating course: {str(e)}', 500)
 
@@ -619,23 +655,94 @@ def update_course(course_id):
 
 @app.route('/api/courses/<int:course_id>', methods=['DELETE'])
 def delete_course(course_id):
-    """Delete a course"""
+    """Delete a course (cascade deletes its sessions)"""
     try:
         db = get_db()
         cursor = db.cursor()
-        
-        # Check if course exists
         cursor.execute('SELECT * FROM courses WHERE id = ?', (course_id,))
         if not cursor.fetchone():
             db.close()
             return error_response('Course not found', 404)
-        
         cursor.execute('DELETE FROM courses WHERE id = ?', (course_id,))
         db.commit()
         db.close()
         return jsonify({'message': 'Course deleted'}), 200
     except Exception as e:
         return error_response(f'Error deleting course: {str(e)}', 500)
+
+@app.route('/api/courses/<int:course_id>/teaching-hours', methods=['GET'])
+def get_course_teaching_hours(course_id):
+    """Get hours and room per teaching type (formation_type=0) for a course"""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('SELECT id FROM courses WHERE id = ?', (course_id,))
+        if not cursor.fetchone():
+            db.close()
+            return error_response('Course not found', 404)
+        cursor.execute('''
+            SELECT teaching_type, total_hours, room_name
+            FROM course_sessions
+            WHERE course_id = ? AND formation_type = 0
+        ''', (course_id,))
+        rows = cursor.fetchall()
+        db.close()
+        result = {t: {'hours': 0, 'room': ''} for t in ['CM', 'TD', 'TP', 'PT']}
+        for r in rows:
+            t = r['teaching_type']
+            if t in result:
+                result[t] = {'hours': r['total_hours'] or 0, 'room': r['room_name'] or ''}
+        return jsonify(result), 200
+    except Exception as e:
+        return error_response(str(e), 500)
+
+@app.route('/api/courses/<int:course_id>/teaching-hours', methods=['PUT'])
+def update_course_teaching_hours(course_id):
+    """Upsert hours and room per teaching type for a course.
+    Body: {"CM": {"hours": 10, "room": "Amphi A"}, "TD": {...}, ...}
+    """
+    try:
+        data = request.get_json()
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('SELECT id FROM courses WHERE id = ?', (course_id,))
+        if not cursor.fetchone():
+            db.close()
+            return error_response('Course not found', 404)
+
+        for ttype in ['CM', 'TD', 'TP', 'PT']:
+            info = (data or {}).get(ttype, {})
+            hours = float(info.get('hours') or 0)
+            room = (info.get('room') or '').strip() or None
+
+            cursor.execute('''
+                SELECT id FROM course_sessions
+                WHERE course_id = ? AND teaching_type = ? AND formation_type = 0
+            ''', (course_id, ttype))
+            existing = cursor.fetchone()
+
+            if hours > 0:
+                if existing:
+                    cursor.execute('''
+                        UPDATE course_sessions
+                        SET total_hours = ?, room_name = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                    ''', (hours, room, existing['id']))
+                else:
+                    cursor.execute('''
+                        INSERT INTO course_sessions
+                            (course_id, formation_type, teaching_type, total_hours, room_name, nb_sessions)
+                        VALUES (?, 0, ?, ?, ?, 0)
+                    ''', (course_id, ttype, hours, room))
+            else:
+                if existing:
+                    cursor.execute('DELETE FROM course_sessions WHERE id = ?', (existing['id'],))
+
+        db.commit()
+        db.close()
+        return jsonify({'message': 'Teaching hours updated'}), 200
+    except Exception as e:
+        return error_response(str(e), 500)
 
 # ======================= COURSE SESSIONS CRUD =======================
 

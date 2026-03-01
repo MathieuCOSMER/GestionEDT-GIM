@@ -58,15 +58,27 @@
         .badge-td { background: #dcfce7; color: #166534; }
         .badge-tp { background: #ffedd5; color: #9a3412; }
         .badge-pt { background: #f3e8ff; color: #6b21a8; }
+        .badge-res { background: #e0f2fe; color: #0369a1; }
+        .badge-sae { background: #fef9c3; color: #854d0e; }
 
-        .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 100; align-items: center; justify-content: center; }
+        .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 100; align-items: flex-start; justify-content: center; overflow-y: auto; padding: 24px 16px; }
         .modal-backdrop.open { display: flex; }
-        .modal { background: #fff; border-radius: 10px; padding: 24px; width: 100%; max-width: 460px; box-shadow: 0 10px 40px rgba(0,0,0,.2); }
+        .modal { background: #fff; border-radius: 10px; padding: 24px; width: 100%; max-width: 460px; box-shadow: 0 10px 40px rgba(0,0,0,.2); margin: auto; }
+        .modal.modal-wide { max-width: 600px; }
         .modal h2 { margin-bottom: 16px; }
         .form-group { margin-bottom: 12px; }
         .form-group label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 4px; }
         .form-group input, .form-group select { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: .9rem; }
         .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .section-title { font-size: .85rem; font-weight: 700; color: #374151; margin: 14px 0 6px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
+        .types-table { width: 100%; border-collapse: collapse; }
+        .types-table th { padding: 5px 8px; font-size: .78rem; text-align: left; color: #6b7280; background: #f9fafb; }
+        .types-table td { padding: 4px 6px; vertical-align: middle; }
+        .types-table td:first-child { font-weight: 700; font-size: .88rem; width: 36px; color: #374151; }
+        .types-table input { width: 100%; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 5px; font-size: .88rem; }
+        .types-table .col-h { width: 80px; }
+        .types-table .col-h input { width: 72px; text-align: right; }
 
         .toast { position: fixed; top: 16px; right: 16px; padding: 12px 20px; border-radius: 8px; color: #fff; font-weight: 600; z-index: 200; animation: slideIn .3s; }
         .toast.success { background: #16a34a; }
@@ -145,6 +157,7 @@
                 <option>S1</option><option>S2</option><option>S3</option>
                 <option>S4</option><option>S5</option><option>S6</option>
             </select>
+            <button class="btn btn-primary" onclick="openCourseModal()">+ Ajouter</button>
         </div>
     </div>
     <div id="courses-table"><div class="spinner">Chargement…</div></div>
@@ -240,9 +253,68 @@
     </div>
 </div>
 
+<!-- ===== MODAL MATIERE ===== -->
+<div class="modal-backdrop" id="modal-course">
+    <div class="modal modal-wide">
+        <h2 id="modal-course-title">Ajouter une matière</h2>
+        <form id="form-course" onsubmit="submitCourse(event)">
+            <input type="hidden" id="course-id">
+            <div class="form-row">
+                <div class="form-group"><label>Code *</label><input id="course-code" required placeholder="ex: R1.01"></div>
+                <div class="form-group">
+                    <label>Type</label>
+                    <select id="course-type">
+                        <option value="Ressource">Ressource</option>
+                        <option value="SAE">SAE</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group"><label>Intitulé *</label><input id="course-name" required placeholder="Nom de la matière"></div>
+            <div class="form-group">
+                <label>Semestre *</label>
+                <select id="course-semester" required>
+                    <option value="">— Choisir —</option>
+                </select>
+            </div>
+
+            <div class="section-title">Heures et salles par type de cours</div>
+            <table class="types-table">
+                <thead><tr><th>Type</th><th class="col-h">Heures</th><th>Salle</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td><span class="badge badge-cm">CM</span></td>
+                        <td class="col-h"><input type="number" id="cm-hours" min="0" step="0.5" placeholder="0"></td>
+                        <td><input id="cm-room" placeholder="Salle / Amphi"></td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge badge-td">TD</span></td>
+                        <td class="col-h"><input type="number" id="td-hours" min="0" step="0.5" placeholder="0"></td>
+                        <td><input id="td-room" placeholder="Salle TD"></td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge badge-tp">TP</span></td>
+                        <td class="col-h"><input type="number" id="tp-hours" min="0" step="0.5" placeholder="0"></td>
+                        <td><input id="tp-room" placeholder="Labo / Salle TP"></td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge badge-pt">PT</span></td>
+                        <td class="col-h"><input type="number" id="pt-hours" min="0" step="0.5" placeholder="0"></td>
+                        <td><input id="pt-room" placeholder="Salle PT"></td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-course')">Annuler</button>
+                <button type="submit" class="btn btn-primary">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 // ===== STATE =====
-const state = { teachers: [], courses: [], rooms: [], sessions: [] };
+const state = { teachers: [], courses: [], rooms: [], sessions: [], semesters: [] };
 
 // ===== API =====
 async function api(endpoint, opts = {}) {
@@ -276,7 +348,10 @@ async function loadPage(name) {
     try {
         if (name === 'dashboard') await loadDashboard();
         else if (name === 'enseignants') { state.teachers = await api('/teachers'); renderTeachers(); }
-        else if (name === 'matieres') { state.courses = await api('/courses'); renderCourses(); }
+        else if (name === 'matieres') {
+            [state.courses, state.semesters] = await Promise.all([api('/courses'), api('/semesters')]);
+            renderCourses();
+        }
         else if (name === 'salles') { state.rooms = await api('/rooms'); renderRooms(); }
         else if (name === 'sessions') {
             [state.sessions, state.teachers] = await Promise.all([api('/course-sessions'), api('/teachers')]);
@@ -368,19 +443,113 @@ async function deleteTeacher(id) {
 // ===== MATIERES =====
 function renderCourses() {
     const sem = document.getElementById('filter-semester-matieres').value;
-    const list = sem ? state.courses.filter(c => c.semester === sem) : state.courses;
+    const list = sem ? state.courses.filter(c => c.semester_code === sem) : state.courses;
     const el = document.getElementById('courses-table');
-    if (!list.length) { el.innerHTML = '<div class="empty">Aucune matière</div>'; return; }
-    el.innerHTML = `<table>
-        <thead><tr><th>Code</th><th>Nom</th><th>Semestre</th><th>Type</th><th>Sessions</th></tr></thead>
+    if (!list.length) { el.innerHTML = '<div class="empty">Aucune matière — cliquez sur « + Ajouter »</div>'; return; }
+
+    function hCell(h, room) {
+        if (!h) return '<td class="empty" style="text-align:center">—</td>';
+        return `<td style="text-align:center">${h}h${room ? `<br><small style="color:#6b7280">${esc(room)}</small>` : ''}</td>`;
+    }
+
+    el.innerHTML = `<div class="overflow-x"><table>
+        <thead><tr>
+            <th>Code</th><th>Intitulé</th><th>Sem.</th><th>Type</th>
+            <th style="text-align:center">CM</th>
+            <th style="text-align:center">TD</th>
+            <th style="text-align:center">TP</th>
+            <th style="text-align:center">PT</th>
+            <th>Actions</th>
+        </tr></thead>
         <tbody>${list.map(c => `<tr>
             <td><strong>${esc(c.code||'')}</strong></td>
             <td>${esc(c.name||'')}</td>
-            <td>${esc(c.semester||'')}</td>
-            <td><span class="badge badge-${(c.type||'cm').toLowerCase()}">${esc(c.type||'N/A')}</span></td>
-            <td>${c.session_count||0}</td>
+            <td>${esc(c.semester_code||'')}</td>
+            <td><span class="badge badge-${(c.course_type||'ressource').toLowerCase().slice(0,3)}">${esc(c.course_type||'')}</span></td>
+            ${hCell(c.cm_hours, c.cm_room)}
+            ${hCell(c.td_hours, c.td_room)}
+            ${hCell(c.tp_hours, c.tp_room)}
+            ${hCell(c.pt_hours, c.pt_room)}
+            <td>
+                <button class="btn btn-secondary btn-sm" onclick="openCourseModal(${c.id})">Éditer</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteCourse(${c.id})">Supprimer</button>
+            </td>
         </tr>`).join('')}</tbody>
-    </table>`;
+    </table></div>`;
+}
+
+async function openCourseModal(id = null) {
+    // Populate semester dropdown
+    const sel = document.getElementById('course-semester');
+    sel.innerHTML = '<option value="">— Choisir —</option>' +
+        state.semesters.map(s => `<option value="${s.id}">${esc(s.code)}${s.name ? ' — ' + esc(s.name) : ''}</option>`).join('');
+
+    document.getElementById('modal-course-title').textContent = id ? 'Modifier la matière' : 'Ajouter une matière';
+    document.getElementById('course-id').value = id || '';
+
+    // Clear fields
+    ['course-code','course-name','cm-room','td-room','tp-room','pt-room'].forEach(f => document.getElementById(f).value = '');
+    ['cm-hours','td-hours','tp-hours','pt-hours'].forEach(f => document.getElementById(f).value = '');
+    document.getElementById('course-type').value = 'Ressource';
+    document.getElementById('course-semester').value = '';
+
+    if (id) {
+        const c = state.courses.find(x => x.id === id);
+        if (c) {
+            document.getElementById('course-code').value = c.code || '';
+            document.getElementById('course-name').value = c.name || '';
+            document.getElementById('course-type').value = c.course_type || 'Ressource';
+            document.getElementById('course-semester').value = c.semester_id || '';
+            document.getElementById('cm-hours').value = c.cm_hours || '';
+            document.getElementById('cm-room').value = c.cm_room || '';
+            document.getElementById('td-hours').value = c.td_hours || '';
+            document.getElementById('td-room').value = c.td_room || '';
+            document.getElementById('tp-hours').value = c.tp_hours || '';
+            document.getElementById('tp-room').value = c.tp_room || '';
+            document.getElementById('pt-hours').value = c.pt_hours || '';
+            document.getElementById('pt-room').value = c.pt_room || '';
+        }
+    }
+    openModal('modal-course');
+}
+
+async function submitCourse(e) {
+    e.preventDefault();
+    const id = document.getElementById('course-id').value;
+    const types = {
+        CM: { hours: document.getElementById('cm-hours').value, room: document.getElementById('cm-room').value },
+        TD: { hours: document.getElementById('td-hours').value, room: document.getElementById('td-room').value },
+        TP: { hours: document.getElementById('tp-hours').value, room: document.getElementById('tp-room').value },
+        PT: { hours: document.getElementById('pt-hours').value, room: document.getElementById('pt-room').value },
+    };
+    const base = {
+        code: document.getElementById('course-code').value,
+        name: document.getElementById('course-name').value,
+        course_type: document.getElementById('course-type').value,
+        semester_id: parseInt(document.getElementById('course-semester').value),
+    };
+    try {
+        if (id) {
+            await api('/courses/' + id, { method: 'PUT', body: JSON.stringify(base) });
+            await api('/courses/' + id + '/teaching-hours', { method: 'PUT', body: JSON.stringify(types) });
+        } else {
+            await api('/courses', { method: 'POST', body: JSON.stringify({ ...base, types }) });
+        }
+        closeModal('modal-course');
+        [state.courses, state.semesters] = await Promise.all([api('/courses'), api('/semesters')]);
+        renderCourses();
+        toast(id ? 'Matière modifiée' : 'Matière ajoutée');
+    } catch(err) { toast('Erreur : ' + err.message, 'error'); }
+}
+
+async function deleteCourse(id) {
+    if (!confirm('Supprimer cette matière et toutes ses sessions ?')) return;
+    try {
+        await api('/courses/' + id, { method: 'DELETE' });
+        state.courses = await api('/courses');
+        renderCourses();
+        toast('Matière supprimée');
+    } catch(err) { toast('Erreur : ' + err.message, 'error'); }
 }
 
 // ===== SALLES =====
