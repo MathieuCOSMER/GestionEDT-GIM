@@ -119,6 +119,7 @@
     <strong>EDT Manager</strong>
     <button onclick="showPage('dashboard')" class="active" id="nav-dashboard">Tableau de bord</button>
     <button onclick="showPage('enseignants')" id="nav-enseignants">Enseignants</button>
+    <button onclick="showPage('semestres')" id="nav-semestres">Semestres</button>
     <button onclick="showPage('matieres')" id="nav-matieres">Matières</button>
     <button onclick="showPage('salles')" id="nav-salles">Salles</button>
     <button onclick="showPage('sessions')" id="nav-sessions">Sessions</button>
@@ -145,6 +146,15 @@
         <div class="link-card" onclick="showPage('service')"><h3>Service enseignants</h3><p>Consulter les HETD</p></div>
         <div class="link-card" onclick="showPage('repartition')"><h3>Répartition semaines</h3><p>Vue hebdomadaire par semestre</p></div>
     </div>
+</div>
+
+<!-- ===== SEMESTRES ===== -->
+<div class="page" id="page-semestres">
+    <div class="toolbar">
+        <h1>Semestres</h1>
+        <button class="btn btn-primary" onclick="openSemesterModal()">+ Ajouter</button>
+    </div>
+    <div id="semesters-table"><div class="spinner">Chargement…</div></div>
 </div>
 
 <!-- ===== ENSEIGNANTS ===== -->
@@ -282,7 +292,7 @@
             <div class="form-group"><label>Intitulé *</label><input id="course-name" required placeholder="Nom de la matière"></div>
             <div class="form-group">
                 <label>Semestre *</label>
-                <select id="course-semester" required onchange="buildWeeklyTable()">
+                <select id="course-semester" required>
                     <option value="">— Choisir —</option>
                 </select>
             </div>
@@ -325,6 +335,45 @@
 
             <div class="form-actions" style="margin-top:20px">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('modal-course')">Annuler</button>
+                <button type="submit" class="btn btn-primary">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ===== MODAL SEMESTRE ===== -->
+<div class="modal-backdrop" id="modal-semester">
+    <div class="modal" style="max-width:500px">
+        <h2 id="modal-semester-title">Ajouter un semestre</h2>
+        <form onsubmit="submitSemester(event)">
+            <input type="hidden" id="semester-id">
+            <div class="form-group">
+                <label>Code *</label>
+                <input id="semester-code" required placeholder="ex : S1, S3, S5">
+            </div>
+            <div class="form-group">
+                <label>Groupe *</label>
+                <input id="semester-year-group" required placeholder="ex : BUT1, BUT2, BUT3">
+            </div>
+            <div class="form-group">
+                <label>Intitulé</label>
+                <input id="semester-name" placeholder="ex : Semestre 1 GIM">
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div class="form-group">
+                    <label>Semaine de début</label>
+                    <input type="number" id="semester-start-week" min="1" max="53" placeholder="ex : 36">
+                    <small style="color:#6b7280">Numéro ISO (1–53)</small>
+                </div>
+                <div class="form-group">
+                    <label>Semaine de fin</label>
+                    <input type="number" id="semester-end-week" min="1" max="53" placeholder="ex : 51">
+                    <small style="color:#6b7280">Numéro ISO (1–53)</small>
+                </div>
+            </div>
+            <div id="semester-modal-error" style="display:none;color:#dc2626;font-size:.82rem;margin-top:6px"></div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-semester')">Annuler</button>
                 <button type="submit" class="btn btn-primary">Enregistrer</button>
             </div>
         </form>
@@ -381,6 +430,7 @@ async function loadPage(name) {
     try {
         if (name === 'dashboard') await loadDashboard();
         else if (name === 'enseignants') { state.teachers = await api('/teachers'); renderTeachers(); }
+        else if (name === 'semestres') { state.semesters = await api('/semesters'); renderSemesters(); }
         else if (name === 'matieres') {
             [state.courses, state.semesters] = await Promise.all([api('/courses'), api('/semesters')]);
             renderCourses();
@@ -510,6 +560,110 @@ function renderCourses() {
             </td>
         </tr>`).join('')}</tbody>
     </table></div>`;
+}
+
+// ===== SEMESTRES =====
+function renderSemesters() {
+    const el = document.getElementById('semesters-table');
+    if (!state.semesters.length) {
+        el.innerHTML = '<div class="empty">Aucun semestre — cliquez sur « + Ajouter »</div>';
+        return;
+    }
+    el.innerHTML = `<table>
+        <thead><tr>
+            <th>Code</th><th>Groupe</th><th>Intitulé</th>
+            <th style="text-align:center">Sem. début</th>
+            <th style="text-align:center">Sem. fin</th>
+            <th style="text-align:center">Nb semaines</th>
+            <th>Actions</th>
+        </tr></thead>
+        <tbody>
+        ${state.semesters.map(s => {
+            const nb = (s.start_week && s.end_week) ? (s.end_week - s.start_week + 1) : '—';
+            const weekInfo = s.start_week
+                ? `<td style="text-align:center">${s.start_week}</td><td style="text-align:center">${s.end_week}</td><td style="text-align:center">${nb}</td>`
+                : `<td colspan="3" style="text-align:center;color:#f59e0b">⚠ Non configuré</td>`;
+            return `<tr>
+                <td><strong>${esc(s.code)}</strong></td>
+                <td>${esc(s.year_group||'')}</td>
+                <td>${esc(s.name||'')}</td>
+                ${weekInfo}
+                <td style="white-space:nowrap">
+                    <button class="btn btn-secondary btn-sm" onclick="openSemesterModal(${s.id})">Éditer</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteSemester(${s.id})">Supprimer</button>
+                </td>
+            </tr>`;
+        }).join('')}
+        </tbody>
+    </table>`;
+}
+
+function openSemesterModal(id = null) {
+    document.getElementById('modal-semester-title').textContent = id ? 'Modifier le semestre' : 'Ajouter un semestre';
+    document.getElementById('semester-id').value = id || '';
+    document.getElementById('semester-code').value = '';
+    document.getElementById('semester-year-group').value = '';
+    document.getElementById('semester-name').value = '';
+    document.getElementById('semester-start-week').value = '';
+    document.getElementById('semester-end-week').value = '';
+    document.getElementById('semester-modal-error').style.display = 'none';
+
+    if (id) {
+        const s = state.semesters.find(x => x.id === id);
+        if (s) {
+            document.getElementById('semester-code').value = s.code || '';
+            document.getElementById('semester-year-group').value = s.year_group || '';
+            document.getElementById('semester-name').value = s.name || '';
+            document.getElementById('semester-start-week').value = s.start_week || '';
+            document.getElementById('semester-end-week').value = s.end_week || '';
+        }
+    }
+    openModal('modal-semester');
+}
+
+async function submitSemester(e) {
+    e.preventDefault();
+    const id = document.getElementById('semester-id').value;
+    const start = parseInt(document.getElementById('semester-start-week').value) || null;
+    const end   = parseInt(document.getElementById('semester-end-week').value) || null;
+    const errEl = document.getElementById('semester-modal-error');
+    errEl.style.display = 'none';
+
+    if (start && end && end < start) {
+        errEl.textContent = 'La semaine de fin doit être ≥ à la semaine de début.';
+        errEl.style.display = 'block';
+        return;
+    }
+
+    const data = {
+        code:       document.getElementById('semester-code').value.trim(),
+        year_group: document.getElementById('semester-year-group').value.trim(),
+        name:       document.getElementById('semester-name').value.trim() || null,
+        start_week: start,
+        end_week:   end,
+    };
+
+    try {
+        if (id) {
+            await api('/semesters/' + id, { method: 'PUT', body: JSON.stringify(data) });
+        } else {
+            await api('/semesters', { method: 'POST', body: JSON.stringify(data) });
+        }
+        closeModal('modal-semester');
+        state.semesters = await api('/semesters');
+        renderSemesters();
+        toast(id ? 'Semestre modifié' : 'Semestre ajouté');
+    } catch(err) { toast('Erreur : ' + err.message, 'error'); }
+}
+
+async function deleteSemester(id) {
+    if (!confirm('Supprimer ce semestre ? Les matières associées perdront leur affectation.')) return;
+    try {
+        await api('/semesters/' + id, { method: 'DELETE' });
+        state.semesters = await api('/semesters');
+        renderSemesters();
+        toast('Semestre supprimé');
+    } catch(err) { toast('Erreur : ' + err.message, 'error'); }
 }
 
 // ===== MATIERES — helpers =====
