@@ -21,19 +21,20 @@ def check_dependencies():
 
 def init_db():
     import sqlite3
-    if not os.path.exists(DB_PATH):
-        print(f"  Creating database at {DB_PATH}...")
-        conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH)
+    table_exists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='teachers'"
+    ).fetchone()
+    if not table_exists:
+        print(f"  Applying schema to {DB_PATH}...")
         with open(SCHEMA_PATH, 'r') as f:
             conn.executescript(f.read())
         conn.commit()
-        conn.close()
         print("  Database created. Run import_excel.py to load data.")
     else:
-        conn = sqlite3.connect(DB_PATH)
         count = conn.execute("SELECT COUNT(*) FROM teachers").fetchone()[0]
-        conn.close()
         print(f"  Database OK ({count} teachers)")
+    conn.close()
 
 def main():
     print("=" * 50)
