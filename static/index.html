@@ -352,8 +352,14 @@
                 <input id="semester-code" required placeholder="ex : S1, S3, S5">
             </div>
             <div class="form-group">
-                <label>Groupe *</label>
-                <input id="semester-year-group" required placeholder="ex : BUT1, BUT2, BUT3">
+                <label>Année *</label>
+                <select id="semester-year-group" required>
+                    <option value="">— Choisir —</option>
+                    <option value="1">BUT1 (1re année)</option>
+                    <option value="2">BUT2 (2e année)</option>
+                    <option value="3">BUT3 (3e année)</option>
+                </select>
+                <small style="color:#6b7280">Utilisé pour la détection des conflits d'emploi du temps</small>
             </div>
             <div class="form-group">
                 <label>Intitulé</label>
@@ -563,6 +569,8 @@ function renderCourses() {
 }
 
 // ===== SEMESTRES =====
+const YG_LABEL = { 1: 'BUT1', 2: 'BUT2', 3: 'BUT3' };
+
 function renderSemesters() {
     const el = document.getElementById('semesters-table');
     if (!state.semesters.length) {
@@ -571,7 +579,7 @@ function renderSemesters() {
     }
     el.innerHTML = `<table>
         <thead><tr>
-            <th>Code</th><th>Groupe</th><th>Intitulé</th>
+            <th>Code</th><th>Année</th><th>Intitulé</th>
             <th style="text-align:center">Sem. début</th>
             <th style="text-align:center">Sem. fin</th>
             <th style="text-align:center">Nb semaines</th>
@@ -585,7 +593,7 @@ function renderSemesters() {
                 : `<td colspan="3" style="text-align:center;color:#f59e0b">⚠ Non configuré</td>`;
             return `<tr>
                 <td><strong>${esc(s.code)}</strong></td>
-                <td>${esc(s.year_group||'')}</td>
+                <td>${esc(YG_LABEL[s.year_group] || s.year_group || '—')}</td>
                 <td>${esc(s.name||'')}</td>
                 ${weekInfo}
                 <td style="white-space:nowrap">
