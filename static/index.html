@@ -77,8 +77,18 @@
         .types-table td { padding: 4px 6px; vertical-align: middle; }
         .types-table td:first-child { font-weight: 700; font-size: .88rem; width: 36px; color: #374151; }
         .types-table input { width: 100%; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 5px; font-size: .88rem; }
-        .types-table .col-h { width: 80px; }
-        .types-table .col-h input { width: 72px; text-align: right; }
+        .types-table .col-h { width: 90px; }
+        .types-table .col-h input { width: 76px; text-align: right; }
+        .weekly-table { margin-top: 4px; border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; }
+        .weekly-table th { background: #f3f4f6; font-size: .78rem; padding: 5px 8px; }
+        .weekly-table td { border-top: 1px solid #f3f4f6; padding: 3px 6px; font-size: .82rem; }
+        .weekly-table td:first-child { white-space: nowrap; color: #374151; font-weight: 500; }
+        .weekly-table tfoot td { font-weight: 700; background: #f9fafb; font-size: .82rem; padding: 5px 8px; border-top: 2px solid #d1d5db; }
+        .weekly-table .w-inp { width: 58px; text-align: right; padding: 3px 5px; border: 1px solid #d1d5db; border-radius: 4px; font-size: .82rem; }
+        .weekly-table .w-inp:focus { outline: none; border-color: #6366f1; }
+        .sum-ok { color: #16a34a; }
+        .sum-over { color: #dc2626; }
+        .sum-low { color: #d97706; }
 
         .toast { position: fixed; top: 16px; right: 16px; padding: 12px 20px; border-radius: 8px; color: #fff; font-weight: 600; z-index: 200; animation: slideIn .3s; }
         .toast.success { background: #16a34a; }
@@ -272,37 +282,53 @@
             <div class="form-group"><label>Intitulé *</label><input id="course-name" required placeholder="Nom de la matière"></div>
             <div class="form-group">
                 <label>Semestre *</label>
-                <select id="course-semester" required>
+                <select id="course-semester" required onchange="buildWeeklyTable()">
                     <option value="">— Choisir —</option>
                 </select>
             </div>
 
-            <div class="section-title">Heures et salles par type de cours</div>
+            <div class="section-title">Volume horaire, durée de séance et salle</div>
             <table class="types-table">
-                <thead><tr><th>Type</th><th class="col-h">Heures</th><th>Salle</th></tr></thead>
+                <thead><tr>
+                    <th>Type</th>
+                    <th class="col-h">Total (h)</th>
+                    <th class="col-h">Durée séance (h)</th>
+                    <th>Salle</th>
+                </tr></thead>
                 <tbody>
                     <tr>
                         <td><span class="badge badge-cm">CM</span></td>
-                        <td class="col-h"><input type="number" id="cm-hours" min="0" step="0.5" placeholder="0"></td>
-                        <td><input id="cm-room" placeholder="Salle / Amphi"></td>
+                        <td class="col-h"><input type="number" id="cm-hours" min="0" step="0.5" placeholder="0" oninput="onTypeHoursChange()"></td>
+                        <td class="col-h"><input type="number" id="cm-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
+                        <td><select id="cm-room"></select></td>
                     </tr>
                     <tr>
                         <td><span class="badge badge-td">TD</span></td>
-                        <td class="col-h"><input type="number" id="td-hours" min="0" step="0.5" placeholder="0"></td>
-                        <td><input id="td-room" placeholder="Salle TD"></td>
+                        <td class="col-h"><input type="number" id="td-hours" min="0" step="0.5" placeholder="0" oninput="onTypeHoursChange()"></td>
+                        <td class="col-h"><input type="number" id="td-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
+                        <td><select id="td-room"></select></td>
                     </tr>
                     <tr>
                         <td><span class="badge badge-tp">TP</span></td>
-                        <td class="col-h"><input type="number" id="tp-hours" min="0" step="0.5" placeholder="0"></td>
-                        <td><input id="tp-room" placeholder="Labo / Salle TP"></td>
+                        <td class="col-h"><input type="number" id="tp-hours" min="0" step="0.5" placeholder="0" oninput="onTypeHoursChange()"></td>
+                        <td class="col-h"><input type="number" id="tp-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
+                        <td><select id="tp-room"></select></td>
                     </tr>
                     <tr>
                         <td><span class="badge badge-pt">PT</span></td>
-                        <td class="col-h"><input type="number" id="pt-hours" min="0" step="0.5" placeholder="0"></td>
-                        <td><input id="pt-room" placeholder="Salle PT"></td>
+                        <td class="col-h"><input type="number" id="pt-hours" min="0" step="0.5" placeholder="0" oninput="onTypeHoursChange()"></td>
+                        <td class="col-h"><input type="number" id="pt-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
+                        <td><select id="pt-room"></select></td>
                     </tr>
                 </tbody>
             </table>
+
+            <div class="section-title">Répartition hebdomadaire</div>
+            <div id="weekly-dist-section" style="font-size:.85rem;color:#6b7280">
+                Sélectionnez un semestre pour saisir la répartition.
+            </div>
+
+            <div id="weekly-error" style="display:none;color:#dc2626;font-size:.82rem;margin-top:8px"></div>
 
             <div class="form-actions">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('modal-course')">Annuler</button>
@@ -478,20 +504,121 @@ function renderCourses() {
     </table></div>`;
 }
 
+// weeklyData[teaching_type][week_number] = hours
+let weeklyData = { CM: {}, TD: {}, TP: {}, PT: {} };
+
+function buildRoomSelects(selectedValues = {}) {
+    const none = '<option value="">— Aucune salle —</option>';
+    const opts = none + state.rooms.map(r =>
+        `<option value="${esc(r.name)}">${esc(r.name)}${r.capacity ? ` (${r.capacity} pl.)` : ''}</option>`
+    ).join('');
+    ['cm','td','tp','pt'].forEach(t => {
+        const sel = document.getElementById(t + '-room');
+        sel.innerHTML = opts;
+        if (selectedValues[t.toUpperCase()]) sel.value = selectedValues[t.toUpperCase()];
+    });
+}
+
+function buildWeeklyTable() {
+    const semId = parseInt(document.getElementById('course-semester').value);
+    const sem = state.semesters.find(s => s.id === semId);
+    const section = document.getElementById('weekly-dist-section');
+
+    if (!sem || !sem.start_week || !sem.end_week) {
+        section.innerHTML = '<p style="color:#6b7280">Configurez les semaines de début/fin du semestre pour saisir la répartition.</p>';
+        return;
+    }
+
+    const allTypes = ['CM','TD','TP','PT'];
+    const active = allTypes.filter(t => (parseFloat(document.getElementById(t.toLowerCase()+'-hours').value)||0) > 0);
+    if (!active.length) {
+        section.innerHTML = '<p style="color:#6b7280">Définissez les volumes horaires ci-dessus pour configurer la répartition.</p>';
+        return;
+    }
+
+    const weeks = [];
+    for (let w = sem.start_week; w <= sem.end_week; w++) weeks.push(w);
+
+    const typeCols = active.map(t =>
+        `<th style="text-align:center;min-width:80px"><span class="badge badge-${t.toLowerCase()}">${t}</span></th>`
+    ).join('');
+
+    const rows = weeks.map((w, i) => {
+        const cells = active.map(t => {
+            const v = (weeklyData[t]||{})[w] != null ? (weeklyData[t][w]||'') : '';
+            return `<td style="text-align:center">
+                <input class="w-inp" type="number" min="0" step="0.5" placeholder="0"
+                    data-t="${t}" data-w="${w}" value="${v}" oninput="onWeeklyInput(this)">
+            </td>`;
+        }).join('');
+        return `<tr><td>Sem. ${i+1} <small style="color:#9ca3af">(#${w})</small></td>${cells}</tr>`;
+    }).join('');
+
+    const footCells = active.map(t => {
+        const total = parseFloat(document.getElementById(t.toLowerCase()+'-hours').value)||0;
+        const sum = Object.values(weeklyData[t]||{}).reduce((a,b)=>a+(parseFloat(b)||0),0);
+        const cls = Math.abs(sum-total)<0.01 ? 'sum-ok' : (sum>total ? 'sum-over' : 'sum-low');
+        return `<td style="text-align:center" id="wsum-${t}" class="${cls}">${sum}h&thinsp;/&thinsp;${total}h</td>`;
+    }).join('');
+
+    section.innerHTML = `<div style="overflow-x:auto">
+        <table class="types-table weekly-table">
+            <thead><tr><th>Semaine</th>${typeCols}</tr></thead>
+            <tbody>${rows}</tbody>
+            <tfoot><tr><td>Total</td>${footCells}</tr></tfoot>
+        </table>
+    </div>`;
+}
+
+function onWeeklyInput(inp) {
+    const t = inp.dataset.t, w = parseInt(inp.dataset.w);
+    weeklyData[t][w] = parseFloat(inp.value) || 0;
+    updateWeeklySums();
+}
+
+function updateWeeklySums() {
+    ['CM','TD','TP','PT'].forEach(t => {
+        const el = document.getElementById('wsum-' + t);
+        if (!el) return;
+        const total = parseFloat(document.getElementById(t.toLowerCase()+'-hours').value)||0;
+        const sum = Object.values(weeklyData[t]||{}).reduce((a,b)=>a+(parseFloat(b)||0),0);
+        el.className = Math.abs(sum-total)<0.01 ? 'sum-ok' : (sum>total ? 'sum-over' : 'sum-low');
+        el.innerHTML = `${sum}h&thinsp;/&thinsp;${total}h`;
+    });
+}
+
+function onTypeHoursChange() {
+    buildWeeklyTable();
+}
+
 async function openCourseModal(id = null) {
+    // Load rooms if not yet in state
+    if (!state.rooms.length) state.rooms = await api('/rooms');
+
+    // Reset weekly data
+    weeklyData = { CM: {}, TD: {}, TP: {}, PT: {} };
+    document.getElementById('weekly-error').style.display = 'none';
+
     // Populate semester dropdown
-    const sel = document.getElementById('course-semester');
-    sel.innerHTML = '<option value="">— Choisir —</option>' +
-        state.semesters.map(s => `<option value="${s.id}">${esc(s.code)}${s.name ? ' — ' + esc(s.name) : ''}</option>`).join('');
+    document.getElementById('course-semester').innerHTML =
+        '<option value="">— Choisir —</option>' +
+        state.semesters.map(s =>
+            `<option value="${s.id}">${esc(s.code)}${s.name ? ' — '+esc(s.name) : ''}${s.start_week ? ` (S${s.start_week}→S${s.end_week})` : ''}</option>`
+        ).join('');
 
     document.getElementById('modal-course-title').textContent = id ? 'Modifier la matière' : 'Ajouter une matière';
     document.getElementById('course-id').value = id || '';
 
-    // Clear fields
-    ['course-code','course-name','cm-room','td-room','tp-room','pt-room'].forEach(f => document.getElementById(f).value = '');
-    ['cm-hours','td-hours','tp-hours','pt-hours'].forEach(f => document.getElementById(f).value = '');
+    // Reset type fields
+    ['cm','td','tp','pt'].forEach(t => {
+        document.getElementById(t+'-hours').value = '';
+        document.getElementById(t+'-dur').value = '1.5';
+    });
+    document.getElementById('course-code').value = '';
+    document.getElementById('course-name').value = '';
     document.getElementById('course-type').value = 'Ressource';
     document.getElementById('course-semester').value = '';
+    buildRoomSelects();
 
     if (id) {
         const c = state.courses.find(x => x.id === id);
@@ -500,40 +627,84 @@ async function openCourseModal(id = null) {
             document.getElementById('course-name').value = c.name || '';
             document.getElementById('course-type').value = c.course_type || 'Ressource';
             document.getElementById('course-semester').value = c.semester_id || '';
-            document.getElementById('cm-hours').value = c.cm_hours || '';
-            document.getElementById('cm-room').value = c.cm_room || '';
-            document.getElementById('td-hours').value = c.td_hours || '';
-            document.getElementById('td-room').value = c.td_room || '';
-            document.getElementById('tp-hours').value = c.tp_hours || '';
-            document.getElementById('tp-room').value = c.tp_room || '';
-            document.getElementById('pt-hours').value = c.pt_hours || '';
-            document.getElementById('pt-room').value = c.pt_room || '';
+            // Load teaching hours with slot_duration from API
+            try {
+                const th = await api('/courses/' + id + '/teaching-hours');
+                const rooms = {};
+                ['CM','TD','TP','PT'].forEach(t => {
+                    const info = th[t] || {};
+                    document.getElementById(t.toLowerCase()+'-hours').value = info.hours || '';
+                    document.getElementById(t.toLowerCase()+'-dur').value = info.slot_duration || '1.5';
+                    rooms[t] = info.room || '';
+                });
+                buildRoomSelects(rooms);
+                // Load weekly distribution
+                const wd = await api('/courses/' + id + '/weekly-distribution');
+                ['CM','TD','TP','PT'].forEach(t => {
+                    weeklyData[t] = {};
+                    Object.entries(wd[t]||{}).forEach(([w,h]) => { weeklyData[t][parseInt(w)] = h; });
+                });
+            } catch(e) { /* ignore, keep defaults */ }
         }
+    } else {
+        buildRoomSelects();
     }
+
+    buildWeeklyTable();
     openModal('modal-course');
 }
 
 async function submitCourse(e) {
     e.preventDefault();
     const id = document.getElementById('course-id').value;
-    const types = {
-        CM: { hours: document.getElementById('cm-hours').value, room: document.getElementById('cm-room').value },
-        TD: { hours: document.getElementById('td-hours').value, room: document.getElementById('td-room').value },
-        TP: { hours: document.getElementById('tp-hours').value, room: document.getElementById('tp-room').value },
-        PT: { hours: document.getElementById('pt-hours').value, room: document.getElementById('pt-room').value },
-    };
+
+    const types = {};
+    ['CM','TD','TP','PT'].forEach(t => {
+        types[t] = {
+            hours:        document.getElementById(t.toLowerCase()+'-hours').value,
+            slot_duration:document.getElementById(t.toLowerCase()+'-dur').value,
+            room:         document.getElementById(t.toLowerCase()+'-room').value,
+        };
+    });
+
+    // Weekly distribution validation
+    const semId = parseInt(document.getElementById('course-semester').value);
+    const sem = state.semesters.find(s => s.id === semId);
+    const errEl = document.getElementById('weekly-error');
+    errEl.style.display = 'none';
+    if (sem && sem.start_week && sem.end_week) {
+        const overAlloc = ['CM','TD','TP','PT'].filter(t => {
+            const total = parseFloat(types[t].hours)||0;
+            if (!total) return false;
+            const sum = Object.values(weeklyData[t]||{}).reduce((a,b)=>a+(parseFloat(b)||0),0);
+            return sum > total + 0.01;
+        });
+        if (overAlloc.length) {
+            errEl.textContent = 'Sur-allocation pour : ' + overAlloc.join(', ') + '. Corrigez la répartition avant d\'enregistrer.';
+            errEl.style.display = 'block';
+            return;
+        }
+    }
+
     const base = {
-        code: document.getElementById('course-code').value,
-        name: document.getElementById('course-name').value,
+        code:        document.getElementById('course-code').value,
+        name:        document.getElementById('course-name').value,
         course_type: document.getElementById('course-type').value,
-        semester_id: parseInt(document.getElementById('course-semester').value),
+        semester_id: semId,
     };
+
     try {
+        let courseId = id;
         if (id) {
             await api('/courses/' + id, { method: 'PUT', body: JSON.stringify(base) });
             await api('/courses/' + id + '/teaching-hours', { method: 'PUT', body: JSON.stringify(types) });
         } else {
-            await api('/courses', { method: 'POST', body: JSON.stringify({ ...base, types }) });
+            const created = await api('/courses', { method: 'POST', body: JSON.stringify({ ...base, types }) });
+            courseId = created.id;
+        }
+        // Save weekly distribution if semester has weeks defined
+        if (sem && sem.start_week && sem.end_week) {
+            await api('/courses/' + courseId + '/weekly-distribution', { method: 'PUT', body: JSON.stringify(weeklyData) });
         }
         closeModal('modal-course');
         [state.courses, state.semesters] = await Promise.all([api('/courses'), api('/semesters')]);

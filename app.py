@@ -672,7 +672,7 @@ def delete_course(course_id):
 
 @app.route('/api/courses/<int:course_id>/teaching-hours', methods=['GET'])
 def get_course_teaching_hours(course_id):
-    """Get hours and room per teaching type (formation_type=0) for a course"""
+    """Get hours, slot_duration and room per teaching type (formation_type=0)"""
     try:
         db = get_db()
         cursor = db.cursor()
@@ -681,25 +681,29 @@ def get_course_teaching_hours(course_id):
             db.close()
             return error_response('Course not found', 404)
         cursor.execute('''
-            SELECT teaching_type, total_hours, room_name
+            SELECT teaching_type, total_hours, slot_duration, room_name
             FROM course_sessions
             WHERE course_id = ? AND formation_type = 0
         ''', (course_id,))
         rows = cursor.fetchall()
         db.close()
-        result = {t: {'hours': 0, 'room': ''} for t in ['CM', 'TD', 'TP', 'PT']}
+        result = {t: {'hours': 0, 'slot_duration': 1.5, 'room': ''} for t in ['CM', 'TD', 'TP', 'PT']}
         for r in rows:
             t = r['teaching_type']
             if t in result:
-                result[t] = {'hours': r['total_hours'] or 0, 'room': r['room_name'] or ''}
+                result[t] = {
+                    'hours': r['total_hours'] or 0,
+                    'slot_duration': r['slot_duration'] or 1.5,
+                    'room': r['room_name'] or ''
+                }
         return jsonify(result), 200
     except Exception as e:
         return error_response(str(e), 500)
 
 @app.route('/api/courses/<int:course_id>/teaching-hours', methods=['PUT'])
 def update_course_teaching_hours(course_id):
-    """Upsert hours and room per teaching type for a course.
-    Body: {"CM": {"hours": 10, "room": "Amphi A"}, "TD": {...}, ...}
+    """Upsert hours, slot_duration and room per teaching type.
+    Body: {"CM": {"hours": 10, "slot_duration": 1.5, "room": "Amphi A"}, ...}
     """
     try:
         data = request.get_json()
@@ -713,7 +717,9 @@ def update_course_teaching_hours(course_id):
         for ttype in ['CM', 'TD', 'TP', 'PT']:
             info = (data or {}).get(ttype, {})
             hours = float(info.get('hours') or 0)
+            slot_dur = float(info.get('slot_duration') or 1.5)
             room = (info.get('room') or '').strip() or None
+            nb = round(hours / slot_dur) if slot_dur > 0 and hours > 0 else 0
 
             cursor.execute('''
                 SELECT id FROM course_sessions
@@ -725,15 +731,17 @@ def update_course_teaching_hours(course_id):
                 if existing:
                     cursor.execute('''
                         UPDATE course_sessions
-                        SET total_hours = ?, room_name = ?, updated_at = CURRENT_TIMESTAMP
+                        SET total_hours = ?, slot_duration = ?, nb_sessions = ?,
+                            room_name = ?, updated_at = CURRENT_TIMESTAMP
                         WHERE id = ?
-                    ''', (hours, room, existing['id']))
+                    ''', (hours, slot_dur, nb, room, existing['id']))
                 else:
                     cursor.execute('''
                         INSERT INTO course_sessions
-                            (course_id, formation_type, teaching_type, total_hours, room_name, nb_sessions)
-                        VALUES (?, 0, ?, ?, ?, 0)
-                    ''', (course_id, ttype, hours, room))
+                            (course_id, formation_type, teaching_type,
+                             total_hours, slot_duration, nb_sessions, room_name)
+                        VALUES (?, 0, ?, ?, ?, ?, ?)
+                    ''', (course_id, ttype, hours, slot_dur, nb, room))
             else:
                 if existing:
                     cursor.execute('DELETE FROM course_sessions WHERE id = ?', (existing['id'],))
@@ -741,6 +749,75 @@ def update_course_teaching_hours(course_id):
         db.commit()
         db.close()
         return jsonify({'message': 'Teaching hours updated'}), 200
+    except Exception as e:
+        return error_response(str(e), 500)
+
+@app.route('/api/courses/<int:course_id>/weekly-distribution', methods=['GET'])
+def get_weekly_distribution(course_id):
+    """Get weekly hours distribution by teaching type.
+    Returns: {CM: {36: 1.5, 37: 1.5}, TD: {...}, TP: {}, PT: {}}
+    """
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('SELECT id FROM courses WHERE id = ?', (course_id,))
+        if not cursor.fetchone():
+            db.close()
+            return error_response('Course not found', 404)
+        cursor.execute('''
+            SELECT cs.teaching_type, wh.week_number, wh.hours
+            FROM course_sessions cs
+            JOIN weekly_hours wh ON wh.course_session_id = cs.id
+            WHERE cs.course_id = ? AND cs.formation_type = 0
+            ORDER BY cs.teaching_type, wh.week_number
+        ''', (course_id,))
+        rows = cursor.fetchall()
+        db.close()
+        result = {t: {} for t in ['CM', 'TD', 'TP', 'PT']}
+        for r in rows:
+            t = r['teaching_type']
+            if t in result:
+                result[t][r['week_number']] = r['hours']
+        return jsonify(result), 200
+    except Exception as e:
+        return error_response(str(e), 500)
+
+@app.route('/api/courses/<int:course_id>/weekly-distribution', methods=['PUT'])
+def update_weekly_distribution(course_id):
+    """Save weekly hours per teaching type.
+    Body: {CM: {"36": 1.5, "37": 1.5}, TD: {"36": 2}, ...}
+    """
+    try:
+        data = request.get_json() or {}
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('SELECT id FROM courses WHERE id = ?', (course_id,))
+        if not cursor.fetchone():
+            db.close()
+            return error_response('Course not found', 404)
+
+        for ttype in ['CM', 'TD', 'TP', 'PT']:
+            week_data = data.get(ttype, {})
+            cursor.execute('''
+                SELECT id FROM course_sessions
+                WHERE course_id = ? AND teaching_type = ? AND formation_type = 0
+            ''', (course_id, ttype))
+            session = cursor.fetchone()
+            if not session:
+                continue
+            session_id = session['id']
+            cursor.execute('DELETE FROM weekly_hours WHERE course_session_id = ?', (session_id,))
+            for week_str, hours in week_data.items():
+                h = float(hours or 0)
+                if h > 0:
+                    cursor.execute('''
+                        INSERT INTO weekly_hours (course_session_id, week_number, hours)
+                        VALUES (?, ?, ?)
+                    ''', (session_id, int(week_str), h))
+
+        db.commit()
+        db.close()
+        return jsonify({'message': 'Weekly distribution updated'}), 200
     except Exception as e:
         return error_response(str(e), 500)
 
