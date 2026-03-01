@@ -298,43 +298,50 @@
                 <tbody>
                     <tr>
                         <td><span class="badge badge-cm">CM</span></td>
-                        <td class="col-h"><input type="number" id="cm-hours" min="0" step="0.5" placeholder="0" oninput="onTypeHoursChange()"></td>
+                        <td class="col-h"><input type="number" id="cm-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="cm-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
                         <td><select id="cm-room"></select></td>
                     </tr>
                     <tr>
                         <td><span class="badge badge-td">TD</span></td>
-                        <td class="col-h"><input type="number" id="td-hours" min="0" step="0.5" placeholder="0" oninput="onTypeHoursChange()"></td>
+                        <td class="col-h"><input type="number" id="td-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="td-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
                         <td><select id="td-room"></select></td>
                     </tr>
                     <tr>
                         <td><span class="badge badge-tp">TP</span></td>
-                        <td class="col-h"><input type="number" id="tp-hours" min="0" step="0.5" placeholder="0" oninput="onTypeHoursChange()"></td>
+                        <td class="col-h"><input type="number" id="tp-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="tp-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
                         <td><select id="tp-room"></select></td>
                     </tr>
                     <tr>
                         <td><span class="badge badge-pt">PT</span></td>
-                        <td class="col-h"><input type="number" id="pt-hours" min="0" step="0.5" placeholder="0" oninput="onTypeHoursChange()"></td>
+                        <td class="col-h"><input type="number" id="pt-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="pt-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
                         <td><select id="pt-room"></select></td>
                     </tr>
                 </tbody>
             </table>
 
-            <div class="section-title">Répartition hebdomadaire</div>
-            <div id="weekly-dist-section" style="font-size:.85rem;color:#6b7280">
-                Sélectionnez un semestre pour saisir la répartition.
-            </div>
-
-            <div id="weekly-error" style="display:none;color:#dc2626;font-size:.82rem;margin-top:8px"></div>
-
-            <div class="form-actions">
+            <div class="form-actions" style="margin-top:20px">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('modal-course')">Annuler</button>
                 <button type="submit" class="btn btn-primary">Enregistrer</button>
             </div>
         </form>
+    </div>
+</div>
+
+<!-- ===== MODAL RÉPARTITION HEBDOMADAIRE ===== -->
+<div class="modal-backdrop" id="modal-weekly">
+    <div class="modal modal-wide" style="max-width:740px">
+        <h2 id="weekly-modal-title" style="font-size:1rem;margin-bottom:4px">Répartition hebdomadaire</h2>
+        <p id="weekly-modal-subtitle" style="color:#6b7280;font-size:.82rem;margin-bottom:12px"></p>
+        <div id="weekly-modal-body"></div>
+        <div id="weekly-modal-error" style="display:none;color:#dc2626;font-size:.82rem;margin-top:10px;padding:8px 12px;background:#fef2f2;border-radius:6px;border:1px solid #fecaca"></div>
+        <div class="form-actions" style="margin-top:16px">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-weekly')">Fermer</button>
+            <button type="button" class="btn btn-primary" onclick="submitWeekly()">Enregistrer</button>
+        </div>
     </div>
 </div>
 
@@ -496,17 +503,16 @@ function renderCourses() {
             ${hCell(c.td_hours, c.td_room)}
             ${hCell(c.tp_hours, c.tp_room)}
             ${hCell(c.pt_hours, c.pt_room)}
-            <td>
+            <td style="white-space:nowrap">
                 <button class="btn btn-secondary btn-sm" onclick="openCourseModal(${c.id})">Éditer</button>
+                <button class="btn btn-secondary btn-sm" onclick="openWeeklyModal(${c.id})" title="Répartition hebdomadaire">Répartition</button>
                 <button class="btn btn-danger btn-sm" onclick="deleteCourse(${c.id})">Supprimer</button>
             </td>
         </tr>`).join('')}</tbody>
     </table></div>`;
 }
 
-// weeklyData[teaching_type][week_number] = hours
-let weeklyData = { CM: {}, TD: {}, TP: {}, PT: {} };
-
+// ===== MATIERES — helpers =====
 function buildRoomSelects(selectedValues = {}) {
     const none = '<option value="">— Aucune salle —</option>';
     const opts = none + state.rooms.map(r =>
@@ -519,97 +525,18 @@ function buildRoomSelects(selectedValues = {}) {
     });
 }
 
-function buildWeeklyTable() {
-    const semId = parseInt(document.getElementById('course-semester').value);
-    const sem = state.semesters.find(s => s.id === semId);
-    const section = document.getElementById('weekly-dist-section');
-
-    if (!sem || !sem.start_week || !sem.end_week) {
-        section.innerHTML = '<p style="color:#6b7280">Configurez les semaines de début/fin du semestre pour saisir la répartition.</p>';
-        return;
-    }
-
-    const allTypes = ['CM','TD','TP','PT'];
-    const active = allTypes.filter(t => (parseFloat(document.getElementById(t.toLowerCase()+'-hours').value)||0) > 0);
-    if (!active.length) {
-        section.innerHTML = '<p style="color:#6b7280">Définissez les volumes horaires ci-dessus pour configurer la répartition.</p>';
-        return;
-    }
-
-    const weeks = [];
-    for (let w = sem.start_week; w <= sem.end_week; w++) weeks.push(w);
-
-    const typeCols = active.map(t =>
-        `<th style="text-align:center;min-width:80px"><span class="badge badge-${t.toLowerCase()}">${t}</span></th>`
-    ).join('');
-
-    const rows = weeks.map((w, i) => {
-        const cells = active.map(t => {
-            const v = (weeklyData[t]||{})[w] != null ? (weeklyData[t][w]||'') : '';
-            return `<td style="text-align:center">
-                <input class="w-inp" type="number" min="0" step="0.5" placeholder="0"
-                    data-t="${t}" data-w="${w}" value="${v}" oninput="onWeeklyInput(this)">
-            </td>`;
-        }).join('');
-        return `<tr><td>Sem. ${i+1} <small style="color:#9ca3af">(#${w})</small></td>${cells}</tr>`;
-    }).join('');
-
-    const footCells = active.map(t => {
-        const total = parseFloat(document.getElementById(t.toLowerCase()+'-hours').value)||0;
-        const sum = Object.values(weeklyData[t]||{}).reduce((a,b)=>a+(parseFloat(b)||0),0);
-        const cls = Math.abs(sum-total)<0.01 ? 'sum-ok' : (sum>total ? 'sum-over' : 'sum-low');
-        return `<td style="text-align:center" id="wsum-${t}" class="${cls}">${sum}h&thinsp;/&thinsp;${total}h</td>`;
-    }).join('');
-
-    section.innerHTML = `<div style="overflow-x:auto">
-        <table class="types-table weekly-table">
-            <thead><tr><th>Semaine</th>${typeCols}</tr></thead>
-            <tbody>${rows}</tbody>
-            <tfoot><tr><td>Total</td>${footCells}</tr></tfoot>
-        </table>
-    </div>`;
-}
-
-function onWeeklyInput(inp) {
-    const t = inp.dataset.t, w = parseInt(inp.dataset.w);
-    weeklyData[t][w] = parseFloat(inp.value) || 0;
-    updateWeeklySums();
-}
-
-function updateWeeklySums() {
-    ['CM','TD','TP','PT'].forEach(t => {
-        const el = document.getElementById('wsum-' + t);
-        if (!el) return;
-        const total = parseFloat(document.getElementById(t.toLowerCase()+'-hours').value)||0;
-        const sum = Object.values(weeklyData[t]||{}).reduce((a,b)=>a+(parseFloat(b)||0),0);
-        el.className = Math.abs(sum-total)<0.01 ? 'sum-ok' : (sum>total ? 'sum-over' : 'sum-low');
-        el.innerHTML = `${sum}h&thinsp;/&thinsp;${total}h`;
-    });
-}
-
-function onTypeHoursChange() {
-    buildWeeklyTable();
-}
-
 async function openCourseModal(id = null) {
-    // Load rooms if not yet in state
     if (!state.rooms.length) state.rooms = await api('/rooms');
 
-    // Reset weekly data
-    weeklyData = { CM: {}, TD: {}, TP: {}, PT: {} };
-    document.getElementById('weekly-error').style.display = 'none';
-
-    // Populate semester dropdown
     document.getElementById('course-semester').innerHTML =
         '<option value="">— Choisir —</option>' +
         state.semesters.map(s =>
-            `<option value="${s.id}">${esc(s.code)}${s.name ? ' — '+esc(s.name) : ''}${s.start_week ? ` (S${s.start_week}→S${s.end_week})` : ''}</option>`
+            `<option value="${s.id}">${esc(s.code)}${s.name ? ' — '+esc(s.name) : ''}${s.start_week ? ` (sem.${s.start_week}→${s.end_week})` : ''}</option>`
         ).join('');
 
     document.getElementById('modal-course-title').textContent = id ? 'Modifier la matière' : 'Ajouter une matière';
     document.getElementById('course-id').value = id || '';
 
-    // Reset type fields
     ['cm','td','tp','pt'].forEach(t => {
         document.getElementById(t+'-hours').value = '';
         document.getElementById(t+'-dur').value = '1.5';
@@ -627,7 +554,6 @@ async function openCourseModal(id = null) {
             document.getElementById('course-name').value = c.name || '';
             document.getElementById('course-type').value = c.course_type || 'Ressource';
             document.getElementById('course-semester').value = c.semester_id || '';
-            // Load teaching hours with slot_duration from API
             try {
                 const th = await api('/courses/' + id + '/teaching-hours');
                 const rooms = {};
@@ -638,73 +564,36 @@ async function openCourseModal(id = null) {
                     rooms[t] = info.room || '';
                 });
                 buildRoomSelects(rooms);
-                // Load weekly distribution
-                const wd = await api('/courses/' + id + '/weekly-distribution');
-                ['CM','TD','TP','PT'].forEach(t => {
-                    weeklyData[t] = {};
-                    Object.entries(wd[t]||{}).forEach(([w,h]) => { weeklyData[t][parseInt(w)] = h; });
-                });
-            } catch(e) { /* ignore, keep defaults */ }
+            } catch(e) { /* keep defaults */ }
         }
-    } else {
-        buildRoomSelects();
     }
-
-    buildWeeklyTable();
     openModal('modal-course');
 }
 
 async function submitCourse(e) {
     e.preventDefault();
     const id = document.getElementById('course-id').value;
-
+    const semId = parseInt(document.getElementById('course-semester').value);
     const types = {};
     ['CM','TD','TP','PT'].forEach(t => {
         types[t] = {
-            hours:        document.getElementById(t.toLowerCase()+'-hours').value,
-            slot_duration:document.getElementById(t.toLowerCase()+'-dur').value,
-            room:         document.getElementById(t.toLowerCase()+'-room').value,
+            hours:         document.getElementById(t.toLowerCase()+'-hours').value,
+            slot_duration: document.getElementById(t.toLowerCase()+'-dur').value,
+            room:          document.getElementById(t.toLowerCase()+'-room').value,
         };
     });
-
-    // Weekly distribution validation
-    const semId = parseInt(document.getElementById('course-semester').value);
-    const sem = state.semesters.find(s => s.id === semId);
-    const errEl = document.getElementById('weekly-error');
-    errEl.style.display = 'none';
-    if (sem && sem.start_week && sem.end_week) {
-        const overAlloc = ['CM','TD','TP','PT'].filter(t => {
-            const total = parseFloat(types[t].hours)||0;
-            if (!total) return false;
-            const sum = Object.values(weeklyData[t]||{}).reduce((a,b)=>a+(parseFloat(b)||0),0);
-            return sum > total + 0.01;
-        });
-        if (overAlloc.length) {
-            errEl.textContent = 'Sur-allocation pour : ' + overAlloc.join(', ') + '. Corrigez la répartition avant d\'enregistrer.';
-            errEl.style.display = 'block';
-            return;
-        }
-    }
-
     const base = {
         code:        document.getElementById('course-code').value,
         name:        document.getElementById('course-name').value,
         course_type: document.getElementById('course-type').value,
         semester_id: semId,
     };
-
     try {
-        let courseId = id;
         if (id) {
             await api('/courses/' + id, { method: 'PUT', body: JSON.stringify(base) });
             await api('/courses/' + id + '/teaching-hours', { method: 'PUT', body: JSON.stringify(types) });
         } else {
-            const created = await api('/courses', { method: 'POST', body: JSON.stringify({ ...base, types }) });
-            courseId = created.id;
-        }
-        // Save weekly distribution if semester has weeks defined
-        if (sem && sem.start_week && sem.end_week) {
-            await api('/courses/' + courseId + '/weekly-distribution', { method: 'PUT', body: JSON.stringify(weeklyData) });
+            await api('/courses', { method: 'POST', body: JSON.stringify({ ...base, types }) });
         }
         closeModal('modal-course');
         [state.courses, state.semesters] = await Promise.all([api('/courses'), api('/semesters')]);
@@ -720,6 +609,129 @@ async function deleteCourse(id) {
         state.courses = await api('/courses');
         renderCourses();
         toast('Matière supprimée');
+    } catch(err) { toast('Erreur : ' + err.message, 'error'); }
+}
+
+// ===== RÉPARTITION HEBDOMADAIRE (modal dédié) =====
+let weeklyData = { CM: {}, TD: {}, TP: {}, PT: {} };
+let _weeklyHours = {};   // volumes de référence pour la validation
+let _weeklyActive = [];  // types actifs dans le modal courant
+let _weeklyModalCourseId = null;
+
+async function openWeeklyModal(courseId) {
+    const c = state.courses.find(x => x.id === courseId);
+    if (!c) return;
+    const sem = state.semesters.find(s => s.id === c.semester_id);
+    if (!sem || !sem.start_week || !sem.end_week) {
+        toast('Le semestre « ' + (c.semester_code||'') + ' » doit avoir des semaines de début et fin définies.', 'error');
+        return;
+    }
+
+    _weeklyModalCourseId = courseId;
+    weeklyData = { CM: {}, TD: {}, TP: {}, PT: {} };
+    _weeklyHours  = { CM: c.cm_hours||0, TD: c.td_hours||0, TP: c.tp_hours||0, PT: c.pt_hours||0 };
+    _weeklyActive = ['CM','TD','TP','PT'].filter(t => _weeklyHours[t] > 0);
+
+    document.getElementById('weekly-modal-title').textContent = `Répartition hebdomadaire`;
+    document.getElementById('weekly-modal-subtitle').textContent =
+        `${c.code} · ${c.name}  —  Semestre ${c.semester_code}  (sem. ${sem.start_week} → ${sem.end_week})`;
+    document.getElementById('weekly-modal-error').style.display = 'none';
+    document.getElementById('weekly-modal-body').innerHTML = '<div class="spinner">Chargement…</div>';
+    openModal('modal-weekly');
+
+    try {
+        const wd = await api('/courses/' + courseId + '/weekly-distribution');
+        ['CM','TD','TP','PT'].forEach(t => {
+            weeklyData[t] = {};
+            Object.entries(wd[t]||{}).forEach(([w,h]) => { weeklyData[t][parseInt(w)] = parseFloat(h)||0; });
+        });
+    } catch(e) { /* use empty */ }
+
+    renderWeeklyModalTable(sem);
+}
+
+function renderWeeklyModalTable(sem) {
+    const body = document.getElementById('weekly-modal-body');
+
+    if (!_weeklyActive.length) {
+        body.innerHTML = '<p style="color:#6b7280">Aucun type de cours avec volume horaire défini pour cette matière.</p>';
+        return;
+    }
+
+    const weeks = [];
+    for (let w = sem.start_week; w <= sem.end_week; w++) weeks.push(w);
+
+    const typeCols = _weeklyActive.map(t =>
+        `<th style="text-align:center;min-width:90px">
+            <span class="badge badge-${t.toLowerCase()}">${t}</span>
+            <br><small style="font-weight:400;color:#6b7280">${_weeklyHours[t]}h total</small>
+        </th>`
+    ).join('');
+
+    const rows = weeks.map((w, i) => {
+        const cells = _weeklyActive.map(t => {
+            const v = weeklyData[t][w] || '';
+            return `<td style="text-align:center">
+                <input class="w-inp" type="number" min="0" step="0.5" placeholder="0"
+                    data-t="${t}" data-w="${w}" value="${v}" oninput="onWeeklyInput(this)">
+            </td>`;
+        }).join('');
+        return `<tr><td style="white-space:nowrap;padding:4px 10px">Sem.&thinsp;${i+1} <small style="color:#9ca3af">(#${w})</small></td>${cells}</tr>`;
+    }).join('');
+
+    const footCells = _weeklyActive.map(t => {
+        const total = _weeklyHours[t];
+        const sum = Object.values(weeklyData[t]).reduce((a,b)=>a+(b||0),0);
+        const cls = Math.abs(sum-total)<0.01 ? 'sum-ok' : (sum>total ? 'sum-over' : 'sum-low');
+        return `<td style="text-align:center" id="wsum-${t}" class="${cls}">${sum}h&thinsp;/&thinsp;${total}h</td>`;
+    }).join('');
+
+    body.innerHTML = `<div style="overflow-x:auto">
+        <table class="types-table weekly-table">
+            <thead><tr><th>Semaine</th>${typeCols}</tr></thead>
+            <tbody>${rows}</tbody>
+            <tfoot><tr><td><strong>Total</strong></td>${footCells}</tr></tfoot>
+        </table>
+    </div>
+    <p style="font-size:.78rem;color:#6b7280;margin-top:8px">
+        <span class="sum-ok">&#9632;</span> Complet &nbsp;
+        <span class="sum-low">&#9632;</span> Incomplet &nbsp;
+        <span class="sum-over">&#9632;</span> Sur-alloué (bloquant)
+    </p>`;
+}
+
+function onWeeklyInput(inp) {
+    const t = inp.dataset.t, w = parseInt(inp.dataset.w);
+    weeklyData[t][w] = parseFloat(inp.value) || 0;
+    // Update footer cell
+    const el = document.getElementById('wsum-' + t);
+    if (!el) return;
+    const total = _weeklyHours[t]||0;
+    const sum = Object.values(weeklyData[t]).reduce((a,b)=>a+(b||0),0);
+    el.className = Math.abs(sum-total)<0.01 ? 'sum-ok' : (sum>total ? 'sum-over' : 'sum-low');
+    el.innerHTML = `${sum}h&thinsp;/&thinsp;${total}h`;
+}
+
+async function submitWeekly() {
+    const errEl = document.getElementById('weekly-modal-error');
+    errEl.style.display = 'none';
+
+    const overAlloc = _weeklyActive.filter(t => {
+        const sum = Object.values(weeklyData[t]).reduce((a,b)=>a+(b||0),0);
+        return sum > (_weeklyHours[t]||0) + 0.01;
+    });
+    if (overAlloc.length) {
+        errEl.textContent = 'Sur-allocation pour : ' + overAlloc.join(', ') +
+            '. La somme hebdomadaire ne peut pas dépasser le volume horaire total.';
+        errEl.style.display = 'block';
+        return;
+    }
+
+    try {
+        await api('/courses/' + _weeklyModalCourseId + '/weekly-distribution',
+            { method: 'PUT', body: JSON.stringify(weeklyData) });
+        closeModal('modal-weekly');
+        toast('Répartition enregistrée');
     } catch(err) { toast('Erreur : ' + err.message, 'error'); }
 }
 
