@@ -13,6 +13,10 @@ EXCEL_FILE = os.path.join(_HERE, "placement cours semaine BUT 25-26 V3.xlsx")
 DB_FILE = os.path.join(_HERE, "edt.db")
 SCHEMA_FILE = os.path.join(_HERE, "schema.sql")
 
+# Allow overriding EXCEL_FILE via command-line argument
+if len(sys.argv) > 1:
+    EXCEL_FILE = os.path.abspath(sys.argv[1])
+
 SEMESTER_MAPPING = {
     "S1+S2": [("S1", 1), ("S2", 1)],
     "S3+S4": [("S3", 2), ("S4", 2)],
