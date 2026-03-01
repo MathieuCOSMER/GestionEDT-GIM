@@ -1386,6 +1386,101 @@ def import_excel():
     except Exception as e:
         return error_response(f'Error importing file: {str(e)}', 500)
 
+# ======================= REPARTITION HEBDOMADAIRE =======================
+
+@app.route('/api/repartition', methods=['GET'])
+def get_repartition():
+    """Tableau pivot : pour un semestre donné, heures par cours et par semaine"""
+    semester_code = request.args.get('semester', '')
+    try:
+        db = get_db()
+        cursor = db.cursor()
+
+        # Semaines disponibles pour ce semestre (ou tous)
+        if semester_code:
+            cursor.execute('''
+                SELECT DISTINCT wh.week_number
+                FROM weekly_hours wh
+                JOIN course_sessions cs ON wh.course_session_id = cs.id
+                JOIN courses c ON cs.course_id = c.id
+                JOIN semesters s ON c.semester_id = s.id
+                WHERE s.code = ? AND wh.hours > 0
+                ORDER BY wh.week_number
+            ''', (semester_code,))
+        else:
+            cursor.execute('''
+                SELECT DISTINCT wh.week_number
+                FROM weekly_hours wh
+                WHERE wh.hours > 0
+                ORDER BY wh.week_number
+            ''')
+        weeks = [r['week_number'] for r in cursor.fetchall()]
+
+        # Lignes de données avec heures hebdomadaires
+        if semester_code:
+            cursor.execute('''
+                SELECT cs.id AS session_id,
+                       c.code AS course_code, c.name AS course_name,
+                       s.code AS semester_code,
+                       cs.teaching_type, cs.formation_type,
+                       cs.total_hours, cs.nb_sessions,
+                       t.name AS teacher_name,
+                       wh.week_number, wh.semester_week, wh.hours
+                FROM course_sessions cs
+                JOIN courses c ON cs.course_id = c.id
+                JOIN semesters s ON c.semester_id = s.id
+                LEFT JOIN teachers t ON cs.teacher_id = t.id
+                LEFT JOIN weekly_hours wh ON wh.course_session_id = cs.id
+                WHERE s.code = ?
+                ORDER BY c.code, cs.teaching_type, cs.formation_type, wh.week_number
+            ''', (semester_code,))
+        else:
+            cursor.execute('''
+                SELECT cs.id AS session_id,
+                       c.code AS course_code, c.name AS course_name,
+                       s.code AS semester_code,
+                       cs.teaching_type, cs.formation_type,
+                       cs.total_hours, cs.nb_sessions,
+                       t.name AS teacher_name,
+                       wh.week_number, wh.semester_week, wh.hours
+                FROM course_sessions cs
+                JOIN courses c ON cs.course_id = c.id
+                JOIN semesters s ON c.semester_id = s.id
+                LEFT JOIN teachers t ON cs.teacher_id = t.id
+                LEFT JOIN weekly_hours wh ON wh.course_session_id = cs.id
+                ORDER BY s.code, c.code, cs.teaching_type, cs.formation_type, wh.week_number
+            ''')
+        raw = cursor.fetchall()
+        db.close()
+
+        # Pivot : regrouper par session
+        sessions = {}
+        order = []
+        for r in raw:
+            sid = r['session_id']
+            if sid not in sessions:
+                sessions[sid] = {
+                    'course_code': r['course_code'] or '',
+                    'course_name': r['course_name'] or '',
+                    'semester': r['semester_code'] or '',
+                    'type': r['teaching_type'] or '',
+                    'formation': str(r['formation_type']) if r['formation_type'] else '',
+                    'total_hours': r['total_hours'] or 0,
+                    'nb_sessions': r['nb_sessions'] or 0,
+                    'teacher': r['teacher_name'] or '',
+                    'by_week': {},
+                }
+                order.append(sid)
+            if r['week_number'] is not None and (r['hours'] or 0) > 0:
+                sessions[sid]['by_week'][r['week_number']] = r['hours'] or 0
+
+        return jsonify({
+            'weeks': weeks,
+            'rows': [sessions[sid] for sid in order],
+        }), 200
+    except Exception as e:
+        return error_response(f'Error fetching repartition: {str(e)}', 500)
+
 # ======================= ERROR HANDLERS =======================
 
 @app.errorhandler(404)

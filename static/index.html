@@ -76,6 +76,19 @@
         .spinner { text-align: center; padding: 40px; color: #6b7280; }
 
         .overflow-x { overflow-x: auto; }
+
+        /* Répartition pivot table */
+        .repartition-wrap { overflow-x: auto; max-height: 75vh; overflow-y: auto; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+        .repartition-wrap table { min-width: max-content; border-collapse: collapse; background: #fff; }
+        .repartition-wrap thead th { position: sticky; top: 0; z-index: 2; background: #f9fafb; }
+        .repartition-wrap td.s-col, .repartition-wrap th.s-col { position: sticky; z-index: 1; background: #fff; border-right: 1px solid #e5e7eb; }
+        .repartition-wrap thead th.s-col { background: #f9fafb; z-index: 3; }
+        .cell-hours { text-align: center; font-weight: 600; color: #1e40af; }
+        .cell-empty { text-align: center; color: #d1d5db; font-size: .75rem; }
+        .col-week { text-align: center; min-width: 50px; font-size: .78rem; }
+        .col-total { text-align: center; font-weight: 700; color: #4f46e5; background: #eef2ff !important; border-left: 2px solid #c7d2fe; border-right: 2px solid #c7d2fe; }
+        .repartition-wrap tr:hover td { background: #f0f4ff; }
+        .repartition-wrap tr:hover td.s-col { background: #e8eeff; }
     </style>
 </head>
 <body>
@@ -88,6 +101,7 @@
     <button onclick="showPage('salles')" id="nav-salles">Salles</button>
     <button onclick="showPage('sessions')" id="nav-sessions">Sessions</button>
     <button onclick="showPage('service')" id="nav-service">Service</button>
+    <button onclick="showPage('repartition')" id="nav-repartition">Répartition</button>
 </nav>
 
 <main>
@@ -107,6 +121,7 @@
         <div class="link-card" onclick="showPage('salles')"><h3>Salles</h3><p>Gérer les salles</p></div>
         <div class="link-card" onclick="showPage('sessions')"><h3>Sessions de cours</h3><p>Gérer les sessions</p></div>
         <div class="link-card" onclick="showPage('service')"><h3>Service enseignants</h3><p>Consulter les HETD</p></div>
+        <div class="link-card" onclick="showPage('repartition')"><h3>Répartition semaines</h3><p>Vue hebdomadaire par semestre</p></div>
     </div>
 </div>
 
@@ -169,6 +184,22 @@
 <div class="page" id="page-service">
     <h1>Service enseignants</h1>
     <div id="service-table"><div class="spinner">Chargement…</div></div>
+</div>
+
+<!-- ===== REPARTITION ===== -->
+<div class="page" id="page-repartition">
+    <div class="toolbar">
+        <h1>Répartition hebdomadaire</h1>
+        <div class="filters">
+            <label>Semestre :</label>
+            <select id="filter-semester-repartition" onchange="loadRepartition()">
+                <option value="">Tous</option>
+                <option>S1</option><option>S2</option><option>S3</option>
+                <option>S4</option><option>S5</option><option>S6</option>
+            </select>
+        </div>
+    </div>
+    <div id="repartition-table"><div class="spinner">Chargement…</div></div>
 </div>
 
 </main>
@@ -252,6 +283,7 @@ async function loadPage(name) {
             renderSessions();
         }
         else if (name === 'service') { const d = await api('/service/all'); renderService(d); }
+        else if (name === 'repartition') { await loadRepartition(); }
     } catch (e) {
         toast('Erreur de chargement : ' + e.message, 'error');
     }
@@ -463,6 +495,76 @@ function renderService(data) {
             <td style="color:#4f46e5">${totalHetd}</td>
         </tr></tfoot>
     </table>`;
+}
+
+// ===== REPARTITION =====
+async function loadRepartition() {
+    const sem = document.getElementById('filter-semester-repartition').value;
+    const el = document.getElementById('repartition-table');
+    el.innerHTML = '<div class="spinner">Chargement…</div>';
+    try {
+        const url = '/repartition' + (sem ? '?semester=' + encodeURIComponent(sem) : '');
+        const data = await api(url);
+        renderRepartition(data);
+    } catch(e) {
+        el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
+    }
+}
+
+function renderRepartition({ weeks, rows }) {
+    const el = document.getElementById('repartition-table');
+    if (!rows.length) { el.innerHTML = '<div class="empty">Aucune donnée</div>'; return; }
+
+    const typeColors = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' };
+    const showSem = document.getElementById('filter-semester-repartition').value === '';
+
+    // Colonnes fixes (gauche) et leurs largeurs
+    const fixedCols = [
+        { key: 'code',  label: 'Code',       w: 70  },
+        { key: 'name',  label: 'Matière',     w: 190 },
+        ...(showSem ? [{ key: 'sem', label: 'Sem.', w: 55 }] : []),
+        { key: 'type',  label: 'Type',        w: 60  },
+        { key: 'teach', label: 'Enseignant',  w: 140 },
+    ];
+    // Calculer les left cumulatifs
+    let cum = 0;
+    fixedCols.forEach(c => { c.left = cum; cum += c.w; });
+
+    const sCol = (c, content) =>
+        `<td class="s-col" style="left:${c.left}px;min-width:${c.w}px;max-width:${c.w}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${content}</td>`;
+    const sTh = (c) =>
+        `<th class="s-col col-week" style="left:${c.left}px;min-width:${c.w}px">${c.label}</th>`;
+
+    const headerWeeks = weeks.map(w => `<th class="col-week">S${w}</th>`).join('');
+
+    const bodyRows = rows.map(r => {
+        const typeKey = (r.type || '').toUpperCase();
+        const badge = `<span class="badge ${typeColors[typeKey] || 'badge-cm'}">${esc(r.type || '')}</span>`;
+        const weekTotal = weeks.reduce((s, w) => s + (r.by_week[w] || 0), 0);
+        const cells = weeks.map(w => {
+            const h = r.by_week[w];
+            return h ? `<td class="cell-hours">${h}</td>` : `<td class="cell-empty">·</td>`;
+        }).join('');
+
+        const cols = [
+            sCol(fixedCols[0], `<strong>${esc(r.course_code)}</strong>`),
+            sCol(fixedCols[1], esc(r.course_name)),
+            ...(showSem ? [sCol(fixedCols[2], esc(r.semester))] : []),
+            sCol(fixedCols[showSem ? 3 : 2], badge),
+            sCol(fixedCols[showSem ? 4 : 3], esc(r.teacher)),
+        ].join('');
+
+        return `<tr>${cols}<td class="col-total">${weekTotal > 0 ? weekTotal + 'h' : ''}</td>${cells}</tr>`;
+    }).join('');
+
+    el.innerHTML = `<div class="repartition-wrap"><table>
+        <thead><tr>
+            ${fixedCols.map(sTh).join('')}
+            <th class="col-total" style="min-width:56px">Total</th>
+            ${headerWeeks}
+        </tr></thead>
+        <tbody>${bodyRows}</tbody>
+    </table></div>`;
 }
 
 // ===== MODAL HELPERS =====
