@@ -7,15 +7,29 @@ import sys
 import os
 import tempfile
 import shutil
+import tkinter as tk
+from tkinter import filedialog
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-EXCEL_FILE = os.path.join(_HERE, "placement cours semaine BUT 25-26 V3.xlsx")
 DB_FILE = os.path.join(_HERE, "edt.db")
 SCHEMA_FILE = os.path.join(_HERE, "schema.sql")
 
-# Allow overriding EXCEL_FILE via command-line argument
+# Sélection du fichier Excel via argument ou boîte de dialogue
 if len(sys.argv) > 1:
     EXCEL_FILE = os.path.abspath(sys.argv[1])
+else:
+    root = tk.Tk()
+    root.withdraw()
+    root.wm_attributes("-topmost", True)
+    EXCEL_FILE = filedialog.askopenfilename(
+        title="Sélectionner le fichier Excel EDT",
+        filetypes=[("Fichiers Excel", "*.xlsx *.xls"), ("Tous les fichiers", "*.*")],
+        initialdir=_HERE,
+    )
+    root.destroy()
+    if not EXCEL_FILE:
+        print("Aucun fichier sélectionné. Abandon.")
+        sys.exit(0)
 
 SEMESTER_MAPPING = {
     "S1+S2": [("S1", 1), ("S2", 1)],
