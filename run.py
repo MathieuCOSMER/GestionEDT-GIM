@@ -6,7 +6,7 @@ import sys
 import subprocess
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(os.path.dirname(BASE_DIR), 'edt.db')  # /sessions/.../edt.db
+DB_PATH = os.path.join(BASE_DIR, 'edt.db')
 SCHEMA_PATH = os.path.join(BASE_DIR, 'schema.sql')
 
 def check_dependencies():

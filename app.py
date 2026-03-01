@@ -17,8 +17,9 @@ app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
 
 # Database configuration
-DATABASE = '/sessions/optimistic-zen-bardeen/edt.db'
-SCHEMA_PATH = '/sessions/optimistic-zen-bardeen/mnt/GestionEDT/schema.sql'
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE = os.environ.get('EDT_DB_PATH', os.path.join(_BASE_DIR, 'edt.db'))
+SCHEMA_PATH = os.path.join(_BASE_DIR, 'schema.sql')
 
 # Helper function to get database connection
 def get_db():
