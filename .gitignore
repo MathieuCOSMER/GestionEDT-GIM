@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 venv/
+.venv/
 .env
 
 # Node
@@ -17,5 +18,4 @@ node_modules/
 Thumbs.db
 
 # IDE
-.vscode/
 .idea/

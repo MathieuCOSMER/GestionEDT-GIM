@@ -1,0 +1,11 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  "python.terminal.activateEnvironment": true,
+  "python.terminal.activateEnvInCurrentTerminal": true,
+  "[python]": {
+    "editor.formatOnSave": true
+  },
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}"
+  ]
+}
