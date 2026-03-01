@@ -388,7 +388,7 @@
 
 <!-- ===== MODAL RÉPARTITION HEBDOMADAIRE ===== -->
 <div class="modal-backdrop" id="modal-weekly">
-    <div class="modal modal-wide" style="max-width:740px">
+    <div class="modal modal-wide" style="max-width:min(96vw,1100px)">
         <h2 id="weekly-modal-title" style="font-size:1rem;margin-bottom:4px">Répartition hebdomadaire</h2>
         <p id="weekly-modal-subtitle" style="color:#6b7280;font-size:.82rem;margin-bottom:12px"></p>
         <div id="weekly-modal-body"></div>
@@ -830,36 +830,40 @@ function renderWeeklyModalTable(sem) {
         for (let w = 1; w <= sem.end_week; w++) weeks.push(w);
     }
 
-    const typeCols = _weeklyActive.map(t =>
-        `<th style="text-align:center;min-width:90px">
-            <span class="badge badge-${t.toLowerCase()}">${t}</span>
-            <br><small style="font-weight:400;color:#6b7280">${_weeklyHours[t]}h total</small>
-        </th>`
-    ).join('');
+    // Tableau horizontal : une ligne par type, une colonne par semaine (comme l'onglet Répartition)
+    const headerWeeks = weeks.map(w => `<th class="col-week">S${w}</th>`).join('');
 
-    const rows = weeks.map((w, i) => {
-        const cells = _weeklyActive.map(t => {
+    const rows = _weeklyActive.map(t => {
+        const total = _weeklyHours[t];
+        const sum = Object.values(weeklyData[t]).reduce((a, b) => a + (b || 0), 0);
+        const cls = Math.abs(sum - total) < 0.01 ? 'sum-ok' : (sum > total ? 'sum-over' : 'sum-low');
+        const cells = weeks.map(w => {
             const v = weeklyData[t][w] || '';
-            return `<td style="text-align:center">
+            return `<td style="text-align:center;padding:3px 4px">
                 <input class="w-inp" type="number" min="0" step="0.5" placeholder="0"
                     data-t="${t}" data-w="${w}" value="${v}" oninput="onWeeklyInput(this)">
             </td>`;
         }).join('');
-        return `<tr><td style="white-space:nowrap;padding:4px 10px">Sem.&thinsp;${i+1} <small style="color:#9ca3af">(#${w})</small></td>${cells}</tr>`;
+        return `<tr>
+            <td class="s-col" style="left:0;padding:4px 10px;min-width:60px">
+                <span class="badge badge-${t.toLowerCase()}">${t}</span>
+            </td>
+            <td class="s-col col-total" id="wsum-${t}" class="${cls}"
+                style="left:60px;min-width:90px;text-align:center;white-space:nowrap;padding:4px 8px">
+                <span class="${cls}">${sum}h&thinsp;/&thinsp;${total}h</span>
+            </td>
+            ${cells}
+        </tr>`;
     }).join('');
 
-    const footCells = _weeklyActive.map(t => {
-        const total = _weeklyHours[t];
-        const sum = Object.values(weeklyData[t]).reduce((a,b)=>a+(b||0),0);
-        const cls = Math.abs(sum-total)<0.01 ? 'sum-ok' : (sum>total ? 'sum-over' : 'sum-low');
-        return `<td style="text-align:center" id="wsum-${t}" class="${cls}">${sum}h&thinsp;/&thinsp;${total}h</td>`;
-    }).join('');
-
-    body.innerHTML = `<div style="overflow-x:auto">
-        <table class="types-table weekly-table">
-            <thead><tr><th>Semaine</th>${typeCols}</tr></thead>
+    body.innerHTML = `<div class="repartition-wrap" style="max-height:260px">
+        <table class="types-table">
+            <thead><tr>
+                <th class="s-col" style="left:0;min-width:60px">Type</th>
+                <th class="s-col col-total" style="left:60px;min-width:90px">Total</th>
+                ${headerWeeks}
+            </tr></thead>
             <tbody>${rows}</tbody>
-            <tfoot><tr><td><strong>Total</strong></td>${footCells}</tr></tfoot>
         </table>
     </div>
     <p style="font-size:.78rem;color:#6b7280;margin-top:8px">
@@ -877,8 +881,9 @@ function onWeeklyInput(inp) {
     if (!el) return;
     const total = _weeklyHours[t]||0;
     const sum = Object.values(weeklyData[t]).reduce((a,b)=>a+(b||0),0);
-    el.className = Math.abs(sum-total)<0.01 ? 'sum-ok' : (sum>total ? 'sum-over' : 'sum-low');
-    el.innerHTML = `${sum}h&thinsp;/&thinsp;${total}h`;
+    const cls = Math.abs(sum-total)<0.01 ? 'sum-ok' : (sum>total ? 'sum-over' : 'sum-low');
+    // Le span intérieur porte la classe de couleur (layout horizontal)
+    el.innerHTML = `<span class="${cls}">${sum}h&thinsp;/&thinsp;${total}h</span>`;
 }
 
 async function submitWeekly() {
