@@ -8,9 +8,10 @@ import os
 import tempfile
 import shutil
 
-EXCEL_FILE = "/sessions/optimistic-zen-bardeen/mnt/uploads/placement cours semaine BUT 25-26 V3.xlsx"
-DB_FILE = "/sessions/optimistic-zen-bardeen/edt.db"
-SCHEMA_FILE = "/sessions/optimistic-zen-bardeen/mnt/GestionEDT/schema.sql"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+EXCEL_FILE = os.path.join(_HERE, "placement cours semaine BUT 25-26 V3.xlsx")
+DB_FILE = os.path.join(_HERE, "edt.db")
+SCHEMA_FILE = os.path.join(_HERE, "schema.sql")
 
 SEMESTER_MAPPING = {
     "S1+S2": [("S1", 1), ("S2", 1)],
