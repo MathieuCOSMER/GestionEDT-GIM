@@ -111,6 +111,31 @@
         .col-total { text-align: center; font-weight: 700; color: #4f46e5; background: #eef2ff !important; border-left: 2px solid #c7d2fe; border-right: 2px solid #c7d2fe; }
         .repartition-wrap tr:hover td { background: #f0f4ff; }
         .repartition-wrap tr:hover td.s-col { background: #e8eeff; }
+
+        /* Semaines spéciales dans la répartition */
+        .col-week.w-vacation { background: #f3f4f6 !important; color: #9ca3af; }
+        .col-week.w-company  { background: #fff7ed !important; color: #c2410c; }
+        .col-week.w-both     { background: #fef9c3 !important; color: #92400e; }
+        .cell-hours.w-vacation, .cell-empty.w-vacation { background: #f9fafb; }
+        .cell-hours.w-company,  .cell-empty.w-company  { background: #fff7ed; }
+        .cell-hours.w-both,     .cell-empty.w-both     { background: #fef9c3; }
+
+        /* Onglets FTP / ALT */
+        .tab-bar { display: flex; gap: 4px; margin-bottom: 10px; border-bottom: 2px solid #e5e7eb; padding-bottom: 0; }
+        .tab-btn { padding: 5px 16px; border: 1px solid #d1d5db; border-bottom: none; border-radius: 6px 6px 0 0; background: #f9fafb; color: #6b7280; font-weight: 600; font-size: .82rem; cursor: pointer; position: relative; bottom: -2px; }
+        .tab-btn.active { background: #fff; color: #4f46e5; border-color: #e5e7eb; border-bottom-color: #fff; }
+        .tab-btn.tab-ftp.active { color: #0369a1; }
+        .tab-btn.tab-alt.active { color: #c2410c; }
+
+        /* Chips semaines spéciales (modal semestre) */
+        .week-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+        .week-chip { padding: 3px 8px; border-radius: 4px; font-size: .78rem; font-weight: 600; cursor: pointer; border: 1px solid #d1d5db; background: #f9fafb; color: #374151; user-select: none; }
+        .week-chip.on-vacation { background: #dbeafe; border-color: #93c5fd; color: #1e40af; }
+        .week-chip.on-company  { background: #ffedd5; border-color: #fdba74; color: #9a3412; }
+
+        /* Badge formation */
+        .badge-ftp { background: #dbeafe; color: #1e40af; }
+        .badge-alt { background: #ffedd5; color: #9a3412; }
     </style>
 </head>
 <body>
@@ -298,40 +323,66 @@
             </div>
 
             <div class="section-title">Volume horaire, durée de séance et salle</div>
+            <div class="tab-bar">
+                <button type="button" class="tab-btn tab-ftp active" id="course-tab-ftp"
+                        onclick="switchCourseTab('ftp',this)">FTP</button>
+                <button type="button" class="tab-btn tab-alt" id="course-tab-alt"
+                        onclick="switchCourseTab('alt',this)">ALT</button>
+            </div>
+            <!-- FTP -->
+            <div id="course-hours-ftp">
             <table class="types-table">
                 <thead><tr>
-                    <th>Type</th>
-                    <th class="col-h">Total (h)</th>
-                    <th class="col-h">Durée séance (h)</th>
-                    <th>Salle</th>
+                    <th>Type</th><th class="col-h">Total (h)</th>
+                    <th class="col-h">Durée séance</th><th>Salle</th>
                 </tr></thead>
                 <tbody>
-                    <tr>
-                        <td><span class="badge badge-cm">CM</span></td>
+                    <tr><td><span class="badge badge-cm">CM</span></td>
                         <td class="col-h"><input type="number" id="cm-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="cm-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
-                        <td><select id="cm-room"></select></td>
-                    </tr>
-                    <tr>
-                        <td><span class="badge badge-td">TD</span></td>
+                        <td><select id="cm-room"></select></td></tr>
+                    <tr><td><span class="badge badge-td">TD</span></td>
                         <td class="col-h"><input type="number" id="td-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="td-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
-                        <td><select id="td-room"></select></td>
-                    </tr>
-                    <tr>
-                        <td><span class="badge badge-tp">TP</span></td>
+                        <td><select id="td-room"></select></td></tr>
+                    <tr><td><span class="badge badge-tp">TP</span></td>
                         <td class="col-h"><input type="number" id="tp-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="tp-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
-                        <td><select id="tp-room"></select></td>
-                    </tr>
-                    <tr>
-                        <td><span class="badge badge-pt">PT</span></td>
+                        <td><select id="tp-room"></select></td></tr>
+                    <tr><td><span class="badge badge-pt">PT</span></td>
                         <td class="col-h"><input type="number" id="pt-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="pt-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
-                        <td><select id="pt-room"></select></td>
-                    </tr>
+                        <td><select id="pt-room"></select></td></tr>
                 </tbody>
             </table>
+            </div>
+            <!-- ALT -->
+            <div id="course-hours-alt" style="display:none">
+            <table class="types-table">
+                <thead><tr>
+                    <th>Type</th><th class="col-h">Total (h)</th>
+                    <th class="col-h">Durée séance</th><th>Salle</th>
+                </tr></thead>
+                <tbody>
+                    <tr><td><span class="badge badge-cm">CM</span></td>
+                        <td class="col-h"><input type="number" id="alt-cm-hours" min="0" step="0.5" placeholder="0"></td>
+                        <td class="col-h"><input type="number" id="alt-cm-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
+                        <td><select id="alt-cm-room"></select></td></tr>
+                    <tr><td><span class="badge badge-td">TD</span></td>
+                        <td class="col-h"><input type="number" id="alt-td-hours" min="0" step="0.5" placeholder="0"></td>
+                        <td class="col-h"><input type="number" id="alt-td-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
+                        <td><select id="alt-td-room"></select></td></tr>
+                    <tr><td><span class="badge badge-tp">TP</span></td>
+                        <td class="col-h"><input type="number" id="alt-tp-hours" min="0" step="0.5" placeholder="0"></td>
+                        <td class="col-h"><input type="number" id="alt-tp-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
+                        <td><select id="alt-tp-room"></select></td></tr>
+                    <tr><td><span class="badge badge-pt">PT</span></td>
+                        <td class="col-h"><input type="number" id="alt-pt-hours" min="0" step="0.5" placeholder="0"></td>
+                        <td class="col-h"><input type="number" id="alt-pt-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
+                        <td><select id="alt-pt-room"></select></td></tr>
+                </tbody>
+            </table>
+            </div>
 
             <div class="form-actions" style="margin-top:20px">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('modal-course')">Annuler</button>
@@ -368,13 +419,28 @@
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
                 <div class="form-group">
                     <label>Semaine de début</label>
-                    <input type="number" id="semester-start-week" min="1" max="53" placeholder="ex : 36">
+                    <input type="number" id="semester-start-week" min="1" max="53" placeholder="ex : 36"
+                           oninput="buildSpecialWeekChips()">
                     <small style="color:#6b7280">Numéro ISO (1–53)</small>
                 </div>
                 <div class="form-group">
                     <label>Semaine de fin</label>
-                    <input type="number" id="semester-end-week" min="1" max="53" placeholder="ex : 51">
+                    <input type="number" id="semester-end-week" min="1" max="53" placeholder="ex : 51"
+                           oninput="buildSpecialWeekChips()">
                     <small style="color:#6b7280">Numéro ISO (1–53)</small>
+                </div>
+            </div>
+            <div id="semester-special-section" style="display:none;margin-top:6px">
+                <div class="section-title">Semaines spéciales</div>
+                <div class="form-group">
+                    <label>Vacances <span class="badge badge-ftp" style="font-size:.72rem">FTP</span>
+                        <small style="font-weight:400;color:#6b7280"> — cliquer pour (dé)sélectionner</small>
+                    </label>
+                    <div id="chips-vacation-ftp" class="week-chips"></div>
+                </div>
+                <div class="form-group">
+                    <label>Entreprise <span class="badge badge-alt" style="font-size:.72rem">ALT</span></label>
+                    <div id="chips-company-alt" class="week-chips"></div>
                 </div>
             </div>
             <div id="semester-modal-error" style="display:none;color:#dc2626;font-size:.82rem;margin-top:6px"></div>
@@ -390,7 +456,11 @@
 <div class="modal-backdrop" id="modal-weekly">
     <div class="modal modal-wide" style="max-width:98vw;width:98vw">
         <h2 id="weekly-modal-title" style="font-size:1rem;margin-bottom:4px">Répartition hebdomadaire</h2>
-        <p id="weekly-modal-subtitle" style="color:#6b7280;font-size:.82rem;margin-bottom:12px"></p>
+        <p id="weekly-modal-subtitle" style="color:#6b7280;font-size:.82rem;margin-bottom:8px"></p>
+        <div class="tab-bar" id="weekly-tabs">
+            <button type="button" class="tab-btn tab-ftp active" onclick="switchWeeklyTab(0,this)">FTP</button>
+            <button type="button" class="tab-btn tab-alt"        onclick="switchWeeklyTab(1,this)">ALT</button>
+        </div>
         <div id="weekly-modal-body"></div>
         <div id="weekly-modal-error" style="display:none;color:#dc2626;font-size:.82rem;margin-top:10px;padding:8px 12px;background:#fef2f2;border-radius:6px;border:1px solid #fecaca"></div>
         <div class="form-actions" style="margin-top:16px">
@@ -610,6 +680,9 @@ function renderSemesters() {
     </table>`;
 }
 
+// State semaines spéciales (édition en cours)
+let _specialWeeks = { vacation_ftp: [], company_alt: [] };
+
 function openSemesterModal(id = null) {
     document.getElementById('modal-semester-title').textContent = id ? 'Modifier le semestre' : 'Ajouter un semestre';
     document.getElementById('semester-id').value = id || '';
@@ -619,6 +692,7 @@ function openSemesterModal(id = null) {
     document.getElementById('semester-start-week').value = '';
     document.getElementById('semester-end-week').value = '';
     document.getElementById('semester-modal-error').style.display = 'none';
+    _specialWeeks = { vacation_ftp: [], company_alt: [] };
 
     if (id) {
         const s = state.semesters.find(x => x.id === id);
@@ -628,9 +702,54 @@ function openSemesterModal(id = null) {
             document.getElementById('semester-name').value = s.name || '';
             document.getElementById('semester-start-week').value = s.start_week || '';
             document.getElementById('semester-end-week').value = s.end_week || '';
+            // Charger les semaines spéciales existantes
+            api('/semesters/' + id + '/special-weeks').then(sw => {
+                _specialWeeks = sw;
+                buildSpecialWeekChips();
+            }).catch(() => {});
         }
     }
+    buildSpecialWeekChips();
     openModal('modal-semester');
+}
+
+function _semWeekRange() {
+    const sw = parseInt(document.getElementById('semester-start-week').value);
+    const ew = parseInt(document.getElementById('semester-end-week').value);
+    if (!sw || !ew) return [];
+    const weeks = [];
+    if (sw <= ew) { for (let w = sw; w <= ew; w++) weeks.push(w); }
+    else { for (let w = sw; w <= 52; w++) weeks.push(w); for (let w = 1; w <= ew; w++) weeks.push(w); }
+    return weeks;
+}
+
+function buildSpecialWeekChips() {
+    const weeks = _semWeekRange();
+    const sec = document.getElementById('semester-special-section');
+    if (!weeks.length) { sec.style.display = 'none'; return; }
+    sec.style.display = '';
+
+    ['vacation_ftp', 'company_alt'].forEach(wtype => {
+        const el = document.getElementById('chips-' + wtype.replace('_', '-'));
+        el.innerHTML = weeks.map(w => {
+            const on = _specialWeeks[wtype].includes(w);
+            return `<span class="week-chip ${on ? 'on-' + wtype.split('_')[0] : ''}"
+                data-w="${w}" data-t="${wtype}" onclick="toggleChip(this)">S${w}</span>`;
+        }).join('');
+    });
+}
+
+function toggleChip(el) {
+    const w = parseInt(el.dataset.w);
+    const t = el.dataset.t;
+    const idx = _specialWeeks[t].indexOf(w);
+    if (idx >= 0) {
+        _specialWeeks[t].splice(idx, 1);
+        el.className = 'week-chip';
+    } else {
+        _specialWeeks[t].push(w);
+        el.className = 'week-chip on-' + t.split('_')[0];
+    }
 }
 
 async function submitSemester(e) {
@@ -652,10 +771,18 @@ async function submitSemester(e) {
     };
 
     try {
+        let semId = id;
         if (id) {
             await api('/semesters/' + id, { method: 'PUT', body: JSON.stringify(data) });
         } else {
-            await api('/semesters', { method: 'POST', body: JSON.stringify(data) });
+            const res = await api('/semesters', { method: 'POST', body: JSON.stringify(data) });
+            semId = res.id;
+        }
+        // Sauvegarder les semaines spéciales
+        if (semId) {
+            await api('/semesters/' + semId + '/special-weeks', {
+                method: 'PUT', body: JSON.stringify(_specialWeeks)
+            });
         }
         closeModal('modal-semester');
         state.semesters = await api('/semesters');
@@ -675,16 +802,24 @@ async function deleteSemester(id) {
 }
 
 // ===== MATIERES — helpers =====
-function buildRoomSelects(selectedValues = {}) {
+function buildRoomSelects(selectedValues = {}, prefix = '') {
     const none = '<option value="">— Aucune salle —</option>';
     const opts = none + state.rooms.map(r =>
         `<option value="${esc(r.name)}">${esc(r.name)}${r.capacity ? ` (${r.capacity} pl.)` : ''}</option>`
     ).join('');
     ['cm','td','tp','pt'].forEach(t => {
-        const sel = document.getElementById(t + '-room');
+        const sel = document.getElementById(prefix + t + '-room');
+        if (!sel) return;
         sel.innerHTML = opts;
         if (selectedValues[t.toUpperCase()]) sel.value = selectedValues[t.toUpperCase()];
     });
+}
+
+function switchCourseTab(tab, btn) {
+    document.getElementById('course-hours-ftp').style.display = tab === 'ftp' ? '' : 'none';
+    document.getElementById('course-hours-alt').style.display = tab === 'alt' ? '' : 'none';
+    document.querySelectorAll('#modal-course .tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
 }
 
 async function openCourseModal(id = null) {
@@ -702,12 +837,19 @@ async function openCourseModal(id = null) {
     ['cm','td','tp','pt'].forEach(t => {
         document.getElementById(t+'-hours').value = '';
         document.getElementById(t+'-dur').value = '1.5';
+        document.getElementById('alt-'+t+'-hours').value = '';
+        document.getElementById('alt-'+t+'-dur').value = '1.5';
     });
     document.getElementById('course-code').value = '';
     document.getElementById('course-name').value = '';
     document.getElementById('course-type').value = 'Ressource';
     document.getElementById('course-semester').value = '';
+    // Reset FTP tab visible
+    document.getElementById('course-hours-ftp').style.display = '';
+    document.getElementById('course-hours-alt').style.display = 'none';
+    document.querySelectorAll('#modal-course .tab-btn').forEach((b,i) => b.classList.toggle('active', i===0));
     buildRoomSelects();
+    buildRoomSelects({}, 'alt-');
 
     if (id) {
         const c = state.courses.find(x => x.id === id);
@@ -716,8 +858,9 @@ async function openCourseModal(id = null) {
             document.getElementById('course-name').value = c.name || '';
             document.getElementById('course-type').value = c.course_type || 'Ressource';
             document.getElementById('course-semester').value = c.semester_id || '';
+            // Heures FTP
             try {
-                const th = await api('/courses/' + id + '/teaching-hours');
+                const th = await api('/courses/' + id + '/teaching-hours?formation_type=0');
                 const rooms = {};
                 ['CM','TD','TP','PT'].forEach(t => {
                     const info = th[t] || {};
@@ -726,7 +869,19 @@ async function openCourseModal(id = null) {
                     rooms[t] = info.room || '';
                 });
                 buildRoomSelects(rooms);
-            } catch(e) { /* keep defaults */ }
+            } catch(e) {}
+            // Heures ALT
+            try {
+                const th = await api('/courses/' + id + '/teaching-hours?formation_type=1');
+                const rooms = {};
+                ['CM','TD','TP','PT'].forEach(t => {
+                    const info = th[t] || {};
+                    document.getElementById('alt-'+t.toLowerCase()+'-hours').value = info.hours || '';
+                    document.getElementById('alt-'+t.toLowerCase()+'-dur').value = info.slot_duration || '1.5';
+                    rooms[t] = info.room || '';
+                });
+                buildRoomSelects(rooms, 'alt-');
+            } catch(e) {}
         }
     }
     openModal('modal-course');
@@ -736,12 +891,17 @@ async function submitCourse(e) {
     e.preventDefault();
     const id = document.getElementById('course-id').value;
     const semId = parseInt(document.getElementById('course-semester').value);
-    const types = {};
+    const typesFtp = {}, typesAlt = {};
     ['CM','TD','TP','PT'].forEach(t => {
-        types[t] = {
+        typesFtp[t] = {
             hours:         document.getElementById(t.toLowerCase()+'-hours').value,
             slot_duration: document.getElementById(t.toLowerCase()+'-dur').value,
             room:          document.getElementById(t.toLowerCase()+'-room').value,
+        };
+        typesAlt[t] = {
+            hours:         document.getElementById('alt-'+t.toLowerCase()+'-hours').value,
+            slot_duration: document.getElementById('alt-'+t.toLowerCase()+'-dur').value,
+            room:          document.getElementById('alt-'+t.toLowerCase()+'-room').value,
         };
     });
     const base = {
@@ -751,12 +911,15 @@ async function submitCourse(e) {
         semester_id: semId,
     };
     try {
+        let courseId = id;
         if (id) {
             await api('/courses/' + id, { method: 'PUT', body: JSON.stringify(base) });
-            await api('/courses/' + id + '/teaching-hours', { method: 'PUT', body: JSON.stringify(types) });
         } else {
-            await api('/courses', { method: 'POST', body: JSON.stringify({ ...base, types }) });
+            const res = await api('/courses', { method: 'POST', body: JSON.stringify({ ...base, types: typesFtp }) });
+            courseId = res.id;
         }
+        await api('/courses/' + courseId + '/teaching-hours?formation_type=0', { method: 'PUT', body: JSON.stringify(typesFtp) });
+        await api('/courses/' + courseId + '/teaching-hours?formation_type=1', { method: 'PUT', body: JSON.stringify(typesAlt) });
         closeModal('modal-course');
         [state.courses, state.semesters] = await Promise.all([api('/courses'), api('/semesters')]);
         renderCourses();
@@ -776,10 +939,12 @@ async function deleteCourse(id) {
 
 // ===== RÉPARTITION HEBDOMADAIRE (modal dédié) =====
 let weeklyData = { CM: {}, TD: {}, TP: {}, PT: {} };
-let _weeklyHours = {};   // volumes de référence pour la validation
-let _weeklySlot  = {};   // durée d'une séance par type
-let _weeklyActive = [];  // types actifs dans le modal courant
+let _weeklyHours = {};
+let _weeklySlot  = {};
+let _weeklyActive = [];
 let _weeklyModalCourseId = null;
+let _weeklyFormationType = 0;   // 0=FTP, 1=ALT
+let _weeklySpecial = { vacation_ftp: [], company_alt: [] };
 
 async function openWeeklyModal(courseId) {
     const c = state.courses.find(x => x.id === courseId);
@@ -791,39 +956,71 @@ async function openWeeklyModal(courseId) {
     }
 
     _weeklyModalCourseId = courseId;
-    weeklyData = { CM: {}, TD: {}, TP: {}, PT: {} };
-    _weeklyHours  = { CM: c.cm_hours||0, TD: c.td_hours||0, TP: c.tp_hours||0, PT: c.pt_hours||0 };
-    _weeklySlot   = { CM: c.cm_slot_duration||1.5, TD: c.td_slot_duration||1.5, TP: c.tp_slot_duration||1.5, PT: c.pt_slot_duration||1.5 };
-    _weeklyActive = ['CM','TD','TP','PT'].filter(t => _weeklyHours[t] > 0);
+    _weeklyFormationType = 0;
+    _weeklySpecial = { vacation_ftp: [], company_alt: [] };
 
-    document.getElementById('weekly-modal-title').textContent = `Répartition hebdomadaire`;
+    // Charger les semaines spéciales du semestre
+    try { _weeklySpecial = await api('/semesters/' + sem.id + '/special-weeks'); } catch(e) {}
+
+    // Activer l'onglet FTP par défaut
+    document.querySelectorAll('#weekly-tabs .tab-btn').forEach((b,i) => b.classList.toggle('active', i===0));
+
+    document.getElementById('weekly-modal-title').textContent = 'Répartition hebdomadaire';
     document.getElementById('weekly-modal-subtitle').textContent =
-        `${c.code} · ${c.name}  —  Semestre ${c.semester_code}  (sem. ${sem.start_week} → ${sem.end_week})`;
+        `${c.code} · ${c.name}  —  ${c.semester_code}  (sem. ${sem.start_week} → ${sem.end_week})`;
     document.getElementById('weekly-modal-error').style.display = 'none';
     document.getElementById('weekly-modal-body').innerHTML = '<div class="spinner">Chargement…</div>';
     openModal('modal-weekly');
 
+    await _loadWeeklyFormation(c, 0);
+    renderWeeklyModalTable(sem);
+}
+
+async function _loadWeeklyFormation(c, ft) {
+    _weeklyFormationType = ft;
+    if (ft === 0) {
+        _weeklyHours = { CM: c.cm_hours||0, TD: c.td_hours||0, TP: c.tp_hours||0, PT: c.pt_hours||0 };
+        _weeklySlot  = { CM: c.cm_slot_duration||1.5, TD: c.td_slot_duration||1.5,
+                         TP: c.tp_slot_duration||1.5, PT: c.pt_slot_duration||1.5 };
+    } else {
+        _weeklyHours = { CM: c.alt_cm_hours||0, TD: c.alt_td_hours||0, TP: c.alt_tp_hours||0, PT: c.alt_pt_hours||0 };
+        _weeklySlot  = { CM: c.alt_cm_slot_duration||1.5, TD: c.alt_td_slot_duration||1.5,
+                         TP: c.alt_tp_slot_duration||1.5, PT: c.alt_pt_slot_duration||1.5 };
+    }
+    _weeklyActive = ['CM','TD','TP','PT'].filter(t => _weeklyHours[t] > 0);
+    weeklyData = { CM: {}, TD: {}, TP: {}, PT: {} };
     try {
-        const wd = await api('/courses/' + courseId + '/weekly-distribution');
+        const wd = await api('/courses/' + _weeklyModalCourseId + '/weekly-distribution?formation_type=' + ft);
         ['CM','TD','TP','PT'].forEach(t => {
             weeklyData[t] = {};
             Object.entries(wd[t]||{}).forEach(([w,h]) => { weeklyData[t][parseInt(w)] = parseFloat(h)||0; });
         });
-    } catch(e) { /* use empty */ }
+    } catch(e) {}
+}
 
+async function switchWeeklyTab(ft, btn) {
+    const c = state.courses.find(x => x.id === _weeklyModalCourseId);
+    if (!c) return;
+    const sem = state.semesters.find(s => s.id === c.semester_id);
+    document.getElementById('weekly-modal-body').innerHTML = '<div class="spinner">Chargement…</div>';
+    document.getElementById('weekly-modal-error').style.display = 'none';
+    document.querySelectorAll('#weekly-tabs .tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    await _loadWeeklyFormation(c, ft);
     renderWeeklyModalTable(sem);
 }
 
 function renderWeeklyModalTable(sem) {
     const body = document.getElementById('weekly-modal-body');
+    const ft = _weeklyFormationType;
 
     if (!_weeklyActive.length) {
-        body.innerHTML = '<p style="color:#6b7280">Aucun type de cours avec volume horaire défini pour cette matière.</p>';
+        const label = ft === 0 ? 'FTP' : 'ALT';
+        body.innerHTML = `<p style="color:#6b7280">Aucun volume horaire défini pour <strong>${label}</strong> sur cette matière.</p>`;
         return;
     }
 
-    // Génère la liste des semaines en tenant compte du chevauchement d'année civile
-    // ex. start=36, end=3 → [36,37,...,52,1,2,3]
+    // Plage complète des semaines
     const weeks = [];
     if (sem.start_week <= sem.end_week) {
         for (let w = sem.start_week; w <= sem.end_week; w++) weeks.push(w);
@@ -832,8 +1029,21 @@ function renderWeeklyModalTable(sem) {
         for (let w = 1; w <= sem.end_week; w++) weeks.push(w);
     }
 
-    // Tableau horizontal : une ligne par type, une colonne par semaine (comme l'onglet Répartition)
-    const headerWeeks = weeks.map(w => `<th class="col-week">S${w}</th>`).join('');
+    // Coloration des semaines spéciales
+    function weekCls(w) {
+        const isVac = _weeklySpecial.vacation_ftp.includes(w);
+        const isCo  = _weeklySpecial.company_alt.includes(w);
+        if (isVac && isCo) return 'w-both';
+        if (isVac) return 'w-vacation';
+        if (isCo)  return 'w-company';
+        return '';
+    }
+
+    const headerWeeks = weeks.map(w => {
+        const cls = weekCls(w);
+        const title = cls === 'w-vacation' ? ' title="Vacances FTP"' : cls === 'w-company' ? ' title="Entreprise ALT"' : '';
+        return `<th class="col-week ${cls}"${title}>S${w}</th>`;
+    }).join('');
 
     const rows = _weeklyActive.map(t => {
         const total = _weeklyHours[t];
@@ -842,7 +1052,8 @@ function renderWeeklyModalTable(sem) {
         const cls = Math.abs(sum - total) < 0.01 ? 'sum-ok' : (sum > total ? 'sum-over' : 'sum-low');
         const cells = weeks.map(w => {
             const v = weeklyData[t][w] || '';
-            return `<td style="text-align:center;padding:3px 2px">
+            const wcls = weekCls(w);
+            return `<td class="${wcls}" style="text-align:center;padding:3px 2px">
                 <input class="w-inp" type="number" min="0" step="${step}" placeholder="0"
                     data-t="${t}" data-w="${w}" value="${v}" oninput="onWeeklyInput(this)">
             </td>`;
@@ -859,6 +1070,14 @@ function renderWeeklyModalTable(sem) {
         </tr>`;
     }).join('');
 
+    // Légende semaines spéciales
+    const hasVac = _weeklySpecial.vacation_ftp.length > 0;
+    const hasCo  = _weeklySpecial.company_alt.length  > 0;
+    const legend = (hasVac || hasCo) ? `<p style="font-size:.75rem;color:#6b7280;margin-top:6px">
+        ${hasVac ? '<span style="background:#dbeafe;padding:1px 6px;border-radius:3px;margin-right:6px">Vacances FTP</span>' : ''}
+        ${hasCo  ? '<span style="background:#ffedd5;padding:1px 6px;border-radius:3px;margin-right:6px">Entreprise ALT</span>' : ''}
+    </p>` : '';
+
     body.innerHTML = `<div class="repartition-wrap" style="max-height:260px">
         <table class="types-table weekly-table">
             <thead><tr>
@@ -873,19 +1092,17 @@ function renderWeeklyModalTable(sem) {
         <span class="sum-ok">&#9632;</span> Complet &nbsp;
         <span class="sum-low">&#9632;</span> Incomplet &nbsp;
         <span class="sum-over">&#9632;</span> Sur-alloué (bloquant)
-    </p>`;
+    </p>${legend}`;
 }
 
 function onWeeklyInput(inp) {
     const t = inp.dataset.t, w = parseInt(inp.dataset.w);
     weeklyData[t][w] = parseFloat(inp.value) || 0;
-    // Update footer cell
     const el = document.getElementById('wsum-' + t);
     if (!el) return;
     const total = _weeklyHours[t]||0;
     const sum = Object.values(weeklyData[t]).reduce((a,b)=>a+(b||0),0);
     const cls = Math.abs(sum-total)<0.01 ? 'sum-ok' : (sum>total ? 'sum-over' : 'sum-low');
-    // Le span intérieur porte la classe de couleur (layout horizontal)
     el.innerHTML = `<span class="${cls}">${sum}h&thinsp;/&thinsp;${total}h</span>`;
 }
 
@@ -905,7 +1122,7 @@ async function submitWeekly() {
     }
 
     try {
-        await api('/courses/' + _weeklyModalCourseId + '/weekly-distribution',
+        await api('/courses/' + _weeklyModalCourseId + '/weekly-distribution?formation_type=' + _weeklyFormationType,
             { method: 'PUT', body: JSON.stringify(weeklyData) });
         closeModal('modal-weekly');
         toast('Répartition enregistrée');
@@ -1040,22 +1257,22 @@ async function loadRepartition() {
     }
 }
 
-function renderRepartition({ weeks, rows }) {
+function renderRepartition({ weeks, rows, special_weeks }) {
     const el = document.getElementById('repartition-table');
     if (!rows.length) { el.innerHTML = '<div class="empty">Aucune donnée</div>'; return; }
 
+    const sp = special_weeks || { vacation_ftp: [], company_alt: [] };
     const typeColors = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' };
     const showSem = document.getElementById('filter-semester-repartition').value === '';
 
-    // Colonnes fixes (gauche) et leurs largeurs
     const fixedCols = [
-        { key: 'code',  label: 'Code',       w: 70  },
-        { key: 'name',  label: 'Matière',     w: 190 },
+        { key: 'code',  label: 'Code',      w: 70  },
+        { key: 'name',  label: 'Matière',   w: 190 },
         ...(showSem ? [{ key: 'sem', label: 'Sem.', w: 55 }] : []),
-        { key: 'type',  label: 'Type',        w: 60  },
-        { key: 'teach', label: 'Enseignant',  w: 140 },
+        { key: 'form',  label: '',          w: 44  },
+        { key: 'type',  label: 'Type',      w: 52  },
+        { key: 'teach', label: 'Enseignant',w: 140 },
     ];
-    // Calculer les left cumulatifs
     let cum = 0;
     fixedCols.forEach(c => { c.left = cum; cum += c.w; });
 
@@ -1064,23 +1281,41 @@ function renderRepartition({ weeks, rows }) {
     const sTh = (c) =>
         `<th class="s-col col-week" style="left:${c.left}px;min-width:${c.w}px">${c.label}</th>`;
 
-    const headerWeeks = weeks.map(w => `<th class="col-week">S${w}</th>`).join('');
+    function weekThCls(w) {
+        const isVac = sp.vacation_ftp.includes(w);
+        const isCo  = sp.company_alt.includes(w);
+        if (isVac && isCo) return 'w-both';
+        if (isVac) return 'w-vacation';
+        if (isCo)  return 'w-company';
+        return '';
+    }
+
+    const headerWeeks = weeks.map(w => {
+        const cls = weekThCls(w);
+        return `<th class="col-week ${cls}">S${w}</th>`;
+    }).join('');
 
     const bodyRows = rows.map(r => {
         const typeKey = (r.type || '').toUpperCase();
         const badge = `<span class="badge ${typeColors[typeKey] || 'badge-cm'}">${esc(r.type || '')}</span>`;
+        const formBadge = r.formation ? `<span class="badge badge-${r.formation.toLowerCase()}" style="font-size:.7rem">${esc(r.formation)}</span>` : '';
         const weekTotal = weeks.reduce((s, w) => s + (r.by_week[w] || 0), 0);
         const cells = weeks.map(w => {
             const h = r.by_week[w];
-            return h ? `<td class="cell-hours">${h}</td>` : `<td class="cell-empty">·</td>`;
+            const cls = weekThCls(w);
+            return h ? `<td class="cell-hours ${cls}">${h}</td>` : `<td class="cell-empty ${cls}">·</td>`;
         }).join('');
 
+        const fIdx  = showSem ? 3 : 2;
+        const tIdx  = fIdx + 1;
+        const tcIdx = tIdx + 1;
         const cols = [
             sCol(fixedCols[0], `<strong>${esc(r.course_code)}</strong>`),
             sCol(fixedCols[1], esc(r.course_name)),
             ...(showSem ? [sCol(fixedCols[2], esc(r.semester))] : []),
-            sCol(fixedCols[showSem ? 3 : 2], badge),
-            sCol(fixedCols[showSem ? 4 : 3], esc(r.teacher)),
+            sCol(fixedCols[fIdx], formBadge),
+            sCol(fixedCols[tIdx], badge),
+            sCol(fixedCols[tcIdx], esc(r.teacher)),
         ].join('');
 
         return `<tr>${cols}<td class="col-total">${weekTotal > 0 ? weekTotal + 'h' : ''}</td>${cells}</tr>`;

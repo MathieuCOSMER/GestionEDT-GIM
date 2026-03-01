@@ -130,6 +130,16 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Semester special weeks (vacances FTP, semaines entreprise ALT)
+CREATE TABLE IF NOT EXISTS semester_special_weeks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    semester_id INTEGER NOT NULL,
+    week_number INTEGER NOT NULL,
+    week_type TEXT NOT NULL CHECK(week_type IN ('vacation_ftp', 'company_alt')),
+    FOREIGN KEY (semester_id) REFERENCES semesters(id) ON DELETE CASCADE,
+    UNIQUE(semester_id, week_number, week_type)
+);
+
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_teacher_availability_teacher ON teacher_availability(teacher_id);
 CREATE INDEX IF NOT EXISTS idx_courses_semester ON courses(semester_id);

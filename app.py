@@ -37,6 +37,20 @@ def init_db():
             db.executescript(f.read())
         db.commit()
         db.close()
+    # Migration : ensure semester_special_weeks exists on existing DBs
+    db = get_db()
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS semester_special_weeks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            semester_id INTEGER NOT NULL,
+            week_number INTEGER NOT NULL,
+            week_type TEXT NOT NULL CHECK(week_type IN ('vacation_ftp', 'company_alt')),
+            FOREIGN KEY (semester_id) REFERENCES semesters(id) ON DELETE CASCADE,
+            UNIQUE(semester_id, week_number, week_type)
+        )
+    ''')
+    db.commit()
+    db.close()
 
 # Helper function to convert sqlite3.Row to dict
 def row_to_dict(row):
@@ -492,6 +506,47 @@ def delete_semester(semester_id):
     except Exception as e:
         return error_response(f'Error deleting semester: {str(e)}', 500)
 
+@app.route('/api/semesters/<int:sem_id>/special-weeks', methods=['GET'])
+def get_special_weeks(sem_id):
+    """Return special weeks for a semester: {vacation_ftp: [38,43,...], company_alt: [36,37,...]}"""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute(
+            'SELECT week_number, week_type FROM semester_special_weeks WHERE semester_id = ? ORDER BY week_type, week_number',
+            (sem_id,)
+        )
+        result = {'vacation_ftp': [], 'company_alt': []}
+        for r in cursor.fetchall():
+            if r['week_type'] in result:
+                result[r['week_type']].append(r['week_number'])
+        db.close()
+        return jsonify(result), 200
+    except Exception as e:
+        return error_response(str(e), 500)
+
+@app.route('/api/semesters/<int:sem_id>/special-weeks', methods=['PUT'])
+def set_special_weeks(sem_id):
+    """Replace all special weeks for a semester.
+    Body: {vacation_ftp: [38, 43], company_alt: [36, 37]}
+    """
+    try:
+        data = request.get_json() or {}
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('DELETE FROM semester_special_weeks WHERE semester_id = ?', (sem_id,))
+        for wtype in ['vacation_ftp', 'company_alt']:
+            for wnum in (data.get(wtype) or []):
+                cursor.execute(
+                    'INSERT OR IGNORE INTO semester_special_weeks (semester_id, week_number, week_type) VALUES (?, ?, ?)',
+                    (sem_id, int(wnum), wtype)
+                )
+        db.commit()
+        db.close()
+        return jsonify({'message': 'Special weeks updated'}), 200
+    except Exception as e:
+        return error_response(str(e), 500)
+
 # ======================= COURSES CRUD =======================
 
 @app.route('/api/courses', methods=['GET'])
@@ -528,6 +583,22 @@ def get_courses():
                             THEN cs.slot_duration END) as pt_slot_duration,
                    MAX(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=0
                             THEN cs.room_name END) as pt_room,
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='CM' AND cs.formation_type=1
+                                     THEN cs.total_hours ELSE 0 END), 0) as alt_cm_hours,
+                   MAX(CASE WHEN cs.teaching_type='CM' AND cs.formation_type=1
+                            THEN cs.slot_duration END) as alt_cm_slot_duration,
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='TD' AND cs.formation_type=1
+                                     THEN cs.total_hours ELSE 0 END), 0) as alt_td_hours,
+                   MAX(CASE WHEN cs.teaching_type='TD' AND cs.formation_type=1
+                            THEN cs.slot_duration END) as alt_td_slot_duration,
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=1
+                                     THEN cs.total_hours ELSE 0 END), 0) as alt_tp_hours,
+                   MAX(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=1
+                            THEN cs.slot_duration END) as alt_tp_slot_duration,
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=1
+                                     THEN cs.total_hours ELSE 0 END), 0) as alt_pt_hours,
+                   MAX(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=1
+                            THEN cs.slot_duration END) as alt_pt_slot_duration,
                    COUNT(DISTINCT cs.id) as session_count
             FROM courses c
             JOIN semesters s ON c.semester_id = s.id
@@ -680,8 +751,11 @@ def delete_course(course_id):
 
 @app.route('/api/courses/<int:course_id>/teaching-hours', methods=['GET'])
 def get_course_teaching_hours(course_id):
-    """Get hours, slot_duration and room per teaching type (formation_type=0)"""
+    """Get hours, slot_duration and room per teaching type.
+    Query param: formation_type (0=FTP default, 1=ALT)
+    """
     try:
+        formation_type = int(request.args.get('formation_type', 0))
         db = get_db()
         cursor = db.cursor()
         cursor.execute('SELECT id FROM courses WHERE id = ?', (course_id,))
@@ -691,8 +765,8 @@ def get_course_teaching_hours(course_id):
         cursor.execute('''
             SELECT teaching_type, total_hours, slot_duration, room_name
             FROM course_sessions
-            WHERE course_id = ? AND formation_type = 0
-        ''', (course_id,))
+            WHERE course_id = ? AND formation_type = ?
+        ''', (course_id, formation_type))
         rows = cursor.fetchall()
         db.close()
         result = {t: {'hours': 0, 'slot_duration': 1.5, 'room': ''} for t in ['CM', 'TD', 'TP', 'PT']}
@@ -711,9 +785,11 @@ def get_course_teaching_hours(course_id):
 @app.route('/api/courses/<int:course_id>/teaching-hours', methods=['PUT'])
 def update_course_teaching_hours(course_id):
     """Upsert hours, slot_duration and room per teaching type.
+    Query param: formation_type (0=FTP default, 1=ALT)
     Body: {"CM": {"hours": 10, "slot_duration": 1.5, "room": "Amphi A"}, ...}
     """
     try:
+        formation_type = int(request.args.get('formation_type', 0))
         data = request.get_json()
         db = get_db()
         cursor = db.cursor()
@@ -731,8 +807,8 @@ def update_course_teaching_hours(course_id):
 
             cursor.execute('''
                 SELECT id FROM course_sessions
-                WHERE course_id = ? AND teaching_type = ? AND formation_type = 0
-            ''', (course_id, ttype))
+                WHERE course_id = ? AND teaching_type = ? AND formation_type = ?
+            ''', (course_id, ttype, formation_type))
             existing = cursor.fetchone()
 
             if hours > 0:
@@ -748,8 +824,8 @@ def update_course_teaching_hours(course_id):
                         INSERT INTO course_sessions
                             (course_id, formation_type, teaching_type,
                              total_hours, slot_duration, nb_sessions, room_name)
-                        VALUES (?, 0, ?, ?, ?, ?, ?)
-                    ''', (course_id, ttype, hours, slot_dur, nb, room))
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', (course_id, formation_type, ttype, hours, slot_dur, nb, room))
             else:
                 if existing:
                     cursor.execute('DELETE FROM course_sessions WHERE id = ?', (existing['id'],))
@@ -763,9 +839,11 @@ def update_course_teaching_hours(course_id):
 @app.route('/api/courses/<int:course_id>/weekly-distribution', methods=['GET'])
 def get_weekly_distribution(course_id):
     """Get weekly hours distribution by teaching type.
+    Query param: formation_type (0=FTP default, 1=ALT)
     Returns: {CM: {36: 1.5, 37: 1.5}, TD: {...}, TP: {}, PT: {}}
     """
     try:
+        formation_type = int(request.args.get('formation_type', 0))
         db = get_db()
         cursor = db.cursor()
         cursor.execute('SELECT id FROM courses WHERE id = ?', (course_id,))
@@ -776,9 +854,9 @@ def get_weekly_distribution(course_id):
             SELECT cs.teaching_type, wh.week_number, wh.hours
             FROM course_sessions cs
             JOIN weekly_hours wh ON wh.course_session_id = cs.id
-            WHERE cs.course_id = ? AND cs.formation_type = 0
+            WHERE cs.course_id = ? AND cs.formation_type = ?
             ORDER BY cs.teaching_type, wh.week_number
-        ''', (course_id,))
+        ''', (course_id, formation_type))
         rows = cursor.fetchall()
         db.close()
         result = {t: {} for t in ['CM', 'TD', 'TP', 'PT']}
@@ -793,9 +871,11 @@ def get_weekly_distribution(course_id):
 @app.route('/api/courses/<int:course_id>/weekly-distribution', methods=['PUT'])
 def update_weekly_distribution(course_id):
     """Save weekly hours per teaching type.
+    Query param: formation_type (0=FTP default, 1=ALT)
     Body: {CM: {"36": 1.5, "37": 1.5}, TD: {"36": 2}, ...}
     """
     try:
+        formation_type = int(request.args.get('formation_type', 0))
         data = request.get_json() or {}
         db = get_db()
         cursor = db.cursor()
@@ -808,8 +888,8 @@ def update_weekly_distribution(course_id):
             week_data = data.get(ttype, {})
             cursor.execute('''
                 SELECT id FROM course_sessions
-                WHERE course_id = ? AND teaching_type = ? AND formation_type = 0
-            ''', (course_id, ttype))
+                WHERE course_id = ? AND teaching_type = ? AND formation_type = ?
+            ''', (course_id, ttype, formation_type))
             session = cursor.fetchone()
             if not session:
                 continue
@@ -1588,17 +1668,38 @@ def get_repartition():
         db = get_db()
         cursor = db.cursor()
 
-        # Semaines disponibles pour ce semestre (ou tous)
+        special_weeks = {'vacation_ftp': [], 'company_alt': []}
+
         if semester_code:
-            cursor.execute('''
-                SELECT DISTINCT wh.week_number
-                FROM weekly_hours wh
-                JOIN course_sessions cs ON wh.course_session_id = cs.id
-                JOIN courses c ON cs.course_id = c.id
-                JOIN semesters s ON c.semester_id = s.id
-                WHERE s.code = ? AND wh.hours > 0
-                ORDER BY wh.week_number
-            ''', (semester_code,))
+            # Utiliser la plage complète start_week→end_week du semestre
+            cursor.execute('SELECT id, start_week, end_week FROM semesters WHERE code = ?', (semester_code,))
+            sem_row = cursor.fetchone()
+            if sem_row and sem_row['start_week'] and sem_row['end_week']:
+                sw, ew = sem_row['start_week'], sem_row['end_week']
+                if sw <= ew:
+                    weeks = list(range(sw, ew + 1))
+                else:
+                    weeks = list(range(sw, 53)) + list(range(1, ew + 1))
+                # Semaines spéciales
+                cursor.execute(
+                    'SELECT week_number, week_type FROM semester_special_weeks WHERE semester_id = ? ORDER BY week_type, week_number',
+                    (sem_row['id'],)
+                )
+                for r in cursor.fetchall():
+                    if r['week_type'] in special_weeks:
+                        special_weeks[r['week_type']].append(r['week_number'])
+            else:
+                # Fallback : semaines avec données seulement
+                cursor.execute('''
+                    SELECT DISTINCT wh.week_number
+                    FROM weekly_hours wh
+                    JOIN course_sessions cs ON wh.course_session_id = cs.id
+                    JOIN courses c ON cs.course_id = c.id
+                    JOIN semesters s ON c.semester_id = s.id
+                    WHERE s.code = ? AND wh.hours > 0
+                    ORDER BY wh.week_number
+                ''', (semester_code,))
+                weeks = [r['week_number'] for r in cursor.fetchall()]
         else:
             cursor.execute('''
                 SELECT DISTINCT wh.week_number
@@ -1606,7 +1707,7 @@ def get_repartition():
                 WHERE wh.hours > 0
                 ORDER BY wh.week_number
             ''')
-        weeks = [r['week_number'] for r in cursor.fetchall()]
+            weeks = [r['week_number'] for r in cursor.fetchall()]
 
         # Lignes de données avec heures hebdomadaires
         if semester_code:
@@ -1656,7 +1757,7 @@ def get_repartition():
                     'course_name': r['course_name'] or '',
                     'semester': r['semester_code'] or '',
                     'type': r['teaching_type'] or '',
-                    'formation': str(r['formation_type']) if r['formation_type'] else '',
+                    'formation': {0: 'FTP', 1: 'ALT', 2: 'MUT', 3: 'OTHER'}.get(r['formation_type'], str(r['formation_type'] or '')),
                     'total_hours': r['total_hours'] or 0,
                     'nb_sessions': r['nb_sessions'] or 0,
                     'teacher': r['teacher_name'] or '',
@@ -1669,6 +1770,7 @@ def get_repartition():
         return jsonify({
             'weeks': weeks,
             'rows': [sessions[sid] for sid in order],
+            'special_weeks': special_weeks,
         }), 200
     except Exception as e:
         return error_response(f'Error fetching repartition: {str(e)}', 500)
