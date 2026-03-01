@@ -587,7 +587,11 @@ function renderSemesters() {
         </tr></thead>
         <tbody>
         ${state.semesters.map(s => {
-            const nb = (s.start_week && s.end_week) ? (s.end_week - s.start_week + 1) : '—';
+            const nb = (s.start_week && s.end_week)
+                ? (s.end_week >= s.start_week
+                    ? s.end_week - s.start_week + 1
+                    : 52 - s.start_week + s.end_week + 1)   // chevauchement année civile
+                : '—';
             const weekInfo = s.start_week
                 ? `<td style="text-align:center">${s.start_week}</td><td style="text-align:center">${s.end_week}</td><td style="text-align:center">${nb}</td>`
                 : `<td colspan="3" style="text-align:center;color:#f59e0b">⚠ Non configuré</td>`;
@@ -637,11 +641,7 @@ async function submitSemester(e) {
     const errEl = document.getElementById('semester-modal-error');
     errEl.style.display = 'none';
 
-    if (start && end && end < start) {
-        errEl.textContent = 'La semaine de fin doit être ≥ à la semaine de début.';
-        errEl.style.display = 'block';
-        return;
-    }
+    // Pas de validation fin >= début : un semestre peut chevaucher l'année civile (ex. S36 → S3)
 
     const data = {
         code:       document.getElementById('semester-code').value.trim(),
@@ -820,8 +820,15 @@ function renderWeeklyModalTable(sem) {
         return;
     }
 
+    // Génère la liste des semaines en tenant compte du chevauchement d'année civile
+    // ex. start=36, end=3 → [36,37,...,52,1,2,3]
     const weeks = [];
-    for (let w = sem.start_week; w <= sem.end_week; w++) weeks.push(w);
+    if (sem.start_week <= sem.end_week) {
+        for (let w = sem.start_week; w <= sem.end_week; w++) weeks.push(w);
+    } else {
+        for (let w = sem.start_week; w <= 52; w++) weeks.push(w);
+        for (let w = 1; w <= sem.end_week; w++) weeks.push(w);
+    }
 
     const typeCols = _weeklyActive.map(t =>
         `<th style="text-align:center;min-width:90px">
