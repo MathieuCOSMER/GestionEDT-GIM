@@ -84,7 +84,7 @@
         .weekly-table td { border-top: 1px solid #f3f4f6; padding: 3px 6px; font-size: .82rem; }
         .weekly-table td:first-child { white-space: nowrap; color: #374151; font-weight: 500; }
         .weekly-table tfoot td { font-weight: 700; background: #f9fafb; font-size: .82rem; padding: 5px 8px; border-top: 2px solid #d1d5db; }
-        .weekly-table .w-inp { width: 58px; text-align: right; padding: 3px 5px; border: 1px solid #d1d5db; border-radius: 4px; font-size: .82rem; }
+        .weekly-table .w-inp { width: 40px; text-align: right; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: .82rem; }
         .weekly-table .w-inp:focus { outline: none; border-color: #6366f1; }
         .sum-ok { color: #16a34a; }
         .sum-over { color: #dc2626; }
@@ -832,9 +832,11 @@ function renderWeeklyModalTable(sem) {
 
     // Tableau horizontal : une ligne par type, une colonne par semaine (comme l'onglet Répartition)
     const headerWeeks = weeks.map(w => `<th class="col-week">S${w}</th>`).join('');
+    const nbWeeks = weeks.length;
 
     const rows = _weeklyActive.map(t => {
         const total = _weeklyHours[t];
+        const std = nbWeeks > 0 ? Math.round(total / nbWeeks * 10) / 10 : 0;
         const sum = Object.values(weeklyData[t]).reduce((a, b) => a + (b || 0), 0);
         const cls = Math.abs(sum - total) < 0.01 ? 'sum-ok' : (sum > total ? 'sum-over' : 'sum-low');
         const cells = weeks.map(w => {
@@ -845,11 +847,12 @@ function renderWeeklyModalTable(sem) {
             </td>`;
         }).join('');
         return `<tr>
-            <td class="s-col" style="left:0;padding:4px 10px;min-width:60px">
+            <td class="s-col" style="left:0;padding:4px 10px;min-width:70px;text-align:center">
                 <span class="badge badge-${t.toLowerCase()}">${t}</span>
+                <br><small style="color:#9ca3af;font-weight:400">~${std}h/sem</small>
             </td>
-            <td class="s-col col-total" id="wsum-${t}" class="${cls}"
-                style="left:60px;min-width:90px;text-align:center;white-space:nowrap;padding:4px 8px">
+            <td class="s-col col-total" id="wsum-${t}"
+                style="left:70px;min-width:85px;text-align:center;white-space:nowrap;padding:4px 8px">
                 <span class="${cls}">${sum}h&thinsp;/&thinsp;${total}h</span>
             </td>
             ${cells}
@@ -857,10 +860,10 @@ function renderWeeklyModalTable(sem) {
     }).join('');
 
     body.innerHTML = `<div class="repartition-wrap" style="max-height:260px">
-        <table class="types-table">
+        <table class="types-table weekly-table">
             <thead><tr>
-                <th class="s-col" style="left:0;min-width:60px">Type</th>
-                <th class="s-col col-total" style="left:60px;min-width:90px">Total</th>
+                <th class="s-col" style="left:0;min-width:70px">Type</th>
+                <th class="s-col col-total" style="left:70px;min-width:85px">Total</th>
                 ${headerWeeks}
             </tr></thead>
             <tbody>${rows}</tbody>
