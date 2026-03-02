@@ -36,14 +36,12 @@ CREATE TABLE IF NOT EXISTS rooms (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Semesters
+-- Semesters (label only, used for sorting/display — no date boundaries)
 CREATE TABLE IF NOT EXISTS semesters (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     code TEXT NOT NULL UNIQUE,
     year_group INTEGER NOT NULL,
     name TEXT,
-    start_week INTEGER,
-    end_week INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -55,6 +53,8 @@ CREATE TABLE IF NOT EXISTS courses (
     name TEXT NOT NULL,
     semester_id INTEGER NOT NULL,
     course_type TEXT NOT NULL,
+    start_week INTEGER,
+    end_week INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (semester_id) REFERENCES semesters(id) ON DELETE CASCADE

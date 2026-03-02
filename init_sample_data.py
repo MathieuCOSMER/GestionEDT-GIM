@@ -49,39 +49,39 @@ def init_sample_data():
         
         print("✓ Inserted 6 rooms")
         
-        # Insert semesters
+        # Insert semesters (labels only, no week boundaries)
         semesters = [
-            ('S1', 1, 'Year 1 - Semester 1', 1, 15),
-            ('S2', 1, 'Year 1 - Semester 2', 16, 30),
-            ('S3', 2, 'Year 2 - Semester 3', 1, 15),
-            ('S4', 2, 'Year 2 - Semester 4', 16, 30),
-            ('S5', 3, 'Year 3 - Semester 5', 1, 15),
-            ('S6', 3, 'Year 3 - Semester 6', 16, 30),
+            ('S1', 1, 'Semestre 1'),
+            ('S2', 1, 'Semestre 2'),
+            ('S3', 2, 'Semestre 3'),
+            ('S4', 2, 'Semestre 4'),
+            ('S5', 3, 'Semestre 5'),
+            ('S6', 3, 'Semestre 6'),
         ]
-        
+
         for sem in semesters:
             cursor.execute('''
-                INSERT INTO semesters (code, year_group, name, start_week, end_week)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO semesters (code, year_group, name)
+                VALUES (?, ?, ?)
             ''', sem)
         
         print("✓ Inserted 6 semesters")
         
-        # Insert courses
+        # Insert courses (start_week/end_week = semaines calendaires)
         courses = [
-            ('R1.01', 'Introduction to Programming', 1, 'ressource'),
-            ('R1.02', 'Mathematics 1', 1, 'ressource'),
-            ('R1.03', 'Introduction to Electronics', 1, 'ressource'),
-            ('SAE1.1', 'First Mini-Project', 1, 'sae'),
-            ('R2.01', 'Advanced Programming', 2, 'ressource'),
-            ('R2.02', 'Databases', 2, 'ressource'),
-            ('SAE2.1', 'Team Project', 2, 'sae'),
+            ('R1.01', 'Introduction to Programming', 1, 'ressource', 36, 50),
+            ('R1.02', 'Mathematics 1', 1, 'ressource', 36, 50),
+            ('R1.03', 'Introduction to Electronics', 1, 'ressource', 36, 50),
+            ('SAE1.1', 'First Mini-Project', 1, 'sae', 36, 50),
+            ('R2.01', 'Advanced Programming', 2, 'ressource', 2, 20),
+            ('R2.02', 'Databases', 2, 'ressource', 2, 20),
+            ('SAE2.1', 'Team Project', 2, 'sae', 2, 20),
         ]
-        
+
         for course in courses:
             cursor.execute('''
-                INSERT INTO courses (code, name, semester_id, course_type)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO courses (code, name, semester_id, course_type, start_week, end_week)
+                VALUES (?, ?, ?, ?, ?, ?)
             ''', course)
         
         print("✓ Inserted 7 courses")

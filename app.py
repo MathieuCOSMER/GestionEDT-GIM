@@ -394,14 +394,12 @@ def create_semester():
         db = get_db()
         cursor = db.cursor()
         cursor.execute('''
-            INSERT INTO semesters (code, year_group, name, start_week, end_week)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO semesters (code, year_group, name)
+            VALUES (?, ?, ?)
         ''', (
             data['code'],
             data['year_group'],
-            data.get('name'),
-            data.get('start_week'),
-            data.get('end_week')
+            data.get('name')
         ))
         db.commit()
         semester_id = cursor.lastrowid
@@ -448,7 +446,7 @@ def update_semester(semester_id):
         # Update fields
         update_fields = []
         values = []
-        for field in ['code', 'year_group', 'name', 'start_week', 'end_week']:
+        for field in ['code', 'year_group', 'name']:
             if field in data:
                 update_fields.append(f'{field} = ?')
                 values.append(data[field])
@@ -529,13 +527,15 @@ def create_course():
             return error_response('Semester not found', 404)
         
         cursor.execute('''
-            INSERT INTO courses (code, name, semester_id, course_type)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO courses (code, name, semester_id, course_type, start_week, end_week)
+            VALUES (?, ?, ?, ?, ?, ?)
         ''', (
             data['code'],
             data['name'],
             data['semester_id'],
-            data['course_type']
+            data['course_type'],
+            data.get('start_week'),
+            data.get('end_week')
         ))
         db.commit()
         course_id = cursor.lastrowid
@@ -590,7 +590,7 @@ def update_course(course_id):
         # Update fields
         update_fields = []
         values = []
-        for field in ['code', 'name', 'semester_id', 'course_type']:
+        for field in ['code', 'name', 'semester_id', 'course_type', 'start_week', 'end_week']:
             if field in data:
                 update_fields.append(f'{field} = ?')
                 values.append(data[field])

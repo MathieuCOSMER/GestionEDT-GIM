@@ -252,6 +252,26 @@ def main():
         conn.commit()
         print(f"  {sheet_name}: {total_courses} courses, {total_sessions} sessions")
 
+    # === SET start_week / end_week ON COURSES ===
+    # Derive from the min/max calendar weeks of actual weekly_hours for each course
+    cur.execute("""
+        UPDATE courses SET
+            start_week = (
+                SELECT MIN(wh.week_number)
+                FROM weekly_hours wh
+                JOIN course_sessions cs ON wh.course_session_id = cs.id
+                WHERE cs.course_id = courses.id
+            ),
+            end_week = (
+                SELECT MAX(wh.week_number)
+                FROM weekly_hours wh
+                JOIN course_sessions cs ON wh.course_session_id = cs.id
+                WHERE cs.course_id = courses.id
+            )
+    """)
+    conn.commit()
+    print(f"  Course start/end weeks updated")
+
     # === CALENDAR EVENTS ===
     # Extract from row 0 of S1+S2
     df = sheets["S1+S2"]
