@@ -8,6 +8,7 @@ from flask_cors import CORS
 import sqlite3
 import os
 import json
+import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 import io
@@ -21,24 +22,63 @@ _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE = os.environ.get('EDT_DB_PATH', os.path.join(_BASE_DIR, 'edt.db'))
 SCHEMA_PATH = os.path.join(_BASE_DIR, 'schema.sql')
 
+# Semaines valides de l'année scolaire : S36–S53 puis S01–S27
+VALID_SCHOOL_WEEKS = set(range(36, 54)) | set(range(1, 28))
+
+# ===== GESTION DES ANNÉES UNIVERSITAIRES =====
+SETTINGS_PATH = os.path.join(_BASE_DIR, 'edt_settings.json')
+_settings_cache = None
+
+def get_settings():
+    global _settings_cache
+    if _settings_cache is None:
+        if os.path.exists(SETTINGS_PATH):
+            with open(SETTINGS_PATH, 'r') as f:
+                _settings_cache = json.load(f)
+        else:
+            _settings_cache = {}
+    return _settings_cache
+
+def save_settings(s):
+    global _settings_cache
+    _settings_cache = s
+    with open(SETTINGS_PATH, 'w') as f:
+        json.dump(s, f, indent=2)
+
+def auto_detect_year():
+    today = datetime.now()
+    y = today.year
+    return f"{y}-{y+1}" if today.month >= 8 else f"{y-1}-{y}"
+
+def db_path_for_year(year):
+    return os.path.join(_BASE_DIR, f'edt_{year}.db')
+
+def get_current_year():
+    return get_settings().get('current_year', '')
+
+def list_years():
+    years = []
+    for fname in os.listdir(_BASE_DIR):
+        if fname.startswith('edt_') and fname.endswith('.db') and len(fname) == 16:
+            years.append(fname[4:-3])
+    return sorted(years)
+
+def school_week_key(w, start_week=36):
+    """Clé de tri pour l'ordre scolaire : start_week est la semaine 0"""
+    offset = 53 - start_week + 1
+    return w - start_week if w >= start_week else w + offset
+
 # Helper function to get database connection
 def get_db():
-    """Get database connection"""
-    db = sqlite3.connect(DATABASE)
+    """Connexion à la DB de l'année universitaire courante"""
+    year = get_current_year()
+    path = db_path_for_year(year) if year else DATABASE
+    db = sqlite3.connect(path)
     db.row_factory = sqlite3.Row
     return db
 
-# Helper function to initialize database
-def init_db():
-    """Initialize database from schema"""
-    if not os.path.exists(DATABASE):
-        db = get_db()
-        with open(SCHEMA_PATH, 'r') as f:
-            db.executescript(f.read())
-        db.commit()
-        db.close()
-    # Migration : ensure semester_special_weeks exists on existing DBs
-    db = get_db()
+def _apply_migrations(db):
+    """Applique toutes les migrations de schéma sur une connexion DB ouverte"""
     db.execute('''
         CREATE TABLE IF NOT EXISTS semester_special_weeks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,16 +89,19 @@ def init_db():
             UNIQUE(semester_id, week_number, week_type)
         )
     ''')
-    # Migration : add start_week/end_week to courses table
-    try:
-        db.execute('ALTER TABLE courses ADD COLUMN start_week INTEGER')
-    except sqlite3.OperationalError:
-        pass  # column already exists
-    try:
-        db.execute('ALTER TABLE courses ADD COLUMN end_week INTEGER')
-    except sqlite3.OperationalError:
-        pass  # column already exists
-    # Seed default semesters (S1–S6) if none exist
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    ''')
+    db.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('academic_start_week', '36')")
+    db.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('academic_end_week', '26')")
+    for col in ['start_week', 'end_week']:
+        try:
+            db.execute(f'ALTER TABLE courses ADD COLUMN {col} INTEGER')
+        except sqlite3.OperationalError:
+            pass
     cursor = db.execute('SELECT COUNT(*) as cnt FROM semesters')
     if cursor.fetchone()['cnt'] == 0:
         for code, yg, name in [
@@ -69,6 +112,54 @@ def init_db():
             db.execute('INSERT OR IGNORE INTO semesters (code, year_group, name) VALUES (?, ?, ?)',
                        (code, yg, name))
     db.commit()
+
+def get_year_config():
+    """Lit la configuration de l'année courante (semaines début/fin)"""
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute("SELECT key, value FROM app_settings WHERE key IN ('academic_start_week','academic_end_week')")
+    cfg = {r['key']: int(r['value']) for r in cursor.fetchall()}
+    db.close()
+    return {
+        'academic_start_week': cfg.get('academic_start_week', 36),
+        'academic_end_week':   cfg.get('academic_end_week',   26),
+    }
+
+def get_valid_school_weeks(start_week=36, end_week=26):
+    """Ensemble des semaines valides pour une plage scolaire (peut chevaucher S53→S01)"""
+    if start_week <= end_week:
+        return set(range(start_week, end_week + 1))
+    return set(range(start_week, 54)) | set(range(1, end_week + 1))
+
+def _init_fresh_db(path):
+    """Crée une DB vierge depuis le schéma SQL"""
+    db = sqlite3.connect(path)
+    with open(SCHEMA_PATH, 'r') as f:
+        db.executescript(f.read())
+    _apply_migrations(db)
+    db.close()
+
+# Helper function to initialize database
+def init_db():
+    """Initialise la DB pour l'année courante, migre depuis edt.db si besoin"""
+    settings = get_settings()
+
+    if not settings.get('current_year'):
+        year = auto_detect_year()
+        settings['current_year'] = year
+        save_settings(settings)
+
+    year = settings['current_year']
+    db_path = db_path_for_year(year)
+
+    if not os.path.exists(db_path):
+        if os.path.exists(DATABASE):
+            shutil.copy2(DATABASE, db_path)   # migration depuis edt.db legacy
+        else:
+            _init_fresh_db(db_path)
+
+    db = get_db()
+    _apply_migrations(db)
     db.close()
 
 # Helper function to convert sqlite3.Row to dict
@@ -650,6 +741,18 @@ def create_course():
             db.close()
             return error_response('Semester not found', 404)
 
+        start_week = data.get('start_week')
+        end_week   = data.get('end_week')
+        cfg = get_year_config()
+        valid_weeks = get_valid_school_weeks(cfg['academic_start_week'], cfg['academic_end_week'])
+        sw_label = f"S{cfg['academic_start_week']:02d}–S{cfg['academic_end_week']:02d}"
+        if start_week is not None and int(start_week) not in valid_weeks:
+            db.close()
+            return error_response(f'Semaine de début hors plage année scolaire ({sw_label})', 400)
+        if end_week is not None and int(end_week) not in valid_weeks:
+            db.close()
+            return error_response(f'Semaine de fin hors plage année scolaire ({sw_label})', 400)
+
         cursor.execute('''
             INSERT INTO courses (code, name, semester_id, course_type, start_week, end_week)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -658,8 +761,8 @@ def create_course():
             data['name'],
             data['semester_id'],
             data.get('course_type', 'Ressource'),
-            data.get('start_week'),
-            data.get('end_week'),
+            start_week,
+            end_week,
         ))
         db.commit()
         course_id = cursor.lastrowid
@@ -726,6 +829,17 @@ def update_course(course_id):
             db.close()
             return error_response('Course not found', 404)
         
+        # Validation semaines scolaires
+        cfg = get_year_config()
+        valid_weeks = get_valid_school_weeks(cfg['academic_start_week'], cfg['academic_end_week'])
+        sw_label = f"S{cfg['academic_start_week']:02d}–S{cfg['academic_end_week']:02d}"
+        for wk_field in ['start_week', 'end_week']:
+            if wk_field in data and data[wk_field] is not None:
+                if int(data[wk_field]) not in valid_weeks:
+                    label = 'début' if wk_field == 'start_week' else 'fin'
+                    db.close()
+                    return error_response(f'Semaine de {label} hors plage année scolaire ({sw_label})', 400)
+
         # Update fields
         update_fields = []
         values = []
@@ -786,20 +900,21 @@ def get_course_teaching_hours(course_id):
             db.close()
             return error_response('Course not found', 404)
         cursor.execute('''
-            SELECT teaching_type, total_hours, slot_duration, room_name
+            SELECT teaching_type, total_hours, slot_duration, room_name, teacher_id
             FROM course_sessions
             WHERE course_id = ? AND formation_type = ?
         ''', (course_id, formation_type))
         rows = cursor.fetchall()
         db.close()
-        result = {t: {'hours': 0, 'slot_duration': 1.5, 'room': ''} for t in ['CM', 'TD', 'TP', 'PT']}
+        result = {t: {'hours': 0, 'slot_duration': 1.5, 'room': '', 'teacher_id': None} for t in ['CM', 'TD', 'TP', 'PT']}
         for r in rows:
             t = r['teaching_type']
             if t in result:
                 result[t] = {
                     'hours': r['total_hours'] or 0,
                     'slot_duration': r['slot_duration'] or 1.5,
-                    'room': r['room_name'] or ''
+                    'room': r['room_name'] or '',
+                    'teacher_id': r['teacher_id']
                 }
         return jsonify(result), 200
     except Exception as e:
@@ -826,6 +941,7 @@ def update_course_teaching_hours(course_id):
             hours = float(info.get('hours') or 0)
             slot_dur = float(info.get('slot_duration') or 1.5)
             room = (info.get('room') or '').strip() or None
+            teacher_id = info.get('teacher_id') or None
             nb = round(hours / slot_dur) if slot_dur > 0 and hours > 0 else 0
 
             cursor.execute('''
@@ -839,16 +955,16 @@ def update_course_teaching_hours(course_id):
                     cursor.execute('''
                         UPDATE course_sessions
                         SET total_hours = ?, slot_duration = ?, nb_sessions = ?,
-                            room_name = ?, updated_at = CURRENT_TIMESTAMP
+                            room_name = ?, teacher_id = ?, updated_at = CURRENT_TIMESTAMP
                         WHERE id = ?
-                    ''', (hours, slot_dur, nb, room, existing['id']))
+                    ''', (hours, slot_dur, nb, room, teacher_id, existing['id']))
                 else:
                     cursor.execute('''
                         INSERT INTO course_sessions
                             (course_id, formation_type, teaching_type,
-                             total_hours, slot_duration, nb_sessions, room_name)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (course_id, formation_type, ttype, hours, slot_dur, nb, room))
+                             total_hours, slot_duration, nb_sessions, room_name, teacher_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (course_id, formation_type, ttype, hours, slot_dur, nb, room, teacher_id))
             else:
                 if existing:
                     cursor.execute('DELETE FROM course_sessions WHERE id = ?', (existing['id'],))
@@ -1683,11 +1799,38 @@ def import_excel():
 
 # ======================= REPARTITION HEBDOMADAIRE =======================
 
+@app.route('/api/config', methods=['GET'])
+def get_config():
+    return jsonify(get_year_config())
+
+@app.route('/api/config', methods=['PUT'])
+def update_config():
+    data = request.get_json() or {}
+    db = get_db()
+    for key in ['academic_start_week', 'academic_end_week']:
+        if key in data:
+            try:
+                val = int(data[key])
+            except (TypeError, ValueError):
+                db.close()
+                return error_response(f'{key} doit être un entier', 400)
+            if val < 1 or val > 53:
+                db.close()
+                return error_response(f'{key} hors plage (1–53)', 400)
+            db.execute('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', (key, str(val)))
+    db.commit()
+    db.close()
+    return jsonify({'message': 'Configuration mise à jour'})
+
 @app.route('/api/repartition', methods=['GET'])
 def get_repartition():
     """Tableau pivot : pour un semestre donné, heures par cours et par semaine"""
     semester_code = request.args.get('semester', '')
     try:
+        cfg = get_year_config()
+        sw = cfg['academic_start_week']
+        _key = lambda w: school_week_key(w, sw)
+
         db = get_db()
         cursor = db.cursor()
 
@@ -1709,7 +1852,7 @@ def get_repartition():
                     all_weeks.update(range(sw, 53))
                     all_weeks.update(range(1, ew + 1))
             if all_weeks:
-                weeks = sorted(all_weeks)
+                weeks = sorted(all_weeks, key=_key)
             else:
                 # Fallback : semaines avec données seulement
                 cursor.execute('''
@@ -1719,9 +1862,8 @@ def get_repartition():
                     JOIN courses c ON cs.course_id = c.id
                     JOIN semesters s ON c.semester_id = s.id
                     WHERE s.code = ? AND wh.hours > 0
-                    ORDER BY wh.week_number
                 ''', (semester_code,))
-                weeks = [r['week_number'] for r in cursor.fetchall()]
+                weeks = sorted([r['week_number'] for r in cursor.fetchall()], key=_key)
             # Semaines spéciales
             cursor.execute('SELECT id FROM semesters WHERE code = ?', (semester_code,))
             sem_row = cursor.fetchone()
@@ -1738,9 +1880,8 @@ def get_repartition():
                 SELECT DISTINCT wh.week_number
                 FROM weekly_hours wh
                 WHERE wh.hours > 0
-                ORDER BY wh.week_number
             ''')
-            weeks = [r['week_number'] for r in cursor.fetchall()]
+            weeks = sorted([r['week_number'] for r in cursor.fetchall()], key=_key)
 
         # Lignes de données avec heures hebdomadaires
         if semester_code:
@@ -1807,6 +1948,53 @@ def get_repartition():
         }), 200
     except Exception as e:
         return error_response(f'Error fetching repartition: {str(e)}', 500)
+
+# ======================= ANNÉES UNIVERSITAIRES =======================
+
+@app.route('/api/years', methods=['GET'])
+def get_years():
+    return jsonify({'years': list_years(), 'current': get_current_year()})
+
+@app.route('/api/years', methods=['POST'])
+def create_year():
+    data = request.get_json() or {}
+    new_year = (data.get('year') or '').strip()
+    copy_from = (data.get('copy_from') or '').strip()
+
+    if len(new_year) != 9 or new_year[4] != '-' or not new_year[:4].isdigit() or not new_year[5:].isdigit():
+        return error_response('Format invalide — attendu AAAA-AAAA (ex : 2025-2026)', 400)
+
+    new_path = db_path_for_year(new_year)
+    if os.path.exists(new_path):
+        return error_response(f"L'année {new_year} existe déjà", 400)
+
+    if copy_from:
+        src_path = db_path_for_year(copy_from)
+        if not os.path.exists(src_path):
+            return error_response(f"Année source {copy_from} introuvable", 404)
+        shutil.copy2(src_path, new_path)
+        # S'assurer que la copie est à jour schéma
+        db = sqlite3.connect(new_path)
+        db.row_factory = sqlite3.Row
+        _apply_migrations(db)
+        db.close()
+    else:
+        _init_fresh_db(new_path)
+
+    return jsonify({'year': new_year, 'years': list_years()}), 201
+
+@app.route('/api/years/current', methods=['PUT'])
+def set_current_year():
+    data = request.get_json() or {}
+    year = (data.get('year') or '').strip()
+    if not year:
+        return error_response('year requis', 400)
+    if not os.path.exists(db_path_for_year(year)):
+        return error_response(f"Année {year} introuvable", 404)
+    settings = get_settings()
+    settings['current_year'] = year
+    save_settings(settings)
+    return jsonify({'current': year})
 
 # ======================= ERROR HANDLERS =======================
 

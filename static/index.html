@@ -99,18 +99,34 @@
 
         .overflow-x { overflow-x: auto; }
 
-        /* Répartition pivot table */
-        .repartition-wrap { overflow-x: auto; max-height: 75vh; overflow-y: auto; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
-        .repartition-wrap table { min-width: max-content; border-collapse: collapse; background: #fff; }
+        /* Répartition pivot table — pleine largeur */
+        #repartition-table { position: relative; width: 100vw; left: 50%; transform: translateX(-50%); }
+        .repartition-wrap { overflow-x: auto; max-height: 80vh; overflow-y: auto; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+        .repartition-wrap table { min-width: max-content; border-collapse: collapse; background: #fff; width: 100%; }
         .repartition-wrap thead th { position: sticky; top: 0; z-index: 2; background: #f9fafb; }
         .repartition-wrap td.s-col, .repartition-wrap th.s-col { position: sticky; z-index: 1; background: #fff; border-right: 1px solid #e5e7eb; }
         .repartition-wrap thead th.s-col { background: #f9fafb; z-index: 3; }
         .cell-hours { text-align: center; font-weight: 600; color: #1e40af; }
         .cell-empty { text-align: center; color: #d1d5db; font-size: .75rem; }
-        .col-week { text-align: center; min-width: 50px; font-size: .78rem; }
+        .col-week { text-align: center; min-width: 46px; font-size: .78rem; }
         .col-total { text-align: center; font-weight: 700; color: #4f46e5; background: #eef2ff !important; border-left: 2px solid #c7d2fe; border-right: 2px solid #c7d2fe; }
-        .repartition-wrap tr:hover td { background: #f0f4ff; }
-        .repartition-wrap tr:hover td.s-col { background: #e8eeff; }
+        /* Ligne en-tête matière */
+        .row-mat td { background: #eef2ff !important; font-weight: 700; padding: 7px 14px; border-top: 3px solid #4f46e5; font-size: .88rem; }
+        .mat-sem { color: #6b7280; font-weight: 400; font-size: .82rem; }
+        /* Lignes séparateur formation */
+        .row-form td { font-size: .72rem; font-weight: 700; padding: 2px 14px; letter-spacing: .07em; text-transform: uppercase; }
+        .row-form-ftp td { background: #e0f2fe !important; color: #0369a1; border-top: 1px solid #bae6fd; }
+        .row-form-alt td { background: #fff7ed !important; color: #9a3412; border-top: 1px solid #fed7aa; }
+        /* Fond léger par formation */
+        .row-data.row-ftp td { background: #f8fbff; }
+        .row-data.row-ftp td.s-col { background: #f0f8ff; }
+        .row-data.row-alt td { background: #fffcf8; }
+        .row-data.row-alt td.s-col { background: #fffaf5; }
+        /* Hover uniquement sur les lignes de données */
+        .repartition-wrap tr.row-data:hover td { background: #e8eeff !important; }
+        .repartition-wrap tr.row-data:hover td.s-col { background: #dde4ff !important; }
+        .repartition-wrap tr.row-mat:hover td,
+        .repartition-wrap tr.row-form:hover td { cursor: default; }
 
         /* Semaines spéciales dans la répartition */
         .col-week.w-vacation { background: #f3f4f6 !important; color: #9ca3af; }
@@ -143,6 +159,17 @@
     <button onclick="showPage('sessions')" id="nav-sessions">Sessions</button>
     <button onclick="showPage('service')" id="nav-service">Service</button>
     <button onclick="showPage('repartition')" id="nav-repartition">Répartition</button>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <span style="font-size:.8rem;color:#6b7280;white-space:nowrap">Année :</span>
+        <select id="year-select" onchange="switchYear()"
+                style="padding:4px 10px;border-radius:6px;border:1px solid #c7d2fe;background:#eef2ff;color:#4f46e5;font-weight:700;font-size:.88rem;cursor:pointer">
+            <option>…</option>
+        </select>
+        <button onclick="openNewYearModal()"
+                style="padding:5px 11px;border:1px solid #c7d2fe;border-radius:6px;background:#eef2ff;color:#4f46e5;font-weight:600;cursor:pointer;font-size:.82rem;white-space:nowrap">
+            + Nouvelle année
+        </button>
+    </div>
 </nav>
 
 <main>
@@ -155,6 +182,11 @@
         <div class="card"><div class="label">Matières</div><div class="value" id="stat-courses">…</div></div>
         <div class="card"><div class="label">Salles</div><div class="value" id="stat-rooms">…</div></div>
         <div class="card"><div class="label">Sessions</div><div class="value" id="stat-sessions">…</div></div>
+        <div class="card" style="cursor:pointer;border-left-color:#0369a1" onclick="openConfigModal()" title="Cliquer pour modifier">
+            <div class="label">Plage de l'année</div>
+            <div class="value" id="stat-year-range" style="font-size:1.3rem">…</div>
+            <div style="font-size:.72rem;color:#9ca3af;margin-top:2px">Cliquer pour modifier</div>
+        </div>
     </div>
     <div class="link-grid">
         <div class="link-card" onclick="showPage('enseignants')"><h3>Enseignants</h3><p>Gérer les enseignants</p></div>
@@ -239,12 +271,68 @@
                 <option>S1</option><option>S2</option><option>S3</option>
                 <option>S4</option><option>S5</option><option>S6</option>
             </select>
+            <label style="margin-left:12px">Formation :</label>
+            <select id="filter-formation-repartition" onchange="filterRepartition()">
+                <option value="">FTP + ALT</option>
+                <option value="ftp">FTP</option>
+                <option value="alt">ALT</option>
+            </select>
         </div>
     </div>
     <div id="repartition-table"><div class="spinner">Chargement…</div></div>
 </div>
 
 </main>
+
+<!-- ===== MODAL CONFIGURATION ANNÉE ===== -->
+<div class="modal-backdrop" id="modal-config">
+    <div class="modal">
+        <h2>Configuration de l'année universitaire</h2>
+        <form id="form-config" onsubmit="submitConfig(event)">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div class="form-group">
+                    <label>Semaine de début</label>
+                    <select id="config-start-week"></select>
+                    <small style="color:#6b7280">Première semaine de cours (ex : S36)</small>
+                </div>
+                <div class="form-group">
+                    <label>Semaine de fin</label>
+                    <select id="config-end-week"></select>
+                    <small style="color:#6b7280">Dernière semaine de cours (ex : S26)</small>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-config')">Annuler</button>
+                <button type="submit" class="btn btn-primary">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ===== MODAL NOUVELLE ANNÉE ===== -->
+<div class="modal-backdrop" id="modal-new-year">
+    <div class="modal">
+        <h2>Nouvelle année universitaire</h2>
+        <form id="form-new-year" onsubmit="submitNewYear(event)">
+            <div class="form-group">
+                <label>Année *</label>
+                <input id="new-year-value" placeholder="ex : 2026-2027" required>
+                <small style="color:#6b7280">Format AAAA-AAAA</small>
+            </div>
+            <div class="form-group">
+                <label>Copier depuis</label>
+                <select id="new-year-copy-from">
+                    <option value="">— Base vierge (enseignants, salles, matières) —</option>
+                </select>
+                <small style="color:#6b7280">Crée une copie complète de l'année choisie</small>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-new-year')">Annuler</button>
+                <button type="submit" class="btn btn-primary">Créer et activer</button>
+            </div>
+        </form>
+    </div>
+</div>
 
 <!-- ===== MODAL ENSEIGNANT ===== -->
 <div class="modal-backdrop" id="modal-teacher">
@@ -308,13 +396,17 @@
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
                 <div class="form-group">
                     <label>Semaine de début</label>
-                    <input type="number" id="course-start-week" min="1" max="53" placeholder="ex : 36">
-                    <small style="color:#6b7280">Numéro ISO (1–53)</small>
+                    <select id="course-start-week">
+                        <option value="">— Choisir —</option>
+                    </select>
+                    <small style="color:#6b7280">Année scolaire S36 → S27</small>
                 </div>
                 <div class="form-group">
                     <label>Semaine de fin</label>
-                    <input type="number" id="course-end-week" min="1" max="53" placeholder="ex : 51">
-                    <small style="color:#6b7280">Numéro ISO (1–53)</small>
+                    <select id="course-end-week">
+                        <option value="">— Choisir —</option>
+                    </select>
+                    <small style="color:#6b7280">Année scolaire S36 → S27</small>
                 </div>
             </div>
 
@@ -330,25 +422,29 @@
             <table class="types-table">
                 <thead><tr>
                     <th>Type</th><th class="col-h">Total (h)</th>
-                    <th class="col-h">Durée séance</th><th>Salle</th>
+                    <th class="col-h">Durée séance</th><th>Salle</th><th>Enseignant</th>
                 </tr></thead>
                 <tbody>
                     <tr><td><span class="badge badge-cm">CM</span></td>
                         <td class="col-h"><input type="number" id="cm-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="cm-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
-                        <td><select id="cm-room"></select></td></tr>
+                        <td><select id="cm-room"></select></td>
+                        <td><select id="cm-teacher"></select></td></tr>
                     <tr><td><span class="badge badge-td">TD</span></td>
                         <td class="col-h"><input type="number" id="td-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="td-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
-                        <td><select id="td-room"></select></td></tr>
+                        <td><select id="td-room"></select></td>
+                        <td><select id="td-teacher"></select></td></tr>
                     <tr><td><span class="badge badge-tp">TP</span></td>
                         <td class="col-h"><input type="number" id="tp-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="tp-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
-                        <td><select id="tp-room"></select></td></tr>
+                        <td><select id="tp-room"></select></td>
+                        <td><select id="tp-teacher"></select></td></tr>
                     <tr><td><span class="badge badge-pt">PT</span></td>
                         <td class="col-h"><input type="number" id="pt-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="pt-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
-                        <td><select id="pt-room"></select></td></tr>
+                        <td><select id="pt-room"></select></td>
+                        <td><select id="pt-teacher"></select></td></tr>
                 </tbody>
             </table>
             </div>
@@ -357,25 +453,29 @@
             <table class="types-table">
                 <thead><tr>
                     <th>Type</th><th class="col-h">Total (h)</th>
-                    <th class="col-h">Durée séance</th><th>Salle</th>
+                    <th class="col-h">Durée séance</th><th>Salle</th><th>Enseignant</th>
                 </tr></thead>
                 <tbody>
                     <tr><td><span class="badge badge-cm">CM</span></td>
                         <td class="col-h"><input type="number" id="alt-cm-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="alt-cm-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
-                        <td><select id="alt-cm-room"></select></td></tr>
+                        <td><select id="alt-cm-room"></select></td>
+                        <td><select id="alt-cm-teacher"></select></td></tr>
                     <tr><td><span class="badge badge-td">TD</span></td>
                         <td class="col-h"><input type="number" id="alt-td-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="alt-td-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
-                        <td><select id="alt-td-room"></select></td></tr>
+                        <td><select id="alt-td-room"></select></td>
+                        <td><select id="alt-td-teacher"></select></td></tr>
                     <tr><td><span class="badge badge-tp">TP</span></td>
                         <td class="col-h"><input type="number" id="alt-tp-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="alt-tp-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
-                        <td><select id="alt-tp-room"></select></td></tr>
+                        <td><select id="alt-tp-room"></select></td>
+                        <td><select id="alt-tp-teacher"></select></td></tr>
                     <tr><td><span class="badge badge-pt">PT</span></td>
                         <td class="col-h"><input type="number" id="alt-pt-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="alt-pt-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
-                        <td><select id="alt-pt-room"></select></td></tr>
+                        <td><select id="alt-pt-room"></select></td>
+                        <td><select id="alt-pt-teacher"></select></td></tr>
                 </tbody>
             </table>
             </div>
@@ -408,7 +508,7 @@
 
 <script>
 // ===== STATE =====
-const state = { teachers: [], courses: [], rooms: [], sessions: [], semesters: [] };
+const state = { teachers: [], courses: [], rooms: [], sessions: [], semesters: [], config: null };
 
 // ===== API =====
 async function api(endpoint, opts = {}) {
@@ -459,15 +559,78 @@ async function loadPage(name) {
 }
 
 async function loadDashboard() {
+    await loadYears();
     try {
-        const [t, c, r, s] = await Promise.all([api('/teachers'), api('/courses'), api('/rooms'), api('/course-sessions')]);
+        const [t, c, r, s, cfg] = await Promise.all([
+            api('/teachers'), api('/courses'), api('/rooms'), api('/course-sessions'), api('/config')
+        ]);
         document.getElementById('stat-teachers').textContent = t.length;
         document.getElementById('stat-courses').textContent = c.length;
         document.getElementById('stat-rooms').textContent = r.length;
         document.getElementById('stat-sessions').textContent = s.length;
+        state.config = cfg;
+        const sw = cfg.academic_start_week, ew = cfg.academic_end_week;
+        document.getElementById('stat-year-range').textContent =
+            `S${String(sw).padStart(2,'0')} → S${String(ew).padStart(2,'0')}`;
     } catch(e) {
-        ['teachers','courses','rooms','sessions'].forEach(k => document.getElementById('stat-'+k).textContent = '?');
+        ['teachers','courses','rooms','sessions','year-range'].forEach(k =>
+            document.getElementById('stat-'+k).textContent = '?');
     }
+}
+
+// ===== ANNÉES UNIVERSITAIRES =====
+async function loadYears() {
+    try {
+        const data = await api('/years');
+        const sel = document.getElementById('year-select');
+        sel.innerHTML = data.years.length
+            ? data.years.map(y => `<option value="${y}" ${y === data.current ? 'selected' : ''}>${y}</option>`).join('')
+            : '<option value="">Aucune année</option>';
+    } catch(e) { /* silencieux */ }
+}
+
+async function switchYear() {
+    const year = document.getElementById('year-select').value;
+    if (!year) return;
+    try {
+        await api('/years/current', { method: 'PUT', body: JSON.stringify({ year }) });
+        // Réinitialiser l'état pour forcer un rechargement des données
+        Object.keys(state).forEach(k => { state[k] = []; });
+        _repartitionData = null;
+        await loadDashboard();
+        toast(`Année ${year} activée`);
+    } catch(e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+function openNewYearModal() {
+    const years = [...document.getElementById('year-select').options].map(o => o.value).filter(Boolean);
+    const current = document.getElementById('year-select').value;
+    document.getElementById('new-year-copy-from').innerHTML =
+        '<option value="">— Base vierge —</option>' +
+        years.map(y => `<option value="${y}" ${y === current ? 'selected' : ''}>${y}</option>`).join('');
+    // Suggérer l'année suivante
+    if (current && current.length === 9) {
+        const end = parseInt(current.split('-')[1]);
+        document.getElementById('new-year-value').value = `${end}-${end + 1}`;
+    } else {
+        document.getElementById('new-year-value').value = '';
+    }
+    openModal('modal-new-year');
+}
+
+async function submitNewYear(e) {
+    e.preventDefault();
+    const year    = document.getElementById('new-year-value').value.trim();
+    const copyFrom = document.getElementById('new-year-copy-from').value;
+    try {
+        await api('/years', { method: 'POST', body: JSON.stringify({ year, copy_from: copyFrom }) });
+        await api('/years/current', { method: 'PUT', body: JSON.stringify({ year }) });
+        Object.keys(state).forEach(k => { state[k] = []; });
+        _repartitionData = null;
+        closeModal('modal-new-year');
+        await loadDashboard();
+        toast(`Année ${year} créée et activée`);
+    } catch(e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
 // ===== ENSEIGNANTS =====
@@ -588,6 +751,20 @@ function buildRoomSelects(selectedValues = {}, prefix = '') {
     });
 }
 
+function buildTeacherSelects(selectedValues = {}, prefix = '') {
+    const none = '<option value="">— Aucun enseignant —</option>';
+    const opts = none + state.teachers.map(t =>
+        `<option value="${t.id}">${esc(t.name)}</option>`
+    ).join('');
+    ['cm','td','tp','pt'].forEach(t => {
+        const sel = document.getElementById(prefix + t + '-teacher');
+        if (!sel) return;
+        sel.innerHTML = opts;
+        const v = selectedValues[t.toUpperCase()];
+        if (v) sel.value = v;
+    });
+}
+
 function switchCourseTab(tab, btn) {
     document.getElementById('course-hours-ftp').style.display = tab === 'ftp' ? '' : 'none';
     document.getElementById('course-hours-alt').style.display = tab === 'alt' ? '' : 'none';
@@ -597,6 +774,10 @@ function switchCourseTab(tab, btn) {
 
 async function openCourseModal(id = null) {
     if (!state.rooms.length) state.rooms = await api('/rooms');
+    if (!state.teachers.length) state.teachers = await api('/teachers');
+    if (!state.config) state.config = await api('/config');
+    const cfg = state.config;
+    buildWeekSelects(cfg.academic_start_week, cfg.academic_end_week);
 
     document.getElementById('course-semester').innerHTML =
         '<option value="">— Choisir —</option>' +
@@ -625,6 +806,8 @@ async function openCourseModal(id = null) {
     document.querySelectorAll('#modal-course .tab-btn').forEach((b,i) => b.classList.toggle('active', i===0));
     buildRoomSelects();
     buildRoomSelects({}, 'alt-');
+    buildTeacherSelects();
+    buildTeacherSelects({}, 'alt-');
 
     if (id) {
         const c = state.courses.find(x => x.id === id);
@@ -638,26 +821,30 @@ async function openCourseModal(id = null) {
             // Heures FTP
             try {
                 const th = await api('/courses/' + id + '/teaching-hours?formation_type=0');
-                const rooms = {};
+                const rooms = {}, teachers = {};
                 ['CM','TD','TP','PT'].forEach(t => {
                     const info = th[t] || {};
                     document.getElementById(t.toLowerCase()+'-hours').value = info.hours || '';
                     document.getElementById(t.toLowerCase()+'-dur').value = info.slot_duration || '1.5';
                     rooms[t] = info.room || '';
+                    teachers[t] = info.teacher_id || '';
                 });
                 buildRoomSelects(rooms);
+                buildTeacherSelects(teachers);
             } catch(e) {}
             // Heures ALT
             try {
                 const th = await api('/courses/' + id + '/teaching-hours?formation_type=1');
-                const rooms = {};
+                const rooms = {}, teachers = {};
                 ['CM','TD','TP','PT'].forEach(t => {
                     const info = th[t] || {};
                     document.getElementById('alt-'+t.toLowerCase()+'-hours').value = info.hours || '';
                     document.getElementById('alt-'+t.toLowerCase()+'-dur').value = info.slot_duration || '1.5';
                     rooms[t] = info.room || '';
+                    teachers[t] = info.teacher_id || '';
                 });
                 buildRoomSelects(rooms, 'alt-');
+                buildTeacherSelects(teachers, 'alt-');
             } catch(e) {}
         }
     }
@@ -674,11 +861,13 @@ async function submitCourse(e) {
             hours:         document.getElementById(t.toLowerCase()+'-hours').value,
             slot_duration: document.getElementById(t.toLowerCase()+'-dur').value,
             room:          document.getElementById(t.toLowerCase()+'-room').value,
+            teacher_id:    parseInt(document.getElementById(t.toLowerCase()+'-teacher').value) || null,
         };
         typesAlt[t] = {
             hours:         document.getElementById('alt-'+t.toLowerCase()+'-hours').value,
             slot_duration: document.getElementById('alt-'+t.toLowerCase()+'-dur').value,
             room:          document.getElementById('alt-'+t.toLowerCase()+'-room').value,
+            teacher_id:    parseInt(document.getElementById('alt-'+t.toLowerCase()+'-teacher').value) || null,
         };
     });
     const base = {
@@ -1025,17 +1214,23 @@ function renderService(data) {
 }
 
 // ===== REPARTITION =====
+let _repartitionData = null;
+
 async function loadRepartition() {
     const sem = document.getElementById('filter-semester-repartition').value;
     const el = document.getElementById('repartition-table');
     el.innerHTML = '<div class="spinner">Chargement…</div>';
     try {
         const url = '/repartition' + (sem ? '?semester=' + encodeURIComponent(sem) : '');
-        const data = await api(url);
-        renderRepartition(data);
+        _repartitionData = await api(url);
+        renderRepartition(_repartitionData);
     } catch(e) {
         el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
     }
+}
+
+function filterRepartition() {
+    if (_repartitionData) renderRepartition(_repartitionData);
 }
 
 function renderRepartition({ weeks, rows, special_weeks }) {
@@ -1044,18 +1239,29 @@ function renderRepartition({ weeks, rows, special_weeks }) {
 
     const sp = special_weeks || { vacation_ftp: [], company_alt: [] };
     const typeColors = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' };
-    const showSem = document.getElementById('filter-semester-repartition').value === '';
+    const showSem  = document.getElementById('filter-semester-repartition').value === '';
+    const formFilter = document.getElementById('filter-formation-repartition').value; // '', 'ftp', 'alt'
 
+    // Grouper les lignes par matière puis par formation
+    const byCode = {}, codeOrder = [];
+    rows.forEach(r => {
+        const key = r.course_code + '|' + r.semester;
+        if (!byCode[key]) {
+            byCode[key] = { code: r.course_code, name: r.course_name, sem: r.semester, ftp: [], alt: [] };
+            codeOrder.push(key);
+        }
+        if (r.formation === 'FTP') byCode[key].ftp.push(r);
+        else if (r.formation === 'ALT') byCode[key].alt.push(r);
+    });
+
+    // Colonnes fixes (sticky) — allégées car code/nom sont dans les en-têtes de bloc
     const fixedCols = [
-        { key: 'code',  label: 'Code',      w: 70  },
-        { key: 'name',  label: 'Matière',   w: 190 },
-        ...(showSem ? [{ key: 'sem', label: 'Sem.', w: 55 }] : []),
-        { key: 'form',  label: '',          w: 44  },
-        { key: 'type',  label: 'Type',      w: 52  },
-        { key: 'teach', label: 'Enseignant',w: 140 },
+        { key: 'type',  label: 'Type',       w: 52  },
+        { key: 'teach', label: 'Enseignant',  w: 150 },
     ];
     let cum = 0;
     fixedCols.forEach(c => { c.left = cum; cum += c.w; });
+    const totalColSpan = fixedCols.length + 1 + weeks.length;
 
     const sCol = (c, content) =>
         `<td class="s-col" style="left:${c.left}px;min-width:${c.w}px;max-width:${c.w}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${content}</td>`;
@@ -1076,31 +1282,47 @@ function renderRepartition({ weeks, rows, special_weeks }) {
         return `<th class="col-week ${cls}">S${w}</th>`;
     }).join('');
 
-    const bodyRows = rows.map(r => {
+    function buildDataRow(r, formCls) {
         const typeKey = (r.type || '').toUpperCase();
         const badge = `<span class="badge ${typeColors[typeKey] || 'badge-cm'}">${esc(r.type || '')}</span>`;
-        const formBadge = r.formation ? `<span class="badge badge-${r.formation.toLowerCase()}" style="font-size:.7rem">${esc(r.formation)}</span>` : '';
         const weekTotal = weeks.reduce((s, w) => s + (r.by_week[w] || 0), 0);
         const cells = weeks.map(w => {
             const h = r.by_week[w];
             const cls = weekThCls(w);
             return h ? `<td class="cell-hours ${cls}">${h}</td>` : `<td class="cell-empty ${cls}">·</td>`;
         }).join('');
+        return `<tr class="row-data ${formCls}">
+            ${sCol(fixedCols[0], badge)}
+            ${sCol(fixedCols[1], esc(r.teacher))}
+            <td class="col-total">${weekTotal > 0 ? weekTotal + 'h' : ''}</td>
+            ${cells}
+        </tr>`;
+    }
 
-        const fIdx  = showSem ? 3 : 2;
-        const tIdx  = fIdx + 1;
-        const tcIdx = tIdx + 1;
-        const cols = [
-            sCol(fixedCols[0], `<strong>${esc(r.course_code)}</strong>`),
-            sCol(fixedCols[1], esc(r.course_name)),
-            ...(showSem ? [sCol(fixedCols[2], esc(r.semester))] : []),
-            sCol(fixedCols[fIdx], formBadge),
-            sCol(fixedCols[tIdx], badge),
-            sCol(fixedCols[tcIdx], esc(r.teacher)),
-        ].join('');
+    let bodyRows = '';
+    codeOrder.forEach(key => {
+        const block = byCode[key];
+        const ftpRows = (formFilter === '' || formFilter === 'ftp') ? block.ftp : [];
+        const altRows = (formFilter === '' || formFilter === 'alt') ? block.alt : [];
+        if (!ftpRows.length && !altRows.length) return;
 
-        return `<tr>${cols}<td class="col-total">${weekTotal > 0 ? weekTotal + 'h' : ''}</td>${cells}</tr>`;
-    }).join('');
+        // En-tête de bloc matière
+        const semLabel = showSem ? ` <span class="mat-sem">· ${esc(block.sem)}</span>` : '';
+        bodyRows += `<tr class="row-mat"><td colspan="${totalColSpan}">
+            <strong>${esc(block.code)}</strong> — ${esc(block.name)}${semLabel}
+        </td></tr>`;
+
+        if (ftpRows.length) {
+            if (formFilter === '')
+                bodyRows += `<tr class="row-form row-form-ftp"><td colspan="${totalColSpan}">FTP</td></tr>`;
+            ftpRows.forEach(r => { bodyRows += buildDataRow(r, 'row-ftp'); });
+        }
+        if (altRows.length) {
+            if (formFilter === '')
+                bodyRows += `<tr class="row-form row-form-alt"><td colspan="${totalColSpan}">ALT</td></tr>`;
+            altRows.forEach(r => { bodyRows += buildDataRow(r, 'row-alt'); });
+        }
+    });
 
     el.innerHTML = `<div class="repartition-wrap"><table>
         <thead><tr>
@@ -1122,6 +1344,61 @@ document.querySelectorAll('.modal-backdrop').forEach(b => {
 // ===== UTILS =====
 function esc(str) {
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ===== CONFIGURATION ANNÉE =====
+function buildSchoolWeekList(startW, endW) {
+    // Génère la liste ordonnée des semaines de l'année scolaire
+    const weeks = [];
+    let w = startW;
+    while (true) {
+        weeks.push(w);
+        if (w === endW) break;
+        w = (w === 53) ? 1 : w + 1;
+        if (weeks.length > 54) break; // sécurité
+    }
+    return weeks;
+}
+
+function buildWeekSelects(startW, endW) {
+    // Peuple les selects du modal matière avec les semaines de l'année scolaire
+    const weeks = buildSchoolWeekList(startW, endW);
+    const opts = '<option value="">— Choisir —</option>' +
+        weeks.map(w => `<option value="${w}">S${String(w).padStart(2,'0')}</option>`).join('');
+    document.getElementById('course-start-week').innerHTML = opts;
+    document.getElementById('course-end-week').innerHTML   = opts;
+}
+
+function buildAllWeekSelect(selId, selectedVal) {
+    // Peuple un select avec toutes les semaines 1-53 (pour la config)
+    let opts = '<option value="">—</option>';
+    for (let w = 1; w <= 53; w++)
+        opts += `<option value="${w}" ${w == selectedVal ? 'selected' : ''}>S${String(w).padStart(2,'0')}</option>`;
+    document.getElementById(selId).innerHTML = opts;
+}
+
+async function openConfigModal() {
+    try {
+        const cfg = await api('/config');
+        buildAllWeekSelect('config-start-week', cfg.academic_start_week);
+        buildAllWeekSelect('config-end-week',   cfg.academic_end_week);
+        openModal('modal-config');
+    } catch(e) { toast('Erreur chargement config : ' + e.message, 'error'); }
+}
+
+async function submitConfig(e) {
+    e.preventDefault();
+    const sw = parseInt(document.getElementById('config-start-week').value);
+    const ew = parseInt(document.getElementById('config-end-week').value);
+    if (!sw || !ew) { toast('Choisir une semaine de début et de fin', 'error'); return; }
+    try {
+        await api('/config', { method: 'PUT', body: JSON.stringify({ academic_start_week: sw, academic_end_week: ew }) });
+        state.config = { academic_start_week: sw, academic_end_week: ew };
+        closeModal('modal-config');
+        document.getElementById('stat-year-range').textContent =
+            `S${String(sw).padStart(2,'0')} → S${String(ew).padStart(2,'0')}`;
+        toast('Plage de l\'année enregistrée');
+    } catch(e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
 // ===== INIT =====
