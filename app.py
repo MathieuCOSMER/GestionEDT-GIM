@@ -1822,13 +1822,11 @@ def internal_error(error):
 
 # ======================= APPLICATION STARTUP =======================
 
+# Initialize database on module load (works with any WSGI runner)
+os.makedirs('static', exist_ok=True)
+init_db()
+
 if __name__ == '__main__':
-    # Create static directory if it doesn't exist
-    os.makedirs('static', exist_ok=True)
-    
-    # Initialize database
-    init_db()
-    
     # Run Flask app
     app.run(
         host='0.0.0.0',
