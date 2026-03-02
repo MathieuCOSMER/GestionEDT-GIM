@@ -17,8 +17,9 @@ app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
 
 # Database configuration
-DATABASE = '/sessions/optimistic-zen-bardeen/edt.db'
-SCHEMA_PATH = '/sessions/optimistic-zen-bardeen/mnt/GestionEDT/schema.sql'
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE = os.environ.get('EDT_DB_PATH', os.path.join(_BASE_DIR, 'edt.db'))
+SCHEMA_PATH = os.path.join(_BASE_DIR, 'schema.sql')
 
 # Helper function to get database connection
 def get_db():
@@ -36,6 +37,20 @@ def init_db():
             db.executescript(f.read())
         db.commit()
         db.close()
+    # Migration : ensure semester_special_weeks exists on existing DBs
+    db = get_db()
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS semester_special_weeks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            semester_id INTEGER NOT NULL,
+            week_number INTEGER NOT NULL,
+            week_type TEXT NOT NULL CHECK(week_type IN ('vacation_ftp', 'company_alt')),
+            FOREIGN KEY (semester_id) REFERENCES semesters(id) ON DELETE CASCADE,
+            UNIQUE(semester_id, week_number, week_type)
+        )
+    ''')
+    db.commit()
+    db.close()
 
 # Helper function to convert sqlite3.Row to dict
 def row_to_dict(row):
@@ -491,19 +506,106 @@ def delete_semester(semester_id):
     except Exception as e:
         return error_response(f'Error deleting semester: {str(e)}', 500)
 
+@app.route('/api/semesters/<int:sem_id>/special-weeks', methods=['GET'])
+def get_special_weeks(sem_id):
+    """Return special weeks for a semester: {vacation_ftp: [38,43,...], company_alt: [36,37,...]}"""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute(
+            'SELECT week_number, week_type FROM semester_special_weeks WHERE semester_id = ? ORDER BY week_type, week_number',
+            (sem_id,)
+        )
+        result = {'vacation_ftp': [], 'company_alt': []}
+        for r in cursor.fetchall():
+            if r['week_type'] in result:
+                result[r['week_type']].append(r['week_number'])
+        db.close()
+        return jsonify(result), 200
+    except Exception as e:
+        return error_response(str(e), 500)
+
+@app.route('/api/semesters/<int:sem_id>/special-weeks', methods=['PUT'])
+def set_special_weeks(sem_id):
+    """Replace all special weeks for a semester.
+    Body: {vacation_ftp: [38, 43], company_alt: [36, 37]}
+    """
+    try:
+        data = request.get_json() or {}
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('DELETE FROM semester_special_weeks WHERE semester_id = ?', (sem_id,))
+        for wtype in ['vacation_ftp', 'company_alt']:
+            for wnum in (data.get(wtype) or []):
+                cursor.execute(
+                    'INSERT OR IGNORE INTO semester_special_weeks (semester_id, week_number, week_type) VALUES (?, ?, ?)',
+                    (sem_id, int(wnum), wtype)
+                )
+        db.commit()
+        db.close()
+        return jsonify({'message': 'Special weeks updated'}), 200
+    except Exception as e:
+        return error_response(str(e), 500)
+
 # ======================= COURSES CRUD =======================
 
 @app.route('/api/courses', methods=['GET'])
 def get_courses():
-    """Get all courses"""
+    """Get all courses with hours and rooms per teaching type"""
     try:
         db = get_db()
         cursor = db.cursor()
         cursor.execute('''
-            SELECT c.*, s.code as semester_code 
-            FROM courses c 
-            JOIN semesters s ON c.semester_id = s.id 
-            ORDER BY c.code
+            SELECT c.id, c.code, c.name, c.semester_id, c.course_type,
+                   c.created_at, c.updated_at,
+                   s.code as semester_code,
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='CM' AND cs.formation_type=0
+                                     THEN cs.total_hours ELSE 0 END), 0) as cm_hours,
+                   MAX(CASE WHEN cs.teaching_type='CM' AND cs.formation_type=0
+                            THEN cs.slot_duration END) as cm_slot_duration,
+                   MAX(CASE WHEN cs.teaching_type='CM' AND cs.formation_type=0
+                            THEN cs.room_name END) as cm_room,
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='TD' AND cs.formation_type=0
+                                     THEN cs.total_hours ELSE 0 END), 0) as td_hours,
+                   MAX(CASE WHEN cs.teaching_type='TD' AND cs.formation_type=0
+                            THEN cs.slot_duration END) as td_slot_duration,
+                   MAX(CASE WHEN cs.teaching_type='TD' AND cs.formation_type=0
+                            THEN cs.room_name END) as td_room,
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=0
+                                     THEN cs.total_hours ELSE 0 END), 0) as tp_hours,
+                   MAX(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=0
+                            THEN cs.slot_duration END) as tp_slot_duration,
+                   MAX(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=0
+                            THEN cs.room_name END) as tp_room,
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=0
+                                     THEN cs.total_hours ELSE 0 END), 0) as pt_hours,
+                   MAX(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=0
+                            THEN cs.slot_duration END) as pt_slot_duration,
+                   MAX(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=0
+                            THEN cs.room_name END) as pt_room,
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='CM' AND cs.formation_type=1
+                                     THEN cs.total_hours ELSE 0 END), 0) as alt_cm_hours,
+                   MAX(CASE WHEN cs.teaching_type='CM' AND cs.formation_type=1
+                            THEN cs.slot_duration END) as alt_cm_slot_duration,
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='TD' AND cs.formation_type=1
+                                     THEN cs.total_hours ELSE 0 END), 0) as alt_td_hours,
+                   MAX(CASE WHEN cs.teaching_type='TD' AND cs.formation_type=1
+                            THEN cs.slot_duration END) as alt_td_slot_duration,
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=1
+                                     THEN cs.total_hours ELSE 0 END), 0) as alt_tp_hours,
+                   MAX(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=1
+                            THEN cs.slot_duration END) as alt_tp_slot_duration,
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=1
+                                     THEN cs.total_hours ELSE 0 END), 0) as alt_pt_hours,
+                   MAX(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=1
+                            THEN cs.slot_duration END) as alt_pt_slot_duration,
+                   COUNT(DISTINCT cs.id) as session_count
+            FROM courses c
+            JOIN semesters s ON c.semester_id = s.id
+            LEFT JOIN course_sessions cs ON cs.course_id = c.id
+            GROUP BY c.id, c.code, c.name, c.semester_id, c.course_type,
+                     c.created_at, c.updated_at, s.code
+            ORDER BY s.code, c.code
         ''')
         courses = rows_to_list(cursor.fetchall())
         db.close()
@@ -513,21 +615,20 @@ def get_courses():
 
 @app.route('/api/courses', methods=['POST'])
 def create_course():
-    """Create a new course"""
+    """Create a new course with optional teaching hours per type"""
     try:
         data = request.get_json()
-        if not data or not data.get('code') or not data.get('name') or not data.get('semester_id') or not data.get('course_type'):
-            return error_response('Course code, name, semester_id, and course_type are required')
-        
+        if not data or not data.get('code') or not data.get('name') or not data.get('semester_id'):
+            return error_response('code, name and semester_id are required')
+
         db = get_db()
         cursor = db.cursor()
-        
-        # Check if semester exists
+
         cursor.execute('SELECT * FROM semesters WHERE id = ?', (data['semester_id'],))
         if not cursor.fetchone():
             db.close()
             return error_response('Semester not found', 404)
-        
+
         cursor.execute('''
             INSERT INTO courses (code, name, semester_id, course_type)
             VALUES (?, ?, ?, ?)
@@ -535,19 +636,34 @@ def create_course():
             data['code'],
             data['name'],
             data['semester_id'],
-            data['course_type']
+            data.get('course_type', 'Ressource')
         ))
         db.commit()
         course_id = cursor.lastrowid
+
+        # Insert teaching hours per type (formation_type=0 = définition globale)
+        for ttype in ['CM', 'TD', 'TP', 'PT']:
+            info = (data.get('types') or {}).get(ttype, {})
+            hours = float(info.get('hours') or 0)
+            room = (info.get('room') or '').strip() or None
+            if hours > 0:
+                cursor.execute('''
+                    INSERT INTO course_sessions
+                        (course_id, formation_type, teaching_type, total_hours, room_name, nb_sessions)
+                    VALUES (?, 0, ?, ?, ?, 0)
+                ''', (course_id, ttype, hours, room))
+        db.commit()
+
         cursor.execute('''
-            SELECT c.*, s.code as semester_code 
-            FROM courses c 
-            JOIN semesters s ON c.semester_id = s.id 
+            SELECT c.*, s.code as semester_code
+            FROM courses c JOIN semesters s ON c.semester_id = s.id
             WHERE c.id = ?
         ''', (course_id,))
         course = row_to_dict(cursor.fetchone())
         db.close()
         return jsonify(course), 201
+    except sqlite3.IntegrityError:
+        return error_response('Un cours avec ce code existe déjà pour ce semestre')
     except Exception as e:
         return error_response(f'Error creating course: {str(e)}', 500)
 
@@ -618,23 +734,180 @@ def update_course(course_id):
 
 @app.route('/api/courses/<int:course_id>', methods=['DELETE'])
 def delete_course(course_id):
-    """Delete a course"""
+    """Delete a course (cascade deletes its sessions)"""
     try:
         db = get_db()
         cursor = db.cursor()
-        
-        # Check if course exists
         cursor.execute('SELECT * FROM courses WHERE id = ?', (course_id,))
         if not cursor.fetchone():
             db.close()
             return error_response('Course not found', 404)
-        
         cursor.execute('DELETE FROM courses WHERE id = ?', (course_id,))
         db.commit()
         db.close()
         return jsonify({'message': 'Course deleted'}), 200
     except Exception as e:
         return error_response(f'Error deleting course: {str(e)}', 500)
+
+@app.route('/api/courses/<int:course_id>/teaching-hours', methods=['GET'])
+def get_course_teaching_hours(course_id):
+    """Get hours, slot_duration and room per teaching type.
+    Query param: formation_type (0=FTP default, 1=ALT)
+    """
+    try:
+        formation_type = int(request.args.get('formation_type', 0))
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('SELECT id FROM courses WHERE id = ?', (course_id,))
+        if not cursor.fetchone():
+            db.close()
+            return error_response('Course not found', 404)
+        cursor.execute('''
+            SELECT teaching_type, total_hours, slot_duration, room_name
+            FROM course_sessions
+            WHERE course_id = ? AND formation_type = ?
+        ''', (course_id, formation_type))
+        rows = cursor.fetchall()
+        db.close()
+        result = {t: {'hours': 0, 'slot_duration': 1.5, 'room': ''} for t in ['CM', 'TD', 'TP', 'PT']}
+        for r in rows:
+            t = r['teaching_type']
+            if t in result:
+                result[t] = {
+                    'hours': r['total_hours'] or 0,
+                    'slot_duration': r['slot_duration'] or 1.5,
+                    'room': r['room_name'] or ''
+                }
+        return jsonify(result), 200
+    except Exception as e:
+        return error_response(str(e), 500)
+
+@app.route('/api/courses/<int:course_id>/teaching-hours', methods=['PUT'])
+def update_course_teaching_hours(course_id):
+    """Upsert hours, slot_duration and room per teaching type.
+    Query param: formation_type (0=FTP default, 1=ALT)
+    Body: {"CM": {"hours": 10, "slot_duration": 1.5, "room": "Amphi A"}, ...}
+    """
+    try:
+        formation_type = int(request.args.get('formation_type', 0))
+        data = request.get_json()
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('SELECT id FROM courses WHERE id = ?', (course_id,))
+        if not cursor.fetchone():
+            db.close()
+            return error_response('Course not found', 404)
+
+        for ttype in ['CM', 'TD', 'TP', 'PT']:
+            info = (data or {}).get(ttype, {})
+            hours = float(info.get('hours') or 0)
+            slot_dur = float(info.get('slot_duration') or 1.5)
+            room = (info.get('room') or '').strip() or None
+            nb = round(hours / slot_dur) if slot_dur > 0 and hours > 0 else 0
+
+            cursor.execute('''
+                SELECT id FROM course_sessions
+                WHERE course_id = ? AND teaching_type = ? AND formation_type = ?
+            ''', (course_id, ttype, formation_type))
+            existing = cursor.fetchone()
+
+            if hours > 0:
+                if existing:
+                    cursor.execute('''
+                        UPDATE course_sessions
+                        SET total_hours = ?, slot_duration = ?, nb_sessions = ?,
+                            room_name = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                    ''', (hours, slot_dur, nb, room, existing['id']))
+                else:
+                    cursor.execute('''
+                        INSERT INTO course_sessions
+                            (course_id, formation_type, teaching_type,
+                             total_hours, slot_duration, nb_sessions, room_name)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', (course_id, formation_type, ttype, hours, slot_dur, nb, room))
+            else:
+                if existing:
+                    cursor.execute('DELETE FROM course_sessions WHERE id = ?', (existing['id'],))
+
+        db.commit()
+        db.close()
+        return jsonify({'message': 'Teaching hours updated'}), 200
+    except Exception as e:
+        return error_response(str(e), 500)
+
+@app.route('/api/courses/<int:course_id>/weekly-distribution', methods=['GET'])
+def get_weekly_distribution(course_id):
+    """Get weekly hours distribution by teaching type.
+    Query param: formation_type (0=FTP default, 1=ALT)
+    Returns: {CM: {36: 1.5, 37: 1.5}, TD: {...}, TP: {}, PT: {}}
+    """
+    try:
+        formation_type = int(request.args.get('formation_type', 0))
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('SELECT id FROM courses WHERE id = ?', (course_id,))
+        if not cursor.fetchone():
+            db.close()
+            return error_response('Course not found', 404)
+        cursor.execute('''
+            SELECT cs.teaching_type, wh.week_number, wh.hours
+            FROM course_sessions cs
+            JOIN weekly_hours wh ON wh.course_session_id = cs.id
+            WHERE cs.course_id = ? AND cs.formation_type = ?
+            ORDER BY cs.teaching_type, wh.week_number
+        ''', (course_id, formation_type))
+        rows = cursor.fetchall()
+        db.close()
+        result = {t: {} for t in ['CM', 'TD', 'TP', 'PT']}
+        for r in rows:
+            t = r['teaching_type']
+            if t in result:
+                result[t][r['week_number']] = r['hours']
+        return jsonify(result), 200
+    except Exception as e:
+        return error_response(str(e), 500)
+
+@app.route('/api/courses/<int:course_id>/weekly-distribution', methods=['PUT'])
+def update_weekly_distribution(course_id):
+    """Save weekly hours per teaching type.
+    Query param: formation_type (0=FTP default, 1=ALT)
+    Body: {CM: {"36": 1.5, "37": 1.5}, TD: {"36": 2}, ...}
+    """
+    try:
+        formation_type = int(request.args.get('formation_type', 0))
+        data = request.get_json() or {}
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('SELECT id FROM courses WHERE id = ?', (course_id,))
+        if not cursor.fetchone():
+            db.close()
+            return error_response('Course not found', 404)
+
+        for ttype in ['CM', 'TD', 'TP', 'PT']:
+            week_data = data.get(ttype, {})
+            cursor.execute('''
+                SELECT id FROM course_sessions
+                WHERE course_id = ? AND teaching_type = ? AND formation_type = ?
+            ''', (course_id, ttype, formation_type))
+            session = cursor.fetchone()
+            if not session:
+                continue
+            session_id = session['id']
+            cursor.execute('DELETE FROM weekly_hours WHERE course_session_id = ?', (session_id,))
+            for week_str, hours in week_data.items():
+                h = float(hours or 0)
+                if h > 0:
+                    cursor.execute('''
+                        INSERT INTO weekly_hours (course_session_id, week_number, hours)
+                        VALUES (?, ?, ?)
+                    ''', (session_id, int(week_str), h))
+
+        db.commit()
+        db.close()
+        return jsonify({'message': 'Weekly distribution updated'}), 200
+    except Exception as e:
+        return error_response(str(e), 500)
 
 # ======================= COURSE SESSIONS CRUD =======================
 
@@ -1384,6 +1657,123 @@ def import_excel():
         }), 501
     except Exception as e:
         return error_response(f'Error importing file: {str(e)}', 500)
+
+# ======================= REPARTITION HEBDOMADAIRE =======================
+
+@app.route('/api/repartition', methods=['GET'])
+def get_repartition():
+    """Tableau pivot : pour un semestre donné, heures par cours et par semaine"""
+    semester_code = request.args.get('semester', '')
+    try:
+        db = get_db()
+        cursor = db.cursor()
+
+        special_weeks = {'vacation_ftp': [], 'company_alt': []}
+
+        if semester_code:
+            # Utiliser la plage complète start_week→end_week du semestre
+            cursor.execute('SELECT id, start_week, end_week FROM semesters WHERE code = ?', (semester_code,))
+            sem_row = cursor.fetchone()
+            if sem_row and sem_row['start_week'] and sem_row['end_week']:
+                sw, ew = sem_row['start_week'], sem_row['end_week']
+                if sw <= ew:
+                    weeks = list(range(sw, ew + 1))
+                else:
+                    weeks = list(range(sw, 53)) + list(range(1, ew + 1))
+                # Semaines spéciales
+                cursor.execute(
+                    'SELECT week_number, week_type FROM semester_special_weeks WHERE semester_id = ? ORDER BY week_type, week_number',
+                    (sem_row['id'],)
+                )
+                for r in cursor.fetchall():
+                    if r['week_type'] in special_weeks:
+                        special_weeks[r['week_type']].append(r['week_number'])
+            else:
+                # Fallback : semaines avec données seulement
+                cursor.execute('''
+                    SELECT DISTINCT wh.week_number
+                    FROM weekly_hours wh
+                    JOIN course_sessions cs ON wh.course_session_id = cs.id
+                    JOIN courses c ON cs.course_id = c.id
+                    JOIN semesters s ON c.semester_id = s.id
+                    WHERE s.code = ? AND wh.hours > 0
+                    ORDER BY wh.week_number
+                ''', (semester_code,))
+                weeks = [r['week_number'] for r in cursor.fetchall()]
+        else:
+            cursor.execute('''
+                SELECT DISTINCT wh.week_number
+                FROM weekly_hours wh
+                WHERE wh.hours > 0
+                ORDER BY wh.week_number
+            ''')
+            weeks = [r['week_number'] for r in cursor.fetchall()]
+
+        # Lignes de données avec heures hebdomadaires
+        if semester_code:
+            cursor.execute('''
+                SELECT cs.id AS session_id,
+                       c.code AS course_code, c.name AS course_name,
+                       s.code AS semester_code,
+                       cs.teaching_type, cs.formation_type,
+                       cs.total_hours, cs.nb_sessions,
+                       t.name AS teacher_name,
+                       wh.week_number, wh.semester_week, wh.hours
+                FROM course_sessions cs
+                JOIN courses c ON cs.course_id = c.id
+                JOIN semesters s ON c.semester_id = s.id
+                LEFT JOIN teachers t ON cs.teacher_id = t.id
+                LEFT JOIN weekly_hours wh ON wh.course_session_id = cs.id
+                WHERE s.code = ?
+                ORDER BY c.code, cs.teaching_type, cs.formation_type, wh.week_number
+            ''', (semester_code,))
+        else:
+            cursor.execute('''
+                SELECT cs.id AS session_id,
+                       c.code AS course_code, c.name AS course_name,
+                       s.code AS semester_code,
+                       cs.teaching_type, cs.formation_type,
+                       cs.total_hours, cs.nb_sessions,
+                       t.name AS teacher_name,
+                       wh.week_number, wh.semester_week, wh.hours
+                FROM course_sessions cs
+                JOIN courses c ON cs.course_id = c.id
+                JOIN semesters s ON c.semester_id = s.id
+                LEFT JOIN teachers t ON cs.teacher_id = t.id
+                LEFT JOIN weekly_hours wh ON wh.course_session_id = cs.id
+                ORDER BY s.code, c.code, cs.teaching_type, cs.formation_type, wh.week_number
+            ''')
+        raw = cursor.fetchall()
+        db.close()
+
+        # Pivot : regrouper par session
+        sessions = {}
+        order = []
+        for r in raw:
+            sid = r['session_id']
+            if sid not in sessions:
+                sessions[sid] = {
+                    'course_code': r['course_code'] or '',
+                    'course_name': r['course_name'] or '',
+                    'semester': r['semester_code'] or '',
+                    'type': r['teaching_type'] or '',
+                    'formation': {0: 'FTP', 1: 'ALT', 2: 'MUT', 3: 'OTHER'}.get(r['formation_type'], str(r['formation_type'] or '')),
+                    'total_hours': r['total_hours'] or 0,
+                    'nb_sessions': r['nb_sessions'] or 0,
+                    'teacher': r['teacher_name'] or '',
+                    'by_week': {},
+                }
+                order.append(sid)
+            if r['week_number'] is not None and (r['hours'] or 0) > 0:
+                sessions[sid]['by_week'][r['week_number']] = r['hours'] or 0
+
+        return jsonify({
+            'weeks': weeks,
+            'rows': [sessions[sid] for sid in order],
+            'special_weeks': special_weeks,
+        }), 200
+    except Exception as e:
+        return error_response(f'Error fetching repartition: {str(e)}', 500)
 
 # ======================= ERROR HANDLERS =======================
 
