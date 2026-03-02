@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS courses (
     name TEXT NOT NULL,
     semester_id INTEGER NOT NULL,
     course_type TEXT NOT NULL,
+    start_week INTEGER,
+    end_week INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (semester_id) REFERENCES semesters(id) ON DELETE CASCADE

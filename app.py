@@ -49,6 +49,25 @@ def init_db():
             UNIQUE(semester_id, week_number, week_type)
         )
     ''')
+    # Migration : add start_week/end_week to courses table
+    try:
+        db.execute('ALTER TABLE courses ADD COLUMN start_week INTEGER')
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    try:
+        db.execute('ALTER TABLE courses ADD COLUMN end_week INTEGER')
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    # Seed default semesters (S1–S6) if none exist
+    cursor = db.execute('SELECT COUNT(*) as cnt FROM semesters')
+    if cursor.fetchone()['cnt'] == 0:
+        for code, yg, name in [
+            ('S1', 1, 'Semestre 1'), ('S2', 1, 'Semestre 2'),
+            ('S3', 2, 'Semestre 3'), ('S4', 2, 'Semestre 4'),
+            ('S5', 3, 'Semestre 5'), ('S6', 3, 'Semestre 6'),
+        ]:
+            db.execute('INSERT OR IGNORE INTO semesters (code, year_group, name) VALUES (?, ?, ?)',
+                       (code, yg, name))
     db.commit()
     db.close()
 
@@ -557,6 +576,7 @@ def get_courses():
         cursor = db.cursor()
         cursor.execute('''
             SELECT c.id, c.code, c.name, c.semester_id, c.course_type,
+                   c.start_week, c.end_week,
                    c.created_at, c.updated_at,
                    s.code as semester_code,
                    COALESCE(SUM(CASE WHEN cs.teaching_type='CM' AND cs.formation_type=0
@@ -604,6 +624,7 @@ def get_courses():
             JOIN semesters s ON c.semester_id = s.id
             LEFT JOIN course_sessions cs ON cs.course_id = c.id
             GROUP BY c.id, c.code, c.name, c.semester_id, c.course_type,
+                     c.start_week, c.end_week,
                      c.created_at, c.updated_at, s.code
             ORDER BY s.code, c.code
         ''')
@@ -630,13 +651,15 @@ def create_course():
             return error_response('Semester not found', 404)
 
         cursor.execute('''
-            INSERT INTO courses (code, name, semester_id, course_type)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO courses (code, name, semester_id, course_type, start_week, end_week)
+            VALUES (?, ?, ?, ?, ?, ?)
         ''', (
             data['code'],
             data['name'],
             data['semester_id'],
-            data.get('course_type', 'Ressource')
+            data.get('course_type', 'Ressource'),
+            data.get('start_week'),
+            data.get('end_week'),
         ))
         db.commit()
         course_id = cursor.lastrowid
@@ -706,7 +729,7 @@ def update_course(course_id):
         # Update fields
         update_fields = []
         values = []
-        for field in ['code', 'name', 'semester_id', 'course_type']:
+        for field in ['code', 'name', 'semester_id', 'course_type', 'start_week', 'end_week']:
             if field in data:
                 update_fields.append(f'{field} = ?')
                 values.append(data[field])
@@ -1671,23 +1694,22 @@ def get_repartition():
         special_weeks = {'vacation_ftp': [], 'company_alt': []}
 
         if semester_code:
-            # Utiliser la plage complète start_week→end_week du semestre
-            cursor.execute('SELECT id, start_week, end_week FROM semesters WHERE code = ?', (semester_code,))
-            sem_row = cursor.fetchone()
-            if sem_row and sem_row['start_week'] and sem_row['end_week']:
-                sw, ew = sem_row['start_week'], sem_row['end_week']
+            # Build week range from course-level start_week/end_week
+            cursor.execute('''
+                SELECT c.start_week, c.end_week FROM courses c
+                JOIN semesters s ON c.semester_id = s.id
+                WHERE s.code = ? AND c.start_week IS NOT NULL AND c.end_week IS NOT NULL
+            ''', (semester_code,))
+            all_weeks = set()
+            for row in cursor.fetchall():
+                sw, ew = row['start_week'], row['end_week']
                 if sw <= ew:
-                    weeks = list(range(sw, ew + 1))
+                    all_weeks.update(range(sw, ew + 1))
                 else:
-                    weeks = list(range(sw, 53)) + list(range(1, ew + 1))
-                # Semaines spéciales
-                cursor.execute(
-                    'SELECT week_number, week_type FROM semester_special_weeks WHERE semester_id = ? ORDER BY week_type, week_number',
-                    (sem_row['id'],)
-                )
-                for r in cursor.fetchall():
-                    if r['week_type'] in special_weeks:
-                        special_weeks[r['week_type']].append(r['week_number'])
+                    all_weeks.update(range(sw, 53))
+                    all_weeks.update(range(1, ew + 1))
+            if all_weeks:
+                weeks = sorted(all_weeks)
             else:
                 # Fallback : semaines avec données seulement
                 cursor.execute('''
@@ -1700,6 +1722,17 @@ def get_repartition():
                     ORDER BY wh.week_number
                 ''', (semester_code,))
                 weeks = [r['week_number'] for r in cursor.fetchall()]
+            # Semaines spéciales
+            cursor.execute('SELECT id FROM semesters WHERE code = ?', (semester_code,))
+            sem_row = cursor.fetchone()
+            if sem_row:
+                cursor.execute(
+                    'SELECT week_number, week_type FROM semester_special_weeks WHERE semester_id = ? ORDER BY week_type, week_number',
+                    (sem_row['id'],)
+                )
+                for r in cursor.fetchall():
+                    if r['week_type'] in special_weeks:
+                        special_weeks[r['week_type']].append(r['week_number'])
         else:
             cursor.execute('''
                 SELECT DISTINCT wh.week_number

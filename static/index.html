@@ -127,12 +127,6 @@
         .tab-btn.tab-ftp.active { color: #0369a1; }
         .tab-btn.tab-alt.active { color: #c2410c; }
 
-        /* Chips semaines spéciales (modal semestre) */
-        .week-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-        .week-chip { padding: 3px 8px; border-radius: 4px; font-size: .78rem; font-weight: 600; cursor: pointer; border: 1px solid #d1d5db; background: #f9fafb; color: #374151; user-select: none; }
-        .week-chip.on-vacation { background: #dbeafe; border-color: #93c5fd; color: #1e40af; }
-        .week-chip.on-company  { background: #ffedd5; border-color: #fdba74; color: #9a3412; }
-
         /* Badge formation */
         .badge-ftp { background: #dbeafe; color: #1e40af; }
         .badge-alt { background: #ffedd5; color: #9a3412; }
@@ -144,7 +138,6 @@
     <strong>EDT Manager</strong>
     <button onclick="showPage('dashboard')" class="active" id="nav-dashboard">Tableau de bord</button>
     <button onclick="showPage('enseignants')" id="nav-enseignants">Enseignants</button>
-    <button onclick="showPage('semestres')" id="nav-semestres">Semestres</button>
     <button onclick="showPage('matieres')" id="nav-matieres">Matières</button>
     <button onclick="showPage('salles')" id="nav-salles">Salles</button>
     <button onclick="showPage('sessions')" id="nav-sessions">Sessions</button>
@@ -171,15 +164,6 @@
         <div class="link-card" onclick="showPage('service')"><h3>Service enseignants</h3><p>Consulter les HETD</p></div>
         <div class="link-card" onclick="showPage('repartition')"><h3>Répartition semaines</h3><p>Vue hebdomadaire par semestre</p></div>
     </div>
-</div>
-
-<!-- ===== SEMESTRES ===== -->
-<div class="page" id="page-semestres">
-    <div class="toolbar">
-        <h1>Semestres</h1>
-        <button class="btn btn-primary" onclick="openSemesterModal()">+ Ajouter</button>
-    </div>
-    <div id="semesters-table"><div class="spinner">Chargement…</div></div>
 </div>
 
 <!-- ===== ENSEIGNANTS ===== -->
@@ -321,6 +305,18 @@
                     <option value="">— Choisir —</option>
                 </select>
             </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div class="form-group">
+                    <label>Semaine de début</label>
+                    <input type="number" id="course-start-week" min="1" max="53" placeholder="ex : 36">
+                    <small style="color:#6b7280">Numéro ISO (1–53)</small>
+                </div>
+                <div class="form-group">
+                    <label>Semaine de fin</label>
+                    <input type="number" id="course-end-week" min="1" max="53" placeholder="ex : 51">
+                    <small style="color:#6b7280">Numéro ISO (1–53)</small>
+                </div>
+            </div>
 
             <div class="section-title">Volume horaire, durée de séance et salle</div>
             <div class="tab-bar">
@@ -392,66 +388,6 @@
     </div>
 </div>
 
-<!-- ===== MODAL SEMESTRE ===== -->
-<div class="modal-backdrop" id="modal-semester">
-    <div class="modal" style="max-width:500px">
-        <h2 id="modal-semester-title">Ajouter un semestre</h2>
-        <form onsubmit="submitSemester(event)">
-            <input type="hidden" id="semester-id">
-            <div class="form-group">
-                <label>Code *</label>
-                <input id="semester-code" required placeholder="ex : S1, S3, S5">
-            </div>
-            <div class="form-group">
-                <label>Année *</label>
-                <select id="semester-year-group" required>
-                    <option value="">— Choisir —</option>
-                    <option value="1">BUT1 (1re année)</option>
-                    <option value="2">BUT2 (2e année)</option>
-                    <option value="3">BUT3 (3e année)</option>
-                </select>
-                <small style="color:#6b7280">Utilisé pour la détection des conflits d'emploi du temps</small>
-            </div>
-            <div class="form-group">
-                <label>Intitulé</label>
-                <input id="semester-name" placeholder="ex : Semestre 1 GIM">
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-                <div class="form-group">
-                    <label>Semaine de début</label>
-                    <input type="number" id="semester-start-week" min="1" max="53" placeholder="ex : 36"
-                           oninput="buildSpecialWeekChips()">
-                    <small style="color:#6b7280">Numéro ISO (1–53)</small>
-                </div>
-                <div class="form-group">
-                    <label>Semaine de fin</label>
-                    <input type="number" id="semester-end-week" min="1" max="53" placeholder="ex : 51"
-                           oninput="buildSpecialWeekChips()">
-                    <small style="color:#6b7280">Numéro ISO (1–53)</small>
-                </div>
-            </div>
-            <div id="semester-special-section" style="display:none;margin-top:6px">
-                <div class="section-title">Semaines spéciales</div>
-                <div class="form-group">
-                    <label>Vacances <span class="badge badge-ftp" style="font-size:.72rem">FTP</span>
-                        <small style="font-weight:400;color:#6b7280"> — cliquer pour (dé)sélectionner</small>
-                    </label>
-                    <div id="chips-vacation-ftp" class="week-chips"></div>
-                </div>
-                <div class="form-group">
-                    <label>Entreprise <span class="badge badge-alt" style="font-size:.72rem">ALT</span></label>
-                    <div id="chips-company-alt" class="week-chips"></div>
-                </div>
-            </div>
-            <div id="semester-modal-error" style="display:none;color:#dc2626;font-size:.82rem;margin-top:6px"></div>
-            <div class="form-actions">
-                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-semester')">Annuler</button>
-                <button type="submit" class="btn btn-primary">Enregistrer</button>
-            </div>
-        </form>
-    </div>
-</div>
-
 <!-- ===== MODAL RÉPARTITION HEBDOMADAIRE ===== -->
 <div class="modal-backdrop" id="modal-weekly">
     <div class="modal modal-wide" style="max-width:98vw;width:98vw">
@@ -506,7 +442,6 @@ async function loadPage(name) {
     try {
         if (name === 'dashboard') await loadDashboard();
         else if (name === 'enseignants') { state.teachers = await api('/teachers'); renderTeachers(); }
-        else if (name === 'semestres') { state.semesters = await api('/semesters'); renderSemesters(); }
         else if (name === 'matieres') {
             [state.courses, state.semesters] = await Promise.all([api('/courses'), api('/semesters')]);
             renderCourses();
@@ -613,7 +548,7 @@ function renderCourses() {
 
     el.innerHTML = `<div class="overflow-x"><table>
         <thead><tr>
-            <th>Code</th><th>Intitulé</th><th>Sem.</th><th>Type</th>
+            <th>Code</th><th>Intitulé</th><th>Sem.</th><th>Semaines</th><th>Type</th>
             <th style="text-align:center">CM</th>
             <th style="text-align:center">TD</th>
             <th style="text-align:center">TP</th>
@@ -624,6 +559,7 @@ function renderCourses() {
             <td><strong>${esc(c.code||'')}</strong></td>
             <td>${esc(c.name||'')}</td>
             <td>${esc(c.semester_code||'')}</td>
+            <td style="text-align:center;white-space:nowrap">${c.start_week && c.end_week ? c.start_week + ' → ' + c.end_week : '<span style="color:#9ca3af">—</span>'}</td>
             <td><span class="badge badge-${(c.course_type||'ressource').toLowerCase().slice(0,3)}">${esc(c.course_type||'')}</span></td>
             ${hCell(c.cm_hours, c.cm_room)}
             ${hCell(c.td_hours, c.td_room)}
@@ -636,169 +572,6 @@ function renderCourses() {
             </td>
         </tr>`).join('')}</tbody>
     </table></div>`;
-}
-
-// ===== SEMESTRES =====
-const YG_LABEL = { 1: 'BUT1', 2: 'BUT2', 3: 'BUT3' };
-
-function renderSemesters() {
-    const el = document.getElementById('semesters-table');
-    if (!state.semesters.length) {
-        el.innerHTML = '<div class="empty">Aucun semestre — cliquez sur « + Ajouter »</div>';
-        return;
-    }
-    el.innerHTML = `<table>
-        <thead><tr>
-            <th>Code</th><th>Année</th><th>Intitulé</th>
-            <th style="text-align:center">Sem. début</th>
-            <th style="text-align:center">Sem. fin</th>
-            <th style="text-align:center">Nb semaines</th>
-            <th>Actions</th>
-        </tr></thead>
-        <tbody>
-        ${state.semesters.map(s => {
-            const nb = (s.start_week && s.end_week)
-                ? (s.end_week >= s.start_week
-                    ? s.end_week - s.start_week + 1
-                    : 52 - s.start_week + s.end_week + 1)   // chevauchement année civile
-                : '—';
-            const weekInfo = s.start_week
-                ? `<td style="text-align:center">${s.start_week}</td><td style="text-align:center">${s.end_week}</td><td style="text-align:center">${nb}</td>`
-                : `<td colspan="3" style="text-align:center;color:#f59e0b">⚠ Non configuré</td>`;
-            return `<tr>
-                <td><strong>${esc(s.code)}</strong></td>
-                <td>${esc(YG_LABEL[s.year_group] || s.year_group || '—')}</td>
-                <td>${esc(s.name||'')}</td>
-                ${weekInfo}
-                <td style="white-space:nowrap">
-                    <button class="btn btn-secondary btn-sm" onclick="openSemesterModal(${s.id})">Éditer</button>
-                    <button class="btn btn-danger btn-sm" onclick="deleteSemester(${s.id})">Supprimer</button>
-                </td>
-            </tr>`;
-        }).join('')}
-        </tbody>
-    </table>`;
-}
-
-// State semaines spéciales (édition en cours)
-let _specialWeeks = { vacation_ftp: [], company_alt: [] };
-
-function openSemesterModal(id = null) {
-    document.getElementById('modal-semester-title').textContent = id ? 'Modifier le semestre' : 'Ajouter un semestre';
-    document.getElementById('semester-id').value = id || '';
-    document.getElementById('semester-code').value = '';
-    document.getElementById('semester-year-group').value = '';
-    document.getElementById('semester-name').value = '';
-    document.getElementById('semester-start-week').value = '';
-    document.getElementById('semester-end-week').value = '';
-    document.getElementById('semester-modal-error').style.display = 'none';
-    _specialWeeks = { vacation_ftp: [], company_alt: [] };
-
-    if (id) {
-        const s = state.semesters.find(x => x.id === id);
-        if (s) {
-            document.getElementById('semester-code').value = s.code || '';
-            document.getElementById('semester-year-group').value = s.year_group || '';
-            document.getElementById('semester-name').value = s.name || '';
-            document.getElementById('semester-start-week').value = s.start_week || '';
-            document.getElementById('semester-end-week').value = s.end_week || '';
-            // Charger les semaines spéciales existantes
-            api('/semesters/' + id + '/special-weeks').then(sw => {
-                _specialWeeks = sw;
-                buildSpecialWeekChips();
-            }).catch(() => {});
-        }
-    }
-    buildSpecialWeekChips();
-    openModal('modal-semester');
-}
-
-function _semWeekRange() {
-    const sw = parseInt(document.getElementById('semester-start-week').value);
-    const ew = parseInt(document.getElementById('semester-end-week').value);
-    if (!sw || !ew) return [];
-    const weeks = [];
-    if (sw <= ew) { for (let w = sw; w <= ew; w++) weeks.push(w); }
-    else { for (let w = sw; w <= 52; w++) weeks.push(w); for (let w = 1; w <= ew; w++) weeks.push(w); }
-    return weeks;
-}
-
-function buildSpecialWeekChips() {
-    const weeks = _semWeekRange();
-    const sec = document.getElementById('semester-special-section');
-    if (!weeks.length) { sec.style.display = 'none'; return; }
-    sec.style.display = '';
-
-    ['vacation_ftp', 'company_alt'].forEach(wtype => {
-        const el = document.getElementById('chips-' + wtype.replace('_', '-'));
-        el.innerHTML = weeks.map(w => {
-            const on = _specialWeeks[wtype].includes(w);
-            return `<span class="week-chip ${on ? 'on-' + wtype.split('_')[0] : ''}"
-                data-w="${w}" data-t="${wtype}" onclick="toggleChip(this)">S${w}</span>`;
-        }).join('');
-    });
-}
-
-function toggleChip(el) {
-    const w = parseInt(el.dataset.w);
-    const t = el.dataset.t;
-    const idx = _specialWeeks[t].indexOf(w);
-    if (idx >= 0) {
-        _specialWeeks[t].splice(idx, 1);
-        el.className = 'week-chip';
-    } else {
-        _specialWeeks[t].push(w);
-        el.className = 'week-chip on-' + t.split('_')[0];
-    }
-}
-
-async function submitSemester(e) {
-    e.preventDefault();
-    const id = document.getElementById('semester-id').value;
-    const start = parseInt(document.getElementById('semester-start-week').value) || null;
-    const end   = parseInt(document.getElementById('semester-end-week').value) || null;
-    const errEl = document.getElementById('semester-modal-error');
-    errEl.style.display = 'none';
-
-    // Pas de validation fin >= début : un semestre peut chevaucher l'année civile (ex. S36 → S3)
-
-    const data = {
-        code:       document.getElementById('semester-code').value.trim(),
-        year_group: document.getElementById('semester-year-group').value.trim(),
-        name:       document.getElementById('semester-name').value.trim() || null,
-        start_week: start,
-        end_week:   end,
-    };
-
-    try {
-        let semId = id;
-        if (id) {
-            await api('/semesters/' + id, { method: 'PUT', body: JSON.stringify(data) });
-        } else {
-            const res = await api('/semesters', { method: 'POST', body: JSON.stringify(data) });
-            semId = res.id;
-        }
-        // Sauvegarder les semaines spéciales
-        if (semId) {
-            await api('/semesters/' + semId + '/special-weeks', {
-                method: 'PUT', body: JSON.stringify(_specialWeeks)
-            });
-        }
-        closeModal('modal-semester');
-        state.semesters = await api('/semesters');
-        renderSemesters();
-        toast(id ? 'Semestre modifié' : 'Semestre ajouté');
-    } catch(err) { toast('Erreur : ' + err.message, 'error'); }
-}
-
-async function deleteSemester(id) {
-    if (!confirm('Supprimer ce semestre ? Les matières associées perdront leur affectation.')) return;
-    try {
-        await api('/semesters/' + id, { method: 'DELETE' });
-        state.semesters = await api('/semesters');
-        renderSemesters();
-        toast('Semestre supprimé');
-    } catch(err) { toast('Erreur : ' + err.message, 'error'); }
 }
 
 // ===== MATIERES — helpers =====
@@ -828,7 +601,7 @@ async function openCourseModal(id = null) {
     document.getElementById('course-semester').innerHTML =
         '<option value="">— Choisir —</option>' +
         state.semesters.map(s =>
-            `<option value="${s.id}">${esc(s.code)}${s.name ? ' — '+esc(s.name) : ''}${s.start_week ? ` (sem.${s.start_week}→${s.end_week})` : ''}</option>`
+            `<option value="${s.id}">${esc(s.code)}${s.name ? ' — '+esc(s.name) : ''}</option>`
         ).join('');
 
     document.getElementById('modal-course-title').textContent = id ? 'Modifier la matière' : 'Ajouter une matière';
@@ -844,6 +617,8 @@ async function openCourseModal(id = null) {
     document.getElementById('course-name').value = '';
     document.getElementById('course-type').value = 'Ressource';
     document.getElementById('course-semester').value = '';
+    document.getElementById('course-start-week').value = '';
+    document.getElementById('course-end-week').value = '';
     // Reset FTP tab visible
     document.getElementById('course-hours-ftp').style.display = '';
     document.getElementById('course-hours-alt').style.display = 'none';
@@ -858,6 +633,8 @@ async function openCourseModal(id = null) {
             document.getElementById('course-name').value = c.name || '';
             document.getElementById('course-type').value = c.course_type || 'Ressource';
             document.getElementById('course-semester').value = c.semester_id || '';
+            document.getElementById('course-start-week').value = c.start_week || '';
+            document.getElementById('course-end-week').value = c.end_week || '';
             // Heures FTP
             try {
                 const th = await api('/courses/' + id + '/teaching-hours?formation_type=0');
@@ -909,6 +686,8 @@ async function submitCourse(e) {
         name:        document.getElementById('course-name').value,
         course_type: document.getElementById('course-type').value,
         semester_id: semId,
+        start_week:  parseInt(document.getElementById('course-start-week').value) || null,
+        end_week:    parseInt(document.getElementById('course-end-week').value) || null,
     };
     try {
         let courseId = id;
@@ -949,9 +728,8 @@ let _weeklySpecial = { vacation_ftp: [], company_alt: [] };
 async function openWeeklyModal(courseId) {
     const c = state.courses.find(x => x.id === courseId);
     if (!c) return;
-    const sem = state.semesters.find(s => s.id === c.semester_id);
-    if (!sem || !sem.start_week || !sem.end_week) {
-        toast('Le semestre « ' + (c.semester_code||'') + ' » doit avoir des semaines de début et fin définies.', 'error');
+    if (!c.start_week || !c.end_week) {
+        toast('La matière « ' + (c.code||'') + ' » doit avoir des semaines de début et fin définies.', 'error');
         return;
     }
 
@@ -960,20 +738,24 @@ async function openWeeklyModal(courseId) {
     _weeklySpecial = { vacation_ftp: [], company_alt: [] };
 
     // Charger les semaines spéciales du semestre
-    try { _weeklySpecial = await api('/semesters/' + sem.id + '/special-weeks'); } catch(e) {}
+    const sem = state.semesters.find(s => s.id === c.semester_id);
+    if (sem) {
+        try { _weeklySpecial = await api('/semesters/' + sem.id + '/special-weeks'); } catch(e) {}
+    }
 
     // Activer l'onglet FTP par défaut
     document.querySelectorAll('#weekly-tabs .tab-btn').forEach((b,i) => b.classList.toggle('active', i===0));
 
     document.getElementById('weekly-modal-title').textContent = 'Répartition hebdomadaire';
     document.getElementById('weekly-modal-subtitle').textContent =
-        `${c.code} · ${c.name}  —  ${c.semester_code}  (sem. ${sem.start_week} → ${sem.end_week})`;
+        `${c.code} · ${c.name}  —  ${c.semester_code}  (sem. ${c.start_week} → ${c.end_week})`;
     document.getElementById('weekly-modal-error').style.display = 'none';
     document.getElementById('weekly-modal-body').innerHTML = '<div class="spinner">Chargement…</div>';
     openModal('modal-weekly');
 
     await _loadWeeklyFormation(c, 0);
-    renderWeeklyModalTable(sem);
+    // Pass a sem-like object with course-level start/end weeks
+    renderWeeklyModalTable({ start_week: c.start_week, end_week: c.end_week });
 }
 
 async function _loadWeeklyFormation(c, ft) {
@@ -1001,13 +783,12 @@ async function _loadWeeklyFormation(c, ft) {
 async function switchWeeklyTab(ft, btn) {
     const c = state.courses.find(x => x.id === _weeklyModalCourseId);
     if (!c) return;
-    const sem = state.semesters.find(s => s.id === c.semester_id);
     document.getElementById('weekly-modal-body').innerHTML = '<div class="spinner">Chargement…</div>';
     document.getElementById('weekly-modal-error').style.display = 'none';
     document.querySelectorAll('#weekly-tabs .tab-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     await _loadWeeklyFormation(c, ft);
-    renderWeeklyModalTable(sem);
+    renderWeeklyModalTable({ start_week: c.start_week, end_week: c.end_week });
 }
 
 function renderWeeklyModalTable(sem) {
