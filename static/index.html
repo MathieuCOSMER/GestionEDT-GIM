@@ -98,25 +98,45 @@
         .spinner { text-align: center; padding: 40px; color: #6b7280; }
 
         .overflow-x { overflow-x: auto; }
+        #courses-table { position: relative; width: 100vw; left: 50%; transform: translateX(-50%); }
+        #courses-table table { border-collapse: collapse; width: 100%; font-size: .82rem; }
+        #courses-table td, #courses-table th { padding: 3px 8px; border: 1px solid #e5e7eb; }
+        #courses-table .course-sep td { border-top: 3px solid #6366f1; }
+        #courses-table .form-label { font-size:.72rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; padding:1px 8px; }
+        #courses-table .form-ftp { background:#e0f2fe; color:#0369a1; }
+        #courses-table .form-alt { background:#fff7ed; color:#9a3412; }
+        #courses-table .type-cell { font-size:.75rem; text-align:center; }
 
         /* Répartition pivot table — pleine largeur */
-        #repartition-table { position: relative; width: 100vw; left: 50%; transform: translateX(-50%); }
+        .repartition-layout { display: flex; position: relative; width: 100vw; left: 50%; transform: translateX(-50%); gap: 0; }
+        .repartition-layout #repartition-table { flex: 1; min-width: 0; }
         .repartition-wrap { overflow-x: auto; max-height: 80vh; overflow-y: auto; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
-        .repartition-wrap table { min-width: max-content; border-collapse: collapse; background: #fff; width: 100%; }
-        .repartition-wrap thead th { position: sticky; top: 0; z-index: 2; background: #f9fafb; }
-        .repartition-wrap td.s-col, .repartition-wrap th.s-col { position: sticky; z-index: 1; background: #fff; border-right: 1px solid #e5e7eb; }
+        .repartition-wrap table { border-collapse: collapse; background: #fff; border: 2px solid #374151; font-size: .7rem; width: 100%; }
+        /* Décalage sticky vertical piloté par --htop (posé par JS sur chaque <tr> d'en-tête),
+           ce qui reste correct quel que soit le nombre de lignes récapitulatives. */
+        .repartition-wrap thead th { position: sticky; top: var(--htop, 0); z-index: 2; background: #f9fafb; border-bottom: 1px solid #374151; }
+        .repartition-wrap thead tr.hrow-weeks th { border-bottom: 3px solid #000; box-shadow: inset 0 -3px 0 #000; }
+        .th-promo-ftp { background: #e0f2fe !important; color: #0369a1; font-size: .8rem; font-weight: 700; height: 26px; line-height: 26px; padding: 0 3px; }
+        .th-promo-alt { background: #fff7ed !important; color: #9a3412; font-size: .8rem; font-weight: 700; height: 26px; line-height: 26px; padding: 0 3px; }
+        .th-teacher-total { background: #f3e8ff !important; color: #6b21a8; font-size: .8rem; font-weight: 700; height: 26px; line-height: 26px; padding: 0 3px; }
+        .th-room-total { background: #ccfbf1 !important; color: #0f766e; font-size: .8rem; font-weight: 700; height: 26px; line-height: 26px; padding: 0 3px; }
+        .repartition-wrap td.s-col, .repartition-wrap th.s-col { position: sticky; z-index: 1; background: #fff; border-right: 2px solid #374151; text-align: center; padding: 1px 3px; }
         .repartition-wrap thead th.s-col { background: #f9fafb; z-index: 3; }
-        .cell-hours { text-align: center; font-weight: 600; color: #1e40af; }
-        .cell-empty { text-align: center; color: #d1d5db; font-size: .75rem; }
-        .col-week { text-align: center; min-width: 46px; font-size: .78rem; }
-        .col-total { text-align: center; font-weight: 700; color: #4f46e5; background: #eef2ff !important; border-left: 2px solid #c7d2fe; border-right: 2px solid #c7d2fe; }
+        /* Bordures générales cellules de données */
+        .repartition-wrap td { border-bottom: 1px solid #374151; border-left: 1px solid #374151; }
+        .cell-hours { text-align: center; font-weight: 600; color: #111; padding: 1px 1px; line-height: 1.2; }
+        .cell-empty { text-align: center; color: #bbb; padding: 1px 1px; line-height: 1.2; }
+        .col-week { text-align: center; min-width: 28px; font-size: .75rem; border-left: 1px solid #374151; color: #111; border-bottom: 1px solid #374151; }
+        .repartition-wrap thead tr.hrow-weeks th { height: 24px; }
+        .col-module { text-align: center; font-weight: 600; color: #374151; background: #f3f4f6 !important; border-left: 2px solid #374151; }
+        .col-total { text-align: center; font-weight: 700; color: #4f46e5; background: #eef2ff !important; border-left: 2px solid #374151; border-right: 2px solid #374151; }
         /* Ligne en-tête matière */
-        .row-mat td { background: #eef2ff !important; font-weight: 700; padding: 7px 14px; border-top: 3px solid #4f46e5; font-size: .88rem; }
-        .mat-sem { color: #6b7280; font-weight: 400; font-size: .82rem; }
+        .row-mat td { background: #eef2ff !important; font-weight: 700; padding: 3px 10px; border-top: 2px solid #4f46e5; border-bottom: 1px solid #374151; font-size: .75rem; }
+        .mat-sem { color: #6b7280; font-weight: 400; font-size: .7rem; }
         /* Lignes séparateur formation */
-        .row-form td { font-size: .72rem; font-weight: 700; padding: 2px 14px; letter-spacing: .07em; text-transform: uppercase; }
-        .row-form-ftp td { background: #e0f2fe !important; color: #0369a1; border-top: 1px solid #bae6fd; }
-        .row-form-alt td { background: #fff7ed !important; color: #9a3412; border-top: 1px solid #fed7aa; }
+        .row-form td { font-size: .65rem; font-weight: 700; padding: 1px 10px; letter-spacing: .07em; text-transform: uppercase; border-bottom: 1px solid #374151; }
+        .row-form-ftp td { background: #e0f2fe !important; color: #0369a1; border-top: 1px solid #374151; }
+        .row-form-alt td { background: #fff7ed !important; color: #9a3412; border-top: 1px solid #374151; }
         /* Fond léger par formation */
         .row-data.row-ftp td { background: #f8fbff; }
         .row-data.row-ftp td.s-col { background: #f0f8ff; }
@@ -128,13 +148,31 @@
         .repartition-wrap tr.row-mat:hover td,
         .repartition-wrap tr.row-form:hover td { cursor: default; }
 
-        /* Semaines spéciales dans la répartition */
-        .col-week.w-vacation { background: #f3f4f6 !important; color: #9ca3af; }
-        .col-week.w-company  { background: #fff7ed !important; color: #c2410c; }
-        .col-week.w-both     { background: #fef9c3 !important; color: #92400e; }
-        .cell-hours.w-vacation, .cell-empty.w-vacation { background: #f9fafb; }
-        .cell-hours.w-company,  .cell-empty.w-company  { background: #fff7ed; }
-        .cell-hours.w-both,     .cell-empty.w-both     { background: #fef9c3; }
+        /* Semaines spéciales : coloration uniquement sur les cellules de données (pas les en-têtes) */
+        /* Toutes les semaines spéciales (vacances / stage / entreprise) → orange unique */
+        .cell-hours.w-vacation, .cell-empty.w-vacation,
+        .cell-hours.w-stage,    .cell-empty.w-stage,
+        .cell-hours.w-company,  .cell-empty.w-company,
+        .cell-hours.w-both,     .cell-empty.w-both     { background: #fdba74 !important; }
+
+        /* Page Calendrier spécial */
+        .cal-grid { overflow-x: auto; margin-top: 4px; }
+        /* Carte du calendrier : déborde du conteneur 1200px pour occuper tout l'écran */
+        .cal-card-full { position: relative; width: calc(100vw - 32px); left: 50%; transform: translateX(-50%); box-sizing: border-box; }
+        .cal-grid table { border-collapse: collapse; font-size: .8rem; width: 100%; table-layout: fixed; min-width: 900px; }
+        .cal-grid th { padding: 6px 8px; text-align: center; background: #f9fafb; border: 1px solid #e5e7eb; font-size: .72rem; white-space: nowrap; }
+        .cal-grid th.cal-cat { text-align: left; width: 220px; font-size: .82rem; }
+        .cal-grid td { padding: 3px; border: 1px solid #f3f4f6; text-align: center; }
+        .cal-week { display: flex; align-items: center; justify-content: center; width: 100%; height: 24px; border-radius: 4px; border: 1px solid #e5e7eb; cursor: pointer; font-size: .72rem; color: #9ca3af; transition: all .1s; background: #fafafa; user-select: none; }
+        .cal-week:hover { border-color: #6366f1; color: #4f46e5; background: #eef2ff; }
+        .cal-week.on-vacation { background: #dbeafe; color: #1e40af; border-color: #93c5fd; font-weight: 700; }
+        .cal-week.on-stage    { background: #fef08a; color: #854d0e; border-color: #fde047; font-weight: 700; }
+        .cal-week.on-company  { background: #fed7aa; color: #9a3412; border-color: #fdba74; font-weight: 700; }
+        /* Séparation fin semestre impair / début semestre pair */
+        .cal-grid th.sem-sep, .cal-grid td.sem-sep { border-left: 4px double #374151; }
+        th.sem-sep, td.sem-sep { border-left: 4px double #374151 !important; }
+        .cal-section { font-weight: 700; padding: 10px 8px 4px; font-size: .8rem; color: #374151; border-top: 2px solid #e5e7eb; }
+        .cal-section:first-child { border-top: none; }
 
         /* Onglets FTP / ALT */
         .tab-bar { display: flex; gap: 4px; margin-bottom: 10px; border-bottom: 2px solid #e5e7eb; padding-bottom: 0; }
@@ -146,6 +184,35 @@
         /* Badge formation */
         .badge-ftp { background: #dbeafe; color: #1e40af; }
         .badge-alt { background: #ffedd5; color: #9a3412; }
+        .badge-mut { background: #e9d5ff; color: #6b21a8; }
+        /* Lignes MUT dans la répartition */
+        .row-form-mut td { background: #f3e8ff !important; color: #6b21a8; border-top: 1px solid #374151; }
+        .row-data.row-mut td { background: #faf5ff; }
+        .row-data.row-mut td.s-col { background: #f5f0ff; }
+
+        /* Boutons sélection semestres (répartition) */
+        .sem-toggle { display: inline-flex; gap: 4px; }
+        .sem-btn { padding: 5px 12px; border: 1px solid #c7d2fe; border-radius: 6px; background: #eef2ff; color: #4f46e5; font-weight: 700; font-size: .82rem; cursor: pointer; }
+        .sem-btn:hover { background: #e0e7ff; }
+        .sem-btn.active { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+        /* Édition inline répartition */
+        .repartition-wrap td.cell-hours:hover, .repartition-wrap td.cell-empty:hover { outline: 2px solid #6366f1; outline-offset: -2px; cursor: pointer; }
+        .cell-arrows { display: flex; flex-direction: column; align-items: center; gap: 0; line-height: 1; }
+        .cell-arrows button { background: none; border: none; cursor: pointer; padding: 0; font-size: 10px; line-height: 1; color: #6366f1; width: 20px; height: 10px; display: flex; align-items: center; justify-content: center; }
+        .cell-arrows button:hover { color: #4338ca; background: #eef2ff; border-radius: 2px; }
+        .cell-arrows .cell-val { font-size: .7rem; font-weight: 600; line-height: 1; }
+        /* Total restant rouge si != 0 */
+        .col-total-bad { color: #dc2626 !important; }
+
+        /* Panneau contrôles — sidebar droite */
+        #checks-panel:empty { display: none; }
+        #checks-panel { width: 320px; flex-shrink: 0; max-height: 80vh; overflow-y: auto; border-left: 2px solid #e5e7eb; padding: 8px 10px; background: #fafbfc; font-size: .78rem; }
+        #checks-panel h3 { font-size: .85rem; margin: 8px 0 4px; }
+        #checks-panel table { border-collapse: collapse; width: 100%; font-size: .75rem; margin-bottom: 12px; }
+        #checks-panel th { background: #f3f4f6; border: 1px solid #e5e7eb; padding: 3px 5px; text-align: left; white-space: nowrap; }
+        #checks-panel td { border: 1px solid #e5e7eb; padding: 3px 5px; }
+        #checks-panel .check-warn { background: #fef3c7; }
+        #checks-panel .check-danger { background: #fee2e2; }
     </style>
 </head>
 <body>
@@ -153,12 +220,14 @@
 <nav>
     <strong>EDT Manager</strong>
     <button onclick="showPage('dashboard')" class="active" id="nav-dashboard">Tableau de bord</button>
-    <button onclick="showPage('enseignants')" id="nav-enseignants">Enseignants</button>
+    <button onclick="showPage('enseignants')" id="nav-enseignants">Liste des enseignants</button>
     <button onclick="showPage('matieres')" id="nav-matieres">Matières</button>
     <button onclick="showPage('salles')" id="nav-salles">Salles</button>
     <button onclick="showPage('sessions')" id="nav-sessions">Sessions</button>
     <button onclick="showPage('service')" id="nav-service">Service</button>
+    <button onclick="showPage('repartition-enseignant')" id="nav-repartition-enseignant">Répartition par enseignant</button>
     <button onclick="showPage('repartition')" id="nav-repartition">Répartition</button>
+    <button onclick="showPage('calendrier')" id="nav-calendrier">Calendrier</button>
     <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">
         <span style="font-size:.8rem;color:#6b7280;white-space:nowrap">Année :</span>
         <select id="year-select" onchange="switchYear()"
@@ -189,7 +258,7 @@
         </div>
     </div>
     <div class="link-grid">
-        <div class="link-card" onclick="showPage('enseignants')"><h3>Enseignants</h3><p>Gérer les enseignants</p></div>
+        <div class="link-card" onclick="showPage('enseignants')"><h3>Liste des enseignants</h3><p>Gérer les enseignants</p></div>
         <div class="link-card" onclick="showPage('matieres')"><h3>Matières</h3><p>Consulter les matières</p></div>
         <div class="link-card" onclick="showPage('salles')"><h3>Salles</h3><p>Gérer les salles</p></div>
         <div class="link-card" onclick="showPage('sessions')"><h3>Sessions de cours</h3><p>Gérer les sessions</p></div>
@@ -201,7 +270,7 @@
 <!-- ===== ENSEIGNANTS ===== -->
 <div class="page" id="page-enseignants">
     <div class="toolbar">
-        <h1>Enseignants</h1>
+        <h1>Liste des enseignants</h1>
         <button class="btn btn-primary" onclick="openTeacherModal()">+ Ajouter</button>
     </div>
     <div id="teachers-table"><div class="spinner">Chargement…</div></div>
@@ -254,9 +323,43 @@
     <div id="sessions-table"><div class="spinner">Chargement…</div></div>
 </div>
 
+<!-- ===== REPARTITION PAR ENSEIGNANT ===== -->
+<div class="page" id="page-repartition-enseignant">
+    <div class="toolbar">
+        <h1>Répartition par enseignant</h1>
+        <div class="filters">
+            <label>Enseignant :</label>
+            <select id="filter-teacher-rep" onchange="renderTeacherRepartition()">
+                <option value="">Tous</option>
+            </select>
+            <label style="margin-left:12px">Année :</label>
+            <select id="filter-year-rep" onchange="renderTeacherRepartition()">
+                <option value="">Toutes</option>
+                <option value="1">1A</option>
+                <option value="2">2A</option>
+                <option value="3">3A</option>
+            </select>
+            <label style="margin-left:12px">Formation :</label>
+            <select id="filter-formation-rep" onchange="renderTeacherRepartition()">
+                <option value="">Toutes</option>
+                <option value="0">FTP</option>
+                <option value="1">ALT</option>
+                <option value="2">MUT</option>
+            </select>
+        </div>
+    </div>
+    <div id="teacher-repartition-content"><div class="spinner">Chargement…</div></div>
+</div>
+
 <!-- ===== SERVICE ===== -->
 <div class="page" id="page-service">
     <h1>Service enseignants</h1>
+    <details id="promo-groups-block" style="margin-bottom:18px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px">
+        <summary style="cursor:pointer;font-weight:600;color:#374151">
+            Nombre de groupes par promotion (utilisé pour le calcul des services)
+        </summary>
+        <div id="promo-groups-editor" style="margin-top:12px"><div class="spinner">Chargement…</div></div>
+    </details>
     <div id="service-table"><div class="spinner">Chargement…</div></div>
 </div>
 
@@ -265,24 +368,136 @@
     <div class="toolbar">
         <h1>Répartition hebdomadaire</h1>
         <div class="filters">
-            <label>Semestre :</label>
-            <select id="filter-semester-repartition" onchange="loadRepartition()">
-                <option value="">Tous</option>
-                <option>S1</option><option>S2</option><option>S3</option>
-                <option>S4</option><option>S5</option><option>S6</option>
-            </select>
+            <label>Semestres :</label>
+            <div id="sem-toggle" class="sem-toggle">
+                <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleSemester('S1',this)">S1</button>
+                <button type="button" class="sem-btn active" data-sem="S2" onclick="toggleSemester('S2',this)">S2</button>
+                <button type="button" class="sem-btn" data-sem="S3" onclick="toggleSemester('S3',this)">S3</button>
+                <button type="button" class="sem-btn" data-sem="S4" onclick="toggleSemester('S4',this)">S4</button>
+                <button type="button" class="sem-btn" data-sem="S5" onclick="toggleSemester('S5',this)">S5</button>
+                <button type="button" class="sem-btn" data-sem="S6" onclick="toggleSemester('S6',this)">S6</button>
+            </div>
             <label style="margin-left:12px">Formation :</label>
             <select id="filter-formation-repartition" onchange="filterRepartition()">
                 <option value="">FTP + ALT</option>
                 <option value="ftp">FTP</option>
                 <option value="alt">ALT</option>
             </select>
+            <label style="margin-left:12px">Enseignant :</label>
+            <select id="filter-teacher-repartition" onchange="filterRepartition()">
+                <option value="">Tous</option>
+            </select>
+            <label style="margin-left:12px">Salle :</label>
+            <select id="filter-room-repartition" onchange="filterRepartition()">
+                <option value="">Toutes</option>
+            </select>
+            <label style="margin-left:12px">Semestre :</label>
+            <label style="font-weight:400;margin-left:4px"><input type="checkbox" id="cb-sem-odd" checked onchange="filterRepartition()"> Impair</label>
+            <label style="font-weight:400;margin-left:6px"><input type="checkbox" id="cb-sem-even" checked onchange="filterRepartition()"> Pair</label>
+            <button class="btn btn-primary btn-sm" style="margin-left:16px" onclick="runRepartitionChecks()">
+                Contrôle
+            </button>
+            <button class="btn btn-secondary btn-sm" style="margin-left:8px" onclick="openOrderingModal()">
+                Ordonnancement
+            </button>
+            <button class="btn btn-secondary btn-sm" style="margin-left:8px" onclick="exportRepartitionExcel()">
+                Export Excel
+            </button>
+            <button class="btn btn-secondary btn-sm" style="margin-left:4px" onclick="document.getElementById('import-excel-input').click()">
+                Import Excel
+            </button>
+            <input type="file" id="import-excel-input" accept=".xlsx" style="display:none" onchange="importRepartitionExcel(this)">
         </div>
     </div>
-    <div id="repartition-table"><div class="spinner">Chargement…</div></div>
+    <div class="repartition-layout">
+        <div id="repartition-table"><div class="spinner">Chargement…</div></div>
+        <div id="checks-panel"></div>
+    </div>
+</div>
+
+<!-- ===== CALENDRIER SPECIAL ===== -->
+<div class="page" id="page-calendrier">
+    <div class="toolbar">
+        <h1>Calendrier spécial</h1>
+        <button class="btn btn-primary btn-sm" onclick="saveCalendrier()">Enregistrer</button>
+    </div>
+    <div class="card" style="padding:16px;margin-bottom:16px">
+        <h3 style="margin:0 0 4px">Dates des semestres</h3>
+        <p style="color:#6b7280;font-size:.85rem;margin:0 0 12px">
+            Les semestres impairs (S1 / S3 / S5) et pairs (S2 / S4 / S6) partagent respectivement les mêmes dates.
+        </p>
+        <div style="display:flex;gap:32px;flex-wrap:wrap">
+            <div>
+                <strong style="display:block;margin-bottom:6px">Semestres impairs <span style="color:#9ca3af;font-size:.8rem">(S1 / S3 / S5)</span></strong>
+                <label style="font-size:.85rem">Début&nbsp;
+                    <select id="sem-odd-start" style="margin-right:12px"></select>
+                </label>
+                <label style="font-size:.85rem">Fin&nbsp;
+                    <select id="sem-odd-end" onchange="syncSemesterDates('odd-end')"></select>
+                </label>
+            </div>
+            <div>
+                <strong style="display:block;margin-bottom:6px">Semestres pairs <span style="color:#9ca3af;font-size:.8rem">(S2 / S4 / S6)</span></strong>
+                <label style="font-size:.85rem">Début&nbsp;
+                    <select id="sem-even-start" style="margin-right:12px" onchange="syncSemesterDates('even-start')"></select>
+                </label>
+                <label style="font-size:.85rem">Fin&nbsp;
+                    <select id="sem-even-end"></select>
+                </label>
+            </div>
+        </div>
+    </div>
+    <p style="color:#6b7280;font-size:.85rem;margin-bottom:16px">
+        Cliquez sur les semaines pour les inclure dans chaque catégorie.
+        Ces semaines sont automatiquement exclues lors de l'optimisation.
+    </p>
+    <div class="card cal-card-full" style="padding:16px">
+        <div id="calendrier-body"><div class="spinner">Chargement…</div></div>
+    </div>
+    <div style="margin-top:12px;font-size:.8rem;color:#6b7280;display:flex;gap:12px;flex-wrap:wrap">
+        <strong>Légende :</strong>
+        <span style="background:#dbeafe;color:#1e40af;padding:2px 10px;border-radius:4px">Vacances FTP</span>
+        <span style="background:#fef08a;color:#854d0e;padding:2px 10px;border-radius:4px">Stages FTP</span>
+        <span style="background:#fed7aa;color:#9a3412;padding:2px 10px;border-radius:4px">Entreprise ALT</span>
+    </div>
 </div>
 
 </main>
+
+<!-- ===== MODAL ORDONNANCEMENT ===== -->
+<div class="modal-backdrop" id="modal-ordering">
+    <div class="modal modal-wide">
+        <h2>Contraintes d'ordonnancement</h2>
+        <p style="color:#6b7280;font-size:.85rem;margin-bottom:14px">
+            Définissez l'ordre dans lequel les matières doivent être enseignées.<br>
+            Ces contraintes sont prises en compte lors de l'optimisation.
+        </p>
+
+        <div class="section-title">Ajouter une contrainte</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr auto auto;gap:10px;align-items:end;margin-bottom:14px">
+            <div class="form-group" style="margin-bottom:0">
+                <label>Matière à placer EN PREMIER</label>
+                <select id="ord-pred"></select>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+                <label>Matière à placer APRÈS</label>
+                <select id="ord-succ"></select>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+                <label>Écart min (sem.)</label>
+                <input type="number" id="ord-gap" min="0" step="1" value="0" style="width:70px">
+            </div>
+            <button class="btn btn-primary" onclick="addOrdering()">+ Ajouter</button>
+        </div>
+
+        <div class="section-title">Contraintes existantes</div>
+        <div id="ordering-list" style="min-height:40px"></div>
+
+        <div class="form-actions" style="margin-top:16px">
+            <button class="btn btn-secondary" onclick="closeModal('modal-ordering')">Fermer</button>
+        </div>
+    </div>
+</div>
 
 <!-- ===== MODAL CONFIGURATION ANNÉE ===== -->
 <div class="modal-backdrop" id="modal-config">
@@ -389,7 +604,7 @@
             <div class="form-group"><label>Intitulé *</label><input id="course-name" required placeholder="Nom de la matière"></div>
             <div class="form-group">
                 <label>Semestre *</label>
-                <select id="course-semester" required>
+                <select id="course-semester" required onchange="onCourseSemesterChange()">
                     <option value="">— Choisir —</option>
                 </select>
             </div>
@@ -409,71 +624,97 @@
                     <small style="color:#6b7280">Année scolaire S36 → S27</small>
                 </div>
             </div>
+            <div class="form-group">
+                <label style="font-weight:normal;cursor:pointer">
+                    <input type="checkbox" id="course-default-weeks" onchange="applyDefaultWeeks()">
+                    Utiliser les dates par défaut du semestre (définies dans Calendrier)
+                </label>
+            </div>
 
-            <div class="section-title">Volume horaire, durée de séance et salle</div>
-            <div class="tab-bar">
+            <div style="display:flex;align-items:center;gap:12px;margin:8px 0 4px">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:600;font-size:.85rem">
+                    <input type="checkbox" id="course-mutualized" onchange="onMutualizedChange()">
+                    Mutualisé (CM/TD communs FTP+ALT)
+                </label>
+            </div>
+            <div class="section-title" style="display:flex;align-items:center;justify-content:space-between">
+                <span>Volume horaire, durée de séance et salle</span>
+                <div style="display:flex;gap:6px" id="copy-formation-btns">
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="copyFormation('ftp','alt')">Copier FTP → ALT</button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="copyFormation('alt','ftp')">Copier ALT → FTP</button>
+                </div>
+            </div>
+            <div class="tab-bar" id="course-tab-bar">
                 <button type="button" class="tab-btn tab-ftp active" id="course-tab-ftp"
                         onclick="switchCourseTab('ftp',this)">FTP</button>
                 <button type="button" class="tab-btn tab-alt" id="course-tab-alt"
                         onclick="switchCourseTab('alt',this)">ALT</button>
             </div>
+            <div id="mut-label-ftp" style="display:none;font-weight:700;font-size:.82rem;color:#6b21a8;margin:6px 0 2px">CM / TD mutualisés + TP / PT FTP</div>
             <!-- FTP -->
             <div id="course-hours-ftp">
             <table class="types-table">
                 <thead><tr>
                     <th>Type</th><th class="col-h">Total (h)</th>
-                    <th class="col-h">Durée séance</th><th>Salle</th><th>Enseignant</th>
+                    <th class="col-h">Durée séance</th><th class="col-h">Séances/sem</th><th>Salle</th><th>Enseignant</th>
                 </tr></thead>
                 <tbody>
                     <tr><td><span class="badge badge-cm">CM</span></td>
                         <td class="col-h"><input type="number" id="cm-hours" min="0" step="0.5" placeholder="0"></td>
-                        <td class="col-h"><input type="number" id="cm-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
+                        <td class="col-h"><input type="number" id="cm-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5" onchange="syncHoursStep(this)"></td>
+                        <td class="col-h" rowspan="2" style="vertical-align:middle"><input type="number" id="cm-spw" min="1" step="1" placeholder="1" value="1"></td>
                         <td><select id="cm-room"></select></td>
                         <td><select id="cm-teacher"></select></td></tr>
                     <tr><td><span class="badge badge-td">TD</span></td>
                         <td class="col-h"><input type="number" id="td-hours" min="0" step="0.5" placeholder="0"></td>
-                        <td class="col-h"><input type="number" id="td-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
+                        <td class="col-h"><input type="number" id="td-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5" onchange="syncHoursStep(this)"></td>
                         <td><select id="td-room"></select></td>
                         <td><select id="td-teacher"></select></td></tr>
                     <tr><td><span class="badge badge-tp">TP</span></td>
                         <td class="col-h"><input type="number" id="tp-hours" min="0" step="0.5" placeholder="0"></td>
-                        <td class="col-h"><input type="number" id="tp-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
+                        <td class="col-h"><input type="number" id="tp-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5" onchange="syncHoursStep(this)"></td>
+                        <td class="col-h"><input type="number" id="tp-spw" min="1" step="1" placeholder="1" value="1"></td>
                         <td><select id="tp-room"></select></td>
                         <td><select id="tp-teacher"></select></td></tr>
                     <tr><td><span class="badge badge-pt">PT</span></td>
                         <td class="col-h"><input type="number" id="pt-hours" min="0" step="0.5" placeholder="0"></td>
-                        <td class="col-h"><input type="number" id="pt-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
+                        <td class="col-h"><input type="number" id="pt-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5" onchange="syncHoursStep(this)"></td>
+                        <td class="col-h"><input type="number" id="pt-spw" min="1" step="1" placeholder="1" value="1"></td>
                         <td><select id="pt-room"></select></td>
                         <td><select id="pt-teacher"></select></td></tr>
                 </tbody>
             </table>
             </div>
+            <div id="mut-label-alt" style="display:none;font-weight:700;font-size:.82rem;color:#9a3412;margin:10px 0 2px">TP / PT ALT</div>
             <!-- ALT -->
             <div id="course-hours-alt" style="display:none">
             <table class="types-table">
                 <thead><tr>
                     <th>Type</th><th class="col-h">Total (h)</th>
-                    <th class="col-h">Durée séance</th><th>Salle</th><th>Enseignant</th>
+                    <th class="col-h">Durée séance</th><th class="col-h">Séances/sem</th><th>Salle</th><th>Enseignant</th>
                 </tr></thead>
                 <tbody>
                     <tr><td><span class="badge badge-cm">CM</span></td>
                         <td class="col-h"><input type="number" id="alt-cm-hours" min="0" step="0.5" placeholder="0"></td>
-                        <td class="col-h"><input type="number" id="alt-cm-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
+                        <td class="col-h"><input type="number" id="alt-cm-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5" onchange="syncHoursStep(this)"></td>
+                        <td class="col-h" rowspan="2" style="vertical-align:middle"><input type="number" id="alt-cm-spw" min="1" step="1" placeholder="1" value="1"></td>
                         <td><select id="alt-cm-room"></select></td>
                         <td><select id="alt-cm-teacher"></select></td></tr>
                     <tr><td><span class="badge badge-td">TD</span></td>
                         <td class="col-h"><input type="number" id="alt-td-hours" min="0" step="0.5" placeholder="0"></td>
-                        <td class="col-h"><input type="number" id="alt-td-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
+                        <td class="col-h"><input type="number" id="alt-td-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5" onchange="syncHoursStep(this)"></td>
                         <td><select id="alt-td-room"></select></td>
                         <td><select id="alt-td-teacher"></select></td></tr>
                     <tr><td><span class="badge badge-tp">TP</span></td>
                         <td class="col-h"><input type="number" id="alt-tp-hours" min="0" step="0.5" placeholder="0"></td>
-                        <td class="col-h"><input type="number" id="alt-tp-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
+                        <td class="col-h"><input type="number" id="alt-tp-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5" onchange="syncHoursStep(this)"></td>
+                        <td class="col-h"><input type="number" id="alt-tp-spw" min="1" step="1" placeholder="1" value="1"></td>
                         <td><select id="alt-tp-room"></select></td>
                         <td><select id="alt-tp-teacher"></select></td></tr>
                     <tr><td><span class="badge badge-pt">PT</span></td>
                         <td class="col-h"><input type="number" id="alt-pt-hours" min="0" step="0.5" placeholder="0"></td>
-                        <td class="col-h"><input type="number" id="alt-pt-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5"></td>
+                        <td class="col-h"><input type="number" id="alt-pt-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5" onchange="syncHoursStep(this)"></td>
+                        <td class="col-h"><input type="number" id="alt-pt-spw" min="1" step="1" placeholder="1" value="1"></td>
                         <td><select id="alt-pt-room"></select></td>
                         <td><select id="alt-pt-teacher"></select></td></tr>
                 </tbody>
@@ -508,7 +749,10 @@
 
 <script>
 // ===== STATE =====
-const state = { teachers: [], courses: [], rooms: [], sessions: [], semesters: [], config: null };
+const state = { teachers: [], courses: [], rooms: [], sessions: [], semesters: [], config: null, promotionGroups: [] };
+
+// Dernière semaine de la 1re année civile (52 ou 53 selon le calendrier ISO ; ex: 2026-2027 → 53)
+function maxWeek() { return (state.config && state.config.academic_max_week) || 52; }
 
 // ===== API =====
 async function api(endpoint, opts = {}) {
@@ -538,21 +782,42 @@ function showPage(name) {
     loadPage(name);
 }
 
-async function loadPage(name) {
+async function loadPage(name, forceReload) {
     try {
         if (name === 'dashboard') await loadDashboard();
-        else if (name === 'enseignants') { state.teachers = await api('/teachers'); renderTeachers(); }
+        else if (name === 'enseignants') {
+            if (forceReload || !state.teachers.length) state.teachers = await api('/teachers');
+            renderTeachers();
+        }
         else if (name === 'matieres') {
-            [state.courses, state.semesters] = await Promise.all([api('/courses'), api('/semesters')]);
+            if (forceReload || !state.courses.length) [state.courses, state.semesters] = await Promise.all([api('/courses'), api('/semesters')]);
             renderCourses();
         }
-        else if (name === 'salles') { state.rooms = await api('/rooms'); renderRooms(); }
+        else if (name === 'salles') {
+            if (forceReload || !state.rooms.length) state.rooms = await api('/rooms');
+            renderRooms();
+        }
         else if (name === 'sessions') {
-            [state.sessions, state.teachers] = await Promise.all([api('/course-sessions'), api('/teachers')]);
+            if (forceReload || !state.sessions.length) [state.sessions, state.teachers] = await Promise.all([api('/course-sessions'), api('/teachers')]);
             renderSessions();
         }
-        else if (name === 'service') { const d = await api('/service/all'); renderService(d); }
+        else if (name === 'service') {
+            const [d, pg] = await Promise.all([api('/service/all'), api('/promotion-groups')]);
+            renderPromotionGroups(pg);
+            renderService(d);
+        }
+        else if (name === 'repartition-enseignant') {
+            const [sessions, teachers, pg] = await Promise.all([
+                api('/course-sessions'), api('/teachers'), api('/promotion-groups')
+            ]);
+            state.sessions = sessions;
+            state.teachers = teachers;
+            state.promotionGroups = pg;
+            populateTeacherRepFilter();
+            renderTeacherRepartition();
+        }
         else if (name === 'repartition') { await loadRepartition(); }
+        else if (name === 'calendrier') { await loadCalendrier(); }
     } catch (e) {
         toast('Erreur de chargement : ' + e.message, 'error');
     }
@@ -704,36 +969,59 @@ function renderCourses() {
     const el = document.getElementById('courses-table');
     if (!list.length) { el.innerHTML = '<div class="empty">Aucune matière — cliquez sur « + Ajouter »</div>'; return; }
 
-    function hCell(h, room) {
-        if (!h) return '<td class="empty" style="text-align:center">—</td>';
-        return `<td style="text-align:center">${h}h${room ? `<br><small style="color:#6b7280">${esc(room)}</small>` : ''}</td>`;
+    function hCell(h, teacher) {
+        if (!h) return '<td class="empty" style="text-align:center;color:#bbb">—</td>';
+        return `<td style="text-align:center">${h}h${teacher ? `<br><small style="color:#6b7280">${esc(teacher)}</small>` : ''}</td>`;
     }
 
     el.innerHTML = `<div class="overflow-x"><table>
         <thead><tr>
             <th>Code</th><th>Intitulé</th><th>Sem.</th><th>Semaines</th><th>Type</th>
-            <th style="text-align:center">CM</th>
-            <th style="text-align:center">TD</th>
-            <th style="text-align:center">TP</th>
-            <th style="text-align:center">PT</th>
+            <th style="text-align:center"></th>
+            <th style="text-align:center;color:#0369a1">FTP</th>
+            <th style="text-align:center;color:#9a3412">ALT</th>
             <th>Actions</th>
         </tr></thead>
-        <tbody>${list.map(c => `<tr>
-            <td><strong>${esc(c.code||'')}</strong></td>
-            <td>${esc(c.name||'')}</td>
-            <td>${esc(c.semester_code||'')}</td>
-            <td style="text-align:center;white-space:nowrap">${c.start_week && c.end_week ? c.start_week + ' → ' + c.end_week : '<span style="color:#9ca3af">—</span>'}</td>
-            <td><span class="badge badge-${(c.course_type||'ressource').toLowerCase().slice(0,3)}">${esc(c.course_type||'')}</span></td>
-            ${hCell(c.cm_hours, c.cm_room)}
-            ${hCell(c.td_hours, c.td_room)}
-            ${hCell(c.tp_hours, c.tp_room)}
-            ${hCell(c.pt_hours, c.pt_room)}
-            <td style="white-space:nowrap">
-                <button class="btn btn-secondary btn-sm" onclick="openCourseModal(${c.id})">Éditer</button>
-                <button class="btn btn-secondary btn-sm" onclick="openWeeklyModal(${c.id})" title="Répartition hebdomadaire">Répartition</button>
-                <button class="btn btn-danger btn-sm" onclick="deleteCourse(${c.id})">Supprimer</button>
-            </td>
-        </tr>`).join('')}</tbody>
+        <tbody>${list.map(c => {
+            const types = [
+                { label: 'CM', ftp: c.cm_hours, ftpT: c.cm_teacher, alt: c.alt_cm_hours, altT: c.alt_cm_teacher },
+                { label: 'TD', ftp: c.td_hours, ftpT: c.td_teacher, alt: c.alt_td_hours, altT: c.alt_td_teacher },
+                { label: 'TP', ftp: c.tp_hours, ftpT: c.tp_teacher, alt: c.alt_tp_hours, altT: c.alt_tp_teacher },
+                { label: 'PT', ftp: c.pt_hours, ftpT: c.pt_teacher, alt: c.alt_pt_hours, altT: c.alt_pt_teacher },
+            ].filter(t => t.ftp || t.alt);
+            const nRows = types.length || 1;
+            if (!types.length) return `<tr class="course-sep">
+                <td><strong>${esc(c.code||'')}</strong></td>
+                <td>${esc(c.name||'')}</td>
+                <td>${esc(c.semester_code||'')}</td>
+                <td style="text-align:center;white-space:nowrap">${c.start_week && c.end_week ? c.start_week + ' → ' + c.end_week : '<span style="color:#9ca3af">—</span>'}</td>
+                <td><span class="badge badge-${(c.course_type||'ressource').toLowerCase().slice(0,3)}">${esc(c.course_type||'')}</span></td>
+                <td style="text-align:center;color:#bbb">—</td>
+                <td style="text-align:center;color:#bbb">—</td>
+                <td style="text-align:center;color:#bbb">—</td>
+                <td style="white-space:nowrap">
+                    <button class="btn btn-secondary btn-sm" onclick="openCourseModal(${c.id})">Éditer</button>
+                    <button class="btn btn-secondary btn-sm" onclick="openWeeklyModal(${c.id})" title="Répartition hebdomadaire">Répartition</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteCourse(${c.id})">Supprimer</button>
+                </td>
+            </tr>`;
+            return types.map((t, i) => `<tr${i === 0 ? ' class="course-sep"' : ''}>
+                ${i === 0 ? `
+                <td rowspan="${nRows}"><strong>${esc(c.code||'')}</strong>${c.mutualized ? ' <span class="badge badge-mut" style="font-size:.6rem">MUT</span>' : ''}</td>
+                <td rowspan="${nRows}">${esc(c.name||'')}</td>
+                <td rowspan="${nRows}">${esc(c.semester_code||'')}</td>
+                <td rowspan="${nRows}" style="text-align:center;white-space:nowrap">${c.start_week && c.end_week ? c.start_week + ' → ' + c.end_week : '<span style="color:#9ca3af">—</span>'}</td>
+                <td rowspan="${nRows}"><span class="badge badge-${(c.course_type||'ressource').toLowerCase().slice(0,3)}">${esc(c.course_type||'')}</span></td>` : ''}
+                <td style="font-size:.75rem;font-weight:600;text-align:center">${t.label}</td>
+                ${hCell(t.ftp, t.ftpT)}
+                ${hCell(t.alt, t.altT)}
+                ${i === 0 ? `<td rowspan="${nRows}" style="white-space:nowrap">
+                    <button class="btn btn-secondary btn-sm" onclick="openCourseModal(${c.id})">Éditer</button>
+                    <button class="btn btn-secondary btn-sm" onclick="openWeeklyModal(${c.id})" title="Répartition hebdomadaire">Répartition</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteCourse(${c.id})">Supprimer</button>
+                </td>` : ''}
+            </tr>`).join('');
+        }).join('')}</tbody>
     </table></div>`;
 }
 
@@ -765,11 +1053,109 @@ function buildTeacherSelects(selectedValues = {}, prefix = '') {
     });
 }
 
+function copyFormation(from, to) {
+    const pF = from === 'ftp' ? '' : 'alt-';
+    const pT = to   === 'ftp' ? '' : 'alt-';
+    ['cm','td','tp','pt'].forEach(t => {
+        document.getElementById(pT+t+'-hours').value   = document.getElementById(pF+t+'-hours').value;
+        const durTarget = document.getElementById(pT+t+'-dur');
+        durTarget.value = document.getElementById(pF+t+'-dur').value;
+        // Réaligner le step du champ heures cible sur la durée copiée (sinon validation HTML5 bloque l'enregistrement)
+        syncHoursStep(durTarget);
+        if (t !== 'td') document.getElementById(pT+t+'-spw').value = document.getElementById(pF+t+'-spw').value;
+        document.getElementById(pT+t+'-room').value    = document.getElementById(pF+t+'-room').value;
+        document.getElementById(pT+t+'-teacher').value = document.getElementById(pF+t+'-teacher').value;
+    });
+    toast('Réglages ' + from.toUpperCase() + ' copiés vers ' + to.toUpperCase());
+}
+
 function switchCourseTab(tab, btn) {
     document.getElementById('course-hours-ftp').style.display = tab === 'ftp' ? '' : 'none';
     document.getElementById('course-hours-alt').style.display = tab === 'alt' ? '' : 'none';
     document.querySelectorAll('#modal-course .tab-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+}
+
+function onMutualizedChange() {
+    const mut = document.getElementById('course-mutualized').checked;
+    // Quand mutualisé : masquer tabs/copier, afficher les deux panneaux (FTP = CM/TD mut + TP/PT FTP, ALT = TP/PT ALT)
+    document.getElementById('course-tab-bar').style.display = mut ? 'none' : '';
+    document.getElementById('copy-formation-btns').style.display = mut ? 'none' : '';
+    if (mut) {
+        document.getElementById('course-hours-ftp').style.display = '';
+        document.getElementById('course-hours-alt').style.display = '';
+    } else {
+        // Remettre l'onglet FTP actif, masquer ALT
+        document.getElementById('course-hours-alt').style.display = 'none';
+        document.querySelectorAll('#modal-course .tab-btn').forEach((b,i) => b.classList.toggle('active', i===0));
+    }
+    updateMutualizedLabels(mut);
+}
+
+function onCourseSemesterChange() {
+    const semId = parseInt(document.getElementById('course-semester').value) || null;
+    if (!semId) return;
+    const sem = state.semesters.find(s => s.id === semId);
+    if (sem && (sem.code === 'S5' || sem.code === 'S6')) {
+        document.getElementById('course-mutualized').checked = true;
+        onMutualizedChange();
+    }
+    // Réappliquer les dates par défaut si la case est cochée (semaines liées au semestre)
+    if (document.getElementById('course-default-weeks').checked) applyDefaultWeeks();
+}
+
+function semesterDefaultWeeks() {
+    // Renvoie {start, end} selon la parité du semestre sélectionné, ou null
+    const semId = parseInt(document.getElementById('course-semester').value) || null;
+    if (!semId) return null;
+    const sem = state.semesters.find(s => s.id === semId);
+    const n = sem ? parseInt((sem.code || '').replace(/\D/g, '')) : null;
+    const c = state.config || {};
+    if (!n) return null;
+    return (n % 2 === 1)
+        ? { start: c.semester_odd_start_week,  end: c.semester_odd_end_week }   // S1/S3/S5
+        : { start: c.semester_even_start_week, end: c.semester_even_end_week }; // S2/S4/S6
+}
+
+function applyDefaultWeeks() {
+    const cb = document.getElementById('course-default-weeks');
+    const s = document.getElementById('course-start-week');
+    const e = document.getElementById('course-end-week');
+    if (cb.checked) {
+        const d = semesterDefaultWeeks();
+        if (!d || !d.start || !d.end) {
+            toast('Choisir d\'abord un semestre, et définir ses dates dans le Calendrier', 'error');
+            cb.checked = false;
+            s.disabled = e.disabled = false;
+            return;
+        }
+        s.value = d.start;
+        e.value = d.end;
+    }
+    s.disabled = e.disabled = cb.checked;
+}
+
+function updateMutualizedLabels(mut) {
+    // Quand mutualisé : masquer CM/TD ALT, afficher les labels MUT
+    const altCmTr = document.getElementById('alt-cm-hours').closest('tr');
+    const altTdTr = document.getElementById('alt-td-hours').closest('tr');
+    altCmTr.style.display = mut ? 'none' : '';
+    altTdTr.style.display = mut ? 'none' : '';
+    document.getElementById('mut-label-ftp').style.display = mut ? '' : 'none';
+    document.getElementById('mut-label-alt').style.display = mut ? '' : 'none';
+}
+
+function syncHoursStep(durInput) {
+    const dur = parseFloat(durInput.value) || 1.5;
+    const hoursId = durInput.id.replace('-dur', '-hours');
+    const hoursInput = document.getElementById(hoursId);
+    if (!hoursInput) return;
+    hoursInput.step = dur;
+    const cur = parseFloat(hoursInput.value) || 0;
+    if (cur > 0) hoursInput.value = Math.round(cur / dur) * dur;
+}
+function initAllHoursSteps() {
+    document.querySelectorAll('#modal-course input[id$="-dur"]').forEach(syncHoursStep);
 }
 
 async function openCourseModal(id = null) {
@@ -791,6 +1177,7 @@ async function openCourseModal(id = null) {
     ['cm','td','tp','pt'].forEach(t => {
         document.getElementById(t+'-hours').value = '';
         document.getElementById(t+'-dur').value = '1.5';
+        if (t !== 'td') { document.getElementById(t+'-spw').value = '1'; document.getElementById('alt-'+t+'-spw').value = '1'; }
         document.getElementById('alt-'+t+'-hours').value = '';
         document.getElementById('alt-'+t+'-dur').value = '1.5';
     });
@@ -800,10 +1187,18 @@ async function openCourseModal(id = null) {
     document.getElementById('course-semester').value = '';
     document.getElementById('course-start-week').value = '';
     document.getElementById('course-end-week').value = '';
+    document.getElementById('course-start-week').disabled = false;
+    document.getElementById('course-end-week').disabled = false;
+    document.getElementById('course-default-weeks').checked = false;
+    document.getElementById('course-mutualized').checked = false;
     // Reset FTP tab visible
     document.getElementById('course-hours-ftp').style.display = '';
     document.getElementById('course-hours-alt').style.display = 'none';
+    document.getElementById('course-tab-bar').style.display = '';
+    document.getElementById('copy-formation-btns').style.display = '';
     document.querySelectorAll('#modal-course .tab-btn').forEach((b,i) => b.classList.toggle('active', i===0));
+    // Restaurer les lignes ALT CM/TD
+    updateMutualizedLabels(false);
     buildRoomSelects();
     buildRoomSelects({}, 'alt-');
     buildTeacherSelects();
@@ -818,81 +1213,166 @@ async function openCourseModal(id = null) {
             document.getElementById('course-semester').value = c.semester_id || '';
             document.getElementById('course-start-week').value = c.start_week || '';
             document.getElementById('course-end-week').value = c.end_week || '';
-            // Heures FTP
-            try {
-                const th = await api('/courses/' + id + '/teaching-hours?formation_type=0');
-                const rooms = {}, teachers = {};
-                ['CM','TD','TP','PT'].forEach(t => {
-                    const info = th[t] || {};
-                    document.getElementById(t.toLowerCase()+'-hours').value = info.hours || '';
-                    document.getElementById(t.toLowerCase()+'-dur').value = info.slot_duration || '1.5';
-                    rooms[t] = info.room || '';
-                    teachers[t] = info.teacher_id || '';
-                });
-                buildRoomSelects(rooms);
-                buildTeacherSelects(teachers);
-            } catch(e) {}
-            // Heures ALT
-            try {
-                const th = await api('/courses/' + id + '/teaching-hours?formation_type=1');
-                const rooms = {}, teachers = {};
-                ['CM','TD','TP','PT'].forEach(t => {
-                    const info = th[t] || {};
-                    document.getElementById('alt-'+t.toLowerCase()+'-hours').value = info.hours || '';
-                    document.getElementById('alt-'+t.toLowerCase()+'-dur').value = info.slot_duration || '1.5';
-                    rooms[t] = info.room || '';
-                    teachers[t] = info.teacher_id || '';
-                });
-                buildRoomSelects(rooms, 'alt-');
-                buildTeacherSelects(teachers, 'alt-');
-            } catch(e) {}
+            // « Dates par défaut » : flag stocké → semaines calculées dynamiquement
+            if (c.default_weeks) {
+                document.getElementById('course-default-weeks').checked = true;
+                applyDefaultWeeks();
+            }
+            const isMut = !!c.mutualized;
+            document.getElementById('course-mutualized').checked = isMut;
+            onMutualizedChange();
+
+            if (isMut) {
+                // CM/TD depuis MUT (formation_type=2), TP/PT depuis FTP (0)
+                try {
+                    const thMut = await api('/courses/' + id + '/teaching-hours?formation_type=2');
+                    const thFtp = await api('/courses/' + id + '/teaching-hours?formation_type=0');
+                    const rooms = {}, teachers = {};
+                    ['CM','TD'].forEach(t => {
+                        const info = thMut[t] || {};
+                        document.getElementById(t.toLowerCase()+'-hours').value = info.hours || '';
+                        document.getElementById(t.toLowerCase()+'-dur').value = info.slot_duration || '1.5';
+                        if (t !== 'TD') document.getElementById(t.toLowerCase()+'-spw').value = info.sessions_per_week_max || '1';
+                        rooms[t] = info.room || '';
+                        teachers[t] = info.teacher_id || '';
+                    });
+                    ['TP','PT'].forEach(t => {
+                        const info = thFtp[t] || {};
+                        document.getElementById(t.toLowerCase()+'-hours').value = info.hours || '';
+                        document.getElementById(t.toLowerCase()+'-dur').value = info.slot_duration || '1.5';
+                        document.getElementById(t.toLowerCase()+'-spw').value = info.sessions_per_week_max || '1';
+                        rooms[t] = info.room || '';
+                        teachers[t] = info.teacher_id || '';
+                    });
+                    buildRoomSelects(rooms);
+                    buildTeacherSelects(teachers);
+                } catch(e) { console.warn('Erreur chargement heures MUT:', e); }
+                // ALT TP/PT
+                try {
+                    const thAlt = await api('/courses/' + id + '/teaching-hours?formation_type=1');
+                    const rooms = {}, teachers = {};
+                    ['TP','PT'].forEach(t => {
+                        const info = thAlt[t] || {};
+                        document.getElementById('alt-'+t.toLowerCase()+'-hours').value = info.hours || '';
+                        document.getElementById('alt-'+t.toLowerCase()+'-dur').value = info.slot_duration || '1.5';
+                        document.getElementById('alt-'+t.toLowerCase()+'-spw').value = info.sessions_per_week_max || '1';
+                        rooms[t] = info.room || '';
+                        teachers[t] = info.teacher_id || '';
+                    });
+                    buildRoomSelects(rooms, 'alt-');
+                    buildTeacherSelects(teachers, 'alt-');
+                } catch(e) { console.warn('Erreur chargement heures ALT:', e); }
+            } else {
+                // Heures FTP
+                try {
+                    const th = await api('/courses/' + id + '/teaching-hours?formation_type=0');
+                    const rooms = {}, teachers = {};
+                    ['CM','TD','TP','PT'].forEach(t => {
+                        const info = th[t] || {};
+                        document.getElementById(t.toLowerCase()+'-hours').value = info.hours || '';
+                        document.getElementById(t.toLowerCase()+'-dur').value = info.slot_duration || '1.5';
+                        if (t !== 'TD') document.getElementById(t.toLowerCase()+'-spw').value = info.sessions_per_week_max || '1';
+                        rooms[t] = info.room || '';
+                        teachers[t] = info.teacher_id || '';
+                    });
+                    buildRoomSelects(rooms);
+                    buildTeacherSelects(teachers);
+                } catch(e) { console.warn('Erreur chargement heures FTP:', e); }
+                // Heures ALT
+                try {
+                    const th = await api('/courses/' + id + '/teaching-hours?formation_type=1');
+                    const rooms = {}, teachers = {};
+                    ['CM','TD','TP','PT'].forEach(t => {
+                        const info = th[t] || {};
+                        document.getElementById('alt-'+t.toLowerCase()+'-hours').value = info.hours || '';
+                        document.getElementById('alt-'+t.toLowerCase()+'-dur').value = info.slot_duration || '1.5';
+                        if (t !== 'TD') document.getElementById('alt-'+t.toLowerCase()+'-spw').value = info.sessions_per_week_max || '1';
+                        rooms[t] = info.room || '';
+                        teachers[t] = info.teacher_id || '';
+                    });
+                    buildRoomSelects(rooms, 'alt-');
+                    buildTeacherSelects(teachers, 'alt-');
+                } catch(e) { console.warn('Erreur chargement heures ALT:', e); }
+            }
         }
     }
+    initAllHoursSteps();
     openModal('modal-course');
 }
 
 async function submitCourse(e) {
     e.preventDefault();
     const id = document.getElementById('course-id').value;
-    const semId = parseInt(document.getElementById('course-semester').value);
-    const typesFtp = {}, typesAlt = {};
-    ['CM','TD','TP','PT'].forEach(t => {
-        typesFtp[t] = {
-            hours:         document.getElementById(t.toLowerCase()+'-hours').value,
-            slot_duration: document.getElementById(t.toLowerCase()+'-dur').value,
-            room:          document.getElementById(t.toLowerCase()+'-room').value,
-            teacher_id:    parseInt(document.getElementById(t.toLowerCase()+'-teacher').value) || null,
-        };
-        typesAlt[t] = {
-            hours:         document.getElementById('alt-'+t.toLowerCase()+'-hours').value,
-            slot_duration: document.getElementById('alt-'+t.toLowerCase()+'-dur').value,
-            room:          document.getElementById('alt-'+t.toLowerCase()+'-room').value,
-            teacher_id:    parseInt(document.getElementById('alt-'+t.toLowerCase()+'-teacher').value) || null,
-        };
-    });
-    const base = {
-        code:        document.getElementById('course-code').value,
-        name:        document.getElementById('course-name').value,
-        course_type: document.getElementById('course-type').value,
-        semester_id: semId,
-        start_week:  parseInt(document.getElementById('course-start-week').value) || null,
-        end_week:    parseInt(document.getElementById('course-end-week').value) || null,
+    const semId = parseInt(document.getElementById('course-semester').value) || null;
+    const isMut = document.getElementById('course-mutualized').checked;
+
+    // Lire les inputs du panneau FTP (CM/TD/TP/PT)
+    const readPanel = (prefix) => {
+        const res = {};
+        ['CM','TD','TP','PT'].forEach(t => {
+            const tl = t.toLowerCase();
+            const p = prefix + tl;
+            const spwId = tl === 'td' ? prefix + 'cm-spw' : p + '-spw';
+            res[t] = {
+                hours:                 parseFloat(document.getElementById(p+'-hours').value) || 0,
+                slot_duration:         parseFloat(document.getElementById(p+'-dur').value) || 1.5,
+                sessions_per_week_max: parseInt(document.getElementById(spwId).value) || 1,
+                room:                  document.getElementById(p+'-room').value,
+                teacher_id:            parseInt(document.getElementById(p+'-teacher').value) || null,
+            };
+        });
+        return res;
     };
+    const panelFtp = readPanel('');
+    const panelAlt = readPanel('alt-');
+
+    const useDefault = document.getElementById('course-default-weeks').checked;
+    const base = {
+        code:          document.getElementById('course-code').value,
+        name:          document.getElementById('course-name').value,
+        course_type:   document.getElementById('course-type').value,
+        semester_id:   semId,
+        default_weeks: useDefault ? 1 : 0,
+        // En mode "par défaut", le backend calcule les semaines dynamiquement
+        start_week:    useDefault ? null : (parseInt(document.getElementById('course-start-week').value) || null),
+        end_week:      useDefault ? null : (parseInt(document.getElementById('course-end-week').value) || null),
+        mutualized:    isMut ? 1 : 0,
+    };
+    const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+    const btnText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Enregistrement…'; }
     try {
         let courseId = id;
-        if (id) {
-            await api('/courses/' + id, { method: 'PUT', body: JSON.stringify(base) });
-        } else {
-            const res = await api('/courses', { method: 'POST', body: JSON.stringify({ ...base, types: typesFtp }) });
+        if (!id) {
+            const res = await api('/courses', { method: 'POST', body: JSON.stringify(base) });
             courseId = res.id;
+        } else {
+            await api('/courses/' + id, { method: 'PUT', body: JSON.stringify(base) });
         }
-        await api('/courses/' + courseId + '/teaching-hours?formation_type=0', { method: 'PUT', body: JSON.stringify(typesFtp) });
-        await api('/courses/' + courseId + '/teaching-hours?formation_type=1', { method: 'PUT', body: JSON.stringify(typesAlt) });
+
+        if (isMut) {
+            // CM/TD → MUT (formation_type=2)
+            const typesMut = { CM: panelFtp.CM, TD: panelFtp.TD, TP: {hours:0}, PT: {hours:0} };
+            await api('/courses/' + courseId + '/teaching-hours?formation_type=2', { method: 'PUT', body: JSON.stringify(typesMut) });
+            // FTP : uniquement TP/PT, effacer CM/TD
+            const typesFtpOnly = { CM: {hours:0}, TD: {hours:0}, TP: panelFtp.TP, PT: panelFtp.PT };
+            await api('/courses/' + courseId + '/teaching-hours?formation_type=0', { method: 'PUT', body: JSON.stringify(typesFtpOnly) });
+            // ALT : uniquement TP/PT, effacer CM/TD
+            const typesAltOnly = { CM: {hours:0}, TD: {hours:0}, TP: panelAlt.TP, PT: panelAlt.PT };
+            await api('/courses/' + courseId + '/teaching-hours?formation_type=1', { method: 'PUT', body: JSON.stringify(typesAltOnly) });
+        } else {
+            // Classique : FTP + ALT séparés, effacer MUT
+            await api('/courses/' + courseId + '/teaching-hours?formation_type=0', { method: 'PUT', body: JSON.stringify(panelFtp) });
+            await api('/courses/' + courseId + '/teaching-hours?formation_type=1', { method: 'PUT', body: JSON.stringify(panelAlt) });
+            const clearMut = { CM: {hours:0}, TD: {hours:0}, TP: {hours:0}, PT: {hours:0} };
+            await api('/courses/' + courseId + '/teaching-hours?formation_type=2', { method: 'PUT', body: JSON.stringify(clearMut) });
+        }
         closeModal('modal-course');
         [state.courses, state.semesters] = await Promise.all([api('/courses'), api('/semesters')]);
         renderCourses();
         toast(id ? 'Matière modifiée' : 'Matière ajoutée');
     } catch(err) { toast('Erreur : ' + err.message, 'error'); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = btnText; } }
 }
 
 async function deleteCourse(id) {
@@ -912,7 +1392,7 @@ let _weeklySlot  = {};
 let _weeklyActive = [];
 let _weeklyModalCourseId = null;
 let _weeklyFormationType = 0;   // 0=FTP, 1=ALT
-let _weeklySpecial = { vacation_ftp: [], company_alt: [] };
+let _weeklySpecial = { vacation_ftp: [], stage_ftp: [], company_alt: [] };
 
 async function openWeeklyModal(courseId) {
     const c = state.courses.find(x => x.id === courseId);
@@ -924,13 +1404,19 @@ async function openWeeklyModal(courseId) {
 
     _weeklyModalCourseId = courseId;
     _weeklyFormationType = 0;
-    _weeklySpecial = { vacation_ftp: [], company_alt: [] };
+    _weeklySpecial = { vacation_ftp: [], stage_ftp: [], company_alt: [] };
 
-    // Charger les semaines spéciales du semestre
+    // Charger les semaines spéciales depuis le calendrier global
     const sem = state.semesters.find(s => s.id === c.semester_id);
-    if (sem) {
-        try { _weeklySpecial = await api('/semesters/' + sem.id + '/special-weeks'); } catch(e) {}
-    }
+    try {
+        const cal = await api('/special-calendar');
+        const yg  = sem ? sem.year_group : null;
+        _weeklySpecial = {
+            vacation_ftp: cal.vacation_ftp || [],
+            stage_ftp:    (yg === 2 ? cal.stage_ftp_y2 : yg === 3 ? cal.stage_ftp_y3 : []) || [],
+            company_alt:  (yg ? cal['company_alt_y' + yg] : []) || [],
+        };
+    } catch(e) {}
 
     // Activer l'onglet FTP par défaut
     document.querySelectorAll('#weekly-tabs .tab-btn').forEach((b,i) => b.classList.toggle('active', i===0));
@@ -995,17 +1481,18 @@ function renderWeeklyModalTable(sem) {
     if (sem.start_week <= sem.end_week) {
         for (let w = sem.start_week; w <= sem.end_week; w++) weeks.push(w);
     } else {
-        for (let w = sem.start_week; w <= 52; w++) weeks.push(w);
+        for (let w = sem.start_week; w <= maxWeek(); w++) weeks.push(w);
         for (let w = 1; w <= sem.end_week; w++) weeks.push(w);
     }
 
     // Coloration des semaines spéciales
     function weekCls(w) {
-        const isVac = _weeklySpecial.vacation_ftp.includes(w);
-        const isCo  = _weeklySpecial.company_alt.includes(w);
-        if (isVac && isCo) return 'w-both';
-        if (isVac) return 'w-vacation';
-        if (isCo)  return 'w-company';
+        const isVac   = _weeklySpecial.vacation_ftp.includes(w);
+        const isStage = (_weeklySpecial.stage_ftp || []).includes(w);
+        const isCo    = _weeklySpecial.company_alt.includes(w);
+        if (isStage) return 'w-stage';    // priorité stage (Y2/Y3)
+        if (isVac)   return 'w-vacation';
+        if (isCo)    return 'w-company';
         return '';
     }
 
@@ -1041,11 +1528,13 @@ function renderWeeklyModalTable(sem) {
     }).join('');
 
     // Légende semaines spéciales
-    const hasVac = _weeklySpecial.vacation_ftp.length > 0;
-    const hasCo  = _weeklySpecial.company_alt.length  > 0;
-    const legend = (hasVac || hasCo) ? `<p style="font-size:.75rem;color:#6b7280;margin-top:6px">
-        ${hasVac ? '<span style="background:#dbeafe;padding:1px 6px;border-radius:3px;margin-right:6px">Vacances FTP</span>' : ''}
-        ${hasCo  ? '<span style="background:#ffedd5;padding:1px 6px;border-radius:3px;margin-right:6px">Entreprise ALT</span>' : ''}
+    const hasVac   = _weeklySpecial.vacation_ftp.length > 0;
+    const hasStage = (_weeklySpecial.stage_ftp || []).length > 0;
+    const hasCo    = _weeklySpecial.company_alt.length  > 0;
+    const legend = (hasVac || hasStage || hasCo) ? `<p style="font-size:.75rem;color:#6b7280;margin-top:6px">
+        ${hasVac   ? '<span style="background:#bbf7d0;padding:1px 6px;border-radius:3px;margin-right:6px;color:#111">Vacances FTP</span>' : ''}
+        ${hasStage ? '<span style="background:#fdba74;padding:1px 6px;border-radius:3px;margin-right:6px;color:#111">Stages FTP</span>' : ''}
+        ${hasCo    ? '<span style="background:#bfdbfe;padding:1px 6px;border-radius:3px;margin-right:6px;color:#111">Entreprise ALT</span>' : ''}
     </p>` : '';
 
     body.innerHTML = `<div class="repartition-wrap" style="max-height:260px">
@@ -1156,11 +1645,14 @@ async function deleteRoom(id) {
 }
 
 // ===== SESSIONS =====
+function formationLabel(ft) { return {0:'FTP',1:'ALT',2:'MUT'}[ft] || '?'; }
+
 function renderSessions() {
     const sem = document.getElementById('filter-semester-sessions').value;
     const form = document.getElementById('filter-formation-sessions').value;
+    const formMap = {'FTP':0,'ALT':1,'MUT':2};
     const list = state.sessions.filter(s =>
-        (!sem || s.semester === sem) && (!form || s.formation === form)
+        (!sem || s.semester_code === sem) && (!form || s.formation_type === formMap[form])
     );
     const el = document.getElementById('sessions-table');
     if (!list.length) { el.innerHTML = '<div class="empty">Aucune session</div>'; return; }
@@ -1173,8 +1665,8 @@ function renderSessions() {
             <td><strong>${esc(s.course_code||'')}</strong></td>
             <td>${esc(s.course_name||'')}</td>
             <td>${esc(s.teacher_name||'')}</td>
-            <td>${esc(s.formation||'')}</td>
-            <td><span class="badge badge-${(s.type||'cm').toLowerCase()}">${esc(s.type||'')}</span></td>
+            <td>${formationLabel(s.formation_type)}</td>
+            <td><span class="badge badge-${(s.teaching_type||'cm').toLowerCase()}">${esc(s.teaching_type||'')}</span></td>
             <td>${s.nb_sessions||0}</td>
             <td>${s.total_hours||0}h</td>
             <td>${s.slot_duration||0}h</td>
@@ -1183,11 +1675,238 @@ function renderSessions() {
     </table></div>`;
 }
 
+// ===== REPARTITION PAR ENSEIGNANT =====
+const _HETD_COEFS = { CM: 1.5, TD: 1.0, TP: 2/3, PT: 1.0 };
+
+function _ttKey(tt) {
+    const u = (tt||'').toUpperCase().replace(/\s/g,'');
+    return u.startsWith('TP') ? 'TP' : u;
+}
+
+function _pgMultiplier(yg, ft, tt) {
+    const pg = (state.promotionGroups||[]).find(p => p.year_group === yg && p.formation_type === ft);
+    if (!pg) return 1;
+    const k = _ttKey(tt);
+    return pg[`${k.toLowerCase()}_groups`] || 1;
+}
+
+function populateTeacherRepFilter() {
+    const sel = document.getElementById('filter-teacher-rep');
+    const current = sel.value;
+    const teachers = (state.teachers||[]).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
+    sel.innerHTML = '<option value="">Tous</option>' +
+        teachers.map(t => `<option value="${t.id}">${esc(t.name||'')}</option>`).join('');
+    sel.value = current;
+}
+
+function renderTeacherRepartition() {
+    const el = document.getElementById('teacher-repartition-content');
+    const tFilter = document.getElementById('filter-teacher-rep').value;
+    const yFilter = document.getElementById('filter-year-rep').value;
+    const fFilter = document.getElementById('filter-formation-rep').value;
+
+    let sessions = (state.sessions||[]).filter(s => s.teacher_id);
+    if (tFilter) sessions = sessions.filter(s => String(s.teacher_id) === tFilter);
+    if (yFilter) sessions = sessions.filter(s => String(s.year_group) === yFilter);
+    if (fFilter) sessions = sessions.filter(s => String(s.formation_type) === fFilter);
+
+    if (!sessions.length) {
+        el.innerHTML = '<div class="empty">Aucune session pour ces filtres</div>';
+        return;
+    }
+
+    // Groupement par enseignant
+    const byTeacher = {};
+    sessions.forEach(s => {
+        const tid = s.teacher_id;
+        if (!byTeacher[tid]) byTeacher[tid] = { name: s.teacher_name || '(inconnu)', sessions: [] };
+        byTeacher[tid].sessions.push(s);
+    });
+
+    const teacherIds = Object.keys(byTeacher).sort((a,b) =>
+        (byTeacher[a].name||'').localeCompare(byTeacher[b].name||'')
+    );
+
+    // Total global
+    let gTotalBrut = 0, gTotalPond = 0, gTotalHetd = 0;
+
+    const blocks = teacherIds.map(tid => {
+        const data = byTeacher[tid];
+        // Tri : semestre, code cours, formation, type
+        data.sessions.sort((a,b) =>
+            (a.semester_code||'').localeCompare(b.semester_code||'') ||
+            (a.course_code||'').localeCompare(b.course_code||'') ||
+            (a.formation_type - b.formation_type) ||
+            (a.teaching_type||'').localeCompare(b.teaching_type||'')
+        );
+
+        let tBrut = 0, tPond = 0, tHetd = 0;
+        const sumByType = { CM:0, TD:0, TP:0, PT:0 };
+
+        // Ligne de bilan (en-tête) en début de matière
+        const courseSubtotalRow = (c) => `<tr style="background:#f3f4ff;font-weight:600">
+                <td colspan="5" style="text-align:left;color:#4f46e5">${esc(c.code||'')} — ${esc(c.name||'')}</td>
+                <td style="text-align:right">${c.brut.toFixed(1)}h</td>
+                <td></td>
+                <td style="text-align:right">${c.pond.toFixed(1)}h</td>
+                <td></td>
+                <td style="text-align:right;color:#4f46e5">${c.hetd.toFixed(2)}</td>
+            </tr>`;
+
+        // Regroupement par matière (semestre + code cours, contigus car déjà triés)
+        const courseGroups = [];
+        data.sessions.forEach(s => {
+            const brut = parseFloat(s.total_hours) || 0;
+            const mult = _pgMultiplier(s.year_group, s.formation_type, s.teaching_type);
+            const pond = brut * mult;
+            const coef = _HETD_COEFS[_ttKey(s.teaching_type)] || 1.0;
+            const hetd = pond * coef;
+            tBrut += brut; tPond += pond; tHetd += hetd;
+            const k = _ttKey(s.teaching_type);
+            if (sumByType[k] !== undefined) sumByType[k] += pond;
+
+            const courseKey = `${s.semester_code||''}|${s.course_code||''}`;
+            let cur = courseGroups[courseGroups.length - 1];
+            if (!cur || cur.key !== courseKey) {
+                cur = { key: courseKey, code: s.course_code, name: s.course_name, brut: 0, pond: 0, hetd: 0, rows: [] };
+                courseGroups.push(cur);
+            }
+            cur.brut += brut; cur.pond += pond; cur.hetd += hetd;
+
+            cur.rows.push(`<tr>
+                <td>${esc(s.semester_code||'')}</td>
+                <td><strong>${esc(s.course_code||'')}</strong></td>
+                <td>${esc(s.course_name||'')}</td>
+                <td>${formationLabel(s.formation_type)}</td>
+                <td><span class="badge badge-${(s.teaching_type||'cm').toLowerCase()}">${esc(s.teaching_type||'')}</span></td>
+                <td style="text-align:right">${brut.toFixed(1)}h</td>
+                <td style="text-align:center">× ${mult}</td>
+                <td style="text-align:right">${pond.toFixed(1)}h</td>
+                <td style="text-align:right">${coef.toFixed(2)}</td>
+                <td style="text-align:right;color:#4f46e5;font-weight:600">${hetd.toFixed(2)}</td>
+            </tr>`);
+        });
+        const rows = courseGroups.map(c => courseSubtotalRow(c) + c.rows.join('')).join('');
+
+        gTotalBrut += tBrut; gTotalPond += tPond; gTotalHetd += tHetd;
+
+        return `
+        <div style="margin-bottom:22px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;background:#fff">
+            <div style="background:#eef2ff;padding:10px 14px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+                <h3 style="margin:0;color:#4f46e5;font-size:1.05rem">${esc(data.name)}</h3>
+                <div style="font-size:.85rem;color:#374151">
+                    CM ${sumByType.CM.toFixed(1)}h · TD ${sumByType.TD.toFixed(1)}h · TP ${sumByType.TP.toFixed(1)}h · PT ${sumByType.PT.toFixed(1)}h
+                    &nbsp;|&nbsp; <strong>${tPond.toFixed(1)}h</strong> pondérées
+                    &nbsp;|&nbsp; <strong style="color:#4f46e5">${tHetd.toFixed(2)} HETD</strong>
+                </div>
+            </div>
+            <div class="overflow-x"><table style="margin:0">
+                <thead><tr>
+                    <th>Sem.</th><th>Code</th><th>Matière</th><th>Form.</th><th>Type</th>
+                    <th style="text-align:right">H. brutes</th>
+                    <th style="text-align:center">Groupes</th>
+                    <th style="text-align:right">H. pondérées</th>
+                    <th style="text-align:right">Coef.</th>
+                    <th style="text-align:right">HETD</th>
+                </tr></thead>
+                <tbody>${rows}</tbody>
+            </table></div>
+        </div>`;
+    }).join('');
+
+    const summary = `
+        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;gap:24px;flex-wrap:wrap">
+            <div><span style="color:#6b7280;font-size:.85rem">Enseignants :</span> <strong>${teacherIds.length}</strong></div>
+            <div><span style="color:#6b7280;font-size:.85rem">Sessions :</span> <strong>${sessions.length}</strong></div>
+            <div><span style="color:#6b7280;font-size:.85rem">Total heures brutes :</span> <strong>${gTotalBrut.toFixed(1)}h</strong></div>
+            <div><span style="color:#6b7280;font-size:.85rem">Total heures pondérées :</span> <strong>${gTotalPond.toFixed(1)}h</strong></div>
+            <div><span style="color:#6b7280;font-size:.85rem">Total HETD :</span> <strong style="color:#4f46e5">${gTotalHetd.toFixed(2)}</strong></div>
+        </div>`;
+
+    el.innerHTML = summary + blocks;
+}
+
 // ===== SERVICE =====
 function hetd(s) {
     const cm = parseFloat(s.cm_hours)||0, td = parseFloat(s.td_hours)||0;
     const tp = parseFloat(s.tp_hours)||0, pt = parseFloat(s.pt_hours)||0;
     return (cm*1.5 + td*1.0 + tp*(2/3) + pt*1.0).toFixed(2);
+}
+
+// ----- Groupes par promotion -----
+const _FORMATION_LABELS = { 0: 'FTP', 1: 'ALT', 2: 'MUT' };
+const _YEAR_LABELS = { 1: '1A (S1+S2)', 2: '2A (S3+S4)', 3: '3A (S5+S6)' };
+
+function renderPromotionGroups(rows) {
+    const el = document.getElementById('promo-groups-editor');
+    // Garantir une ligne par (année, formation) — combler les manquantes côté UI
+    const map = {};
+    rows.forEach(r => { map[`${r.year_group}-${r.formation_type}`] = r; });
+    const ordered = [];
+    for (const yg of [1,2,3]) for (const ft of [0,1,2]) {
+        const k = `${yg}-${ft}`;
+        ordered.push(map[k] || { year_group: yg, formation_type: ft, cm_groups: 1, td_groups: 1, tp_groups: 1, pt_groups: 1 });
+    }
+    const numInput = (val, name) =>
+        `<input type="number" min="1" step="1" value="${val}" data-field="${name}" style="width:60px;padding:3px 6px;text-align:center">`;
+    el.innerHTML = `
+        <p style="margin:0 0 8px;font-size:.85rem;color:#6b7280">
+            Multiplicateur appliqué aux heures de chaque type d'enseignement selon la promotion.
+            Ex : si TD = 2 groupes, 10h de TD comptent comme 20h enseignées.
+        </p>
+        <table style="width:auto;border-collapse:collapse;background:#fff;border-radius:6px;overflow:hidden">
+            <thead style="background:#f3f4f6">
+                <tr>
+                    <th style="padding:6px 12px;text-align:left">Année</th>
+                    <th style="padding:6px 12px;text-align:left">Formation</th>
+                    <th style="padding:6px 8px">CM</th>
+                    <th style="padding:6px 8px">TD</th>
+                    <th style="padding:6px 8px">TP</th>
+                    <th style="padding:6px 8px">PT</th>
+                </tr>
+            </thead>
+            <tbody id="promo-groups-tbody">
+                ${ordered.map(r => `
+                    <tr data-yg="${r.year_group}" data-ft="${r.formation_type}" style="border-top:1px solid #f3f4f6">
+                        <td style="padding:5px 12px">${_YEAR_LABELS[r.year_group]||r.year_group}</td>
+                        <td style="padding:5px 12px"><strong>${_FORMATION_LABELS[r.formation_type]||r.formation_type}</strong></td>
+                        <td style="padding:5px 8px;text-align:center">${numInput(r.cm_groups, 'cm_groups')}</td>
+                        <td style="padding:5px 8px;text-align:center">${numInput(r.td_groups, 'td_groups')}</td>
+                        <td style="padding:5px 8px;text-align:center">${numInput(r.tp_groups, 'tp_groups')}</td>
+                        <td style="padding:5px 8px;text-align:center">${numInput(r.pt_groups, 'pt_groups')}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+        <div style="margin-top:10px;display:flex;gap:8px">
+            <button class="btn btn-primary btn-sm" onclick="savePromotionGroups()">Enregistrer</button>
+            <span id="promo-groups-status" style="font-size:.85rem;color:#10b981;align-self:center"></span>
+        </div>
+    `;
+}
+
+async function savePromotionGroups() {
+    const rows = [];
+    document.querySelectorAll('#promo-groups-tbody tr').forEach(tr => {
+        const entry = {
+            year_group: parseInt(tr.dataset.yg),
+            formation_type: parseInt(tr.dataset.ft),
+        };
+        tr.querySelectorAll('input[data-field]').forEach(inp => {
+            entry[inp.dataset.field] = Math.max(1, parseInt(inp.value) || 1);
+        });
+        rows.push(entry);
+    });
+    try {
+        await api('/promotion-groups', { method: 'PUT', body: JSON.stringify(rows) });
+        document.getElementById('promo-groups-status').textContent = '✓ Enregistré';
+        setTimeout(() => { document.getElementById('promo-groups-status').textContent = ''; }, 2000);
+        // Recharger le service avec les nouveaux multiplicateurs
+        const d = await api('/service/all');
+        renderService(d);
+    } catch(e) {
+        toast('Erreur enregistrement : ' + e.message, 'error');
+    }
 }
 
 function renderService(data) {
@@ -1216,13 +1935,289 @@ function renderService(data) {
 // ===== REPARTITION =====
 let _repartitionData = null;
 
+// Correspondance semestre ↔ semestre lié (même année)
+const _semPairs = { S1:'S2', S2:'S1', S3:'S4', S4:'S3', S5:'S6', S6:'S5' };
+let _selectedSemesters = ['S1', 'S2'];
+
+// Ordre d'affichage imposé des matières dans la répartition (S5/S6 entrelacés).
+// Les codes absents de cette liste conservent leur ordre naturel (par code).
+const _courseDisplayOrder = [
+    'R5.01', 'R6.01', 'R5.02', 'R5.03a', 'R5.03b', 'R6.02', 'R5.04', 'R6.03',
+    'R5.05', 'R6.04', 'R5.06', 'R5.07', 'R5.08', 'R5.09', 'R5.10', 'R6.05',
+    'R5.11', 'R6.06', 'R5.12', 'R6.07', 'R5.13', 'R5.14', 'R6.08',
+    'SAE5.1', 'SAE5.2', 'SAE5.3', 'SAE6.1', 'SAE6.2',
+];
+const _courseOrderIdx = {};
+_courseDisplayOrder.forEach((c, i) => { _courseOrderIdx[c] = i; });
+
+function toggleSemester(code, btn) {
+    const i = _selectedSemesters.indexOf(code);
+    if (i >= 0) _selectedSemesters.splice(i, 1);
+    else { _selectedSemesters.push(code); _selectedSemesters.sort(); }
+    btn.classList.toggle('active');
+    loadRepartition();
+}
+
+// Dégradé rouge→vert→rouge selon cible/limites (scope module pour réutilisation)
+function heatBg(h, TGT, MIN, MAX) {
+    if (!h) return null;
+    const t = h <= MIN ? 0
+            : h >= MAX ? 0
+            : h <= TGT ? (h - MIN) / (TGT - MIN)
+            :             1 - (h - TGT) / (MAX - TGT);
+    const r = Math.round(248 + t * (74  - 248));
+    const g = Math.round(113 + t * (222 - 113));
+    const b = Math.round(113 + t * (128 - 113));
+    return `rgb(${r},${g},${b})`;
+}
+const ftpHeatBg = h => heatBg(h, 25, 15, 35);
+const altHeatBg = h => heatBg(h, 35, 20, 40);
+
+// ===== ORDONNANCEMENT =====
+
+async function openOrderingModal() {
+    if (!state.courses.length) state.courses = await api('/courses');
+    buildOrderingSelects();
+    await loadOrderings();
+    openModal('modal-ordering');
+}
+
+function buildOrderingSelects() {
+    const none = '<option value="">— Choisir —</option>';
+    const opts = none + state.courses
+        .slice().sort((a, b) => (a.semester_code||'').localeCompare(b.semester_code||'') || a.code.localeCompare(b.code))
+        .map(c => `<option value="${c.id}">${esc(c.semester_code||'')} · ${esc(c.code)} — ${esc(c.name)}</option>`)
+        .join('');
+    document.getElementById('ord-pred').innerHTML = opts;
+    document.getElementById('ord-succ').innerHTML = opts;
+}
+
+async function loadOrderings() {
+    try {
+        const rows = await api('/course-orderings');
+        renderOrderingList(rows);
+    } catch(e) {
+        document.getElementById('ordering-list').innerHTML = '<div class="empty">Erreur chargement</div>';
+    }
+}
+
+function renderOrderingList(rows) {
+    const el = document.getElementById('ordering-list');
+    if (!rows.length) {
+        el.innerHTML = '<div class="empty" style="padding:12px">Aucune contrainte définie.</div>';
+        return;
+    }
+    el.innerHTML = `<table style="width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1)">
+        <thead style="background:#f9fafb"><tr>
+            <th style="padding:8px 12px;font-size:.78rem;text-align:left;color:#374151">Avant (doit précéder)</th>
+            <th style="padding:8px 12px;font-size:.78rem;text-align:left;color:#374151">Après (doit suivre)</th>
+            <th style="padding:8px 12px;font-size:.78rem;text-align:center;color:#374151">Écart min</th>
+            <th style="padding:8px 12px;font-size:.78rem"></th>
+        </tr></thead>
+        <tbody>${rows.map(r => `
+        <tr style="border-top:1px solid #f3f4f6">
+            <td style="padding:7px 12px;font-size:.88rem"><strong>${esc(r.pred_code)}</strong> — ${esc(r.pred_name)}</td>
+            <td style="padding:7px 12px;font-size:.88rem"><strong>${esc(r.succ_code)}</strong> — ${esc(r.succ_name)}</td>
+            <td style="padding:7px 12px;font-size:.88rem;text-align:center">${r.min_gap_weeks} sem.</td>
+            <td style="padding:7px 12px;text-align:right">
+                <button class="btn btn-danger btn-sm" onclick="deleteOrdering(${r.id})">Supprimer</button>
+            </td>
+        </tr>`).join('')}</tbody>
+    </table>`;
+}
+
+async function addOrdering() {
+    const pred = parseInt(document.getElementById('ord-pred').value);
+    const succ = parseInt(document.getElementById('ord-succ').value);
+    const gap  = parseInt(document.getElementById('ord-gap').value) || 0;
+    if (!pred || !succ) { toast('Sélectionnez les deux matières', 'error'); return; }
+    if (pred === succ)  { toast('Les deux matières doivent être différentes', 'error'); return; }
+    try {
+        await api('/course-orderings', {
+            method: 'POST',
+            body: JSON.stringify({ course_id_pred: pred, course_id_succ: succ, min_gap_weeks: gap }),
+        });
+        toast('Contrainte ajoutée');
+        loadOrderings();
+    } catch(e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function deleteOrdering(id) {
+    try {
+        await api('/course-orderings/' + id, { method: 'DELETE' });
+        toast('Contrainte supprimée');
+        loadOrderings();
+    } catch(e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// ===== CALENDRIER SPECIAL =====
+let _calData = null;
+
+const _CAL_CATS = [
+    { key: 'vacation_ftp',    label: 'Vacances FTP',              sub: '(toutes années)',   cls: 'on-vacation' },
+    { key: 'stage_ftp_y2',   label: 'Stages FTP — 2ème année',   sub: '(S3 / S4)',          cls: 'on-stage'    },
+    { key: 'stage_ftp_y3',   label: 'Stages FTP — 3ème année',   sub: '(S5 / S6)',          cls: 'on-stage'    },
+    { key: 'company_alt_y1', label: 'Entreprise ALT — 1ère année', sub: '(S1 / S2)',         cls: 'on-company'  },
+    { key: 'company_alt_y2', label: 'Entreprise ALT — 2ème année', sub: '(S3 / S4)',         cls: 'on-company'  },
+    { key: 'company_alt_y3', label: 'Entreprise ALT — 3ème année', sub: '(S5 / S6)',         cls: 'on-company'  },
+];
+
+async function loadCalendrier() {
+    const body = document.getElementById('calendrier-body');
+    body.innerHTML = '<div class="spinner">Chargement…</div>';
+    try {
+        const [cal, cfg] = await Promise.all([api('/special-calendar'), api('/config')]);
+        _calData = cal;
+        state.config = cfg;
+        buildAllWeekSelect('sem-odd-start',  cfg.semester_odd_start_week);
+        buildAllWeekSelect('sem-odd-end',    cfg.semester_odd_end_week);
+        buildAllWeekSelect('sem-even-start', cfg.semester_even_start_week);
+        buildAllWeekSelect('sem-even-end',   cfg.semester_even_end_week);
+        renderCalendrierPage(cfg.academic_start_week || 36, cfg.academic_end_week || 26);
+    } catch(e) {
+        body.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
+    }
+}
+
+function nextSchoolWeek(w) { return w >= maxWeek() ? 1 : w + 1; }
+function prevSchoolWeek(w) { return w <= 1 ? maxWeek() : w - 1; }
+
+function syncSemesterDates(source) {
+    // Lie fin du semestre impair et début du semestre pair (semaines consécutives)
+    if (source === 'odd-end') {
+        const oddEnd = parseInt(document.getElementById('sem-odd-end').value);
+        if (oddEnd) document.getElementById('sem-even-start').value = nextSchoolWeek(oddEnd);
+    } else if (source === 'even-start') {
+        const evenStart = parseInt(document.getElementById('sem-even-start').value);
+        if (evenStart) document.getElementById('sem-odd-end').value = prevSchoolWeek(evenStart);
+    }
+    // Rafraîchir la double barre de séparation (ancrée sur le début du semestre pair)
+    const evenStart = parseInt(document.getElementById('sem-even-start').value);
+    if (evenStart) {
+        state.config = { ...(state.config || {}), semester_even_start_week: evenStart };
+        renderCalendrierPage(state.config.academic_start_week || 36, state.config.academic_end_week || 26);
+    }
+}
+
+function renderCalendrierPage(startWeek, endWeek) {
+    // Liste des semaines dans l'ordre scolaire
+    const weeks = [];
+    const sw = parseInt(startWeek), ew = parseInt(endWeek);
+    if (sw <= ew) {
+        for (let w = sw; w <= ew; w++) weeks.push(w);
+    } else {
+        for (let w = sw; w <= maxWeek(); w++) weeks.push(w);
+        for (let w = 1;  w <= ew; w++) weeks.push(w);
+    }
+
+    // Colonne où débute le semestre pair → double barre de séparation
+    const evenStart = parseInt((state.config || {}).semester_even_start_week);
+    const sepIdx = weeks.indexOf(evenStart);
+
+    // En-tête semaines
+    const hdr = weeks.map((w, i) => `<th${i === sepIdx ? ' class="sem-sep"' : ''}>S${w}</th>`).join('');
+
+    let html = '<div class="cal-grid"><table><thead><tr><th class="cal-cat">Catégorie</th>' + hdr + '</tr></thead><tbody>';
+
+    _CAL_CATS.forEach(cat => {
+        const sel = new Set(_calData[cat.key] || []);
+        const cells = weeks.map((w, i) => {
+            const on = sel.has(w);
+            return `<td${i === sepIdx ? ' class="sem-sep"' : ''}><span class="cal-week${on ? ' ' + cat.cls : ''}" data-key="${cat.key}" data-w="${w}" onclick="toggleCalWeek('${cat.key}',${w},this)">${w}</span></td>`;
+        }).join('');
+        html += `<tr>
+            <td style="padding:6px 10px;white-space:nowrap;vertical-align:middle">
+                <strong>${cat.label}</strong> <span style="color:#9ca3af;font-size:.75rem">${cat.sub}</span>
+            </td>${cells}</tr>`;
+    });
+
+    html += '</tbody></table></div>';
+    document.getElementById('calendrier-body').innerHTML = html;
+}
+
+function toggleCalWeek(key, w, el) {
+    const sel = new Set(_calData[key] || []);
+    const cat = _CAL_CATS.find(c => c.key === key);
+    if (sel.has(w)) {
+        sel.delete(w);
+        el.className = 'cal-week';
+    } else {
+        sel.add(w);
+        el.className = 'cal-week ' + (cat ? cat.cls : '');
+    }
+    _calData[key] = Array.from(sel).sort((a, b) => a - b);
+}
+
+async function saveCalendrier() {
+    if (!_calData) return;
+    const dates = {
+        semester_odd_start_week:  parseInt(document.getElementById('sem-odd-start').value),
+        semester_odd_end_week:    parseInt(document.getElementById('sem-odd-end').value),
+        semester_even_start_week: parseInt(document.getElementById('sem-even-start').value),
+        semester_even_end_week:   parseInt(document.getElementById('sem-even-end').value),
+    };
+    if (Object.values(dates).some(v => !v)) {
+        toast('Renseigner les semaines de début et de fin des semestres', 'error');
+        return;
+    }
+    try {
+        await api('/special-calendar', { method: 'PUT', body: JSON.stringify(_calData) });
+        await api('/config', { method: 'PUT', body: JSON.stringify(dates) });
+        state.config = { ...(state.config || {}), ...dates };
+        toast('Calendrier enregistré');
+    } catch(e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
 async function loadRepartition() {
-    const sem = document.getElementById('filter-semester-repartition').value;
+    const sems = _selectedSemesters.slice();
     const el = document.getElementById('repartition-table');
     el.innerHTML = '<div class="spinner">Chargement…</div>';
+    document.getElementById('checks-panel').innerHTML = '';
+    if (!sems.length) {
+        el.innerHTML = '<div class="empty">Sélectionnez au moins un semestre.</div>';
+        _repartitionData = null;
+        return;
+    }
     try {
-        const url = '/repartition' + (sem ? '?semester=' + encodeURIComponent(sem) : '');
-        _repartitionData = await api(url);
+        if (!state.config) state.config = await api('/config');
+        // Ensemble « promo » = semestres sélectionnés + leurs pairs (pour les totaux hebdo)
+        const promoSet = [];
+        sems.forEach(s => {
+            if (!promoSet.includes(s)) promoSet.push(s);
+            const p = _semPairs[s];
+            if (p && !promoSet.includes(p)) promoSet.push(p);
+        });
+        const datas = {};
+        await Promise.all(promoSet.map(async s => {
+            datas[s] = await api('/repartition?semester=' + encodeURIComponent(s));
+        }));
+
+        const weeks = datas[sems[0]].weeks;  // plage complète, identique pour tous les semestres
+        const rows = [];
+        sems.forEach(s => rows.push(...datas[s].rows));   // corps : semestres sélectionnés uniquement
+
+        // Semaines spéciales conservées PAR semestre : le calendrier (vacances/stage/entreprise)
+        // dépend de l'année, donc chaque matière doit être coloriée selon SON semestre.
+        const specialBySem = {};
+        sems.forEach(s => { specialBySem[s] = datas[s].special_weeks; });
+        const uniq = a => [...new Set(a)];
+        const special_weeks = { // union, conservée pour compat (légende, etc.)
+            vacation_ftp: uniq(sems.flatMap(s => datas[s].special_weeks.vacation_ftp || [])),
+            stage_ftp:    uniq(sems.flatMap(s => datas[s].special_weeks.stage_ftp || [])),
+            company_alt:  uniq(sems.flatMap(s => datas[s].special_weeks.company_alt || [])),
+        };
+
+        // promoRows : tous les semestres du promoSet, dédupliqués par session (totaux promo)
+        const seen = new Set();
+        const promoRows = [];
+        promoSet.forEach(s => datas[s].rows.forEach(r => {
+            if (!seen.has(r.session_id)) { seen.add(r.session_id); promoRows.push(r); }
+        }));
+
+        _repartitionData = { weeks, rows, special_weeks, specialBySem, promoRows, selected: sems };
+        populateRepartitionFilters(rows);
         renderRepartition(_repartitionData);
     } catch(e) {
         el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
@@ -1233,68 +2228,157 @@ function filterRepartition() {
     if (_repartitionData) renderRepartition(_repartitionData);
 }
 
-function renderRepartition({ weeks, rows, special_weeks }) {
+// Remplit une liste déroulante à partir des valeurs distinctes des lignes affichées,
+// en conservant la sélection courante si la valeur est toujours présente.
+function populateOptionFilter(selectId, allValue, values) {
+    const sel = document.getElementById(selectId);
+    if (!sel) return;
+    const current = sel.value;
+    const uniq = [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    sel.innerHTML = `<option value="">${allValue}</option>` +
+        uniq.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    sel.value = uniq.includes(current) ? current : '';
+}
+
+// Remplit les filtres Enseignant et Salle d'après les lignes affichées.
+function populateRepartitionFilters(rows) {
+    populateOptionFilter('filter-teacher-repartition', 'Tous',   rows.map(r => r.teacher));
+    populateOptionFilter('filter-room-repartition',    'Toutes', rows.map(r => r.room));
+}
+
+function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
     const el = document.getElementById('repartition-table');
     if (!rows.length) { el.innerHTML = '<div class="empty">Aucune donnée</div>'; return; }
 
-    const sp = special_weeks || { vacation_ftp: [], company_alt: [] };
+    const emptySp = { vacation_ftp: [], stage_ftp: [], company_alt: [] };
+    const spBy = specialBySem || {};
+    // Semaines spéciales applicables à une matière, selon SON semestre (calendrier par année).
+    const spFor = sem => spBy[sem] || special_weeks || emptySp;
     const typeColors = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' };
-    const showSem  = document.getElementById('filter-semester-repartition').value === '';
+    const selected = (_repartitionData && _repartitionData.selected) || [];
+    const showSem = selected.length > 1; // affiche le code semestre dès que plusieurs semestres
     const formFilter = document.getElementById('filter-formation-repartition').value; // '', 'ftp', 'alt'
+    const teacherFilter = document.getElementById('filter-teacher-repartition').value; // '' = tous
+    const roomFilter = document.getElementById('filter-room-repartition').value; // '' = toutes
+    // Colonne où débute le semestre pair → double barre de séparation
+    const evenStart = parseInt((state.config || {}).semester_even_start_week);
+
+    // Cases à cocher Impair / Pair : ne garder que les semaines de la parité voulue
+    const cbOdd = document.getElementById('cb-sem-odd');
+    const cbEven = document.getElementById('cb-sem-even');
+    let showOdd  = cbOdd  ? cbOdd.checked  : true;
+    let showEven = cbEven ? cbEven.checked : true;
+    if (!showOdd && !showEven) { showOdd = showEven = true; } // jamais vide
+    if (!(showOdd && showEven)) {
+        // La parité bascule à la semaine de début du semestre pair (position dans la plage).
+        // Si cette semaine n'est pas affichée (que des semestres impairs), tout est « impair ».
+        const origSep = weeks.indexOf(evenStart);
+        const isEven = origSep >= 0 ? (w => weeks.indexOf(w) >= origSep) : (() => false);
+        weeks = weeks.filter(w => (isEven(w) ? showEven : showOdd));
+    }
+
+    const sepIdx = weeks.indexOf(evenStart);
+    const sepCls = i => (i === sepIdx ? ' sem-sep' : '');
 
     // Grouper les lignes par matière puis par formation
     const byCode = {}, codeOrder = [];
     rows.forEach(r => {
+        if (teacherFilter && r.teacher !== teacherFilter) return; // filtre enseignant
+        if (roomFilter && r.room !== roomFilter) return;          // filtre salle
         const key = r.course_code + '|' + r.semester;
         if (!byCode[key]) {
-            byCode[key] = { code: r.course_code, name: r.course_name, sem: r.semester, ftp: [], alt: [] };
+            byCode[key] = { code: r.course_code, name: r.course_name, sem: r.semester, ftp: [], alt: [], mut: [] };
             codeOrder.push(key);
         }
         if (r.formation === 'FTP') byCode[key].ftp.push(r);
         else if (r.formation === 'ALT') byCode[key].alt.push(r);
+        else if (r.formation === 'MUT') byCode[key].mut.push(r);
     });
 
-    // Colonnes fixes (sticky) — allégées car code/nom sont dans les en-têtes de bloc
+    // Tri d'affichage : d'abord par semestre (S1→S6), puis ordre imposé S5/S6 (entrelacé)
+    // au sein du bloc S5+S6 ; les autres semestres gardent leur ordre naturel (par code).
+    const ordIdx = c => (c in _courseOrderIdx ? _courseOrderIdx[c] : Infinity);
+    const semRank = sem => {
+        const n = parseInt(String(sem || '').replace(/\D/g, '')) || 99;
+        return n >= 5 ? 5 : n; // S5 et S6 regroupés en fin (rang 5) pour rester entrelacés
+    };
+    codeOrder.sort((a, b) => {
+        const ra = semRank(byCode[a].sem), rb = semRank(byCode[b].sem);
+        if (ra !== rb) return ra - rb;
+        return ordIdx(byCode[a].code) - ordIdx(byCode[b].code);
+    });
+
+    // Colonnes fixes (sticky) — largeurs imposées par table-layout:fixed
     const fixedCols = [
-        { key: 'type',  label: 'Type',       w: 52  },
-        { key: 'teach', label: 'Enseignant',  w: 150 },
+        { key: 'type',  label: 'Type',       w: 70  },
+        { key: 'teach', label: 'Enseignant',  w: 105 },
+        { key: 'room',  label: 'Salle',       w: 60  },
     ];
+    const WMOD = 52;   // largeur colonne H. module
+    const WTOTAL = 48; // largeur colonne Total (Reste)
     let cum = 0;
     fixedCols.forEach(c => { c.left = cum; cum += c.w; });
-    const totalColSpan = fixedCols.length + 1 + weeks.length;
+    const moduleFixedLeft = cum;             // left de la colonne H. module sticky
+    const totalFixedLeft  = cum + WMOD;      // left du Total (Reste) sticky
+    const fixedSpan     = fixedCols.length + 2; // Type + Enseignant + H.module + Reste = 4
+    const totalColSpan  = fixedSpan + weeks.length;
+    // Largeur colonne semaine : étirée pour remplir le conteneur (min 28px),
+    // sinon scroll horizontal si trop de semaines.
+    const avail = (el.clientWidth || window.innerWidth) - 2; // marge bordures
+    const WK = Math.max(28, Math.floor((avail - cum - WMOD - WTOTAL) / Math.max(1, weeks.length)));
+    // Largeur totale imposée : garantit que table-layout:fixed ne dépend pas du contenu
+    const tableW = cum + WMOD + WTOTAL + weeks.length * WK;
 
     const sCol = (c, content) =>
-        `<td class="s-col" style="left:${c.left}px;min-width:${c.w}px;max-width:${c.w}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${content}</td>`;
+        `<td class="s-col" style="left:${c.left}px">${content}</td>`;
     const sTh = (c) =>
-        `<th class="s-col col-week" style="left:${c.left}px;min-width:${c.w}px">${c.label}</th>`;
+        `<th class="s-col col-week" style="left:${c.left}px">${c.label}</th>`;
 
-    function weekThCls(w) {
-        const isVac = sp.vacation_ftp.includes(w);
-        const isCo  = sp.company_alt.includes(w);
-        if (isVac && isCo) return 'w-both';
-        if (isVac) return 'w-vacation';
-        if (isCo)  return 'w-company';
+    // Classe semaine pour les EN-TÊTES (jamais colorée)
+    // Classe semaine pour les DONNÉES, selon la formation
+    function weekDataCls(w, formCls, sem) {
+        const sp = spFor(sem);
+        if (formCls === 'row-mut') {
+            // CM/TD mutualisés (FTP+ALT) : on conserve aussi le bleu « entreprise » (ALT)
+            const ftpSpecial = (sp.stage_ftp || []).includes(w) || (sp.vacation_ftp || []).includes(w);
+            const altCompany = (sp.company_alt || []).includes(w);
+            if (ftpSpecial && altCompany)             return 'w-both';
+            if (altCompany)                           return 'w-company';
+            if ((sp.stage_ftp || []).includes(w))     return 'w-stage';
+            if ((sp.vacation_ftp || []).includes(w))  return 'w-vacation';
+        } else if (formCls === 'row-ftp') {
+            if ((sp.stage_ftp || []).includes(w))     return 'w-stage';
+            if ((sp.vacation_ftp || []).includes(w))  return 'w-vacation';
+        } else if (formCls === 'row-alt') {
+            if ((sp.company_alt || []).includes(w))   return 'w-company';
+        }
         return '';
     }
 
-    const headerWeeks = weeks.map(w => {
-        const cls = weekThCls(w);
-        return `<th class="col-week ${cls}">S${w}</th>`;
-    }).join('');
+    const headerWeeks = weeks.map((w, i) => `<th class="col-week${sepCls(i)}">${w}</th>`).join('');
 
     function buildDataRow(r, formCls) {
         const typeKey = (r.type || '').toUpperCase();
         const badge = `<span class="badge ${typeColors[typeKey] || 'badge-cm'}">${esc(r.type || '')}</span>`;
-        const weekTotal = weeks.reduce((s, w) => s + (r.by_week[w] || 0), 0);
-        const cells = weeks.map(w => {
+        const placed = weeks.reduce((s, w) => s + (r.by_week[w] || 0), 0);
+        const remaining = r.total_hours - placed;
+        const sid = r.session_id;
+        const slot = r.slot_duration || 1.5;
+        const cells = weeks.map((w, i) => {
             const h = r.by_week[w];
-            const cls = weekThCls(w);
-            return h ? `<td class="cell-hours ${cls}">${h}</td>` : `<td class="cell-empty ${cls}">·</td>`;
+            const cls = weekDataCls(w, formCls, r.semester) + sepCls(i);
+            return h ? `<td class="cell-hours ${cls}" data-sid="${sid}" data-week="${w}">${h}</td>`
+                     : `<td class="cell-empty ${cls}" data-sid="${sid}" data-week="${w}">·</td>`;
         }).join('');
-        return `<tr class="row-data ${formCls}">
+        const formTag = formCls === 'row-ftp' ? 'FTP' : formCls === 'row-alt' ? 'ALT' : formCls === 'row-mut' ? 'MUT' : '';
+        const totalCls = remaining !== 0 ? ' col-total-bad' : '';
+        const totalTxt = r.total_hours > 0 ? remaining + 'h' : '';
+        return `<tr class="row-data ${formCls}" data-sid="${sid}" data-formation="${formTag}" data-teacher="${esc(r.teacher)}" data-slot="${slot}" data-total-hours="${r.total_hours}">
             ${sCol(fixedCols[0], badge)}
             ${sCol(fixedCols[1], esc(r.teacher))}
-            <td class="col-total">${weekTotal > 0 ? weekTotal + 'h' : ''}</td>
+            ${sCol(fixedCols[2], esc(r.room || ''))}
+            <td class="col-module s-col" style="left:${moduleFixedLeft}px">${r.total_hours > 0 ? r.total_hours + 'h' : ''}</td>
+            <td class="col-total s-col${totalCls}" style="left:${totalFixedLeft}px" data-row-total="${sid}">${totalTxt}</td>
             ${cells}
         </tr>`;
     }
@@ -1302,36 +2386,370 @@ function renderRepartition({ weeks, rows, special_weeks }) {
     let bodyRows = '';
     codeOrder.forEach(key => {
         const block = byCode[key];
+        const mutRows = block.mut; // MUT toujours affichées (communes FTP+ALT)
         const ftpRows = (formFilter === '' || formFilter === 'ftp') ? block.ftp : [];
         const altRows = (formFilter === '' || formFilter === 'alt') ? block.alt : [];
-        if (!ftpRows.length && !altRows.length) return;
+        if (!ftpRows.length && !altRows.length && !mutRows.length) return;
 
-        // En-tête de bloc matière
+        // En-tête matière
         const semLabel = showSem ? ` <span class="mat-sem">· ${esc(block.sem)}</span>` : '';
-        bodyRows += `<tr class="row-mat"><td colspan="${totalColSpan}">
-            <strong>${esc(block.code)}</strong> — ${esc(block.name)}${semLabel}
-        </td></tr>`;
+        bodyRows += `<tr class="row-mat">
+            <td class="s-col" colspan="${fixedSpan}" style="left:0;z-index:2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                <strong>${esc(block.code)}</strong> — ${esc(block.name)}${semLabel}
+            </td><td colspan="${weeks.length}"></td>
+        </tr>`;
+
+        // MUT (CM/TD communs) — toujours affichées en premier
+        if (mutRows.length) {
+            bodyRows += `<tr class="row-form row-form-mut">
+                <td class="s-col" colspan="${fixedSpan}" style="left:0;z-index:2">MUT</td>
+                <td colspan="${weeks.length}"></td>
+            </tr>`;
+            mutRows.forEach(r => { bodyRows += buildDataRow(r, 'row-mut'); });
+        }
 
         if (ftpRows.length) {
             if (formFilter === '')
-                bodyRows += `<tr class="row-form row-form-ftp"><td colspan="${totalColSpan}">FTP</td></tr>`;
+                bodyRows += `<tr class="row-form row-form-ftp">
+                    <td class="s-col" colspan="${fixedSpan}" style="left:0;z-index:2">FTP</td>
+                    <td colspan="${weeks.length}"></td>
+                </tr>`;
             ftpRows.forEach(r => { bodyRows += buildDataRow(r, 'row-ftp'); });
         }
         if (altRows.length) {
             if (formFilter === '')
-                bodyRows += `<tr class="row-form row-form-alt"><td colspan="${totalColSpan}">ALT</td></tr>`;
+                bodyRows += `<tr class="row-form row-form-alt">
+                    <td class="s-col" colspan="${fixedSpan}" style="left:0;z-index:2">ALT</td>
+                    <td colspan="${weeks.length}"></td>
+                </tr>`;
             altRows.forEach(r => { bodyRows += buildDataRow(r, 'row-alt'); });
         }
     });
 
-    el.innerHTML = `<div class="repartition-wrap"><table>
-        <thead><tr>
-            ${fixedCols.map(sTh).join('')}
-            <th class="col-total" style="min-width:56px">Total</th>
-            ${headerWeeks}
-        </tr></thead>
+    // Totaux hebdomadaires par promo : utilise promoRows si dispo (semestre individuel → inclut le semestre lié)
+    const promoSource = (_repartitionData && _repartitionData.promoRows) || rows;
+    const ftpByWeek = {}, altByWeek = {};
+    weeks.forEach(w => { ftpByWeek[w] = 0; altByWeek[w] = 0; });
+    promoSource.forEach(r => {
+        weeks.forEach(w => {
+            const h = r.by_week[w] || 0;
+            if (r.formation === 'FTP') ftpByWeek[w] += h;
+            else if (r.formation === 'ALT') altByWeek[w] += h;
+            else if (r.formation === 'MUT') { ftpByWeek[w] += h; altByWeek[w] += h; }
+        });
+    });
+    const fmtH = h => h > 0 ? h : '';
+
+    const promoHeaderRow = (label, cls, byWeek, colorFn) =>
+        `<tr data-promo="${label}">
+            <th class="s-col ${cls}" colspan="${fixedSpan}" style="left:0">${label}</th>
+            ${weeks.map((w, i) => {
+                const h = byWeek[w];
+                const bg = colorFn ? colorFn(h) : null;
+                const st = bg ? ` style="background:${bg} !important;color:#111"` : '';
+                return `<th class="col-week ${cls}${sepCls(i)}" data-promo-week="${w}"${st}>${fmtH(h)}</th>`;
+            }).join('')}
+        </tr>`;
+
+    // Ligne « heures / semaine » de l'enseignant filtré (somme de ses séances affichées)
+    let teacherHeaderRow = '';
+    if (teacherFilter) {
+        const tByWeek = {};
+        weeks.forEach(w => { tByWeek[w] = 0; });
+        rows.forEach(r => {
+            if (r.teacher !== teacherFilter) return;
+            weeks.forEach(w => { tByWeek[w] += (r.by_week[w] || 0); });
+        });
+        teacherHeaderRow = `<tr data-teacher-total="1">
+            <th class="s-col th-teacher-total" colspan="${fixedSpan}" style="left:0">${esc(teacherFilter)} — h/sem.</th>
+            ${weeks.map((w, i) => {
+                const h = tByWeek[w];
+                const over = h > 20 ? ' style="background:#fca5a5 !important;color:#111"' : '';
+                return `<th class="col-week th-teacher-total${sepCls(i)}" data-teacher-week="${w}"${over}>${fmtH(h)}</th>`;
+            }).join('')}
+        </tr>`;
+    }
+
+    // Ligne « heures / semaine » de la salle filtrée (occupation, somme de ses séances affichées)
+    let roomHeaderRow = '';
+    if (roomFilter) {
+        const rByWeek = {};
+        weeks.forEach(w => { rByWeek[w] = 0; });
+        rows.forEach(r => {
+            if (r.room !== roomFilter) return;
+            weeks.forEach(w => { rByWeek[w] += (r.by_week[w] || 0); });
+        });
+        roomHeaderRow = `<tr data-room-total="1">
+            <th class="s-col th-room-total" colspan="${fixedSpan}" style="left:0">Salle ${esc(roomFilter)} — h/sem.</th>
+            ${weeks.map((w, i) =>
+                `<th class="col-week th-room-total${sepCls(i)}" data-room-week="${w}">${fmtH(rByWeek[w])}</th>`
+            ).join('')}
+        </tr>`;
+    }
+
+    // <colgroup> + table-layout:fixed : largeurs fixées par le CSS, pas par le contenu
+    const colgroup = `<colgroup>
+        ${fixedCols.map(c => `<col style="width:${c.w}px">`).join('')}
+        <col style="width:${WMOD}px">
+        <col style="width:${WTOTAL}px">
+        ${weeks.map(() => `<col style="width:${WK}px">`).join('')}
+    </colgroup>`;
+
+    // Empile les lignes récapitulatives en posant un décalage sticky cumulé (--htop).
+    // Chaque ligne récap fait 26px ; la ligne des numéros de semaine se cale en dessous.
+    const HROW = 26;
+    const withTop = (trHtml, top) => trHtml.replace(/^<tr /, `<tr style="--htop:${top}px" `);
+    let htop = 0;
+    let headerHtml = '';
+    [
+        teacherHeaderRow,
+        roomHeaderRow,
+        formFilter !== 'alt' ? promoHeaderRow('FTP', 'th-promo-ftp', ftpByWeek, ftpHeatBg) : '',
+        formFilter !== 'ftp' ? promoHeaderRow('ALT', 'th-promo-alt', altByWeek, altHeatBg) : '',
+    ].forEach(tr => { if (tr) { headerHtml += withTop(tr, htop); htop += HROW; } });
+    const weeksHeaderRow = `<tr class="hrow-weeks" style="--htop:${htop}px">
+        ${fixedCols.map(sTh).join('')}
+        <th class="col-module s-col" style="left:${moduleFixedLeft}px">H. mod.</th>
+        <th class="col-total s-col" style="left:${totalFixedLeft}px">Reste</th>
+        ${headerWeeks}
+    </tr>`;
+
+    el.innerHTML = `<div class="repartition-wrap"><table style="table-layout:fixed;width:${tableW}px">
+        ${colgroup}
+        <thead>
+            ${headerHtml}
+            ${weeksHeaderRow}
+        </thead>
         <tbody>${bodyRows}</tbody>
     </table></div>`;
+
+    // Délégation d'événement : clic sur une cellule de données → édition inline
+    const wrap = el.querySelector('.repartition-wrap');
+    if (wrap) wrap.addEventListener('click', onRepartitionCellClick);
+}
+
+function onRepartitionCellClick(e) {
+    // Ignorer si clic sur un bouton flèche déjà présent
+    if (e.target.closest('.cell-arrows')) return;
+    const td = e.target.closest('td[data-sid][data-week]');
+    if (!td || td.querySelector('.cell-arrows')) return;
+
+    const sid = parseInt(td.dataset.sid);
+    const week = parseInt(td.dataset.week);
+    const tr = td.closest('tr');
+    const slot = parseFloat(tr.dataset.slot) || 1.5;
+    const currentVal = parseFloat(td.textContent) || 0;
+
+    // Créer le widget flèches
+    const div = document.createElement('div');
+    div.className = 'cell-arrows';
+    const btnUp = document.createElement('button');
+    btnUp.innerHTML = '&#9650;';
+    btnUp.title = '+' + slot + 'h';
+    const valSpan = document.createElement('span');
+    valSpan.className = 'cell-val';
+    valSpan.textContent = currentVal || '·';
+    const btnDown = document.createElement('button');
+    btnDown.innerHTML = '&#9660;';
+    btnDown.title = '-' + slot + 'h';
+    div.appendChild(btnUp);
+    div.appendChild(valSpan);
+    div.appendChild(btnDown);
+    td.textContent = '';
+    td.appendChild(div);
+
+    btnUp.addEventListener('click', ev => {
+        ev.stopPropagation();
+        const cur = parseFloat(valSpan.textContent) || 0;
+        const nv = Math.round((cur + slot) * 100) / 100;
+        valSpan.textContent = nv;
+        updateRepartitionCell(sid, week, nv, td);
+    });
+    btnDown.addEventListener('click', ev => {
+        ev.stopPropagation();
+        const cur = parseFloat(valSpan.textContent) || 0;
+        const nv = Math.max(0, Math.round((cur - slot) * 100) / 100);
+        valSpan.textContent = nv || '·';
+        updateRepartitionCell(sid, week, nv, td);
+    });
+
+    // Fermer le widget si on clique ailleurs
+    function closeWidget(ev) {
+        if (td.contains(ev.target)) return;
+        document.removeEventListener('click', closeWidget, true);
+        const v = parseFloat(valSpan.textContent) || 0;
+        td.textContent = v || '·';
+        if (v) { td.classList.add('cell-hours'); td.classList.remove('cell-empty'); }
+        else   { td.classList.add('cell-empty'); td.classList.remove('cell-hours'); }
+    }
+    setTimeout(() => document.addEventListener('click', closeWidget, true), 0);
+}
+
+async function updateRepartitionCell(sid, week, newHours, td) {
+    try {
+        await api(`/weekly-hours/${sid}/${week}`, {
+            method: 'PUT',
+            body: JSON.stringify({ hours: newHours }),
+        });
+    } catch(err) {
+        toast('Erreur sauvegarde : ' + err.message, 'error');
+        return;
+    }
+
+    // Mettre à jour _repartitionData
+    if (_repartitionData) {
+        const row = _repartitionData.rows.find(r => r.session_id === sid);
+        if (row) {
+            const oldH = row.by_week[week] || 0;
+            const delta = newHours - oldH;
+            if (newHours > 0) row.by_week[week] = newHours;
+            else delete row.by_week[week];
+
+            // Mettre à jour le total restant
+            const totalTd = document.querySelector(`td[data-row-total="${sid}"]`);
+            if (totalTd) {
+                const placed = Object.values(row.by_week).reduce((s, v) => s + v, 0);
+                const remaining = row.total_hours - placed;
+                totalTd.textContent = row.total_hours > 0 ? remaining + 'h' : '';
+                if (remaining !== 0) totalTd.classList.add('col-total-bad');
+                else totalTd.classList.remove('col-total-bad');
+            }
+
+            // Mettre à jour les totaux promo en-tête
+            const tr = td.closest('tr');
+            const formation = tr ? tr.dataset.formation : '';
+            if (formation && delta !== 0) {
+                // MUT compte pour FTP et ALT
+                const promoLabels = formation === 'MUT' ? ['FTP', 'ALT'] : [formation];
+                promoLabels.forEach(promoLabel => {
+                    const promoRow = document.querySelector(`tr[data-promo="${promoLabel}"]`);
+                    if (promoRow) {
+                        const th = promoRow.querySelector(`th[data-promo-week="${week}"]`);
+                        if (th) {
+                            const curTotal = parseFloat(th.textContent) || 0;
+                            const newTotal = curTotal + delta;
+                            th.textContent = newTotal > 0 ? newTotal : '';
+                            const colorFn = promoLabel === 'FTP' ? ftpHeatBg : altHeatBg;
+                            const bg = colorFn(newTotal);
+                            if (bg) th.setAttribute('style', `background:${bg} !important;color:#111`);
+                            else th.removeAttribute('style');
+                        }
+                    }
+                });
+                // Aussi mettre à jour promoRows si elles existent
+                if (_repartitionData.promoRows) {
+                    const promoRow2 = _repartitionData.promoRows.find(r => r.session_id === sid);
+                    if (promoRow2) {
+                        if (newHours > 0) promoRow2.by_week[week] = newHours;
+                        else delete promoRow2.by_week[week];
+                    }
+                }
+            }
+
+            // Mettre à jour la ligne « h/sem. » de l'enseignant si elle est affichée
+            const teacherSel = document.getElementById('filter-teacher-repartition');
+            const tf = teacherSel ? teacherSel.value : '';
+            if (tf && row.teacher === tf && delta !== 0) {
+                const tRow = document.querySelector('tr[data-teacher-total]');
+                const th = tRow && tRow.querySelector(`th[data-teacher-week="${week}"]`);
+                if (th) {
+                    const newTotal = (parseFloat(th.textContent) || 0) + delta;
+                    th.textContent = newTotal > 0 ? newTotal : '';
+                    if (newTotal > 20) th.setAttribute('style', 'background:#fca5a5 !important;color:#111');
+                    else th.removeAttribute('style');
+                }
+            }
+
+            // Mettre à jour la ligne « h/sem. » de la salle si elle est affichée
+            const roomSel = document.getElementById('filter-room-repartition');
+            const rf = roomSel ? roomSel.value : '';
+            if (rf && row.room === rf && delta !== 0) {
+                const rRow = document.querySelector('tr[data-room-total]');
+                const th = rRow && rRow.querySelector(`th[data-room-week="${week}"]`);
+                if (th) {
+                    const newTotal = (parseFloat(th.textContent) || 0) + delta;
+                    th.textContent = newTotal > 0 ? newTotal : '';
+                }
+            }
+        }
+    }
+}
+
+// ===== EXPORT EXCEL =====
+function exportRepartitionExcel() {
+    window.location.href = '/api/export/repartition';
+}
+
+// ===== IMPORT EXCEL =====
+async function importRepartitionExcel(input) {
+    const file = input.files[0];
+    if (!file) return;
+    input.value = '';
+
+    if (!confirm('Importer la répartition depuis ce fichier ?\nLes heures existantes seront remplacées par les valeurs du fichier.')) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const res = await fetch('/api/import/repartition', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!res.ok) { alert('Erreur : ' + (data.error || 'Import échoué')); return; }
+
+        let msg = data.message;
+        if (data.errors && data.errors.length > 0) {
+            msg += '\n\nErreurs :\n' + data.errors.join('\n');
+        }
+        alert(msg);
+        loadRepartition();
+    } catch (e) {
+        alert('Erreur réseau : ' + e.message);
+    }
+}
+
+// ===== CONTROLES REPARTITION =====
+async function runRepartitionChecks() {
+    const panel = document.getElementById('checks-panel');
+    panel.innerHTML = '<div class="spinner">Vérification…</div>';
+    try {
+        const data = await api('/checks/repartition');
+        renderChecksPanel(data);
+    } catch(err) {
+        panel.innerHTML = '<div class="empty">Erreur : ' + esc(err.message) + '</div>';
+    }
+}
+
+function renderChecksPanel({ teacher_load, room_conflicts }) {
+    const panel = document.getElementById('checks-panel');
+    let html = '';
+
+    // Table charge enseignants
+    html += '<h3 style="margin:12px 0 6px;font-size:.95rem">Charge enseignants par semaine</h3>';
+    if (teacher_load.length) {
+        html += '<table><thead><tr><th>Enseignant</th><th>Semaine</th><th>Heures</th><th>Matières</th></tr></thead><tbody>';
+        teacher_load.forEach(r => {
+            const cls = r.total_hours > 30 ? 'check-danger' : r.total_hours > 20 ? 'check-warn' : '';
+            html += `<tr class="${cls}"><td>${esc(r.teacher_name)}</td><td>S${String(r.week_number).padStart(2,'0')}</td><td>${r.total_hours}h</td><td>${esc(r.courses)}</td></tr>`;
+        });
+        html += '</tbody></table>';
+    } else {
+        html += '<p style="color:#6b7280;font-size:.85rem">Aucune donnée de charge enseignant.</p>';
+    }
+
+    // Table conflits salles
+    html += '<h3 style="margin:12px 0 6px;font-size:.95rem">Conflits salles (> 2 matières / semaine)</h3>';
+    html += '<p style="color:#6b7280;font-size:.72rem;margin:-2px 0 6px">STD exclue · 123 comptée comme 2 salles (nb matières ÷ 2)</p>';
+    if (room_conflicts.length) {
+        html += '<table><thead><tr><th>Salle</th><th>Semaine</th><th>Nb matières</th><th>Matières</th></tr></thead><tbody>';
+        room_conflicts.forEach(r => {
+            html += `<tr class="check-danger"><td>${esc(r.room_name)}</td><td>S${String(r.week_number).padStart(2,'0')}</td><td>${r.nb_courses}</td><td>${esc(r.courses)}</td></tr>`;
+        });
+        html += '</tbody></table>';
+    } else {
+        html += '<p style="color:#6b7280;font-size:.85rem">Aucun conflit de salle détecté.</p>';
+    }
+
+    panel.innerHTML = html;
 }
 
 // ===== MODAL HELPERS =====
@@ -1354,7 +2772,7 @@ function buildSchoolWeekList(startW, endW) {
     while (true) {
         weeks.push(w);
         if (w === endW) break;
-        w = (w === 53) ? 1 : w + 1;
+        w = (w >= maxWeek()) ? 1 : w + 1;
         if (weeks.length > 54) break; // sécurité
     }
     return weeks;
@@ -1370,9 +2788,9 @@ function buildWeekSelects(startW, endW) {
 }
 
 function buildAllWeekSelect(selId, selectedVal) {
-    // Peuple un select avec toutes les semaines 1-53 (pour la config)
+    // Peuple un select avec toutes les semaines 1-52 (pour la config)
     let opts = '<option value="">—</option>';
-    for (let w = 1; w <= 53; w++)
+    for (let w = 1; w <= 52; w++)
         opts += `<option value="${w}" ${w == selectedVal ? 'selected' : ''}>S${String(w).padStart(2,'0')}</option>`;
     document.getElementById(selId).innerHTML = opts;
 }
@@ -1393,7 +2811,7 @@ async function submitConfig(e) {
     if (!sw || !ew) { toast('Choisir une semaine de début et de fin', 'error'); return; }
     try {
         await api('/config', { method: 'PUT', body: JSON.stringify({ academic_start_week: sw, academic_end_week: ew }) });
-        state.config = { academic_start_week: sw, academic_end_week: ew };
+        state.config = { ...(state.config || {}), academic_start_week: sw, academic_end_week: ew };
         closeModal('modal-config');
         document.getElementById('stat-year-range').textContent =
             `S${String(sw).padStart(2,'0')} → S${String(ew).padStart(2,'0')}`;

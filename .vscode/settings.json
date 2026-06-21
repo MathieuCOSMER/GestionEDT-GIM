@@ -1,5 +1,5 @@
 {
-  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.defaultInterpreterPath": "${workspaceFolder}/venv_Pro/Scripts/python.exe",
   "python.terminal.activateEnvironment": true,
   "python.terminal.activateEnvInCurrentTerminal": true,
   "python.terminal.executeInFileDir": false,
@@ -7,5 +7,9 @@
     "${workspaceFolder}"
   ],
   "python.venvPath": "${workspaceFolder}",
-  "python.venvFolders": [".venv"]
+  "python.venvFolders": [
+    "venv_Pro",
+    "venv_Home"
+  ],
+  "python-envs.defaultEnvManager": "ms-python.python:venv"
 }
