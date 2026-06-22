@@ -494,17 +494,20 @@ def me():
 
 # ======================= STATIC FILES =======================
 
+_STATIC_DIR = os.path.join(_BASE_DIR, 'static')
+
 @app.route('/')
 def serve_root():
     """Serve index.html at root"""
-    if os.path.exists('static/index.html'):
-        return send_file('static/index.html')
+    index_path = os.path.join(_STATIC_DIR, 'index.html')
+    if os.path.exists(index_path):
+        return send_file(index_path)
     return jsonify({'message': 'Welcome to IUT EDT Management System'}), 200
 
 @app.route('/<path:path>')
 def serve_static(path):
     """Serve static files"""
-    return send_from_directory('static', path)
+    return send_from_directory(_STATIC_DIR, path)
 
 # ======================= TEACHERS CRUD =======================
 
