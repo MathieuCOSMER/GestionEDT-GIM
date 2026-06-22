@@ -886,8 +886,9 @@ function applyRole(role, user, teacher, status) {
             ? (user + ' · ' + (status === 'Vacataire' ? 'vacataire' : 'titulaire'))
             : 'Admin';
     }
-    // Enseignant : onglets de répartition + liste des enseignants (consultation seule)
-    const teacherTabs = ['nav-repartition', 'nav-repartition-enseignant', 'nav-enseignants'];
+    // Enseignant : onglets de répartition ; seul le titulaire voit la liste des enseignants (consultation seule)
+    const teacherTabs = ['nav-repartition', 'nav-repartition-enseignant'];
+    if (state.teacherTitulaire) teacherTabs.push('nav-enseignants');
     document.querySelectorAll('nav button[id^="nav-"]').forEach(b => {
         b.style.display = (role === 'teacher' && !teacherTabs.includes(b.id)) ? 'none' : '';
     });
