@@ -339,7 +339,7 @@
 <div class="page" id="page-enseignants">
     <div class="toolbar">
         <h1>Liste des enseignants</h1>
-        <button class="btn btn-primary" onclick="openTeacherModal()">+ Ajouter</button>
+        <button class="btn btn-primary admin-only" onclick="openTeacherModal()">+ Ajouter</button>
     </div>
     <div id="teachers-table"><div class="spinner">Chargement…</div></div>
 </div>
@@ -840,11 +840,8 @@ async function api(endpoint, opts = {}) {
     const method = (opts.method || 'GET').toUpperCase();
     // Garde côté client : visiteur / enseignant = lecture seule (le serveur l'impose aussi)
     if (state.role === 'teacher' && method !== 'GET' && method !== 'HEAD') {
-        // Le titulaire peut modifier la liste des enseignants
-        if (!(state.teacherTitulaire && endpoint.startsWith('/teachers'))) {
-            toast('Lecture seule', 'error');
-            throw new Error('Lecture seule');
-        }
+        toast('Lecture seule', 'error');
+        throw new Error('Lecture seule');
     }
     const r = await fetch('/api' + endpoint, {
         headers: { 'Content-Type': 'application/json' },
@@ -889,9 +886,8 @@ function applyRole(role, user, teacher, status) {
             ? (user + ' · ' + (status === 'Vacataire' ? 'vacataire' : 'titulaire'))
             : 'Admin';
     }
-    // Enseignant : onglets de répartition ; le titulaire voit aussi la liste des enseignants
-    const teacherTabs = ['nav-repartition', 'nav-repartition-enseignant'];
-    if (state.teacherTitulaire) teacherTabs.push('nav-enseignants');
+    // Enseignant : onglets de répartition + liste des enseignants (consultation seule)
+    const teacherTabs = ['nav-repartition', 'nav-repartition-enseignant', 'nav-enseignants'];
     document.querySelectorAll('nav button[id^="nav-"]').forEach(b => {
         b.style.display = (role === 'teacher' && !teacherTabs.includes(b.id)) ? 'none' : '';
     });
@@ -1072,7 +1068,7 @@ function renderTeachers() {
     if (!state.teachers.length) { el.innerHTML = '<div class="empty">Aucun enseignant</div>'; return; }
     el.innerHTML = `<table>
         <thead><tr>
-            <th>Nom</th><th>Email</th><th>Téléphone</th><th>Structure</th><th>Corps</th><th>Statut</th><th>Actions</th>
+            <th>Nom</th><th>Email</th><th>Téléphone</th><th>Structure</th><th>Corps</th><th>Statut</th>${state.role === 'admin' ? '<th>Actions</th>' : ''}
         </tr></thead>
         <tbody>${state.teachers.map(t => `<tr>
             <td><strong>${esc(t.name)}</strong></td>
@@ -1081,10 +1077,10 @@ function renderTeachers() {
             <td>${esc(t.structure||'')}</td>
             <td>${esc(t.corps||'')}</td>
             <td>${esc(t.status||'Titulaire')}</td>
-            <td>
+            ${state.role === 'admin' ? `<td>
                 <button class="btn btn-secondary btn-sm" onclick="openTeacherModal(${t.id})">Éditer</button>
                 <button class="btn btn-danger btn-sm" onclick="deleteTeacher(${t.id})">Supprimer</button>
-            </td>
+            </td>` : ''}
         </tr>`).join('')}</tbody>
     </table>`;
 }

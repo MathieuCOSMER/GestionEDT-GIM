@@ -442,10 +442,7 @@ def _require_auth():
     if not role:
         return error_response('Authentification requise', 401)
     if role != 'admin' and request.method not in ('GET', 'HEAD'):
-        # Enseignant titulaire : autorisé à modifier la liste des enseignants
-        if (role == 'teacher' and session.get('teacher_status') == 'Titulaire'
-                and path.startswith('/api/teachers')):
-            return
+        # Toute écriture (y compris la liste des enseignants) est réservée à l'admin
         return error_response('Accès en lecture seule', 403)
 
 @app.route('/api/login', methods=['POST'])
