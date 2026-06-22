@@ -3,7 +3,7 @@ Flask backend application for IUT Gestion Emploi Du Temps (EDT)
 Manages timetables for IUT GIM Toulon
 """
 
-from flask import Flask, request, jsonify, send_file, send_from_directory, g
+from flask import Flask, request, jsonify, send_file, send_from_directory, g, session
 from flask_cors import CORS
 import sqlite3
 import os
@@ -16,7 +16,21 @@ import io
 
 # Initialize Flask app
 app = Flask(__name__, static_folder='static', static_url_path='')
-CORS(app)
+app.secret_key = os.environ.get('EDT_SECRET_KEY', 'edt-gim-toulon-secret-2026')
+CORS(app, supports_credentials=True)
+
+# ======================= AUTHENTIFICATION =======================
+# Comptes : Admin (tous droits) + connexion enseignant par nom (lecture seule).
+# Le mot de passe admin peut être surchargé via la variable d'environnement
+# EDT_ADMIN_PASSWORD (recommandé en production pour ne pas l'avoir en clair).
+AUTH_USERS = {
+    'Admin': {
+        'password': os.environ.get('EDT_ADMIN_PASSWORD', 'GestionEDT22#'),
+        'role': 'admin',
+    },
+}
+# Routes API accessibles sans être connecté
+_PUBLIC_API = {'/api/login', '/api/logout', '/api/me'}
 
 # Database configuration
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -172,6 +186,32 @@ def _apply_migrations(db):
             UNIQUE(week_number, week_type)
         )
     ''')
+    # Commentaire libre par semaine (affiché en répartition + export Excel)
+    # `formations` = formations concernées (ex : 'FTP,ALT', 'FTP', 'ALT')
+    # `years` = années (year_group) concernées (ex : '1,2,3', '1', '2,3')
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS week_comments (
+            week_number INTEGER PRIMARY KEY,
+            comment TEXT NOT NULL,
+            formations TEXT NOT NULL DEFAULT 'FTP,ALT',
+            years TEXT NOT NULL DEFAULT '1,2,3'
+        )
+    ''')
+    _wc_cols = [r[1] for r in db.execute("PRAGMA table_info(week_comments)").fetchall()]
+    if 'formations' not in _wc_cols:
+        db.execute("ALTER TABLE week_comments ADD COLUMN formations TEXT NOT NULL DEFAULT 'FTP,ALT'")
+    if 'years' not in _wc_cols:
+        db.execute("ALTER TABLE week_comments ADD COLUMN years TEXT NOT NULL DEFAULT '1,2,3'")
+    # Code texte par catégorie de calendrier (affiché en ligne verticale en répartition)
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS special_category_codes (
+            week_type TEXT PRIMARY KEY,
+            code TEXT NOT NULL
+        )
+    ''')
+    # Statut enseignant : Titulaire / Vacataire
+    if 'status' not in [r[1] for r in db.execute("PRAGMA table_info(teachers)").fetchall()]:
+        db.execute("ALTER TABLE teachers ADD COLUMN status TEXT DEFAULT 'Titulaire'")
     # Auto-migration depuis semester_special_weeks (données legacy)
     db.execute('''
         INSERT OR IGNORE INTO special_calendar (week_number, week_type)
@@ -386,6 +426,72 @@ def error_response(message, status_code=400):
     """Return error response"""
     return jsonify({'error': message}), status_code
 
+# ======================= AUTHENTIFICATION (routes + garde) =======================
+
+@app.before_request
+def _require_auth():
+    """Protège l'API : connexion obligatoire ; visiteur = lecture seule."""
+    if request.method == 'OPTIONS':
+        return
+    path = request.path
+    if not path.startswith('/api/'):
+        return  # fichiers statiques (SPA + page de connexion) : libres
+    if path in _PUBLIC_API:
+        return
+    role = session.get('role')
+    if not role:
+        return error_response('Authentification requise', 401)
+    if role != 'admin' and request.method not in ('GET', 'HEAD'):
+        # Enseignant titulaire : autorisé à modifier la liste des enseignants
+        if (role == 'teacher' and session.get('teacher_status') == 'Titulaire'
+                and path.startswith('/api/teachers')):
+            return
+        return error_response('Accès en lecture seule', 403)
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    data = request.get_json() or {}
+    username = (data.get('username') or '').strip()
+    password = data.get('password') or ''
+    # Compte fixe (Admin), identifiant insensible à la casse
+    key = next((k for k in AUTH_USERS if k.lower() == username.lower()), None)
+    if key:
+        user = AUTH_USERS[key]
+        if user['password'] != password:
+            return error_response('Identifiant ou mot de passe incorrect', 401)
+        session.permanent = True
+        session['user'] = key
+        session['role'] = user['role']
+        session.pop('teacher_name', None)
+        return jsonify({'username': key, 'role': user['role']})
+    # Sinon : connexion enseignant par nom de famille (insensible à la casse)
+    if username:
+        db = get_db()
+        row = db.execute('SELECT name, status FROM teachers WHERE LOWER(name) = LOWER(?)', (username,)).fetchone()
+        if row:
+            status = row['status'] or 'Titulaire'
+            session.permanent = True
+            session['user'] = row['name']
+            session['role'] = 'teacher'
+            session['teacher_name'] = row['name']
+            session['teacher_status'] = status
+            return jsonify({'username': row['name'], 'role': 'teacher',
+                            'teacher': row['name'], 'status': status})
+    return error_response('Identifiant ou mot de passe incorrect', 401)
+
+@app.route('/api/logout', methods=['POST'])
+def logout():
+    session.clear()
+    return jsonify({'message': 'Déconnecté'})
+
+@app.route('/api/me', methods=['GET'])
+def me():
+    if session.get('role'):
+        return jsonify({'username': session.get('user'), 'role': session.get('role'),
+                        'teacher': session.get('teacher_name'),
+                        'status': session.get('teacher_status')})
+    return error_response('Non authentifié', 401)
+
 # ======================= STATIC FILES =======================
 
 @app.route('/')
@@ -425,14 +531,15 @@ def create_teacher():
         db = get_db()
         cursor = db.cursor()
         cursor.execute('''
-            INSERT INTO teachers (name, email, phone, structure, corps_code, max_hours_day, priority)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO teachers (name, email, phone, structure, corps_code, status, max_hours_day, priority)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             data['name'],
             data.get('email'),
             data.get('phone'),
             data.get('structure'),
             data.get('corps_code'),
+            data.get('status') or 'Titulaire',
             data.get('max_hours_day', 6),
             data.get('priority', 1)
         ))
@@ -478,7 +585,7 @@ def update_teacher(teacher_id):
         # Update fields
         update_fields = []
         values = []
-        for field in ['name', 'email', 'phone', 'structure', 'corps_code', 'max_hours_day', 'priority']:
+        for field in ['name', 'email', 'phone', 'structure', 'corps_code', 'status', 'max_hours_day', 'priority']:
             if field in data:
                 update_fields.append(f'{field} = ?')
                 values.append(data[field])
@@ -877,6 +984,86 @@ def set_special_calendar():
     except Exception as e:
         return error_response(str(e), 500)
 
+@app.route('/api/week-comments', methods=['GET'])
+def get_week_comments():
+    """Retourne les commentaires par semaine :
+    {week_number: {comment: str, formations: [..]}}"""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('SELECT week_number, comment, formations, years FROM week_comments')
+        return jsonify({str(r['week_number']): {
+            'comment': r['comment'],
+            'formations': [f for f in (r['formations'] or 'FTP,ALT').split(',') if f],
+            'years': [int(y) for y in (r['years'] or '1,2,3').split(',') if y],
+        } for r in cursor.fetchall()}), 200
+    except Exception as e:
+        return error_response(str(e), 500)
+
+@app.route('/api/week-comments', methods=['PUT'])
+def set_week_comments():
+    """Remplace l'ensemble des commentaires.
+    Body: {week_number: {comment: str, formations: [..]}, ...}
+    (accepte aussi l'ancien format {week_number: "texte"}). Vide = suppression."""
+    try:
+        data = request.get_json() or {}
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('DELETE FROM week_comments')
+        for wnum, val in data.items():
+            if isinstance(val, dict):
+                text = (val.get('comment') or '').strip()
+                forms = [f for f in (val.get('formations') or []) if f in ('FTP', 'ALT')]
+                yrs = [str(y) for y in (val.get('years') or []) if str(y) in ('1', '2', '3')]
+            else:
+                text = (val or '').strip()
+                forms, yrs = [], []
+            formations = ','.join(forms) if forms else 'FTP,ALT'
+            years = ','.join(yrs) if yrs else '1,2,3'
+            if text:
+                cursor.execute(
+                    'INSERT OR REPLACE INTO week_comments (week_number, comment, formations, years) VALUES (?, ?, ?, ?)',
+                    (int(wnum), text, formations, years)
+                )
+        db.commit()
+        return jsonify({'message': 'Commentaires mis à jour'}), 200
+    except Exception as e:
+        return error_response(str(e), 500)
+
+@app.route('/api/category-codes', methods=['GET'])
+def get_category_codes():
+    """Retourne le code texte par catégorie : {week_type: code}"""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('SELECT week_type, code FROM special_category_codes')
+        return jsonify({r['week_type']: r['code'] for r in cursor.fetchall()}), 200
+    except Exception as e:
+        return error_response(str(e), 500)
+
+@app.route('/api/category-codes', methods=['PUT'])
+def set_category_codes():
+    """Remplace les codes des catégories. Body: {week_type: code, ...}
+    Une valeur vide supprime le code."""
+    try:
+        data = request.get_json() or {}
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('DELETE FROM special_category_codes')
+        for wtype, code in data.items():
+            if wtype not in _SPECIAL_TYPES:
+                continue
+            text = (code or '').strip()
+            if text:
+                cursor.execute(
+                    'INSERT OR REPLACE INTO special_category_codes (week_type, code) VALUES (?, ?)',
+                    (wtype, text)
+                )
+        db.commit()
+        return jsonify({'message': 'Codes mis à jour'}), 200
+    except Exception as e:
+        return error_response(str(e), 500)
+
 # ======================= COURSES CRUD =======================
 
 @app.route('/api/courses', methods=['GET'])
@@ -927,11 +1114,15 @@ def get_courses():
                    MAX(CASE WHEN cs.teaching_type='CM' AND cs.formation_type=1
                             THEN cs.slot_duration END) as alt_cm_slot_duration,
                    MAX(CASE WHEN cs.teaching_type='CM' AND cs.formation_type=1
+                            THEN cs.room_name END) as alt_cm_room,
+                   MAX(CASE WHEN cs.teaching_type='CM' AND cs.formation_type=1
                             THEN t.name END) as alt_cm_teacher,
                    COALESCE(SUM(CASE WHEN cs.teaching_type='TD' AND cs.formation_type=1
                                      THEN cs.total_hours ELSE 0 END), 0) as alt_td_hours,
                    MAX(CASE WHEN cs.teaching_type='TD' AND cs.formation_type=1
                             THEN cs.slot_duration END) as alt_td_slot_duration,
+                   MAX(CASE WHEN cs.teaching_type='TD' AND cs.formation_type=1
+                            THEN cs.room_name END) as alt_td_room,
                    MAX(CASE WHEN cs.teaching_type='TD' AND cs.formation_type=1
                             THEN t.name END) as alt_td_teacher,
                    COALESCE(SUM(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=1
@@ -939,11 +1130,15 @@ def get_courses():
                    MAX(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=1
                             THEN cs.slot_duration END) as alt_tp_slot_duration,
                    MAX(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=1
+                            THEN cs.room_name END) as alt_tp_room,
+                   MAX(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=1
                             THEN t.name END) as alt_tp_teacher,
                    COALESCE(SUM(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=1
                                      THEN cs.total_hours ELSE 0 END), 0) as alt_pt_hours,
                    MAX(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=1
                             THEN cs.slot_duration END) as alt_pt_slot_duration,
+                   MAX(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=1
+                            THEN cs.room_name END) as alt_pt_room,
                    MAX(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=1
                             THEN t.name END) as alt_pt_teacher,
                    COUNT(DISTINCT cs.id) as session_count
@@ -2316,6 +2511,23 @@ def export_repartition_excel():
         db = get_db()
         cursor = db.cursor()
 
+        # Filtres d'affichage (repris de l'onglet Répartition) : semestres, formation, enseignant
+        sel_sems = [s.strip() for s in (request.args.get('semesters') or '').split(',') if s.strip()]
+        sel_sems = set(sel_sems) or None
+        form_filter = (request.args.get('formation') or '').lower()   # '', 'ftp', 'alt'
+        teacher_filter = (request.args.get('teacher') or '').strip() or None
+
+        def session_included(s):
+            if sel_sems is not None and s['semester'] not in sel_sems:
+                return False
+            if teacher_filter and (s['teacher'] or '') != teacher_filter:
+                return False
+            if form_filter == 'ftp' and s['formation'] not in ('FTP', 'MUT'):
+                return False
+            if form_filter == 'alt' and s['formation'] not in ('ALT', 'MUT'):
+                return False
+            return True
+
         cfg = get_year_config()
         start_week = cfg['academic_start_week']
         end_week_cfg = cfg['academic_end_week']
@@ -2329,6 +2541,17 @@ def export_repartition_excel():
         for r in cursor.fetchall():
             if r['week_type'] in sc:
                 sc[r['week_type']].add(r['week_number'])
+
+        # Charger les commentaires par semaine (affichés au-dessus du tableau)
+        cursor.execute('SELECT week_number, comment, formations, years FROM week_comments')
+        week_comments = {r['week_number']: {
+            'comment': r['comment'],
+            'years': [int(y) for y in (r['years'] or '1,2,3').split(',') if y],
+        } for r in cursor.fetchall()}
+
+        # Charger les codes des catégories (affichés en 1re ligne de chaque onglet)
+        cursor.execute('SELECT week_type, code FROM special_category_codes')
+        category_codes = {r['week_type']: r['code'] for r in cursor.fetchall()}
 
         # Charger toutes les sessions avec heures hebdomadaires
         cursor.execute('''
@@ -2394,29 +2617,42 @@ def export_repartition_excel():
         fill_mat = PatternFill('solid', fgColor='EEF2FF')
         fill_header = PatternFill('solid', fgColor='F3F4F6')
         fill_total = PatternFill('solid', fgColor='EEF2FF')
-        fill_vacation = PatternFill('solid', fgColor='BBF7D0')
-        fill_stage = PatternFill('solid', fgColor='FDBA74')
-        fill_company = PatternFill('solid', fgColor='BFDBFE')
+        # Semaines spéciales (vacances / stage / entreprise) : couleur orange unique,
+        # cohérente avec l'affichage à l'écran.
+        fill_vacation = PatternFill('solid', fgColor='FDBA74')
+        fill_stage    = PatternFill('solid', fgColor='FDBA74')
+        fill_company  = PatternFill('solid', fgColor='FDBA74')
         align_center = Alignment(horizontal='center', vertical='center')
 
         wb = Workbook()
         wb.remove(wb.active)
 
+        # Ordre d'affichage imposé des matières S5/S6 (entrelacé), identique à l'écran.
+        # Les codes absents conservent leur ordre naturel (tri stable).
+        s56_order = {code: i for i, code in enumerate([
+            'R5.01', 'R6.01', 'R5.02', 'R5.03a', 'R5.03b', 'R6.02', 'R5.04', 'R6.03',
+            'R5.05', 'R6.04', 'R5.06', 'R5.07', 'R5.08', 'R5.09', 'R5.10', 'R6.05',
+            'R5.11', 'R6.06', 'R5.12', 'R6.07', 'R5.13', 'R5.14', 'R6.08',
+            'SAE5.1', 'SAE5.2', 'SAE5.3', 'SAE6.1', 'SAE6.2',
+        ])}
+        # Repositionnements ponctuels « placer ce code juste après cet autre code ».
+        course_after = {'R3.11': 'R3.08'}
+
         year_groups = [(1, 'S1+S2', ['S1', 'S2']), (2, 'S3+S4', ['S3', 'S4']), (3, 'S5+S6', ['S5', 'S6'])]
 
         for yg, sheet_name, sem_codes in year_groups:
+            # Filtrer les sessions pour cette année + selon l'affichage (semestre/formation/enseignant)
+            year_sessions = [sessions[sid] for sid in order
+                             if sessions[sid]['semester'] in sem_codes and session_included(sessions[sid])]
+            if not year_sessions:
+                continue  # onglet non créé s'il n'y a rien à afficher
+
             ws = wb.create_sheet(title=sheet_name)
 
             # Semaines spéciales pour cette année
             sp_vacation = sc['vacation_ftp']
             sp_stage = sc.get(f'stage_ftp_y{yg}', set()) if yg >= 2 else set()
             sp_company = sc.get(f'company_alt_y{yg}', set())
-
-            # Filtrer les sessions pour cette année
-            year_sessions = [sessions[sid] for sid in order if sessions[sid]['semester'] in sem_codes]
-            if not year_sessions:
-                ws.append(['Aucune donnée'])
-                continue
 
             # Grouper par matière
             by_code = {}
@@ -2431,10 +2667,22 @@ def export_repartition_excel():
                 elif s['formation'] == 'ALT': by_code[key]['alt'].append(s)
                 elif s['formation'] == 'MUT': by_code[key]['mut'].append(s)
 
-            # Colonnes : Matière | Type | Formation | Enseignant | Salle | Heures | Reste | S36 | S37 | ...
-            COL_MAT = 1
-            COL_TYPE = 2
-            COL_FORM = 3
+            # Ordre imposé S5/S6 (entrelacé) ; autres années : ordre naturel conservé.
+            code_order.sort(key=lambda k: s56_order.get(by_code[k]['code'], 10**6))
+            # Repositionnements ponctuels (ex. R3.11 juste après R3.08)
+            for move_code, after_code in course_after.items():
+                mi = next((i for i, k in enumerate(code_order) if by_code[k]['code'] == move_code), -1)
+                if mi < 0 or not any(by_code[k]['code'] == after_code for k in code_order):
+                    continue
+                item = code_order.pop(mi)
+                ai = next((i for i, k in enumerate(code_order) if by_code[k]['code'] == after_code), -1)
+                code_order.insert(ai + 1, item)
+
+            # Colonnes : Formation | Matière | Type | Enseignant | Salle | Heures | Reste | S36 | S37 | ...
+            # La colonne Formation est fusionnée verticalement par groupe (FTP/ALT/MUT).
+            COL_FORM = 1
+            COL_MAT = 2
+            COL_TYPE = 3
             COL_TEACH = 4
             COL_ROOM = 5
             COL_TOTAL = 6
@@ -2442,39 +2690,58 @@ def export_repartition_excel():
             COL_FIRST_WEEK = 8
 
             nw = len(weeks)
+            # Colonne d'appoint (cachée) : formation par ligne, pour les SUMIF des totaux
+            # (les cellules fusionnées de COL_FORM sont vides hors ancre, inutilisables en formule).
+            COL_FORMKEY = COL_FIRST_WEEK + nw
             first_wk_letter = get_column_letter(COL_FIRST_WEEK)
             last_wk_letter = get_column_letter(COL_FIRST_WEEK + nw - 1)
-            form_col = get_column_letter(COL_FORM)
-            form_range = f'${form_col}$6:${form_col}$2000'
+            formkey_col = get_column_letter(COL_FORMKEY)
+            form_range = f'${formkey_col}$6:${formkey_col}$2000'
 
             # --- Ligne 1 : Annotations (semaines spéciales, éditable) ---
             font_annot = Font(italic=True, size=7, color='666666')
             fill_annot = PatternFill('solid', fgColor='FFFFEE')
             align_annot = Alignment(horizontal='center', vertical='center', text_rotation=90)
 
-            ws.cell(row=1, column=1, value='Annotations').font = Font(italic=True, size=8)
-            ws.cell(row=1, column=1).fill = fill_annot
+            a1 = ws.cell(row=1, column=1, value='Annotations')
+            a1.font = Font(italic=True, size=8)
+            a1.fill = fill_annot
+            a1.alignment = align_center
             for col in range(2, COL_FIRST_WEEK):
                 ws.cell(row=1, column=col).fill = fill_annot
                 ws.cell(row=1, column=col).border = border_all
+            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=COL_FIRST_WEEK - 1)
+            has_comment = False
             for i, w in enumerate(weeks):
                 labels = []
-                if w in sp_vacation: labels.append('Vacances')
-                if w in sp_stage: labels.append('Stage FTP')
-                if w in sp_company: labels.append('Entreprise ALT')
-                c = ws.cell(row=1, column=COL_FIRST_WEEK + i, value='\n'.join(labels) if labels else '')
+                # Code de la catégorie si défini, sinon libellé complet
+                if w in sp_vacation:
+                    labels.append(category_codes.get('vacation_ftp') or 'Vacances')
+                if w in sp_stage:
+                    labels.append(category_codes.get(f'stage_ftp_y{yg}') or 'Stage FTP')
+                if w in sp_company:
+                    labels.append(category_codes.get(f'company_alt_y{yg}') or 'Entreprise ALT')
+                wc = week_comments.get(w)
+                if wc and (not wc['years'] or yg in wc['years']):
+                    labels.append(wc['comment'])
+                    has_comment = True
+                c = ws.cell(row=1, column=COL_FIRST_WEEK + i, value=' / '.join(labels) if labels else '')
                 c.font = font_annot
                 c.fill = fill_annot
                 c.alignment = align_annot
                 c.border = border_all
-            ws.row_dimensions[1].height = 60
+            # Plus de hauteur si des commentaires (texte vertical) sont présents
+            ws.row_dimensions[1].height = 140 if has_comment else 60
 
             # --- Ligne 2 : Totaux FTP (formules SUMIF) ---
-            ws.cell(row=2, column=1, value='FTP').font = font_form_ftp
-            ws.cell(row=2, column=1).fill = fill_ftp
+            f2 = ws.cell(row=2, column=1, value='FTP')
+            f2.font = font_form_ftp
+            f2.fill = fill_ftp
+            f2.alignment = align_center
             for col in range(2, COL_FIRST_WEEK):
                 ws.cell(row=2, column=col).fill = fill_ftp
                 ws.cell(row=2, column=col).border = border_all
+            ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=COL_FIRST_WEEK - 1)
             for i in range(nw):
                 wk_col = get_column_letter(COL_FIRST_WEEK + i)
                 wk_range = f'{wk_col}$6:{wk_col}$2000'
@@ -2487,11 +2754,14 @@ def export_repartition_excel():
                 c.number_format = '0.##;-0.##;0'
 
             # --- Ligne 3 : Totaux ALT (formules SUMIF) ---
-            ws.cell(row=3, column=1, value='ALT').font = font_form_alt
-            ws.cell(row=3, column=1).fill = fill_alt
+            a3 = ws.cell(row=3, column=1, value='ALT')
+            a3.font = font_form_alt
+            a3.fill = fill_alt
+            a3.alignment = align_center
             for col in range(2, COL_FIRST_WEEK):
                 ws.cell(row=3, column=col).fill = fill_alt
                 ws.cell(row=3, column=col).border = border_all
+            ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=COL_FIRST_WEEK - 1)
             for i in range(nw):
                 wk_col = get_column_letter(COL_FIRST_WEEK + i)
                 wk_range = f'{wk_col}$6:{wk_col}$2000'
@@ -2504,7 +2774,7 @@ def export_repartition_excel():
                 c.number_format = '0.##;-0.##;0'
 
             # --- Ligne 4 : En-têtes ---
-            headers = ['Matière', 'Type', 'Formation', 'Enseignant', 'Salle', 'Heures', 'Reste']
+            headers = ['Formation', 'Matière', 'Type', 'Enseignant', 'Salle', 'Heures', 'Reste']
             for i, h in enumerate(headers):
                 c = ws.cell(row=4, column=i+1, value=h)
                 c.font = font_header
@@ -2527,7 +2797,7 @@ def export_repartition_excel():
                 if not all_rows:
                     continue
 
-                # Ligne en-tête matière
+                # Ligne en-tête matière (le libellé occupe la colonne Matière)
                 c = ws.cell(row=row, column=COL_MAT, value=f"{block['code']} — {block['name']} ({block['sem']})")
                 c.font = font_mat
                 c.fill = fill_mat
@@ -2536,57 +2806,101 @@ def export_repartition_excel():
                     ws.cell(row=row, column=col).border = border_all
                 row += 1
 
-                for s in all_rows:
-                    form = s['formation']
+                # Ligne « Total promo » : total d'heures de la matière par promo (MUT compté
+                # pour FTP et ALT)
+                ftp_total = sum((s['total_hours'] or 0) for s in block['mut'] + block['ftp'])
+                alt_total = sum((s['total_hours'] or 0) for s in block['mut'] + block['alt'])
+                for col in range(1, COL_FIRST_WEEK + nw):
+                    cc = ws.cell(row=row, column=col); cc.fill = fill_total; cc.border = border_all
+                lbl = ws.cell(row=row, column=COL_FORM, value='Total promo')
+                lbl.font = Font(bold=True, size=8)
+                lbl.alignment = Alignment(horizontal='right', vertical='center')
+                ws.merge_cells(start_row=row, start_column=COL_FORM, end_row=row, end_column=COL_MAT)
+                cf = ws.cell(row=row, column=COL_TYPE, value='FTP')
+                cf.font = font_form_ftp; cf.fill = fill_ftp; cf.alignment = align_center; cf.border = border_all
+                vf = ws.cell(row=row, column=COL_TEACH, value=ftp_total or None)
+                vf.font = Font(bold=True, size=8, color='0369A1'); vf.fill = fill_ftp
+                vf.alignment = align_center; vf.border = border_all; vf.number_format = '0.##'
+                ca = ws.cell(row=row, column=COL_ROOM, value='ALT')
+                ca.font = font_form_alt; ca.fill = fill_alt; ca.alignment = align_center; ca.border = border_all
+                va = ws.cell(row=row, column=COL_TOTAL, value=alt_total or None)
+                va.font = Font(bold=True, size=8, color='9A3412'); va.fill = fill_alt
+                va.alignment = align_center; va.border = border_all; va.number_format = '0.##'
+                row += 1
 
-                    c = ws.cell(row=row, column=COL_TYPE, value=s['type'])
-                    c.font = font_data
-                    c.alignment = align_center
-                    c.border = border_all
+                # Une « bande » par formation : libellé fusionné verticalement dans COL_FORM
+                for form, grp in (('MUT', block['mut']), ('FTP', block['ftp']), ('ALT', block['alt'])):
+                    if not grp:
+                        continue
+                    group_start = row
+                    form_font = font_form_mut if form == 'MUT' else font_form_ftp if form == 'FTP' else font_form_alt
+                    form_fill = fill_mut if form == 'MUT' else fill_ftp if form == 'FTP' else fill_alt
 
-                    c = ws.cell(row=row, column=COL_FORM, value=form)
-                    c.font = font_form_mut if form == 'MUT' else font_form_ftp if form == 'FTP' else font_form_alt
-                    c.fill = fill_mut if form == 'MUT' else fill_ftp if form == 'FTP' else fill_alt
-                    c.alignment = align_center
-                    c.border = border_all
+                    for s in grp:
+                        # Colonne Formation : style posé sur chaque cellule (avant fusion)
+                        fc = ws.cell(row=row, column=COL_FORM)
+                        fc.fill = form_fill
+                        fc.border = border_all
+                        fc.alignment = align_center
+                        # Colonne d'appoint cachée : formation par ligne (pour les SUMIF)
+                        ws.cell(row=row, column=COL_FORMKEY, value=form).font = font_data
 
-                    c = ws.cell(row=row, column=COL_TEACH, value=s['teacher'])
-                    c.font = font_data
-                    c.border = border_all
-
-                    c = ws.cell(row=row, column=COL_ROOM, value=s['room'])
-                    c.font = font_data
-                    c.border = border_all
-
-                    # Heures prévues
-                    c = ws.cell(row=row, column=COL_TOTAL, value=s['total_hours'] if s['total_hours'] > 0 else None)
-                    c.font = font_data
-                    c.alignment = align_center
-                    c.border = border_all
-
-                    # Reste (formule Excel)
-                    reste_formula = f'={total_col_letter}{row}-SUM({first_wk_letter}{row}:{last_wk_letter}{row})'
-                    c = ws.cell(row=row, column=COL_RESTE, value=reste_formula)
-                    c.font = font_total_ok
-                    c.fill = fill_total
-                    c.alignment = align_center
-                    c.border = border_all
-                    c.number_format = '0.##;-0.##;0'
-
-                    for i, w in enumerate(weeks):
-                        h = s['by_week'].get(w, 0)
-                        c = ws.cell(row=row, column=COL_FIRST_WEEK + i, value=h if h else None)
+                        c = ws.cell(row=row, column=COL_TYPE, value=s['type'])
                         c.font = font_data
                         c.alignment = align_center
                         c.border = border_all
-                        c.number_format = '0.##;-0.##;0'
-                        if form in ('FTP', 'MUT'):
-                            if w in sp_stage: c.fill = fill_stage
-                            elif w in sp_vacation: c.fill = fill_vacation
-                        elif form == 'ALT':
-                            if w in sp_company: c.fill = fill_company
 
-                    row += 1
+                        c = ws.cell(row=row, column=COL_TEACH, value=s['teacher'])
+                        c.font = font_data
+                        c.border = border_all
+
+                        c = ws.cell(row=row, column=COL_ROOM, value=s['room'])
+                        c.font = font_data
+                        c.border = border_all
+
+                        # Heures prévues
+                        c = ws.cell(row=row, column=COL_TOTAL, value=s['total_hours'] if s['total_hours'] > 0 else None)
+                        c.font = font_data
+                        c.alignment = align_center
+                        c.border = border_all
+
+                        # Reste (formule Excel)
+                        reste_formula = f'={total_col_letter}{row}-SUM({first_wk_letter}{row}:{last_wk_letter}{row})'
+                        c = ws.cell(row=row, column=COL_RESTE, value=reste_formula)
+                        c.font = font_total_ok
+                        c.fill = fill_total
+                        c.alignment = align_center
+                        c.border = border_all
+                        c.number_format = '0.##;-0.##;0'
+
+                        for i, w in enumerate(weeks):
+                            h = s['by_week'].get(w, 0)
+                            c = ws.cell(row=row, column=COL_FIRST_WEEK + i, value=h if h else None)
+                            c.font = font_data
+                            c.alignment = align_center
+                            c.border = border_all
+                            c.number_format = '0.##;-0.##;0'
+                            if form == 'MUT':
+                                # CM/TD mutualisés : FTP (stage/vacances) + ALT (entreprise)
+                                if w in sp_stage or w in sp_vacation or w in sp_company: c.fill = fill_stage
+                            elif form == 'FTP':
+                                if w in sp_stage: c.fill = fill_stage
+                                elif w in sp_vacation: c.fill = fill_vacation
+                            elif form == 'ALT':
+                                if w in sp_company: c.fill = fill_company
+
+                        row += 1
+
+                    # Libellé de la formation dans la cellule fusionnée (ancre = 1re ligne)
+                    group_end = row - 1
+                    anchor = ws.cell(row=group_start, column=COL_FORM, value=form)
+                    anchor.font = form_font
+                    anchor.fill = form_fill
+                    anchor.alignment = align_center
+                    anchor.border = border_all
+                    if group_end > group_start:
+                        ws.merge_cells(start_row=group_start, start_column=COL_FORM,
+                                       end_row=group_end, end_column=COL_FORM)
 
             # Mise en forme conditionnelle : Reste rouge si != 0
             reste_letter = get_column_letter(COL_RESTE)
@@ -2598,22 +2912,24 @@ def export_repartition_excel():
             ))
 
             # Largeurs de colonnes
+            ws.column_dimensions[get_column_letter(COL_FORM)].width = 5
             ws.column_dimensions[get_column_letter(COL_MAT)].width = 6
             ws.column_dimensions[get_column_letter(COL_TYPE)].width = 5
-            ws.column_dimensions[get_column_letter(COL_FORM)].width = 5
             ws.column_dimensions[get_column_letter(COL_TEACH)].width = 16
             ws.column_dimensions[get_column_letter(COL_ROOM)].width = 10
             ws.column_dimensions[get_column_letter(COL_TOTAL)].width = 6
             ws.column_dimensions[get_column_letter(COL_RESTE)].width = 6
             for i in range(nw):
                 ws.column_dimensions[get_column_letter(COL_FIRST_WEEK + i)].width = 4.5
+            # Colonne d'appoint formation : cachée (sert uniquement aux SUMIF)
+            ws.column_dimensions[get_column_letter(COL_FORMKEY)].hidden = True
 
             # Figer les volets
             ws.freeze_panes = ws.cell(row=5, column=COL_FIRST_WEEK)
 
         # --- Feuille Contacts enseignants ---
         ws_contacts = wb.create_sheet(title='Contacts')
-        contact_headers = ['Nom', 'Email', 'Téléphone', 'Structure', 'Corps']
+        contact_headers = ['Nom', 'Email', 'Téléphone', 'Structure', 'Corps', 'Statut']
         for i, h in enumerate(contact_headers, 1):
             c = ws_contacts.cell(row=1, column=i, value=h)
             c.font = font_header
@@ -2621,10 +2937,15 @@ def export_repartition_excel():
             c.border = border_all
             c.alignment = align_center
 
-        cursor.execute('SELECT name, email, phone, structure, corps_code FROM teachers ORDER BY name')
+        cursor.execute('SELECT name, email, phone, structure, corps_code, status FROM teachers ORDER BY name')
         teachers_list = cursor.fetchall()
+        # Ne garder que les enseignants présents dans l'affichage filtré
+        incl_names = {(sessions[sid]['teacher'] or '').strip()
+                      for sid in order if session_included(sessions[sid])}
+        incl_names.discard('')
+        teachers_list = [t for t in teachers_list if t['name'] in incl_names]
         for r_idx, t in enumerate(teachers_list, 2):
-            for col_idx, field in enumerate(['name', 'email', 'phone', 'structure', 'corps_code'], 1):
+            for col_idx, field in enumerate(['name', 'email', 'phone', 'structure', 'corps_code', 'status'], 1):
                 c = ws_contacts.cell(row=r_idx, column=col_idx, value=t[field])
                 c.font = font_data
                 c.border = border_all
@@ -2634,9 +2955,209 @@ def export_repartition_excel():
         ws_contacts.column_dimensions['C'].width = 15
         ws_contacts.column_dimensions['D'].width = 20
         ws_contacts.column_dimensions['E'].width = 15
+        ws_contacts.column_dimensions['F'].width = 12
         last_contact_row = len(teachers_list) + 1
-        ws_contacts.auto_filter.ref = f'A1:E{last_contact_row}'
+        ws_contacts.auto_filter.ref = f'A1:F{last_contact_row}'
         ws_contacts.freeze_panes = 'A2'
+
+        # --- Un onglet par enseignant : bilan + calendrier de ses heures ---
+        import re
+
+        def _safe_sheet_name(name, used):
+            base = re.sub(r'[:\\/?*\[\]]', ' ', name).strip() or 'Enseignant'
+            base = base[:31]
+            title, n = base, 2
+            while title.lower() in used:
+                suffix = f' ({n})'
+                title = base[:31 - len(suffix)] + suffix
+                n += 1
+            used.add(title.lower())
+            return title
+
+        # Grouper les sessions (filtrées selon l'affichage) par enseignant
+        by_teacher = {}
+        for sid in order:
+            s = sessions[sid]
+            if not session_included(s):
+                continue
+            tname = (s['teacher'] or '').strip()
+            if tname:
+                by_teacher.setdefault(tname, []).append(s)
+
+        used_titles = {'contacts', 's1+s2', 's3+s4', 's5+s6'}
+        type_rank = {'CM': 0, 'TD': 1, 'TP': 2, 'PT': 3}
+        fill_overload = PatternFill('solid', fgColor='FCA5A5')
+        # Styles d'annotation (ligne 1), identiques aux onglets par année
+        font_annot = Font(italic=True, size=7, color='666666')
+        fill_annot = PatternFill('solid', fgColor='FFFFEE')
+        align_annot = Alignment(horizontal='center', vertical='center', text_rotation=90)
+
+        # Colonnes au format Répartition (sans la colonne Enseignant, redondante ici)
+        TF_FORM, TF_MAT, TF_TYPE, TF_SALLE, TF_TOTAL, TF_RESTE = 1, 2, 3, 4, 5, 6
+        TF_FIRST = 7
+        nw = len(weeks)
+        TF_FORMKEY = TF_FIRST + nw
+        tf_total_letter = get_column_letter(TF_TOTAL)
+        tf_first_letter = get_column_letter(TF_FIRST)
+        tf_last_letter = get_column_letter(TF_FIRST + nw - 1)
+        tf_formkey_letter = get_column_letter(TF_FORMKEY)
+        tf_form_range = f'${tf_formkey_letter}$5:${tf_formkey_letter}$2000'
+
+        for tname in sorted(by_teacher.keys(), key=lambda x: x.lower()):
+            tsessions = by_teacher[tname]
+            ws = wb.create_sheet(title=_safe_sheet_name(tname, used_titles))
+
+            teacher_ygs = sorted({s['year_group'] for s in tsessions if s['year_group']})
+            sp_vac = sc['vacation_ftp']
+            total_prev = sum(s['total_hours'] or 0 for s in tsessions)
+            total_placed = sum(sum(s['by_week'].get(w, 0) for w in weeks) for s in tsessions)
+
+            # --- Ligne 1 : nom + bilan (gauche) + annotations/codes par semaine (vertical) ---
+            c = ws.cell(row=1, column=1,
+                        value=f'{tname}  —  Prévu {total_prev:g} h  /  Placé {total_placed:g} h  /  '
+                              f'Reste {total_prev - total_placed:g} h')
+            c.font = Font(bold=True, size=10, color='4F46E5')
+            c.alignment = Alignment(horizontal='left', vertical='center')
+            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=TF_RESTE)
+            has_comment = False
+            for i, w in enumerate(weeks):
+                labels = []
+                if w in sp_vac:
+                    labels.append(category_codes.get('vacation_ftp') or 'Vacances')
+                for g in teacher_ygs:
+                    if g >= 2 and w in sc.get(f'stage_ftp_y{g}', set()):
+                        labels.append(category_codes.get(f'stage_ftp_y{g}') or 'Stage FTP')
+                    if w in sc.get(f'company_alt_y{g}', set()):
+                        labels.append(category_codes.get(f'company_alt_y{g}') or 'Entreprise ALT')
+                seen = set()
+                labels = [x for x in labels if not (x in seen or seen.add(x))]
+                cc = ws.cell(row=1, column=TF_FIRST + i, value=' / '.join(labels) if labels else '')
+                cc.font = font_annot; cc.fill = fill_annot; cc.alignment = align_annot; cc.border = border_all
+                if labels:
+                    has_comment = True
+            ws.row_dimensions[1].height = 140 if has_comment else 40
+
+            # --- Lignes 2 et 3 : totaux FTP / ALT (formules SUMIF) ---
+            for trow, crit, lab_fill, lab_font, col_clr in (
+                (2, 'FTP', fill_ftp, font_form_ftp, '0369A1'),
+                (3, 'ALT', fill_alt, font_form_alt, '9A3412'),
+            ):
+                lc = ws.cell(row=trow, column=1, value=crit)
+                lc.font = lab_font; lc.alignment = align_center
+                for col in range(1, TF_FIRST):
+                    cell = ws.cell(row=trow, column=col); cell.fill = lab_fill; cell.border = border_all
+                ws.merge_cells(start_row=trow, start_column=1, end_row=trow, end_column=TF_FIRST - 1)
+                for i in range(nw):
+                    wk_col = get_column_letter(TF_FIRST + i)
+                    wk_range = f'{wk_col}$5:{wk_col}$2000'
+                    cc = ws.cell(row=trow, column=TF_FIRST + i,
+                                 value=f'=SUMIF({tf_form_range},"{crit}",{wk_range})+SUMIF({tf_form_range},"MUT",{wk_range})')
+                    cc.font = Font(bold=True, size=8, color=col_clr)
+                    cc.fill = lab_fill; cc.alignment = align_center; cc.border = border_all
+                    cc.number_format = '0.##;-0.##;0'
+
+            # --- Ligne 4 : en-têtes ---
+            for i, h in enumerate(['Form.', 'Matière', 'Type', 'Salle', 'Heures', 'Reste'], 1):
+                cc = ws.cell(row=4, column=i, value=h)
+                cc.font = font_header; cc.fill = fill_header; cc.border = border_all; cc.alignment = align_center
+            for i, w in enumerate(weeks):
+                cc = ws.cell(row=4, column=TF_FIRST + i, value=f'S{w:02d}')
+                cc.font = font_header; cc.fill = fill_header; cc.border = border_all; cc.alignment = align_center
+
+            # --- Lignes 5+ : données groupées par matière (colonne Formation fusionnée) ---
+            by_code, code_order = {}, []
+            for s in sorted(tsessions, key=lambda s: (s['semester'], s['course_code'], type_rank.get(s['type'], 9))):
+                key = s['course_code'] + '|' + s['semester']
+                if key not in by_code:
+                    by_code[key] = {'code': s['course_code'], 'name': s['course_name'],
+                                    'sem': s['semester'], 'mut': [], 'ftp': [], 'alt': []}
+                    code_order.append(key)
+                f = s['formation']
+                (by_code[key]['mut'] if f == 'MUT' else by_code[key]['ftp'] if f == 'FTP' else by_code[key]['alt']).append(s)
+
+            row = 5
+            week_totals = {w: 0 for w in weeks}
+            for key in code_order:
+                block = by_code[key]
+                c = ws.cell(row=row, column=TF_MAT, value=f"{block['code']} — {block['name']} ({block['sem']})")
+                c.font = font_mat; c.fill = fill_mat
+                for col in range(1, TF_FIRST + nw):
+                    ws.cell(row=row, column=col).fill = fill_mat
+                    ws.cell(row=row, column=col).border = border_all
+                row += 1
+
+                for form, grp in (('MUT', block['mut']), ('FTP', block['ftp']), ('ALT', block['alt'])):
+                    if not grp:
+                        continue
+                    group_start = row
+                    form_font = font_form_mut if form == 'MUT' else font_form_ftp if form == 'FTP' else font_form_alt
+                    form_fill = fill_mut if form == 'MUT' else fill_ftp if form == 'FTP' else fill_alt
+                    for s in grp:
+                        yg_s = s['year_group']
+                        sp_v = sc['vacation_ftp']
+                        sp_st = sc.get(f'stage_ftp_y{yg_s}', set()) if yg_s and yg_s >= 2 else set()
+                        sp_co = sc.get(f'company_alt_y{yg_s}', set())
+                        ws.cell(row=row, column=TF_FORM).fill = form_fill
+                        ws.cell(row=row, column=TF_FORMKEY, value=form).font = font_data
+                        ws.cell(row=row, column=TF_TYPE, value=s['type']).font = font_data
+                        ws.cell(row=row, column=TF_SALLE, value=s['room']).font = font_data
+                        ws.cell(row=row, column=TF_TOTAL, value=s['total_hours'] or None).font = font_data
+                        rc = ws.cell(row=row, column=TF_RESTE,
+                                     value=f'={tf_total_letter}{row}-SUM({tf_first_letter}{row}:{tf_last_letter}{row})')
+                        rc.font = font_total_ok; rc.fill = fill_total; rc.number_format = '0.##;-0.##;0'
+                        for col in (TF_FORM, TF_TYPE, TF_SALLE, TF_TOTAL, TF_RESTE):
+                            ws.cell(row=row, column=col).border = border_all
+                            ws.cell(row=row, column=col).alignment = align_center
+                        for i, w in enumerate(weeks):
+                            h = s['by_week'].get(w, 0)
+                            week_totals[w] += h
+                            cc = ws.cell(row=row, column=TF_FIRST + i, value=h if h else None)
+                            cc.font = font_data; cc.alignment = align_center; cc.border = border_all
+                            cc.number_format = '0.##;-0.##;0'
+                            if form == 'MUT':
+                                if w in sp_st or w in sp_v or w in sp_co: cc.fill = fill_stage
+                            elif form == 'FTP':
+                                if w in sp_st: cc.fill = fill_stage
+                                elif w in sp_v: cc.fill = fill_vacation
+                            elif form == 'ALT':
+                                if w in sp_co: cc.fill = fill_company
+                        row += 1
+                    group_end = row - 1
+                    anchor = ws.cell(row=group_start, column=TF_FORM, value=form)
+                    anchor.font = form_font; anchor.fill = form_fill
+                    anchor.alignment = align_center; anchor.border = border_all
+                    if group_end > group_start:
+                        ws.merge_cells(start_row=group_start, start_column=TF_FORM,
+                                       end_row=group_end, end_column=TF_FORM)
+
+            # Ligne charge totale de l'enseignant / semaine (toutes formations, MUT compté 1 fois)
+            ws.cell(row=row, column=TF_MAT, value='Total / sem.').font = Font(bold=True, size=8)
+            ws.cell(row=row, column=TF_TOTAL, value=total_placed or None).font = Font(bold=True, size=8)
+            for col in range(1, TF_FIRST):
+                cell = ws.cell(row=row, column=col); cell.fill = fill_header; cell.border = border_all; cell.alignment = align_center
+            for i, w in enumerate(weeks):
+                tot = week_totals[w]
+                cc = ws.cell(row=row, column=TF_FIRST + i, value=tot if tot else None)
+                cc.font = Font(bold=True, size=8); cc.alignment = align_center; cc.border = border_all
+                cc.number_format = '0.##;-0.##;0'
+                cc.fill = fill_overload if tot > 20 else fill_header
+            total_row = row
+
+            # Mise en forme conditionnelle : Reste rouge si != 0
+            reste_letter = get_column_letter(TF_RESTE)
+            ws.conditional_formatting.add(
+                f'{reste_letter}5:{reste_letter}{max(total_row - 1, 5)}',
+                CellIsRule(operator='notEqual', formula=['0'],
+                           font=Font(bold=True, size=8, color='DC2626'),
+                           fill=PatternFill('solid', fgColor='FEE2E2')))
+
+            # Largeurs + colonne d'appoint cachée + volets figés
+            for col, wd in ((TF_FORM, 5), (TF_MAT, 16), (TF_TYPE, 5), (TF_SALLE, 10), (TF_TOTAL, 6), (TF_RESTE, 6)):
+                ws.column_dimensions[get_column_letter(col)].width = wd
+            for i in range(nw):
+                ws.column_dimensions[get_column_letter(TF_FIRST + i)].width = 4.5
+            ws.column_dimensions[get_column_letter(TF_FORMKEY)].hidden = True
+            ws.freeze_panes = ws.cell(row=5, column=TF_FIRST)
 
         # Générer le fichier
         output = io.BytesIO()
@@ -2671,19 +3192,30 @@ def import_repartition_excel():
         imported = 0
         errors = []
 
+        year_sheet_names = {'S1+S2', 'S3+S4', 'S5+S6'}
         for ws in wb.worksheets:
-            if ws.title == 'Contacts':
+            # N'importer que les onglets de répartition par année (ignorer Contacts + onglets enseignants)
+            if ws.title not in year_sheet_names:
                 continue
 
-            # Trouver la ligne d'en-tête (celle qui contient "Matière")
+            # Trouver la ligne d'en-tête (celle qui contient "Matière") et localiser les
+            # colonnes par leur libellé (l'ordre peut varier : Formation est désormais à gauche).
             header_row = None
+            col_mat = col_type = col_form = None
             for r in range(1, 10):
-                val = ws.cell(row=r, column=1).value
-                if val and str(val).strip() == 'Matière':
+                labels = {}
+                for c in range(1, ws.max_column + 1):
+                    v = ws.cell(row=r, column=c).value
+                    if v is not None:
+                        labels[str(v).strip()] = c
+                if 'Matière' in labels:
                     header_row = r
+                    col_mat = labels.get('Matière')
+                    col_type = labels.get('Type')
+                    col_form = labels.get('Formation')
                     break
 
-            if header_row is None:
+            if header_row is None or not col_mat or not col_type or not col_form:
                 errors.append(f"Onglet {ws.title}: en-tête introuvable")
                 continue
 
@@ -2705,11 +3237,16 @@ def import_repartition_excel():
             # Parcourir les lignes de données
             current_code = None
             current_sem = None
+            last_form = None  # colonne Formation fusionnée : report de la dernière valeur lue
 
             for r in range(header_row + 1, ws.max_row + 1):
-                mat_val = ws.cell(row=r, column=1).value
-                type_val = ws.cell(row=r, column=2).value
-                form_val = ws.cell(row=r, column=3).value
+                mat_val = ws.cell(row=r, column=col_mat).value
+                type_val = ws.cell(row=r, column=col_type).value
+                form_cell = ws.cell(row=r, column=col_form).value
+                # Cellule fusionnée : seule l'ancre porte la valeur → report sur les lignes suivantes
+                if form_cell is not None and str(form_cell).strip():
+                    last_form = str(form_cell).strip()
+                form_val = last_form
 
                 # Ligne en-tête matière : "R1.01 — Mécanique (S1)"
                 if mat_val and not type_val:
@@ -3661,8 +4198,9 @@ init_db()
 
 if __name__ == '__main__':
     # Run Flask app
+    # debug est désactivé par défaut ; activez-le en local avec EDT_DEBUG=1.
     app.run(
         host='0.0.0.0',
-        port=5000,
-        debug=True
+        port=int(os.environ.get('PORT', 5000)),
+        debug=os.environ.get('EDT_DEBUG', '0') == '1'
     )
