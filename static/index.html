@@ -133,6 +133,15 @@
         /* Ligne en-tête matière */
         .row-mat td { background: #eef2ff !important; font-weight: 700; padding: 3px 10px; border-top: 2px solid #4f46e5; border-bottom: 1px solid #374151; font-size: .75rem; }
         .mat-sem { color: #6b7280; font-weight: 400; font-size: .7rem; }
+        /* Colonne Formation fusionnée (FTP/ALT/MUT) à gauche */
+        .repartition-wrap td.form-col { font-size: .62rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; text-align: center; vertical-align: middle; }
+        .repartition-wrap td.form-col.form-ftp { background: #e0f2fe !important; color: #0369a1; }
+        .repartition-wrap td.form-col.form-alt { background: #fff7ed !important; color: #9a3412; }
+        .repartition-wrap td.form-col.form-mut { background: #f3e8ff !important; color: #6b21a8; }
+        /* La colonne fusionnée garde sa couleur même au survol de la ligne */
+        .repartition-wrap tr.row-data:hover td.form-col.form-ftp { background: #e0f2fe !important; }
+        .repartition-wrap tr.row-data:hover td.form-col.form-alt { background: #fff7ed !important; }
+        .repartition-wrap tr.row-data:hover td.form-col.form-mut { background: #f3e8ff !important; }
         /* Lignes séparateur formation */
         .row-form td { font-size: .65rem; font-weight: 700; padding: 1px 10px; letter-spacing: .07em; text-transform: uppercase; border-bottom: 1px solid #374151; }
         .row-form-ftp td { background: #e0f2fe !important; color: #0369a1; border-top: 1px solid #374151; }
@@ -165,9 +174,22 @@
         .cal-grid td { padding: 3px; border: 1px solid #f3f4f6; text-align: center; }
         .cal-week { display: flex; align-items: center; justify-content: center; width: 100%; height: 24px; border-radius: 4px; border: 1px solid #e5e7eb; cursor: pointer; font-size: .72rem; color: #9ca3af; transition: all .1s; background: #fafafa; user-select: none; }
         .cal-week:hover { border-color: #6366f1; color: #4f46e5; background: #eef2ff; }
-        .cal-week.on-vacation { background: #dbeafe; color: #1e40af; border-color: #93c5fd; font-weight: 700; }
-        .cal-week.on-stage    { background: #fef08a; color: #854d0e; border-color: #fde047; font-weight: 700; }
+        /* Toutes les catégories en orange */
+        .cal-week.on-vacation,
+        .cal-week.on-stage,
         .cal-week.on-company  { background: #fed7aa; color: #9a3412; border-color: #fdba74; font-weight: 700; }
+        /* Colonne Code des catégories */
+        .cal-grid th.cal-code { width: 90px; font-size: .78rem; }
+        .cat-code-input { width: 100%; box-sizing: border-box; padding: 3px 5px; border: 1px solid #d1d5db; border-radius: 4px; font-size: .78rem; text-align: center; }
+        .cat-code-input:focus { outline: none; border-color: #6366f1; }
+        /* Commentaire par semaine (ligne Commentaires du calendrier) */
+        .cal-comment { display: flex; align-items: center; justify-content: center; width: 100%; height: 24px; border-radius: 4px; border: 1px dashed #d1d5db; cursor: pointer; font-size: .8rem; color: #cbd5e1; background: #fafafa; user-select: none; }
+        .cal-comment:hover { border-color: #6366f1; color: #4f46e5; background: #eef2ff; }
+        .cal-comment.has-comment { background: #ede9fe; color: #6d28d9; border: 1px solid #c4b5fd; font-weight: 700; }
+        /* Ligne des commentaires (codes, texte vertical) au-dessus de la répartition */
+        .repartition-wrap thead tr.hrow-codes th { height: 120px; vertical-align: bottom; padding: 4px 0; background: #fff; }
+        .repartition-wrap thead tr.hrow-codes th.s-col { background: #fff; }
+        .rep-code { writing-mode: vertical-rl; text-orientation: mixed; display: inline-block; white-space: nowrap; font-size: .85rem; font-weight: 600; color: #000; line-height: 1.15; max-height: 112px; overflow: hidden; }
         /* Séparation fin semestre impair / début semestre pair */
         .cal-grid th.sem-sep, .cal-grid td.sem-sep { border-left: 4px double #374151; }
         th.sem-sep, td.sem-sep { border-left: 4px double #374151 !important; }
@@ -213,30 +235,77 @@
         #checks-panel td { border: 1px solid #e5e7eb; padding: 3px 5px; }
         #checks-panel .check-warn { background: #fef3c7; }
         #checks-panel .check-danger { background: #fee2e2; }
+        /* ===== Connexion ===== */
+        #login-overlay { position: fixed; inset: 0; z-index: 9999; background: linear-gradient(135deg,#4f46e5,#6d28d9); display: flex; align-items: center; justify-content: center; }
+        .login-card { background: #fff; border-radius: 12px; padding: 28px 32px; width: 340px; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+        .login-card h2 { margin: 0 0 4px; color: #4f46e5; font-size: 1.2rem; }
+        .login-card .login-sub { color: #6b7280; font-size: .82rem; margin-bottom: 18px; }
+        .login-card .form-group { margin-bottom: 14px; }
+        .login-card label { display: block; font-weight: 600; font-size: .82rem; margin-bottom: 4px; color: #374151; }
+        .login-card input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: .9rem; }
+        .login-card input:focus { outline: none; border-color: #6366f1; }
+        .login-card .btn { width: 100%; margin-top: 6px; justify-content: center; }
+        #login-error { color: #dc2626; font-size: .82rem; min-height: 18px; margin-bottom: 4px; }
+        /* Badge rôle / déconnexion dans la barre de navigation */
+        .role-badge { font-size: .78rem; font-weight: 700; padding: 3px 9px; border-radius: 6px; white-space: nowrap; }
+        .role-badge.admin { background: #dcfce7; color: #166534; }
+        .role-badge.teacher { background: #dbeafe; color: #1e40af; }
+        /* Enseignant : gestion d'année masquée + outils de répartition masqués
+           (l'accès en écriture est filtré par rôle/onglet, pas par cette règle) */
+        body.role-teacher .admin-only,
+        body.role-teacher .rep-tool-restricted { display: none !important; }
+        /* Ordre des onglets pour l'enseignant : Globale, Calendaire, Liste */
+        body.role-teacher #nav-repartition-enseignant { order: 1; }
+        body.role-teacher #nav-repartition { order: 2; }
+        body.role-teacher #nav-enseignants { order: 3; }
+        body.role-teacher #nav-right { order: 99; }
+        /* Case « Taux horaires » + Export : réservés à l'admin et aux titulaires */
+        body.role-vacataire .rates-toggle,
+        body.role-vacataire .export-btn { display: none !important; }
     </style>
 </head>
 <body>
 
+<!-- ===== PAGE DE CONNEXION ===== -->
+<div id="login-overlay">
+    <div class="login-card">
+        <h2>Gestion EDT — IUT GIM</h2>
+        <div class="login-sub">Connexion requise</div>
+        <div class="form-group">
+            <label>Identifiant</label>
+            <input id="login-user" autocomplete="username" oninput="onLoginUserInput()" onkeydown="if(event.key==='Enter')loginEnterFromUser()">
+        </div>
+        <div class="form-group" id="login-pass-group" style="display:none">
+            <label>Mot de passe</label>
+            <input id="login-pass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+        </div>
+        <div id="login-error"></div>
+        <button class="btn btn-primary" onclick="doLogin()">Se connecter</button>
+    </div>
+</div>
+
 <nav>
     <strong>EDT Manager</strong>
-    <button onclick="showPage('dashboard')" class="active" id="nav-dashboard">Tableau de bord</button>
-    <button onclick="showPage('enseignants')" id="nav-enseignants">Liste des enseignants</button>
+    <button onclick="showPage('repartition')" class="active" id="nav-repartition">Répartition Calendaire</button>
+    <button onclick="showPage('repartition-enseignant')" id="nav-repartition-enseignant">Répartition Globale</button>
+    <button onclick="showPage('calendrier')" id="nav-calendrier">Calendrier</button>
     <button onclick="showPage('matieres')" id="nav-matieres">Matières</button>
     <button onclick="showPage('salles')" id="nav-salles">Salles</button>
-    <button onclick="showPage('sessions')" id="nav-sessions">Sessions</button>
-    <button onclick="showPage('service')" id="nav-service">Service</button>
-    <button onclick="showPage('repartition-enseignant')" id="nav-repartition-enseignant">Répartition par enseignant</button>
-    <button onclick="showPage('repartition')" id="nav-repartition">Répartition</button>
-    <button onclick="showPage('calendrier')" id="nav-calendrier">Calendrier</button>
-    <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">
-        <span style="font-size:.8rem;color:#6b7280;white-space:nowrap">Année :</span>
+    <button onclick="showPage('enseignants')" id="nav-enseignants">Liste des enseignants</button>
+    <div id="nav-right" style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <span class="admin-only" style="font-size:.8rem;color:#6b7280;white-space:nowrap">Année :</span>
         <select id="year-select" onchange="switchYear()"
                 style="padding:4px 10px;border-radius:6px;border:1px solid #c7d2fe;background:#eef2ff;color:#4f46e5;font-weight:700;font-size:.88rem;cursor:pointer">
             <option>…</option>
         </select>
-        <button onclick="openNewYearModal()"
+        <button class="admin-only" onclick="openNewYearModal()"
                 style="padding:5px 11px;border:1px solid #c7d2fe;border-radius:6px;background:#eef2ff;color:#4f46e5;font-weight:600;cursor:pointer;font-size:.82rem;white-space:nowrap">
             + Nouvelle année
+        </button>
+        <span id="role-badge" class="role-badge" style="display:none"></span>
+        <button onclick="logout()" title="Se déconnecter"
+                style="padding:5px 11px;border:1px solid #e5e7eb;border-radius:6px;background:#fff;color:#6b7280;font-weight:600;cursor:pointer;font-size:.82rem;white-space:nowrap">
+            Déconnexion
         </button>
     </div>
 </nav>
@@ -261,9 +330,8 @@
         <div class="link-card" onclick="showPage('enseignants')"><h3>Liste des enseignants</h3><p>Gérer les enseignants</p></div>
         <div class="link-card" onclick="showPage('matieres')"><h3>Matières</h3><p>Consulter les matières</p></div>
         <div class="link-card" onclick="showPage('salles')"><h3>Salles</h3><p>Gérer les salles</p></div>
-        <div class="link-card" onclick="showPage('sessions')"><h3>Sessions de cours</h3><p>Gérer les sessions</p></div>
-        <div class="link-card" onclick="showPage('service')"><h3>Service enseignants</h3><p>Consulter les HETD</p></div>
-        <div class="link-card" onclick="showPage('repartition')"><h3>Répartition semaines</h3><p>Vue hebdomadaire par semestre</p></div>
+        <div class="link-card" onclick="showPage('repartition-enseignant')"><h3>Répartition Globale</h3><p>Vue par enseignant</p></div>
+        <div class="link-card" onclick="showPage('repartition')"><h3>Répartition Calendaire</h3><p>Vue hebdomadaire par semestre</p></div>
     </div>
 </div>
 
@@ -281,13 +349,30 @@
     <div class="toolbar">
         <h1>Matières</h1>
         <div class="filters">
-            <label>Semestre :</label>
-            <select id="filter-semester-matieres" onchange="renderCourses()">
-                <option value="">Tous</option>
-                <option>S1</option><option>S2</option><option>S3</option>
-                <option>S4</option><option>S5</option><option>S6</option>
+            <label>Semestres :</label>
+            <div id="mat-sem-toggle" class="sem-toggle">
+                <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleMatSemester('S1',this)">S1</button>
+                <button type="button" class="sem-btn active" data-sem="S2" onclick="toggleMatSemester('S2',this)">S2</button>
+                <button type="button" class="sem-btn active" data-sem="S3" onclick="toggleMatSemester('S3',this)">S3</button>
+                <button type="button" class="sem-btn active" data-sem="S4" onclick="toggleMatSemester('S4',this)">S4</button>
+                <button type="button" class="sem-btn active" data-sem="S5" onclick="toggleMatSemester('S5',this)">S5</button>
+                <button type="button" class="sem-btn active" data-sem="S6" onclick="toggleMatSemester('S6',this)">S6</button>
+            </div>
+            <label style="margin-left:12px">Formation :</label>
+            <select id="filter-formation-matieres" onchange="renderCourses()">
+                <option value="">FTP + ALT</option>
+                <option value="ftp">FTP</option>
+                <option value="alt">ALT</option>
             </select>
-            <button class="btn btn-primary" onclick="openCourseModal()">+ Ajouter</button>
+            <label style="margin-left:12px">Enseignant :</label>
+            <select id="filter-teacher-matieres" onchange="renderCourses()">
+                <option value="">Tous</option>
+            </select>
+            <label style="margin-left:12px">Salle :</label>
+            <select id="filter-room-matieres" onchange="renderCourses()">
+                <option value="">Toutes</option>
+            </select>
+            <button class="btn btn-primary" style="margin-left:12px" onclick="openCourseModal()">+ Ajouter</button>
         </div>
     </div>
     <div id="courses-table"><div class="spinner">Chargement…</div></div>
@@ -302,31 +387,10 @@
     <div id="rooms-table"><div class="spinner">Chargement…</div></div>
 </div>
 
-<!-- ===== SESSIONS ===== -->
-<div class="page" id="page-sessions">
-    <div class="toolbar">
-        <h1>Sessions de cours</h1>
-        <div class="filters">
-            <label>Semestre :</label>
-            <select id="filter-semester-sessions" onchange="renderSessions()">
-                <option value="">Tous</option>
-                <option>S1</option><option>S2</option><option>S3</option>
-                <option>S4</option><option>S5</option><option>S6</option>
-            </select>
-            <label>Formation :</label>
-            <select id="filter-formation-sessions" onchange="renderSessions()">
-                <option value="">Tous</option>
-                <option>FTP</option><option>ALT</option><option>MUT</option>
-            </select>
-        </div>
-    </div>
-    <div id="sessions-table"><div class="spinner">Chargement…</div></div>
-</div>
-
 <!-- ===== REPARTITION PAR ENSEIGNANT ===== -->
 <div class="page" id="page-repartition-enseignant">
     <div class="toolbar">
-        <h1>Répartition par enseignant</h1>
+        <h1>Répartition Globale</h1>
         <div class="filters">
             <label>Enseignant :</label>
             <select id="filter-teacher-rep" onchange="renderTeacherRepartition()">
@@ -351,31 +415,19 @@
     <div id="teacher-repartition-content"><div class="spinner">Chargement…</div></div>
 </div>
 
-<!-- ===== SERVICE ===== -->
-<div class="page" id="page-service">
-    <h1>Service enseignants</h1>
-    <details id="promo-groups-block" style="margin-bottom:18px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px">
-        <summary style="cursor:pointer;font-weight:600;color:#374151">
-            Nombre de groupes par promotion (utilisé pour le calcul des services)
-        </summary>
-        <div id="promo-groups-editor" style="margin-top:12px"><div class="spinner">Chargement…</div></div>
-    </details>
-    <div id="service-table"><div class="spinner">Chargement…</div></div>
-</div>
-
 <!-- ===== REPARTITION ===== -->
 <div class="page" id="page-repartition">
     <div class="toolbar">
-        <h1>Répartition hebdomadaire</h1>
+        <h1>Répartition Calendaire</h1>
         <div class="filters">
             <label>Semestres :</label>
             <div id="sem-toggle" class="sem-toggle">
                 <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleSemester('S1',this)">S1</button>
                 <button type="button" class="sem-btn active" data-sem="S2" onclick="toggleSemester('S2',this)">S2</button>
-                <button type="button" class="sem-btn" data-sem="S3" onclick="toggleSemester('S3',this)">S3</button>
-                <button type="button" class="sem-btn" data-sem="S4" onclick="toggleSemester('S4',this)">S4</button>
-                <button type="button" class="sem-btn" data-sem="S5" onclick="toggleSemester('S5',this)">S5</button>
-                <button type="button" class="sem-btn" data-sem="S6" onclick="toggleSemester('S6',this)">S6</button>
+                <button type="button" class="sem-btn active" data-sem="S3" onclick="toggleSemester('S3',this)">S3</button>
+                <button type="button" class="sem-btn active" data-sem="S4" onclick="toggleSemester('S4',this)">S4</button>
+                <button type="button" class="sem-btn active" data-sem="S5" onclick="toggleSemester('S5',this)">S5</button>
+                <button type="button" class="sem-btn active" data-sem="S6" onclick="toggleSemester('S6',this)">S6</button>
             </div>
             <label style="margin-left:12px">Formation :</label>
             <select id="filter-formation-repartition" onchange="filterRepartition()">
@@ -394,16 +446,17 @@
             <label style="margin-left:12px">Semestre :</label>
             <label style="font-weight:400;margin-left:4px"><input type="checkbox" id="cb-sem-odd" checked onchange="filterRepartition()"> Impair</label>
             <label style="font-weight:400;margin-left:6px"><input type="checkbox" id="cb-sem-even" checked onchange="filterRepartition()"> Pair</label>
-            <button class="btn btn-primary btn-sm" style="margin-left:16px" onclick="runRepartitionChecks()">
+            <label class="rates-toggle" style="font-weight:400;margin-left:12px"><input type="checkbox" id="cb-show-rates" checked onchange="filterRepartition()"> Taux horaires</label>
+            <button class="btn btn-primary btn-sm rep-tool-restricted" style="margin-left:16px" onclick="runRepartitionChecks()">
                 Contrôle
             </button>
-            <button class="btn btn-secondary btn-sm" style="margin-left:8px" onclick="openOrderingModal()">
+            <button class="btn btn-secondary btn-sm rep-tool-restricted" style="margin-left:8px" onclick="openOrderingModal()">
                 Ordonnancement
             </button>
-            <button class="btn btn-secondary btn-sm" style="margin-left:8px" onclick="exportRepartitionExcel()">
+            <button class="btn btn-secondary btn-sm export-btn" style="margin-left:8px" onclick="exportRepartitionExcel()">
                 Export Excel
             </button>
-            <button class="btn btn-secondary btn-sm" style="margin-left:4px" onclick="document.getElementById('import-excel-input').click()">
+            <button class="btn btn-secondary btn-sm rep-tool-restricted" style="margin-left:4px" onclick="document.getElementById('import-excel-input').click()">
                 Import Excel
             </button>
             <input type="file" id="import-excel-input" accept=".xlsx" style="display:none" onchange="importRepartitionExcel(this)">
@@ -446,7 +499,22 @@
                 </label>
             </div>
         </div>
+        <div style="margin-top:16px;border-top:1px solid #e5e7eb;padding-top:12px">
+            <strong style="display:block;margin-bottom:6px">Plage de l'année <span style="color:#9ca3af;font-size:.8rem">(première et dernière semaine de cours)</span></strong>
+            <label style="font-size:.85rem">Début&nbsp;
+                <select id="config-start-week" style="margin-right:12px"></select>
+            </label>
+            <label style="font-size:.85rem">Fin&nbsp;
+                <select id="config-end-week"></select>
+            </label>
+        </div>
     </div>
+    <details id="promo-groups-block" style="margin-bottom:16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px">
+        <summary style="cursor:pointer;font-weight:600;color:#374151">
+            Nombre de groupes par promotion (utilisé pour le calcul des services)
+        </summary>
+        <div id="promo-groups-editor" style="margin-top:12px"><div class="spinner">Chargement…</div></div>
+    </details>
     <p style="color:#6b7280;font-size:.85rem;margin-bottom:16px">
         Cliquez sur les semaines pour les inclure dans chaque catégorie.
         Ces semaines sont automatiquement exclues lors de l'optimisation.
@@ -499,28 +567,35 @@
     </div>
 </div>
 
-<!-- ===== MODAL CONFIGURATION ANNÉE ===== -->
-<div class="modal-backdrop" id="modal-config">
+<!-- ===== MODAL COMMENTAIRE DE SEMAINE ===== -->
+<div class="modal-backdrop" id="modal-week-comment">
     <div class="modal">
-        <h2>Configuration de l'année universitaire</h2>
-        <form id="form-config" onsubmit="submitConfig(event)">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-                <div class="form-group">
-                    <label>Semaine de début</label>
-                    <select id="config-start-week"></select>
-                    <small style="color:#6b7280">Première semaine de cours (ex : S36)</small>
-                </div>
-                <div class="form-group">
-                    <label>Semaine de fin</label>
-                    <select id="config-end-week"></select>
-                    <small style="color:#6b7280">Dernière semaine de cours (ex : S26)</small>
-                </div>
+        <h2>Commentaire — semaine S<span id="wc-week"></span></h2>
+        <div class="form-group">
+            <label>Commentaire</label>
+            <textarea id="wc-text" rows="3" style="width:100%;box-sizing:border-box"></textarea>
+        </div>
+        <div class="form-group">
+            <label>Formations concernées</label>
+            <div style="display:flex;gap:16px;margin-top:4px">
+                <label style="font-weight:400"><input type="checkbox" id="wc-ftp" checked> FTP</label>
+                <label style="font-weight:400"><input type="checkbox" id="wc-alt" checked> ALT</label>
             </div>
-            <div class="form-actions">
-                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-config')">Annuler</button>
-                <button type="submit" class="btn btn-primary">Enregistrer</button>
+            <small style="color:#6b7280">Si aucune n'est cochée, le commentaire s'applique aux deux.</small>
+        </div>
+        <div class="form-group">
+            <label>Années concernées</label>
+            <div style="display:flex;gap:16px;margin-top:4px">
+                <label style="font-weight:400"><input type="checkbox" id="wc-y1" checked> 1ʳᵉ (S1/S2)</label>
+                <label style="font-weight:400"><input type="checkbox" id="wc-y2" checked> 2ᵉ (S3/S4)</label>
+                <label style="font-weight:400"><input type="checkbox" id="wc-y3" checked> 3ᵉ (S5/S6)</label>
             </div>
-        </form>
+            <small style="color:#6b7280">Si aucune n'est cochée, le commentaire s'applique à toutes.</small>
+        </div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-week-comment')">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="saveWeekCommentModal()">Valider</button>
+        </div>
     </div>
 </div>
 
@@ -560,6 +635,12 @@
             <div class="form-group"><label>Téléphone</label><input id="teacher-phone"></div>
             <div class="form-group"><label>Structure</label><input id="teacher-structure"></div>
             <div class="form-group"><label>Corps</label><input id="teacher-corps"></div>
+            <div class="form-group"><label>Statut</label>
+                <select id="teacher-status">
+                    <option value="Titulaire">Titulaire</option>
+                    <option value="Vacataire">Vacataire</option>
+                </select>
+            </div>
             <div class="form-actions">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('modal-teacher')">Annuler</button>
                 <button type="submit" class="btn btn-primary">Enregistrer</button>
@@ -749,19 +830,113 @@
 
 <script>
 // ===== STATE =====
-const state = { teachers: [], courses: [], rooms: [], sessions: [], semesters: [], config: null, promotionGroups: [] };
+const state = { teachers: [], courses: [], rooms: [], sessions: [], semesters: [], config: null, promotionGroups: [], role: null, user: null };
 
 // Dernière semaine de la 1re année civile (52 ou 53 selon le calendrier ISO ; ex: 2026-2027 → 53)
 function maxWeek() { return (state.config && state.config.academic_max_week) || 52; }
 
 // ===== API =====
 async function api(endpoint, opts = {}) {
+    const method = (opts.method || 'GET').toUpperCase();
+    // Garde côté client : visiteur / enseignant = lecture seule (le serveur l'impose aussi)
+    if (state.role === 'teacher' && method !== 'GET' && method !== 'HEAD') {
+        // Le titulaire peut modifier la liste des enseignants
+        if (!(state.teacherTitulaire && endpoint.startsWith('/teachers'))) {
+            toast('Lecture seule', 'error');
+            throw new Error('Lecture seule');
+        }
+    }
     const r = await fetch('/api' + endpoint, {
         headers: { 'Content-Type': 'application/json' },
         ...opts
     });
+    if (r.status === 401) { showLogin(); throw new Error('Session expirée — reconnectez-vous'); }
     if (!r.ok) throw new Error(await r.text());
     return r.json();
+}
+
+// ===== AUTHENTIFICATION =====
+function showLogin() {
+    document.getElementById('login-overlay').style.display = 'flex';
+    document.getElementById('login-user').focus();
+}
+
+// Le champ mot de passe n'apparaît que pour l'admin
+function loginIsAdmin() {
+    return (document.getElementById('login-user').value || '').trim().toLowerCase() === 'admin';
+}
+function onLoginUserInput() {
+    document.getElementById('login-pass-group').style.display = loginIsAdmin() ? '' : 'none';
+}
+function loginEnterFromUser() {
+    if (loginIsAdmin()) document.getElementById('login-pass').focus();
+    else doLogin();
+}
+
+function applyRole(role, user, teacher, status) {
+    state.role = role;
+    state.user = user;
+    state.teacherName = teacher || null;
+    state.teacherStatus = status || null;
+    state.teacherTitulaire = (role === 'teacher' && status === 'Titulaire');
+    document.body.classList.toggle('role-teacher', role === 'teacher');
+    document.body.classList.toggle('role-vacataire', role === 'teacher' && status !== 'Titulaire');
+    const badge = document.getElementById('role-badge');
+    if (badge) {
+        badge.style.display = '';
+        badge.className = 'role-badge ' + role;
+        badge.textContent = role === 'teacher'
+            ? (user + ' · ' + (status === 'Vacataire' ? 'vacataire' : 'titulaire'))
+            : 'Admin';
+    }
+    // Enseignant : onglets de répartition ; le titulaire voit aussi la liste des enseignants
+    const teacherTabs = ['nav-repartition', 'nav-repartition-enseignant'];
+    if (state.teacherTitulaire) teacherTabs.push('nav-enseignants');
+    document.querySelectorAll('nav button[id^="nav-"]').forEach(b => {
+        b.style.display = (role === 'teacher' && !teacherTabs.includes(b.id)) ? 'none' : '';
+    });
+    // Le changement d'année est une écriture → réservé à l'admin
+    const ys = document.getElementById('year-select');
+    if (ys) ys.disabled = (role !== 'admin');
+}
+
+function goHome() {
+    // L'admin a besoin de la liste des années (chargée auparavant par le tableau de bord)
+    if (state.role === 'admin') loadYears();
+    // Premier onglet selon le rôle : admin → Répartition Calendaire ; enseignant → Globale
+    showPage(state.role === 'teacher' ? 'repartition-enseignant' : 'repartition');
+}
+
+async function checkAuth() {
+    try {
+        const me = await api('/me');
+        document.getElementById('login-overlay').style.display = 'none';
+        applyRole(me.role, me.username, me.teacher, me.status);
+        goHome();
+    } catch (e) {
+        showLogin();
+    }
+}
+
+async function doLogin() {
+    const username = document.getElementById('login-user').value.trim();
+    const password = document.getElementById('login-pass').value;
+    const errEl = document.getElementById('login-error');
+    errEl.textContent = '';
+    try {
+        const me = await api('/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+        document.getElementById('login-pass').value = '';
+        document.getElementById('login-overlay').style.display = 'none';
+        applyRole(me.role, me.username, me.teacher, me.status);
+        goHome();
+    } catch (e) {
+        errEl.textContent = 'Identifiant ou mot de passe incorrect';
+    }
+}
+
+async function logout() {
+    try { await fetch('/api/logout', { method: 'POST' }); } catch (e) { /* ignore */ }
+    location.reload();
 }
 
 // ===== TOAST =====
@@ -796,15 +971,6 @@ async function loadPage(name, forceReload) {
         else if (name === 'salles') {
             if (forceReload || !state.rooms.length) state.rooms = await api('/rooms');
             renderRooms();
-        }
-        else if (name === 'sessions') {
-            if (forceReload || !state.sessions.length) [state.sessions, state.teachers] = await Promise.all([api('/course-sessions'), api('/teachers')]);
-            renderSessions();
-        }
-        else if (name === 'service') {
-            const [d, pg] = await Promise.all([api('/service/all'), api('/promotion-groups')]);
-            renderPromotionGroups(pg);
-            renderService(d);
         }
         else if (name === 'repartition-enseignant') {
             const [sessions, teachers, pg] = await Promise.all([
@@ -859,10 +1025,12 @@ async function switchYear() {
     if (!year) return;
     try {
         await api('/years/current', { method: 'PUT', body: JSON.stringify({ year }) });
-        // Réinitialiser l'état pour forcer un rechargement des données
-        Object.keys(state).forEach(k => { state[k] = []; });
+        // Réinitialiser les données (sans toucher à l'authentification) pour forcer un rechargement
+        ['teachers', 'courses', 'rooms', 'sessions', 'semesters', 'promotionGroups'].forEach(k => { state[k] = []; });
+        state.config = null;
         _repartitionData = null;
-        await loadDashboard();
+        await loadYears();
+        showPage('repartition-enseignant');
         toast(`Année ${year} activée`);
     } catch(e) { toast('Erreur : ' + e.message, 'error'); }
 }
@@ -904,7 +1072,7 @@ function renderTeachers() {
     if (!state.teachers.length) { el.innerHTML = '<div class="empty">Aucun enseignant</div>'; return; }
     el.innerHTML = `<table>
         <thead><tr>
-            <th>Nom</th><th>Email</th><th>Téléphone</th><th>Structure</th><th>Corps</th><th>Actions</th>
+            <th>Nom</th><th>Email</th><th>Téléphone</th><th>Structure</th><th>Corps</th><th>Statut</th><th>Actions</th>
         </tr></thead>
         <tbody>${state.teachers.map(t => `<tr>
             <td><strong>${esc(t.name)}</strong></td>
@@ -912,6 +1080,7 @@ function renderTeachers() {
             <td>${esc(t.phone||'')}</td>
             <td>${esc(t.structure||'')}</td>
             <td>${esc(t.corps||'')}</td>
+            <td>${esc(t.status||'Titulaire')}</td>
             <td>
                 <button class="btn btn-secondary btn-sm" onclick="openTeacherModal(${t.id})">Éditer</button>
                 <button class="btn btn-danger btn-sm" onclick="deleteTeacher(${t.id})">Supprimer</button>
@@ -929,6 +1098,7 @@ function openTeacherModal(id = null) {
     document.getElementById('teacher-phone').value = t ? t.phone || '' : '';
     document.getElementById('teacher-structure').value = t ? t.structure || '' : '';
     document.getElementById('teacher-corps').value = t ? t.corps || '' : '';
+    document.getElementById('teacher-status').value = (t && t.status) ? t.status : 'Titulaire';
     openModal('modal-teacher');
 }
 
@@ -941,6 +1111,7 @@ async function submitTeacher(e) {
         phone: document.getElementById('teacher-phone').value,
         structure: document.getElementById('teacher-structure').value,
         corps: document.getElementById('teacher-corps').value,
+        status: document.getElementById('teacher-status').value,
     };
     try {
         if (id) await api('/teachers/' + id, { method: 'PUT', body: JSON.stringify(data) });
@@ -963,65 +1134,128 @@ async function deleteTeacher(id) {
 }
 
 // ===== MATIERES =====
+// Filtres repris de l'onglet Répartition (semestres, formation, enseignant, salle)
+let _matSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
+
+function toggleMatSemester(code, btn) {
+    if (_matSemesters.has(code)) _matSemesters.delete(code);
+    else _matSemesters.add(code);
+    btn.classList.toggle('active');
+    renderCourses();
+}
+
+// Remplit les listes Enseignant / Salle à partir des matières chargées
+function populateMatiereFilters() {
+    const cs = state.courses || [];
+    const teachers = [], rooms = [];
+    const tKeys = ['cm_teacher','td_teacher','tp_teacher','pt_teacher','alt_cm_teacher','alt_td_teacher','alt_tp_teacher','alt_pt_teacher'];
+    const rKeys = ['cm_room','td_room','tp_room','pt_room','alt_cm_room','alt_td_room','alt_tp_room','alt_pt_room'];
+    cs.forEach(c => {
+        tKeys.forEach(k => { if (c[k]) teachers.push(c[k]); });
+        rKeys.forEach(k => { if (c[k]) rooms.push(c[k]); });
+    });
+    populateOptionFilter('filter-teacher-matieres', 'Tous', teachers);
+    populateOptionFilter('filter-room-matieres', 'Toutes', rooms);
+}
+
 function renderCourses() {
-    const sem = document.getElementById('filter-semester-matieres').value;
-    const list = sem ? state.courses.filter(c => c.semester_code === sem) : state.courses;
+    populateMatiereFilters();
+    const formFilter    = (document.getElementById('filter-formation-matieres') || {}).value || '';
+    const teacherFilter = (document.getElementById('filter-teacher-matieres') || {}).value || '';
+    const roomFilter    = (document.getElementById('filter-room-matieres') || {}).value || '';
     const el = document.getElementById('courses-table');
-    if (!list.length) { el.innerHTML = '<div class="empty">Aucune matière — cliquez sur « + Ajouter »</div>'; return; }
+
+    if (!_matSemesters.size) {
+        el.innerHTML = '<div class="empty">Sélectionnez au moins un semestre.</div>';
+        return;
+    }
+
+    const showFtpCol = formFilter !== 'alt';
+    const showAltCol = formFilter !== 'ftp';
+    const noCellFilter = formFilter === '' && !teacherFilter && !roomFilter;
+
+    // Ne garde une face (FTP/ALT) d'un type que si elle passe les filtres formation/enseignant/salle
+    const filterTypes = c => [
+        { label: 'CM', ftp: c.cm_hours, ftpT: c.cm_teacher, ftpR: c.cm_room, alt: c.alt_cm_hours, altT: c.alt_cm_teacher, altR: c.alt_cm_room },
+        { label: 'TD', ftp: c.td_hours, ftpT: c.td_teacher, ftpR: c.td_room, alt: c.alt_td_hours, altT: c.alt_td_teacher, altR: c.alt_td_room },
+        { label: 'TP', ftp: c.tp_hours, ftpT: c.tp_teacher, ftpR: c.tp_room, alt: c.alt_tp_hours, altT: c.alt_tp_teacher, altR: c.alt_tp_room },
+        { label: 'PT', ftp: c.pt_hours, ftpT: c.pt_teacher, ftpR: c.pt_room, alt: c.alt_pt_hours, altT: c.alt_pt_teacher, altR: c.alt_pt_room },
+    ].map(t => {
+        const keepFtp = showFtpCol && t.ftp && (!teacherFilter || t.ftpT === teacherFilter) && (!roomFilter || t.ftpR === roomFilter);
+        const keepAlt = showAltCol && t.alt && (!teacherFilter || t.altT === teacherFilter) && (!roomFilter || t.altR === roomFilter);
+        return { label: t.label,
+                 ftp: keepFtp ? t.ftp : 0, ftpT: keepFtp ? t.ftpT : null, ftpR: keepFtp ? t.ftpR : null,
+                 alt: keepAlt ? t.alt : 0, altT: keepAlt ? t.altT : null, altR: keepAlt ? t.altR : null };
+    }).filter(t => t.ftp || t.alt);
+
+    const list = state.courses.filter(c => _matSemesters.has(c.semester_code));
+    if (!list.length) { el.innerHTML = '<div class="empty">Aucune matière pour cette sélection.</div>'; return; }
 
     function hCell(h, teacher) {
         if (!h) return '<td class="empty" style="text-align:center;color:#bbb">—</td>';
         return `<td style="text-align:center">${h}h${teacher ? `<br><small style="color:#6b7280">${esc(teacher)}</small>` : ''}</td>`;
     }
+    // Salle(s) d'un type : pièces distinctes des faces FTP/ALT retenues
+    function salleCell(t) {
+        const rs = [];
+        if (t.ftp && t.ftpR && !rs.includes(t.ftpR)) rs.push(t.ftpR);
+        if (t.alt && t.altR && !rs.includes(t.altR)) rs.push(t.altR);
+        return `<td style="text-align:center;font-size:.8rem">${rs.length ? esc(rs.join(' / ')) : '<span style="color:#bbb">—</span>'}</td>`;
+    }
+
+    const rows = list.map(c => {
+        const types = filterTypes(c);
+        const nRows = types.length || 1;
+        const actions = `<td${types.length ? ` rowspan="${nRows}"` : ''} style="white-space:nowrap">
+                    <button class="btn btn-secondary btn-sm" onclick="openCourseModal(${c.id})">Éditer</button>
+                    <button class="btn btn-secondary btn-sm" onclick="openWeeklyModal(${c.id})" title="Répartition hebdomadaire">Répartition</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteCourse(${c.id})">Supprimer</button>
+                </td>`;
+        const weeksCell = c.start_week && c.end_week ? c.start_week + ' → ' + c.end_week : '<span style="color:#9ca3af">—</span>';
+        const badge = `<span class="badge badge-${(c.course_type||'ressource').toLowerCase().slice(0,3)}">${esc(c.course_type||'')}</span>`;
+        if (!types.length) {
+            // Sans aucune face retenue : afficher seulement si aucun filtre cellule actif
+            if (!noCellFilter) return '';
+            return `<tr class="course-sep">
+                <td><strong>${esc(c.code||'')}</strong></td>
+                <td>${esc(c.name||'')}</td>
+                <td>${esc(c.semester_code||'')}</td>
+                <td style="text-align:center;white-space:nowrap">${weeksCell}</td>
+                <td>${badge}</td>
+                <td style="text-align:center;color:#bbb">—</td>
+                <td style="text-align:center;color:#bbb">—</td>
+                ${showFtpCol ? '<td style="text-align:center;color:#bbb">—</td>' : ''}
+                ${showAltCol ? '<td style="text-align:center;color:#bbb">—</td>' : ''}
+                ${actions}
+            </tr>`;
+        }
+        return types.map((t, i) => `<tr${i === 0 ? ' class="course-sep"' : ''}>
+                ${i === 0 ? `
+                <td rowspan="${nRows}"><strong>${esc(c.code||'')}</strong>${c.mutualized ? ' <span class="badge badge-mut" style="font-size:.6rem">MUT</span>' : ''}</td>
+                <td rowspan="${nRows}">${esc(c.name||'')}</td>
+                <td rowspan="${nRows}">${esc(c.semester_code||'')}</td>
+                <td rowspan="${nRows}" style="text-align:center;white-space:nowrap">${weeksCell}</td>
+                <td rowspan="${nRows}">${badge}</td>` : ''}
+                <td style="font-size:.75rem;font-weight:600;text-align:center">${t.label}</td>
+                ${salleCell(t)}
+                ${showFtpCol ? hCell(t.ftp, t.ftpT) : ''}
+                ${showAltCol ? hCell(t.alt, t.altT) : ''}
+                ${i === 0 ? actions : ''}
+            </tr>`).join('');
+    }).join('');
+
+    if (!rows) { el.innerHTML = '<div class="empty">Aucune matière pour cette sélection.</div>'; return; }
 
     el.innerHTML = `<div class="overflow-x"><table>
         <thead><tr>
             <th>Code</th><th>Intitulé</th><th>Sem.</th><th>Semaines</th><th>Type</th>
             <th style="text-align:center"></th>
-            <th style="text-align:center;color:#0369a1">FTP</th>
-            <th style="text-align:center;color:#9a3412">ALT</th>
+            <th style="text-align:center">Salle</th>
+            ${showFtpCol ? '<th style="text-align:center;color:#0369a1">FTP</th>' : ''}
+            ${showAltCol ? '<th style="text-align:center;color:#9a3412">ALT</th>' : ''}
             <th>Actions</th>
         </tr></thead>
-        <tbody>${list.map(c => {
-            const types = [
-                { label: 'CM', ftp: c.cm_hours, ftpT: c.cm_teacher, alt: c.alt_cm_hours, altT: c.alt_cm_teacher },
-                { label: 'TD', ftp: c.td_hours, ftpT: c.td_teacher, alt: c.alt_td_hours, altT: c.alt_td_teacher },
-                { label: 'TP', ftp: c.tp_hours, ftpT: c.tp_teacher, alt: c.alt_tp_hours, altT: c.alt_tp_teacher },
-                { label: 'PT', ftp: c.pt_hours, ftpT: c.pt_teacher, alt: c.alt_pt_hours, altT: c.alt_pt_teacher },
-            ].filter(t => t.ftp || t.alt);
-            const nRows = types.length || 1;
-            if (!types.length) return `<tr class="course-sep">
-                <td><strong>${esc(c.code||'')}</strong></td>
-                <td>${esc(c.name||'')}</td>
-                <td>${esc(c.semester_code||'')}</td>
-                <td style="text-align:center;white-space:nowrap">${c.start_week && c.end_week ? c.start_week + ' → ' + c.end_week : '<span style="color:#9ca3af">—</span>'}</td>
-                <td><span class="badge badge-${(c.course_type||'ressource').toLowerCase().slice(0,3)}">${esc(c.course_type||'')}</span></td>
-                <td style="text-align:center;color:#bbb">—</td>
-                <td style="text-align:center;color:#bbb">—</td>
-                <td style="text-align:center;color:#bbb">—</td>
-                <td style="white-space:nowrap">
-                    <button class="btn btn-secondary btn-sm" onclick="openCourseModal(${c.id})">Éditer</button>
-                    <button class="btn btn-secondary btn-sm" onclick="openWeeklyModal(${c.id})" title="Répartition hebdomadaire">Répartition</button>
-                    <button class="btn btn-danger btn-sm" onclick="deleteCourse(${c.id})">Supprimer</button>
-                </td>
-            </tr>`;
-            return types.map((t, i) => `<tr${i === 0 ? ' class="course-sep"' : ''}>
-                ${i === 0 ? `
-                <td rowspan="${nRows}"><strong>${esc(c.code||'')}</strong>${c.mutualized ? ' <span class="badge badge-mut" style="font-size:.6rem">MUT</span>' : ''}</td>
-                <td rowspan="${nRows}">${esc(c.name||'')}</td>
-                <td rowspan="${nRows}">${esc(c.semester_code||'')}</td>
-                <td rowspan="${nRows}" style="text-align:center;white-space:nowrap">${c.start_week && c.end_week ? c.start_week + ' → ' + c.end_week : '<span style="color:#9ca3af">—</span>'}</td>
-                <td rowspan="${nRows}"><span class="badge badge-${(c.course_type||'ressource').toLowerCase().slice(0,3)}">${esc(c.course_type||'')}</span></td>` : ''}
-                <td style="font-size:.75rem;font-weight:600;text-align:center">${t.label}</td>
-                ${hCell(t.ftp, t.ftpT)}
-                ${hCell(t.alt, t.altT)}
-                ${i === 0 ? `<td rowspan="${nRows}" style="white-space:nowrap">
-                    <button class="btn btn-secondary btn-sm" onclick="openCourseModal(${c.id})">Éditer</button>
-                    <button class="btn btn-secondary btn-sm" onclick="openWeeklyModal(${c.id})" title="Répartition hebdomadaire">Répartition</button>
-                    <button class="btn btn-danger btn-sm" onclick="deleteCourse(${c.id})">Supprimer</button>
-                </td>` : ''}
-            </tr>`).join('');
-        }).join('')}</tbody>
+        <tbody>${rows}</tbody>
     </table></div>`;
 }
 
@@ -1697,6 +1931,17 @@ function populateTeacherRepFilter() {
     sel.innerHTML = '<option value="">Tous</option>' +
         teachers.map(t => `<option value="${t.id}">${esc(t.name||'')}</option>`).join('');
     sel.value = current;
+    // Enseignant connecté : sa fiche est présélectionnée (valeur = id de l'enseignant).
+    // Vacataire : verrouillé ; titulaire : présélectionné mais modifiable.
+    if (state.role === 'teacher' && state.teacherName) {
+        const me = teachers.find(t => (t.name||'').toLowerCase() === state.teacherName.toLowerCase());
+        if (state.teacherTitulaire) {
+            if (!sel.value && me) sel.value = String(me.id);   // défaut, modifiable
+        } else {
+            if (me) sel.value = String(me.id);
+            sel.disabled = true;
+        }
+    }
 }
 
 function renderTeacherRepartition() {
@@ -1901,9 +2146,6 @@ async function savePromotionGroups() {
         await api('/promotion-groups', { method: 'PUT', body: JSON.stringify(rows) });
         document.getElementById('promo-groups-status').textContent = '✓ Enregistré';
         setTimeout(() => { document.getElementById('promo-groups-status').textContent = ''; }, 2000);
-        // Recharger le service avec les nouveaux multiplicateurs
-        const d = await api('/service/all');
-        renderService(d);
     } catch(e) {
         toast('Erreur enregistrement : ' + e.message, 'error');
     }
@@ -1937,7 +2179,7 @@ let _repartitionData = null;
 
 // Correspondance semestre ↔ semestre lié (même année)
 const _semPairs = { S1:'S2', S2:'S1', S3:'S4', S4:'S3', S5:'S6', S6:'S5' };
-let _selectedSemesters = ['S1', 'S2'];
+let _selectedSemesters = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'];
 
 // Ordre d'affichage imposé des matières dans la répartition (S5/S6 entrelacés).
 // Les codes absents de cette liste conservent leur ordre naturel (par code).
@@ -1949,6 +2191,9 @@ const _courseDisplayOrder = [
 ];
 const _courseOrderIdx = {};
 _courseDisplayOrder.forEach((c, i) => { _courseOrderIdx[c] = i; });
+
+// Repositionnements ponctuels « placer ce code juste après cet autre code ».
+const _courseAfter = { 'R3.11': 'R3.08' };
 
 function toggleSemester(code, btn) {
     const i = _selectedSemesters.indexOf(code);
@@ -2052,6 +2297,9 @@ async function deleteOrdering(id) {
 
 // ===== CALENDRIER SPECIAL =====
 let _calData = null;
+let _weekComments = {};   // { weekNumber: commentaire }
+let _categoryCodes = {};  // { week_type: code }
+let _specialCalRaw = {};  // { week_type: [semaines] } (calendrier brut, pour les codes en répartition)
 
 const _CAL_CATS = [
     { key: 'vacation_ftp',    label: 'Vacances FTP',              sub: '(toutes années)',   cls: 'on-vacation' },
@@ -2066,13 +2314,21 @@ async function loadCalendrier() {
     const body = document.getElementById('calendrier-body');
     body.innerHTML = '<div class="spinner">Chargement…</div>';
     try {
-        const [cal, cfg] = await Promise.all([api('/special-calendar'), api('/config')]);
+        const [cal, cfg, comments, codes, pg] = await Promise.all([
+            api('/special-calendar'), api('/config'), api('/week-comments'),
+            api('/category-codes'), api('/promotion-groups')
+        ]);
         _calData = cal;
+        _weekComments = comments || {};
+        _categoryCodes = codes || {};
         state.config = cfg;
+        renderPromotionGroups(pg);
         buildAllWeekSelect('sem-odd-start',  cfg.semester_odd_start_week);
         buildAllWeekSelect('sem-odd-end',    cfg.semester_odd_end_week);
         buildAllWeekSelect('sem-even-start', cfg.semester_even_start_week);
         buildAllWeekSelect('sem-even-end',   cfg.semester_even_end_week);
+        buildAllWeekSelect('config-start-week', cfg.academic_start_week);
+        buildAllWeekSelect('config-end-week',   cfg.academic_end_week);
         renderCalendrierPage(cfg.academic_start_week || 36, cfg.academic_end_week || 26);
     } catch(e) {
         body.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
@@ -2117,7 +2373,7 @@ function renderCalendrierPage(startWeek, endWeek) {
     // En-tête semaines
     const hdr = weeks.map((w, i) => `<th${i === sepIdx ? ' class="sem-sep"' : ''}>S${w}</th>`).join('');
 
-    let html = '<div class="cal-grid"><table><thead><tr><th class="cal-cat">Catégorie</th>' + hdr + '</tr></thead><tbody>';
+    let html = '<div class="cal-grid"><table><thead><tr><th class="cal-cat">Catégorie</th><th class="cal-code">Code</th>' + hdr + '</tr></thead><tbody>';
 
     _CAL_CATS.forEach(cat => {
         const sel = new Set(_calData[cat.key] || []);
@@ -2125,14 +2381,85 @@ function renderCalendrierPage(startWeek, endWeek) {
             const on = sel.has(w);
             return `<td${i === sepIdx ? ' class="sem-sep"' : ''}><span class="cal-week${on ? ' ' + cat.cls : ''}" data-key="${cat.key}" data-w="${w}" onclick="toggleCalWeek('${cat.key}',${w},this)">${w}</span></td>`;
         }).join('');
+        const code = _categoryCodes[cat.key] || '';
         html += `<tr>
             <td style="padding:6px 10px;white-space:nowrap;vertical-align:middle">
                 <strong>${cat.label}</strong> <span style="color:#9ca3af;font-size:.75rem">${cat.sub}</span>
-            </td>${cells}</tr>`;
+            </td>
+            <td style="vertical-align:middle"><input class="cat-code-input" data-key="${cat.key}" value="${esc(code)}" placeholder="—" oninput="setCategoryCode('${cat.key}', this.value)"></td>
+            ${cells}</tr>`;
     });
+
+    // Ligne Commentaires : un commentaire libre par semaine (clic pour éditer)
+    const commentCells = weeks.map((w, i) => {
+        const wc = _weekComments[w];
+        const txt = wc ? (wc.comment || '') : '';
+        const fL = wc && wc.formations ? wc.formations.join('+') : '';
+        const yL = wc && wc.years ? wc.years.map(y => y + 'A').join('+') : '';
+        const tags = [fL && fL !== 'FTP+ALT' ? fL : '', yL && yL !== '1A+2A+3A' ? yL : ''].filter(Boolean).join(' · ');
+        const has = txt ? ' has-comment' : '';
+        const safe = esc(txt + (tags ? ` (${tags})` : ''));
+        return `<td${i === sepIdx ? ' class="sem-sep"' : ''}><span class="cal-comment${has}" data-w="${w}" title="${safe}" onclick="editWeekComment(${w},this)">${txt ? '✎' : '+'}</span></td>`;
+    }).join('');
+    html += `<tr>
+        <td style="padding:6px 10px;white-space:nowrap;vertical-align:middle">
+            <strong>Commentaires</strong> <span style="color:#9ca3af;font-size:.75rem">(par semaine)</span>
+        </td>
+        <td></td>
+        ${commentCells}</tr>`;
 
     html += '</tbody></table></div>';
     document.getElementById('calendrier-body').innerHTML = html;
+}
+
+let _wcEditWeek = null, _wcEditEl = null;
+
+function editWeekComment(w, el) {
+    _wcEditWeek = w;
+    _wcEditEl = el;
+    const wc = _weekComments[w] || { comment: '', formations: ['FTP', 'ALT'], years: [1, 2, 3] };
+    const forms = wc.formations || ['FTP', 'ALT'];
+    const yrs = wc.years || [1, 2, 3];
+    document.getElementById('wc-week').textContent = w;
+    document.getElementById('wc-text').value = wc.comment || '';
+    document.getElementById('wc-ftp').checked = forms.includes('FTP');
+    document.getElementById('wc-alt').checked = forms.includes('ALT');
+    document.getElementById('wc-y1').checked = yrs.includes(1);
+    document.getElementById('wc-y2').checked = yrs.includes(2);
+    document.getElementById('wc-y3').checked = yrs.includes(3);
+    openModal('modal-week-comment');
+    setTimeout(() => document.getElementById('wc-text').focus(), 50);
+}
+
+function saveWeekCommentModal() {
+    const w = _wcEditWeek;
+    const clean = (document.getElementById('wc-text').value || '').trim();
+    const forms = [];
+    if (document.getElementById('wc-ftp').checked) forms.push('FTP');
+    if (document.getElementById('wc-alt').checked) forms.push('ALT');
+    if (!forms.length) { forms.push('FTP', 'ALT'); } // par défaut : les deux
+    const yrs = [];
+    if (document.getElementById('wc-y1').checked) yrs.push(1);
+    if (document.getElementById('wc-y2').checked) yrs.push(2);
+    if (document.getElementById('wc-y3').checked) yrs.push(3);
+    if (!yrs.length) { yrs.push(1, 2, 3); } // par défaut : toutes
+    if (clean) _weekComments[w] = { comment: clean, formations: forms, years: yrs };
+    else delete _weekComments[w];
+    if (_wcEditEl) {
+        const fLabel = forms.join('+');
+        const yLabel = yrs.map(y => y + 'A').join('+');
+        const tags = [fLabel !== 'FTP+ALT' ? fLabel : '', yLabel !== '1A+2A+3A' ? yLabel : ''].filter(Boolean).join(' · ');
+        _wcEditEl.textContent = clean ? '✎' : '+';
+        _wcEditEl.title = clean ? (clean + (tags ? ` (${tags})` : '')) : '';
+        _wcEditEl.classList.toggle('has-comment', !!clean);
+    }
+    closeModal('modal-week-comment');
+}
+
+function setCategoryCode(key, value) {
+    const clean = (value || '').trim();
+    if (clean) _categoryCodes[key] = clean;
+    else delete _categoryCodes[key];
 }
 
 function toggleCalWeek(key, w, el) {
@@ -2156,6 +2483,10 @@ async function saveCalendrier() {
         semester_even_start_week: parseInt(document.getElementById('sem-even-start').value),
         semester_even_end_week:   parseInt(document.getElementById('sem-even-end').value),
     };
+    const aSw = parseInt(document.getElementById('config-start-week').value);
+    const aEw = parseInt(document.getElementById('config-end-week').value);
+    if (aSw) dates.academic_start_week = aSw;
+    if (aEw) dates.academic_end_week = aEw;
     if (Object.values(dates).some(v => !v)) {
         toast('Renseigner les semaines de début et de fin des semestres', 'error');
         return;
@@ -2163,7 +2494,10 @@ async function saveCalendrier() {
     try {
         await api('/special-calendar', { method: 'PUT', body: JSON.stringify(_calData) });
         await api('/config', { method: 'PUT', body: JSON.stringify(dates) });
+        await api('/week-comments', { method: 'PUT', body: JSON.stringify(_weekComments) });
+        await api('/category-codes', { method: 'PUT', body: JSON.stringify(_categoryCodes) });
         state.config = { ...(state.config || {}), ...dates };
+        renderCalendrierPage(state.config.academic_start_week || 36, state.config.academic_end_week || 26);
         toast('Calendrier enregistré');
     } catch(e) {
         toast('Erreur : ' + e.message, 'error');
@@ -2193,6 +2527,12 @@ async function loadRepartition() {
         await Promise.all(promoSet.map(async s => {
             datas[s] = await api('/repartition?semester=' + encodeURIComponent(s));
         }));
+        const [wc, calRaw, catCodes] = await Promise.all([
+            api('/week-comments'), api('/special-calendar'), api('/category-codes')
+        ]);
+        _weekComments = wc || {};
+        _specialCalRaw = calRaw || {};
+        _categoryCodes = catCodes || {};
 
         const weeks = datas[sems[0]].weeks;  // plage complète, identique pour tous les semestres
         const rows = [];
@@ -2244,6 +2584,21 @@ function populateOptionFilter(selectId, allValue, values) {
 function populateRepartitionFilters(rows) {
     populateOptionFilter('filter-teacher-repartition', 'Tous',   rows.map(r => r.teacher));
     populateOptionFilter('filter-room-repartition',    'Toutes', rows.map(r => r.room));
+    // Enseignant connecté : sa fiche est présélectionnée.
+    // Vacataire : verrouillé sur son nom ; titulaire : présélectionné mais modifiable.
+    if (state.role === 'teacher' && state.teacherName) {
+        const sel = document.getElementById('filter-teacher-repartition');
+        if (![...sel.options].some(o => o.value === state.teacherName)) {
+            sel.insertAdjacentHTML('beforeend',
+                `<option value="${esc(state.teacherName)}">${esc(state.teacherName)}</option>`);
+        }
+        if (state.teacherTitulaire) {
+            if (!sel.value) sel.value = state.teacherName;   // défaut, modifiable
+        } else {
+            sel.value = state.teacherName;
+            sel.disabled = true;
+        }
+    }
 }
 
 function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
@@ -2307,6 +2662,14 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
         if (ra !== rb) return ra - rb;
         return ordIdx(byCode[a].code) - ordIdx(byCode[b].code);
     });
+    // Repositionnements ponctuels (ex. R3.11 juste après R3.08)
+    Object.entries(_courseAfter).forEach(([moveCode, afterCode]) => {
+        const mi = codeOrder.findIndex(k => byCode[k].code === moveCode);
+        if (mi < 0 || !codeOrder.some(k => byCode[k].code === afterCode)) return;
+        const [item] = codeOrder.splice(mi, 1);
+        const ai = codeOrder.findIndex(k => byCode[k].code === afterCode);
+        codeOrder.splice(ai + 1, 0, item);
+    });
 
     // Colonnes fixes (sticky) — largeurs imposées par table-layout:fixed
     const fixedCols = [
@@ -2314,13 +2677,15 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
         { key: 'teach', label: 'Enseignant',  w: 105 },
         { key: 'room',  label: 'Salle',       w: 60  },
     ];
+    const WFORM = 34;  // largeur colonne Formation (FTP/ALT/MUT) fusionnée à gauche
     const WMOD = 52;   // largeur colonne H. module
     const WTOTAL = 48; // largeur colonne Total (Reste)
-    let cum = 0;
+    let cum = WFORM;   // les colonnes fixes commencent après la colonne Formation
     fixedCols.forEach(c => { c.left = cum; cum += c.w; });
     const moduleFixedLeft = cum;             // left de la colonne H. module sticky
     const totalFixedLeft  = cum + WMOD;      // left du Total (Reste) sticky
-    const fixedSpan     = fixedCols.length + 2; // Type + Enseignant + H.module + Reste = 4
+    // Formation + Type + Enseignant + Salle + H.module + Reste
+    const fixedSpan     = 1 + fixedCols.length + 2;
     const totalColSpan  = fixedSpan + weeks.length;
     // Largeur colonne semaine : étirée pour remplir le conteneur (min 28px),
     // sinon scroll horizontal si trop de semaines.
@@ -2357,7 +2722,7 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
 
     const headerWeeks = weeks.map((w, i) => `<th class="col-week${sepCls(i)}">${w}</th>`).join('');
 
-    function buildDataRow(r, formCls) {
+    function buildDataRow(r, formCls, formCell) {
         const typeKey = (r.type || '').toUpperCase();
         const badge = `<span class="badge ${typeColors[typeKey] || 'badge-cm'}">${esc(r.type || '')}</span>`;
         const placed = weeks.reduce((s, w) => s + (r.by_week[w] || 0), 0);
@@ -2373,7 +2738,12 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
         const formTag = formCls === 'row-ftp' ? 'FTP' : formCls === 'row-alt' ? 'ALT' : formCls === 'row-mut' ? 'MUT' : '';
         const totalCls = remaining !== 0 ? ' col-total-bad' : '';
         const totalTxt = r.total_hours > 0 ? remaining + 'h' : '';
+        // Colonne Formation fusionnée (rowspan) sur la 1re ligne du groupe uniquement
+        const formColTd = formCell
+            ? `<td class="s-col form-col form-${formCell.kind}" rowspan="${formCell.span}" style="left:0;z-index:2">${formCell.label}</td>`
+            : '';
         return `<tr class="row-data ${formCls}" data-sid="${sid}" data-formation="${formTag}" data-teacher="${esc(r.teacher)}" data-slot="${slot}" data-total-hours="${r.total_hours}">
+            ${formColTd}
             ${sCol(fixedCols[0], badge)}
             ${sCol(fixedCols[1], esc(r.teacher))}
             ${sCol(fixedCols[2], esc(r.room || ''))}
@@ -2399,50 +2769,52 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
             </td><td colspan="${weeks.length}"></td>
         </tr>`;
 
-        // MUT (CM/TD communs) — toujours affichées en premier
-        if (mutRows.length) {
-            bodyRows += `<tr class="row-form row-form-mut">
-                <td class="s-col" colspan="${fixedSpan}" style="left:0;z-index:2">MUT</td>
-                <td colspan="${weeks.length}"></td>
-            </tr>`;
-            mutRows.forEach(r => { bodyRows += buildDataRow(r, 'row-mut'); });
-        }
-
-        if (ftpRows.length) {
-            if (formFilter === '')
-                bodyRows += `<tr class="row-form row-form-ftp">
-                    <td class="s-col" colspan="${fixedSpan}" style="left:0;z-index:2">FTP</td>
-                    <td colspan="${weeks.length}"></td>
-                </tr>`;
-            ftpRows.forEach(r => { bodyRows += buildDataRow(r, 'row-ftp'); });
-        }
-        if (altRows.length) {
-            if (formFilter === '')
-                bodyRows += `<tr class="row-form row-form-alt">
-                    <td class="s-col" colspan="${fixedSpan}" style="left:0;z-index:2">ALT</td>
-                    <td colspan="${weeks.length}"></td>
-                </tr>`;
-            altRows.forEach(r => { bodyRows += buildDataRow(r, 'row-alt'); });
-        }
+        // Chaque formation : libellé (MUT/FTP/ALT) dans une colonne fusionnée à gauche
+        const addGroup = (groupRows, formCls, label, kind) => {
+            groupRows.forEach((r, i) => {
+                bodyRows += buildDataRow(r, formCls, i === 0 ? { label, kind, span: groupRows.length } : null);
+            });
+        };
+        if (mutRows.length) addGroup(mutRows, 'row-mut', 'MUT', 'mut'); // MUT toujours en premier
+        if (ftpRows.length) addGroup(ftpRows, 'row-ftp', 'FTP', 'ftp');
+        if (altRows.length) addGroup(altRows, 'row-alt', 'ALT', 'alt');
     });
 
-    // Totaux hebdomadaires par promo : utilise promoRows si dispo (semestre individuel → inclut le semestre lié)
+    // Taux horaire hebdomadaire par promo (formation + année), au lieu d'un total
+    // global qui mélangerait les années. Jusqu'à 6 lignes : FTP1, ALT1, … FTP3, ALT3.
     const promoSource = (_repartitionData && _repartitionData.promoRows) || rows;
-    const ftpByWeek = {}, altByWeek = {};
-    weeks.forEach(w => { ftpByWeek[w] = 0; altByWeek[w] = 0; });
+    const ygOf = sem => Math.ceil((parseInt(String(sem).replace(/\D/g, '')) || 0) / 2);
+    const promoData = {};  // clé "FTP1" -> { form, yg, byWeek }
+    const ensurePromo = (form, yg) => {
+        const k = form + yg;
+        if (!promoData[k]) { promoData[k] = { form, yg, byWeek: {} }; weeks.forEach(w => promoData[k].byWeek[w] = 0); }
+        return promoData[k];
+    };
     promoSource.forEach(r => {
+        const yg = ygOf(r.semester);
+        if (!yg) return;
         weeks.forEach(w => {
             const h = r.by_week[w] || 0;
-            if (r.formation === 'FTP') ftpByWeek[w] += h;
-            else if (r.formation === 'ALT') altByWeek[w] += h;
-            else if (r.formation === 'MUT') { ftpByWeek[w] += h; altByWeek[w] += h; }
+            if (!h) return;
+            if (r.formation === 'FTP') ensurePromo('FTP', yg).byWeek[w] += h;
+            else if (r.formation === 'ALT') ensurePromo('ALT', yg).byWeek[w] += h;
+            else if (r.formation === 'MUT') { ensurePromo('FTP', yg).byWeek[w] += h; ensurePromo('ALT', yg).byWeek[w] += h; }
         });
     });
+    // Ordre d'affichage : FTP1, ALT1, FTP2, ALT2, FTP3, ALT3 (uniquement les promos présentes)
+    const promoOrder = [];
+    [1, 2, 3].forEach(yg => ['FTP', 'ALT'].forEach(form => {
+        const k = form + yg;
+        if (!promoData[k]) return;
+        if (formFilter === 'ftp' && form !== 'FTP') return;
+        if (formFilter === 'alt' && form !== 'ALT') return;
+        promoOrder.push(k);
+    }));
     const fmtH = h => h > 0 ? h : '';
 
-    const promoHeaderRow = (label, cls, byWeek, colorFn) =>
-        `<tr data-promo="${label}">
-            <th class="s-col ${cls}" colspan="${fixedSpan}" style="left:0">${label}</th>
+    const promoHeaderRow = (key, cls, byWeek, colorFn) =>
+        `<tr data-promo="${key}">
+            <th class="s-col ${cls}" colspan="${fixedSpan}" style="left:0">${key}</th>
             ${weeks.map((w, i) => {
                 const h = byWeek[w];
                 const bg = colorFn ? colorFn(h) : null;
@@ -2460,8 +2832,9 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
             if (r.teacher !== teacherFilter) return;
             weeks.forEach(w => { tByWeek[w] += (r.by_week[w] || 0); });
         });
+        const tTotal = weeks.reduce((s, w) => s + tByWeek[w], 0);
         teacherHeaderRow = `<tr data-teacher-total="1">
-            <th class="s-col th-teacher-total" colspan="${fixedSpan}" style="left:0">${esc(teacherFilter)} — h/sem.</th>
+            <th class="s-col th-teacher-total" colspan="${fixedSpan}" style="left:0">${esc(teacherFilter)} — h/sem. (Σ ${Math.round(tTotal * 10) / 10} h)</th>
             ${weeks.map((w, i) => {
                 const h = tByWeek[w];
                 const over = h > 20 ? ' style="background:#fca5a5 !important;color:#111"' : '';
@@ -2489,11 +2862,62 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
 
     // <colgroup> + table-layout:fixed : largeurs fixées par le CSS, pas par le contenu
     const colgroup = `<colgroup>
+        <col style="width:${WFORM}px">
         ${fixedCols.map(c => `<col style="width:${c.w}px">`).join('')}
         <col style="width:${WMOD}px">
         <col style="width:${WTOTAL}px">
         ${weeks.map(() => `<col style="width:${WK}px">`).join('')}
     </colgroup>`;
+
+    // Ligne « Commentaires » (texte vertical) : pour chaque semaine, les codes des
+    // catégories du calendrier qui la couvrent, séparés par « / ».
+    // On ne garde que les catégories cohérentes avec la formation et les années
+    // (year_group) des semestres sélectionnés.
+    const catMeta = {
+        vacation_ftp:   { form: 'ftp', yg: null },  // FTP, toutes années
+        stage_ftp_y2:   { form: 'ftp', yg: 2 },
+        stage_ftp_y3:   { form: 'ftp', yg: 3 },
+        company_alt_y1: { form: 'alt', yg: 1 },
+        company_alt_y2: { form: 'alt', yg: 2 },
+        company_alt_y3: { form: 'alt', yg: 3 },
+    };
+    const selYG = new Set(selected.map(s => Math.ceil((parseInt(String(s).replace(/\D/g, '')) || 0) / 2)));
+    const catVisible = key => {
+        const m = catMeta[key];
+        if (!m) return true;
+        if (formFilter && formFilter !== m.form) return false;       // filtre FTP/ALT
+        if (m.yg !== null && !selYG.has(m.yg)) return false;          // année du semestre
+        return true;
+    };
+    // Commentaire libre de la semaine, si sa formation correspond au filtre courant
+    const commentForWeek = w => {
+        const wc = _weekComments[w];
+        if (!wc || !wc.comment) return '';
+        const fset = wc.formations || ['FTP', 'ALT'];
+        const okForm = formFilter === '' ? true : (formFilter === 'ftp' ? fset.includes('FTP') : fset.includes('ALT'));
+        const yset = (wc.years && wc.years.length) ? wc.years : [1, 2, 3];
+        const okYear = !selYG.size || yset.some(y => selYG.has(y));
+        return (okForm && okYear) ? wc.comment : '';
+    };
+    const codeForWeek = w => {
+        const out = [];
+        _CAL_CATS.forEach(c => {
+            const code = _categoryCodes[c.key];
+            if (code && catVisible(c.key) && (_specialCalRaw[c.key] || []).includes(w) && !out.includes(code)) out.push(code);
+        });
+        const cm = commentForWeek(w);
+        if (cm && !out.includes(cm)) out.push(cm);
+        return out.join(' / ');
+    };
+    const anyCode = weeks.some(w => codeForWeek(w));
+    const CODES_H = 124;
+    let codesHeaderRow = '';
+    if (anyCode) {
+        codesHeaderRow = `<tr class="hrow-codes">
+            <th class="s-col" colspan="${fixedSpan}" style="left:0">Commentaires</th>
+            ${weeks.map((w, i) => { const t = codeForWeek(w); return `<th class="col-week${sepCls(i)}"><span class="rep-code" title="${esc(t)}">${esc(t)}</span></th>`; }).join('')}
+        </tr>`;
+    }
 
     // Empile les lignes récapitulatives en posant un décalage sticky cumulé (--htop).
     // Chaque ligne récap fait 26px ; la ligne des numéros de semaine se cale en dessous.
@@ -2501,13 +2925,26 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
     const withTop = (trHtml, top) => trHtml.replace(/^<tr /, `<tr style="--htop:${top}px" `);
     let htop = 0;
     let headerHtml = '';
+    if (codesHeaderRow) { headerHtml += withTop(codesHeaderRow, htop); htop += CODES_H; }
+    // Taux horaires par formation (FTP1/ALT1/…) :
+    //  - jamais pour le vacataire (uniquement son propre taux) ;
+    //  - pour admin/titulaire, selon la case « Taux horaires ».
+    const cbRates = document.getElementById('cb-show-rates');
+    const showRates = cbRates ? cbRates.checked : true;
+    const hideRates = (state.role === 'teacher' && !state.teacherTitulaire) || !showRates;
+    const promoRowsHtml = hideRates ? [] : promoOrder.map(k => {
+        const p = promoData[k];
+        const cls = p.form === 'FTP' ? 'th-promo-ftp' : 'th-promo-alt';
+        const colorFn = p.form === 'FTP' ? ftpHeatBg : altHeatBg;
+        return promoHeaderRow(k, cls, p.byWeek, colorFn);
+    });
     [
         teacherHeaderRow,
         roomHeaderRow,
-        formFilter !== 'alt' ? promoHeaderRow('FTP', 'th-promo-ftp', ftpByWeek, ftpHeatBg) : '',
-        formFilter !== 'ftp' ? promoHeaderRow('ALT', 'th-promo-alt', altByWeek, altHeatBg) : '',
+        ...promoRowsHtml,
     ].forEach(tr => { if (tr) { headerHtml += withTop(tr, htop); htop += HROW; } });
     const weeksHeaderRow = `<tr class="hrow-weeks" style="--htop:${htop}px">
+        <th class="s-col col-week form-col" style="left:0">Form.</th>
         ${fixedCols.map(sTh).join('')}
         <th class="col-module s-col" style="left:${moduleFixedLeft}px">H. mod.</th>
         <th class="col-total s-col" style="left:${totalFixedLeft}px">Reste</th>
@@ -2529,6 +2966,8 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
 }
 
 function onRepartitionCellClick(e) {
+    // Enseignant (lecture seule) : pas d'édition des cases
+    if (state.role === 'teacher') return;
     // Ignorer si clic sur un bouton flèche déjà présent
     if (e.target.closest('.cell-arrows')) return;
     const td = e.target.closest('td[data-sid][data-week]');
@@ -2619,17 +3058,18 @@ async function updateRepartitionCell(sid, week, newHours, td) {
             const tr = td.closest('tr');
             const formation = tr ? tr.dataset.formation : '';
             if (formation && delta !== 0) {
-                // MUT compte pour FTP et ALT
-                const promoLabels = formation === 'MUT' ? ['FTP', 'ALT'] : [formation];
-                promoLabels.forEach(promoLabel => {
-                    const promoRow = document.querySelector(`tr[data-promo="${promoLabel}"]`);
+                // Promo concernée = formation + année (year_group) ; MUT compte pour FTP et ALT
+                const yg = Math.ceil((parseInt(String(row.semester).replace(/\D/g, '')) || 0) / 2);
+                const promoKeys = formation === 'MUT' ? [`FTP${yg}`, `ALT${yg}`] : [`${formation}${yg}`];
+                promoKeys.forEach(promoKey => {
+                    const promoRow = document.querySelector(`tr[data-promo="${promoKey}"]`);
                     if (promoRow) {
                         const th = promoRow.querySelector(`th[data-promo-week="${week}"]`);
                         if (th) {
                             const curTotal = parseFloat(th.textContent) || 0;
                             const newTotal = curTotal + delta;
                             th.textContent = newTotal > 0 ? newTotal : '';
-                            const colorFn = promoLabel === 'FTP' ? ftpHeatBg : altHeatBg;
+                            const colorFn = promoKey.startsWith('FTP') ? ftpHeatBg : altHeatBg;
                             const bg = colorFn(newTotal);
                             if (bg) th.setAttribute('style', `background:${bg} !important;color:#111`);
                             else th.removeAttribute('style');
@@ -2677,7 +3117,14 @@ async function updateRepartitionCell(sid, week, newHours, td) {
 
 // ===== EXPORT EXCEL =====
 function exportRepartitionExcel() {
-    window.location.href = '/api/export/repartition';
+    // L'export reprend uniquement ce qui est à l'affichage : semestres, formation, enseignant
+    const params = new URLSearchParams();
+    if (_selectedSemesters && _selectedSemesters.length) params.set('semesters', _selectedSemesters.join(','));
+    const f = (document.getElementById('filter-formation-repartition') || {}).value || '';
+    if (f) params.set('formation', f);
+    const t = (document.getElementById('filter-teacher-repartition') || {}).value || '';
+    if (t) params.set('teacher', t);
+    window.location.href = '/api/export/repartition?' + params.toString();
 }
 
 // ===== IMPORT EXCEL =====
@@ -2795,32 +3242,8 @@ function buildAllWeekSelect(selId, selectedVal) {
     document.getElementById(selId).innerHTML = opts;
 }
 
-async function openConfigModal() {
-    try {
-        const cfg = await api('/config');
-        buildAllWeekSelect('config-start-week', cfg.academic_start_week);
-        buildAllWeekSelect('config-end-week',   cfg.academic_end_week);
-        openModal('modal-config');
-    } catch(e) { toast('Erreur chargement config : ' + e.message, 'error'); }
-}
-
-async function submitConfig(e) {
-    e.preventDefault();
-    const sw = parseInt(document.getElementById('config-start-week').value);
-    const ew = parseInt(document.getElementById('config-end-week').value);
-    if (!sw || !ew) { toast('Choisir une semaine de début et de fin', 'error'); return; }
-    try {
-        await api('/config', { method: 'PUT', body: JSON.stringify({ academic_start_week: sw, academic_end_week: ew }) });
-        state.config = { ...(state.config || {}), academic_start_week: sw, academic_end_week: ew };
-        closeModal('modal-config');
-        document.getElementById('stat-year-range').textContent =
-            `S${String(sw).padStart(2,'0')} → S${String(ew).padStart(2,'0')}`;
-        toast('Plage de l\'année enregistrée');
-    } catch(e) { toast('Erreur : ' + e.message, 'error'); }
-}
-
 // ===== INIT =====
-loadDashboard();
+checkAuth();
 </script>
 </body>
 </html>

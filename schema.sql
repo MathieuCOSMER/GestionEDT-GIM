@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS teachers (
     phone TEXT,
     structure TEXT,
     corps_code TEXT,
+    status TEXT DEFAULT 'Titulaire',
     max_hours_day REAL DEFAULT 6,
     priority INTEGER DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
