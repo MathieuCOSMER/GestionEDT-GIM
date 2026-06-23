@@ -258,10 +258,11 @@
            (l'accès en écriture est filtré par rôle/onglet, pas par cette règle) */
         body.role-teacher .admin-only,
         body.role-teacher .rep-tool-restricted { display: none !important; }
-        /* Ordre des onglets pour l'enseignant : Globale, Calendaire, Liste */
+        /* Ordre des onglets pour l'enseignant : Globale, Calendaire, Liste, Contenu */
         body.role-teacher #nav-repartition-enseignant { order: 1; }
         body.role-teacher #nav-repartition { order: 2; }
         body.role-teacher #nav-enseignants { order: 3; }
+        body.role-teacher #nav-contenu { order: 4; }
         body.role-teacher #nav-right { order: 99; }
         /* Case « Taux horaires » + Export : réservés à l'admin et aux titulaires */
         body.role-vacataire .rates-toggle,
@@ -291,7 +292,7 @@
 <nav>
     <strong>EDT Manager</strong>
     <button onclick="showPage('repartition')" class="active" id="nav-repartition">Répartition Calendaire</button>
-    <button onclick="showPage('repartition-enseignant')" id="nav-repartition-enseignant">Répartition Globale</button>
+    <button onclick="showPage('repartition-enseignant')" id="nav-repartition-enseignant">Bilan Global</button>
     <button onclick="showPage('calendrier')" id="nav-calendrier">Calendrier</button>
     <button onclick="showPage('matieres')" id="nav-matieres">Matières</button>
     <button onclick="showPage('salles')" id="nav-salles">Salles</button>
@@ -335,7 +336,7 @@
         <div class="link-card" onclick="showPage('enseignants')"><h3>Liste des enseignants</h3><p>Gérer les enseignants</p></div>
         <div class="link-card" onclick="showPage('matieres')"><h3>Matières</h3><p>Consulter les matières</p></div>
         <div class="link-card" onclick="showPage('salles')"><h3>Salles</h3><p>Gérer les salles</p></div>
-        <div class="link-card" onclick="showPage('repartition-enseignant')"><h3>Répartition Globale</h3><p>Vue par enseignant</p></div>
+        <div class="link-card" onclick="showPage('repartition-enseignant')"><h3>Bilan Global</h3><p>Vue par enseignant</p></div>
         <div class="link-card" onclick="showPage('repartition')"><h3>Répartition Calendaire</h3><p>Vue hebdomadaire par semestre</p></div>
     </div>
 </div>
@@ -431,7 +432,7 @@
 <!-- ===== REPARTITION PAR ENSEIGNANT ===== -->
 <div class="page" id="page-repartition-enseignant">
     <div class="toolbar">
-        <h1>Répartition Globale</h1>
+        <h1>Bilan Global</h1>
         <div class="filters">
             <label>Enseignant :</label>
             <select id="filter-teacher-rep" onchange="renderTeacherRepartition()">
