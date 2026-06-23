@@ -217,6 +217,10 @@
         .sem-btn { padding: 5px 12px; border: 1px solid #c7d2fe; border-radius: 6px; background: #eef2ff; color: #4f46e5; font-weight: 700; font-size: .82rem; cursor: pointer; }
         .sem-btn:hover { background: #e0e7ff; }
         .sem-btn.active { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+        /* Sous-onglets (contenu des matières) */
+        .subtab { padding: 8px 16px; border: none; background: none; color: #6b7280; font-weight: 600; font-size: .9rem; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -1px; }
+        .subtab:hover { color: #4f46e5; }
+        .subtab.active { color: #4f46e5; border-bottom-color: #4f46e5; }
         /* Édition inline répartition */
         .repartition-wrap td.cell-hours:hover, .repartition-wrap td.cell-empty:hover { outline: 2px solid #6366f1; outline-offset: -2px; cursor: pointer; }
         .cell-arrows { display: flex; flex-direction: column; align-items: center; gap: 0; line-height: 1; }
@@ -383,7 +387,17 @@
 <div class="page" id="page-contenu">
     <div class="toolbar">
         <h1>Contenu des matières</h1>
-        <div class="filters">
+    </div>
+    <div class="subtabs" style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid #e5e7eb">
+        <button type="button" id="cont-subtab-view" class="subtab active"
+                onclick="showContentTab('view')">Consultation</button>
+        <button type="button" id="cont-subtab-edit" class="subtab"
+                onclick="showContentTab('edit')">Mes matières</button>
+    </div>
+
+    <!-- Sous-onglet : Consultation (lecture seule, toutes les matières) -->
+    <div id="cont-pane-view">
+        <div class="filters" style="margin-bottom:12px">
             <label>Semestres :</label>
             <div id="cont-sem-toggle" class="sem-toggle">
                 <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleContSemester('S1',this)">S1</button>
@@ -396,8 +410,13 @@
             <input type="text" id="cont-search" placeholder="Rechercher une matière…"
                    oninput="renderContent()" style="margin-left:12px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
         </div>
+        <div id="content-list"><div class="spinner">Chargement…</div></div>
     </div>
-    <div id="content-list"><div class="spinner">Chargement…</div></div>
+
+    <!-- Sous-onglet : Mes matières (modifiables par la personne connectée) -->
+    <div id="cont-pane-edit" style="display:none">
+        <div id="content-edit-list"><div class="spinner">Chargement…</div></div>
+    </div>
 </div>
 
 <!-- ===== SALLES ===== -->
@@ -989,7 +1008,7 @@ async function loadPage(name, forceReload) {
         }
         else if (name === 'contenu') {
             state.courses = await api('/courses');
-            renderContent();
+            showContentTab(_contTab);
         }
         else if (name === 'salles') {
             if (forceReload || !state.rooms.length) state.rooms = await api('/rooms');
@@ -1185,6 +1204,21 @@ function canEditCourseContent(c) {
     return names.includes(state.teacherName.trim().toLowerCase());
 }
 
+let _contTab = 'view';
+
+function showContentTab(tab) {
+    _contTab = tab;
+    document.getElementById('cont-subtab-view').classList.toggle('active', tab === 'view');
+    document.getElementById('cont-subtab-edit').classList.toggle('active', tab === 'edit');
+    document.getElementById('cont-pane-view').style.display = (tab === 'view') ? '' : 'none';
+    document.getElementById('cont-pane-edit').style.display = (tab === 'edit') ? '' : 'none';
+    if (tab === 'view') renderContent();
+    else renderContentEdit();
+}
+
+const _SEM_ORDER = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'];
+
+// Sous-onglet « Consultation » : toutes les matières, en lecture seule
 function renderContent() {
     const el = document.getElementById('content-list');
     if (!_contSemesters.size) {
@@ -1196,9 +1230,7 @@ function renderContent() {
     if (q) list = list.filter(c => ((c.code || '') + ' ' + (c.name || '')).toLowerCase().includes(q));
     if (!list.length) { el.innerHTML = '<div class="empty">Aucune matière pour cette sélection.</div>'; return; }
 
-    // Regroupe par semestre, dans l'ordre S1…S6
-    const order = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'];
-    list.sort((a, b) => (order.indexOf(a.semester_code) - order.indexOf(b.semester_code))
+    list.sort((a, b) => (_SEM_ORDER.indexOf(a.semester_code) - _SEM_ORDER.indexOf(b.semester_code))
                         || (a.code || '').localeCompare(b.code || ''));
     let html = '';
     let curSem = null;
@@ -1207,21 +1239,43 @@ function renderContent() {
             curSem = c.semester_code;
             html += `<h2 style="margin:18px 0 8px;color:#4f46e5">${esc(curSem || '')}</h2>`;
         }
-        const editable = canEditCourseContent(c);
         const teachers = c.teacher_names ? `<small style="color:#6b7280"> · ${esc(c.teacher_names)}</small>` : '';
         const content = c.content || '';
-        const body = editable
-            ? `<textarea id="cont-ta-${c.id}" rows="5"
-                   style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #d1d5db;border-radius:6px;font:inherit;resize:vertical"
-                   placeholder="Décrivez le contenu / programme de la matière…">${esc(content)}</textarea>
-               <div style="margin-top:6px;text-align:right">
-                   <button class="btn btn-primary btn-sm" onclick="saveCourseContent(${c.id})">Enregistrer</button>
-               </div>`
-            : `<div style="white-space:pre-wrap;color:${content ? '#374151' : '#9ca3af'}">${content ? esc(content) : 'Aucune description renseignée.'}</div>`;
         html += `<div class="card" style="border-left-color:#4f46e5;margin-bottom:12px">
-            <div style="margin-bottom:6px"><strong>${esc(c.code || '')}</strong> — ${esc(c.name || '')}${teachers}
-                ${editable ? '<span class="badge" style="background:#eef2ff;color:#4f46e5;margin-left:8px">Modifiable</span>' : ''}</div>
-            ${body}
+            <div style="margin-bottom:6px"><strong>${esc(c.code || '')}</strong> — ${esc(c.name || '')}${teachers}</div>
+            <div style="white-space:pre-wrap;color:${content ? '#374151' : '#9ca3af'}">${content ? esc(content) : 'Aucune description renseignée.'}</div>
+        </div>`;
+    });
+    el.innerHTML = html;
+}
+
+// Sous-onglet « Mes matières » : uniquement les matières modifiables par la personne connectée
+function renderContentEdit() {
+    const el = document.getElementById('content-edit-list');
+    let list = (state.courses || []).filter(canEditCourseContent);
+    if (!list.length) {
+        el.innerHTML = '<div class="empty">Aucune matière modifiable pour votre compte.</div>';
+        return;
+    }
+    list.sort((a, b) => (_SEM_ORDER.indexOf(a.semester_code) - _SEM_ORDER.indexOf(b.semester_code))
+                        || (a.code || '').localeCompare(b.code || ''));
+    let html = '';
+    let curSem = null;
+    list.forEach(c => {
+        if (c.semester_code !== curSem) {
+            curSem = c.semester_code;
+            html += `<h2 style="margin:18px 0 8px;color:#4f46e5">${esc(curSem || '')}</h2>`;
+        }
+        const teachers = c.teacher_names ? `<small style="color:#6b7280"> · ${esc(c.teacher_names)}</small>` : '';
+        const content = c.content || '';
+        html += `<div class="card" style="border-left-color:#4f46e5;margin-bottom:12px">
+            <div style="margin-bottom:6px"><strong>${esc(c.code || '')}</strong> — ${esc(c.name || '')}${teachers}</div>
+            <textarea id="cont-ta-${c.id}" rows="5"
+                style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #d1d5db;border-radius:6px;font:inherit;resize:vertical"
+                placeholder="Décrivez le contenu / programme de la matière…">${esc(content)}</textarea>
+            <div style="margin-top:6px;text-align:right">
+                <button class="btn btn-primary btn-sm" onclick="saveCourseContent(${c.id})">Enregistrer</button>
+            </div>
         </div>`;
     });
     el.innerHTML = html;
