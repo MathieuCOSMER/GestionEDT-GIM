@@ -290,6 +290,7 @@
     <button onclick="showPage('repartition-enseignant')" id="nav-repartition-enseignant">Répartition Globale</button>
     <button onclick="showPage('calendrier')" id="nav-calendrier">Calendrier</button>
     <button onclick="showPage('matieres')" id="nav-matieres">Matières</button>
+    <button onclick="showPage('contenu')" id="nav-contenu">Contenu des matières</button>
     <button onclick="showPage('salles')" id="nav-salles">Salles</button>
     <button onclick="showPage('enseignants')" id="nav-enseignants">Liste des enseignants</button>
     <div id="nav-right" style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">
@@ -376,6 +377,27 @@
         </div>
     </div>
     <div id="courses-table"><div class="spinner">Chargement…</div></div>
+</div>
+
+<!-- ===== CONTENU DES MATIERES ===== -->
+<div class="page" id="page-contenu">
+    <div class="toolbar">
+        <h1>Contenu des matières</h1>
+        <div class="filters">
+            <label>Semestres :</label>
+            <div id="cont-sem-toggle" class="sem-toggle">
+                <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleContSemester('S1',this)">S1</button>
+                <button type="button" class="sem-btn active" data-sem="S2" onclick="toggleContSemester('S2',this)">S2</button>
+                <button type="button" class="sem-btn active" data-sem="S3" onclick="toggleContSemester('S3',this)">S3</button>
+                <button type="button" class="sem-btn active" data-sem="S4" onclick="toggleContSemester('S4',this)">S4</button>
+                <button type="button" class="sem-btn active" data-sem="S5" onclick="toggleContSemester('S5',this)">S5</button>
+                <button type="button" class="sem-btn active" data-sem="S6" onclick="toggleContSemester('S6',this)">S6</button>
+            </div>
+            <input type="text" id="cont-search" placeholder="Rechercher une matière…"
+                   oninput="renderContent()" style="margin-left:12px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+        </div>
+    </div>
+    <div id="content-list"><div class="spinner">Chargement…</div></div>
 </div>
 
 <!-- ===== SALLES ===== -->
@@ -887,7 +909,7 @@ function applyRole(role, user, teacher, status) {
             : 'Admin';
     }
     // Enseignant : onglets de répartition ; seul le titulaire voit la liste des enseignants (consultation seule)
-    const teacherTabs = ['nav-repartition', 'nav-repartition-enseignant'];
+    const teacherTabs = ['nav-repartition', 'nav-repartition-enseignant', 'nav-contenu'];
     if (state.teacherTitulaire) teacherTabs.push('nav-enseignants');
     document.querySelectorAll('nav button[id^="nav-"]').forEach(b => {
         b.style.display = (role === 'teacher' && !teacherTabs.includes(b.id)) ? 'none' : '';
@@ -964,6 +986,10 @@ async function loadPage(name, forceReload) {
         else if (name === 'matieres') {
             if (forceReload || !state.courses.length) [state.courses, state.semesters] = await Promise.all([api('/courses'), api('/semesters')]);
             renderCourses();
+        }
+        else if (name === 'contenu') {
+            state.courses = await api('/courses');
+            renderContent();
         }
         else if (name === 'salles') {
             if (forceReload || !state.rooms.length) state.rooms = await api('/rooms');
@@ -1139,6 +1165,87 @@ function toggleMatSemester(code, btn) {
     else _matSemesters.add(code);
     btn.classList.toggle('active');
     renderCourses();
+}
+
+// ===== CONTENU DES MATIERES =====
+let _contSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
+
+function toggleContSemester(code, btn) {
+    if (_contSemesters.has(code)) _contSemesters.delete(code);
+    else _contSemesters.add(code);
+    btn.classList.toggle('active');
+    renderContent();
+}
+
+// L'admin édite tout ; un enseignant édite uniquement les matières où il intervient
+function canEditCourseContent(c) {
+    if (state.role === 'admin') return true;
+    if (state.role !== 'teacher' || !state.teacherName) return false;
+    const names = (c.teacher_names || '').split(',').map(s => s.trim().toLowerCase());
+    return names.includes(state.teacherName.trim().toLowerCase());
+}
+
+function renderContent() {
+    const el = document.getElementById('content-list');
+    if (!_contSemesters.size) {
+        el.innerHTML = '<div class="empty">Sélectionnez au moins un semestre.</div>';
+        return;
+    }
+    const q = ((document.getElementById('cont-search') || {}).value || '').trim().toLowerCase();
+    let list = (state.courses || []).filter(c => _contSemesters.has(c.semester_code));
+    if (q) list = list.filter(c => ((c.code || '') + ' ' + (c.name || '')).toLowerCase().includes(q));
+    if (!list.length) { el.innerHTML = '<div class="empty">Aucune matière pour cette sélection.</div>'; return; }
+
+    // Regroupe par semestre, dans l'ordre S1…S6
+    const order = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'];
+    list.sort((a, b) => (order.indexOf(a.semester_code) - order.indexOf(b.semester_code))
+                        || (a.code || '').localeCompare(b.code || ''));
+    let html = '';
+    let curSem = null;
+    list.forEach(c => {
+        if (c.semester_code !== curSem) {
+            curSem = c.semester_code;
+            html += `<h2 style="margin:18px 0 8px;color:#4f46e5">${esc(curSem || '')}</h2>`;
+        }
+        const editable = canEditCourseContent(c);
+        const teachers = c.teacher_names ? `<small style="color:#6b7280"> · ${esc(c.teacher_names)}</small>` : '';
+        const content = c.content || '';
+        const body = editable
+            ? `<textarea id="cont-ta-${c.id}" rows="5"
+                   style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #d1d5db;border-radius:6px;font:inherit;resize:vertical"
+                   placeholder="Décrivez le contenu / programme de la matière…">${esc(content)}</textarea>
+               <div style="margin-top:6px;text-align:right">
+                   <button class="btn btn-primary btn-sm" onclick="saveCourseContent(${c.id})">Enregistrer</button>
+               </div>`
+            : `<div style="white-space:pre-wrap;color:${content ? '#374151' : '#9ca3af'}">${content ? esc(content) : 'Aucune description renseignée.'}</div>`;
+        html += `<div class="card" style="border-left-color:#4f46e5;margin-bottom:12px">
+            <div style="margin-bottom:6px"><strong>${esc(c.code || '')}</strong> — ${esc(c.name || '')}${teachers}
+                ${editable ? '<span class="badge" style="background:#eef2ff;color:#4f46e5;margin-left:8px">Modifiable</span>' : ''}</div>
+            ${body}
+        </div>`;
+    });
+    el.innerHTML = html;
+}
+
+async function saveCourseContent(id) {
+    const ta = document.getElementById('cont-ta-' + id);
+    if (!ta) return;
+    const content = ta.value;
+    try {
+        // Appel direct : la garde client de api() bloque toute écriture côté enseignant,
+        // or l'enseignant intervenant est autorisé sur cette route (vérifié côté serveur).
+        const r = await fetch('/api/courses/' + id + '/content', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content })
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const c = (state.courses || []).find(x => x.id === id);
+        if (c) c.content = content.trim();
+        toast('Contenu enregistré');
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
 }
 
 // Remplit les listes Enseignant / Salle à partir des matières chargées

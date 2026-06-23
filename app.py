@@ -161,6 +161,11 @@ def _apply_migrations(db):
         db.execute('ALTER TABLE courses ADD COLUMN default_weeks INTEGER DEFAULT 0')
     except sqlite3.OperationalError:
         pass
+    # Description / contenu pédagogique de la matière (éditable par admin ou intervenant)
+    try:
+        db.execute('ALTER TABLE courses ADD COLUMN content TEXT')
+    except sqlite3.OperationalError:
+        pass
     try:
         db.execute('ALTER TABLE course_sessions ADD COLUMN sessions_per_week_max INTEGER DEFAULT 1')
     except sqlite3.OperationalError:
@@ -428,6 +433,26 @@ def error_response(message, status_code=400):
 
 # ======================= AUTHENTIFICATION (routes + garde) =======================
 
+import re as _re
+# Reconnaît /api/courses/<id>/content (autorisé aux intervenants en écriture)
+_COURSE_CONTENT_RE = _re.compile(r'^/api/courses/\d+/content$')
+
+def _is_course_content_path(path):
+    return bool(_COURSE_CONTENT_RE.match(path))
+
+def teacher_intervenes_in_course(course_id, teacher_name):
+    """Vrai si l'enseignant (par nom) intervient dans une session de la matière."""
+    if not teacher_name:
+        return False
+    db = get_db()
+    row = db.execute('''
+        SELECT 1 FROM course_sessions cs
+        JOIN teachers t ON cs.teacher_id = t.id
+        WHERE cs.course_id = ? AND LOWER(t.name) = LOWER(?)
+        LIMIT 1
+    ''', (course_id, teacher_name)).fetchone()
+    return row is not None
+
 @app.before_request
 def _require_auth():
     """Protège l'API : connexion obligatoire ; visiteur = lecture seule."""
@@ -442,7 +467,11 @@ def _require_auth():
     if not role:
         return error_response('Authentification requise', 401)
     if role != 'admin' and request.method not in ('GET', 'HEAD'):
-        # Toute écriture (y compris la liste des enseignants) est réservée à l'admin
+        # Exception : l'enseignant intervenant peut éditer le contenu de SA matière.
+        # L'autorisation fine (intervenant ou non) est vérifiée dans le handler.
+        if role == 'teacher' and _is_course_content_path(path):
+            return
+        # Toute autre écriture (y compris la liste des enseignants) est réservée à l'admin
         return error_response('Accès en lecture seule', 403)
 
 @app.route('/api/login', methods=['POST'])
@@ -1075,8 +1104,9 @@ def get_courses():
         cursor.execute('''
             SELECT c.id, c.code, c.name, c.semester_id, c.course_type,
                    c.start_week, c.end_week, c.default_weeks, c.mutualized,
-                   c.created_at, c.updated_at,
+                   c.content, c.created_at, c.updated_at,
                    s.code as semester_code,
+                   GROUP_CONCAT(DISTINCT t.name) as teacher_names,
                    COALESCE(SUM(CASE WHEN cs.teaching_type='CM' AND cs.formation_type IN (0,2)
                                      THEN cs.total_hours ELSE 0 END), 0) as cm_hours,
                    MAX(CASE WHEN cs.teaching_type='CM' AND cs.formation_type IN (0,2)
@@ -1148,7 +1178,7 @@ def get_courses():
             LEFT JOIN teachers t ON cs.teacher_id = t.id
             GROUP BY c.id, c.code, c.name, c.semester_id, c.course_type,
                      c.start_week, c.end_week, c.default_weeks, c.mutualized,
-                     c.created_at, c.updated_at, s.code
+                     c.content, c.created_at, c.updated_at, s.code
             ORDER BY s.code, c.code
         ''')
         courses = rows_to_list(cursor.fetchall())
@@ -1238,6 +1268,35 @@ def get_course(course_id):
         return jsonify(row_to_dict(course)), 200
     except Exception as e:
         return error_response(f'Error fetching course: {str(e)}', 500)
+
+@app.route('/api/courses/<int:course_id>/content', methods=['PUT'])
+def update_course_content(course_id):
+    """Met à jour la description / contenu pédagogique d'une matière.
+    Autorisé à l'admin ou à un enseignant intervenant dans la matière."""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('SELECT id FROM courses WHERE id = ?', (course_id,))
+        if not cursor.fetchone():
+            return error_response('Course not found', 404)
+
+        role = session.get('role')
+        if role != 'admin':
+            teacher_name = session.get('teacher_name')
+            if not teacher_intervenes_in_course(course_id, teacher_name):
+                return error_response("Vous n'intervenez pas dans cette matière", 403)
+
+        data = request.get_json() or {}
+        content = data.get('content')
+        content = content.strip() if isinstance(content, str) else None
+        cursor.execute(
+            'UPDATE courses SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            (content or None, course_id)
+        )
+        db.commit()
+        return jsonify({'id': course_id, 'content': content or ''}), 200
+    except Exception as e:
+        return error_response(f'Error updating course content: {str(e)}', 500)
 
 @app.route('/api/courses/<int:course_id>', methods=['PUT'])
 def update_course(course_id):
