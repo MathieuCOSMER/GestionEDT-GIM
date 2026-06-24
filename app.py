@@ -884,6 +884,26 @@ def restore_backup():
     _audit('RESTORE', ip=_client_ip(), user=session.get('user'), year=year, file=fname)
     return jsonify({'restored': fname, 'year': year})
 
+@app.route('/api/backups', methods=['DELETE'])
+def delete_backup():
+    """Supprime une sauvegarde (admin)."""
+    if session.get('role') != 'admin':
+        return error_response('Accès réservé à l\'administrateur', 403)
+    data = request.get_json() or {}
+    year = (data.get('year') or '').strip()
+    fname = (data.get('file') or '').strip()
+    if not _is_year(year) or not fname:
+        return error_response('Paramètres invalides', 400)
+    bdir = _backup_dir_for_year(year)
+    path = os.path.join(bdir, fname)
+    # Anti path-traversal : le fichier doit bien être dans le dossier de sauvegardes
+    if (os.path.dirname(os.path.abspath(path)) != os.path.abspath(bdir)
+            or not os.path.isfile(path)):
+        return error_response('Sauvegarde introuvable', 404)
+    os.remove(path)
+    _audit('BACKUP_DELETE', ip=_client_ip(), user=session.get('user'), year=year, file=fname)
+    return jsonify({'deleted': fname, 'year': year})
+
 # ======================= STATIC FILES =======================
 
 _STATIC_DIR = os.path.join(_BASE_DIR, 'static')

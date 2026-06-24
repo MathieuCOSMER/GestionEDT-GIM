@@ -1449,14 +1449,17 @@ function renderBackups(backups) {
             <th style="width:110px">Année</th>
             <th style="width:100px">Taille</th>
             <th>Fichier</th>
-            <th style="width:120px"></th>
+            <th style="width:200px"></th>
         </tr></thead><tbody>` +
         backups.map(b => `<tr>
             <td style="white-space:nowrap;color:#6b7280">${esc(b.datetime)}</td>
             <td>${esc(b.year)}</td>
             <td>${b.size_kb} Ko</td>
             <td style="font-family:ui-monospace,monospace;font-size:.8rem">${esc(b.file)}</td>
-            <td><button class="btn btn-secondary btn-sm" onclick="restoreBackup('${esc(b.year)}','${esc(b.file)}')">Restaurer</button></td>
+            <td style="white-space:nowrap">
+                <button class="btn btn-secondary btn-sm" onclick="restoreBackup('${esc(b.year)}','${esc(b.file)}')">Restaurer</button>
+                <button class="btn btn-secondary btn-sm" style="margin-left:4px;color:#b91c1c" onclick="deleteBackup('${esc(b.year)}','${esc(b.file)}')">Supprimer</button>
+            </td>
         </tr>`).join('') +
         `</tbody></table>`;
     el.innerHTML = html;
@@ -1481,6 +1484,17 @@ async function restoreBackup(year, file) {
         // Recharge les données en vidant le cache local
         state.courses = []; state.teachers = []; state.rooms = []; state.sessions = [];
         setTimeout(() => location.reload(), 800);
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+async function deleteBackup(year, file) {
+    if (!confirm(`Supprimer définitivement la sauvegarde :\n${file} (${year}) ?`)) return;
+    try {
+        await api('/backups', { method: 'DELETE', body: JSON.stringify({ year, file }) });
+        toast('Sauvegarde supprimée');
+        loadBackups();
     } catch (e) {
         toast('Erreur : ' + e.message, 'error');
     }
