@@ -234,6 +234,14 @@
         .pn-table td.pn-cell { background: #f9fafb; border-bottom: 3px solid #475569; }
         .pn-table .pn-empty { color: #9ca3af; }
         .pn-table textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font: inherit; font-size: .82rem; resize: vertical; }
+        /* Journal d'audit */
+        .journal-table th, .journal-table td { padding: 6px 10px; border-bottom: 1px solid #f3f4f6; text-align: left; vertical-align: top; }
+        .journal-table tbody tr:hover td { background: #f9fafb; }
+        .jr-badge { display: inline-block; font-size: .72rem; font-weight: 700; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+        .jr-badge.jr-ok { background: #dcfce7; color: #166534; }
+        .jr-badge.jr-bad { background: #fee2e2; color: #b91c1c; }
+        .jr-badge.jr-write { background: #dbeafe; color: #1e40af; }
+        .jr-badge.jr-info { background: #f3f4f6; color: #4b5563; }
         /* Édition inline répartition */
         .repartition-wrap td.cell-hours:hover, .repartition-wrap td.cell-empty:hover { outline: 2px solid #6366f1; outline-offset: -2px; cursor: pointer; }
         .cell-arrows { display: flex; flex-direction: column; align-items: center; gap: 0; line-height: 1; }
@@ -310,6 +318,7 @@
     <button onclick="showPage('matieres')" id="nav-matieres">Matières</button>
     <button onclick="showPage('salles')" id="nav-salles">Salles</button>
     <button onclick="showPage('enseignants')" id="nav-enseignants">Liste des enseignants</button>
+    <button onclick="showPage('journal')" id="nav-journal" class="admin-only">Journal</button>
     <button onclick="showPage('contenu')" id="nav-contenu">Contenu des matières</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
         <span class="admin-only" style="font-size:.8rem;color:#6b7280;white-space:nowrap">Année :</span>
@@ -457,6 +466,33 @@
         <button class="btn btn-primary" onclick="openRoomModal()">+ Ajouter</button>
     </div>
     <div id="rooms-table"><div class="spinner">Chargement…</div></div>
+</div>
+
+<!-- ===== JOURNAL D'AUDIT (admin) ===== -->
+<div class="page" id="page-journal">
+    <div class="toolbar">
+        <h1>Journal</h1>
+        <div class="filters">
+            <label>Type :</label>
+            <select id="journal-type" onchange="renderJournal()">
+                <option value="">Tous</option>
+                <option value="LOGIN">Connexions</option>
+                <option value="LOGIN_FAIL">Échecs / blocages</option>
+                <option value="WRITE">Modifications</option>
+            </select>
+            <input type="text" id="journal-search" placeholder="Rechercher (IP, utilisateur, chemin…)"
+                   oninput="renderJournal()" style="margin-left:12px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;width:230px">
+            <label style="margin-left:12px">Lignes :</label>
+            <select id="journal-lines" onchange="loadJournal()">
+                <option value="200">200</option>
+                <option value="500">500</option>
+                <option value="1000">1000</option>
+                <option value="2000">2000</option>
+            </select>
+            <button class="btn btn-secondary btn-sm" style="margin-left:12px" onclick="loadJournal()">Rafraîchir</button>
+        </div>
+    </div>
+    <div id="journal-content"><div class="spinner">Chargement…</div></div>
 </div>
 
 <!-- ===== REPARTITION PAR ENSEIGNANT ===== -->
@@ -1083,6 +1119,7 @@ async function loadPage(name, forceReload) {
             if (forceReload || !state.rooms.length) state.rooms = await api('/rooms');
             renderRooms();
         }
+        else if (name === 'journal') { await loadJournal(); }
         else if (name === 'repartition-enseignant') {
             const [sessions, teachers, pg] = await Promise.all([
                 api('/course-sessions'), api('/teachers'), api('/promotion-groups')
@@ -1363,6 +1400,60 @@ async function checkPnPdf() {
     } catch (e) {
         btn.style.display = 'none';
     }
+}
+
+// ===== JOURNAL D'AUDIT (admin) =====
+let _journalLines = [];
+
+async function loadJournal() {
+    const el = document.getElementById('journal-content');
+    const n = (document.getElementById('journal-lines') || {}).value || 200;
+    el.innerHTML = '<div class="spinner">Chargement…</div>';
+    try {
+        const data = await api('/audit-log?lines=' + n);
+        _journalLines = (data && data.lines) || [];
+        renderJournal();
+    } catch (e) {
+        el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
+    }
+}
+
+// Découpe une ligne "date | EVENT | k=v | k=v" en {ts, event, fields}
+function parseJournalLine(line) {
+    const parts = line.split(' | ');
+    const ts = parts.shift() || '';
+    const event = parts.shift() || '';
+    return { ts, event, details: parts.join('  ·  '), raw: line };
+}
+
+function journalEventClass(ev) {
+    if (ev === 'LOGIN_OK') return 'jr-ok';
+    if (ev === 'LOGIN_FAIL' || ev === 'LOGIN_BLOCKED') return 'jr-bad';
+    if (ev === 'WRITE') return 'jr-write';
+    return 'jr-info';
+}
+
+function renderJournal() {
+    const el = document.getElementById('journal-content');
+    const typeF = (document.getElementById('journal-type') || {}).value || '';
+    const q = ((document.getElementById('journal-search') || {}).value || '').trim().toLowerCase();
+    let rows = _journalLines.map(parseJournalLine);
+    if (typeF === 'LOGIN') rows = rows.filter(r => r.event.startsWith('LOGIN') || r.event === 'LOGOUT');
+    else if (typeF === 'LOGIN_FAIL') rows = rows.filter(r => r.event === 'LOGIN_FAIL' || r.event === 'LOGIN_BLOCKED');
+    else if (typeF) rows = rows.filter(r => r.event === typeF);
+    if (q) rows = rows.filter(r => r.raw.toLowerCase().includes(q));
+    if (!rows.length) { el.innerHTML = '<div class="empty">Aucune entrée.</div>'; return; }
+    el.innerHTML = `<table class="journal-table"><thead><tr>
+            <th style="width:170px">Date / heure</th>
+            <th style="width:130px">Événement</th>
+            <th>Détails</th>
+        </tr></thead><tbody>` +
+        rows.map(r => `<tr>
+            <td style="white-space:nowrap;color:#6b7280">${esc(r.ts)}</td>
+            <td><span class="jr-badge ${journalEventClass(r.event)}">${esc(r.event)}</span></td>
+            <td style="font-family:ui-monospace,monospace;font-size:.8rem">${esc(r.details)}</td>
+        </tr>`).join('') +
+        `</tbody></table>`;
 }
 
 // Sous-onglet « Mes matières » : uniquement les matières modifiables par la personne connectée
