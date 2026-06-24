@@ -431,6 +431,19 @@
 
     <!-- Sous-onglet : Mes matières (modifiables par la personne connectée) -->
     <div id="cont-pane-edit" style="display:none">
+        <div class="filters" style="margin-bottom:12px">
+            <label>Semestres :</label>
+            <div id="cont-edit-sem-toggle" class="sem-toggle">
+                <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleContEditSemester('S1',this)">S1</button>
+                <button type="button" class="sem-btn active" data-sem="S2" onclick="toggleContEditSemester('S2',this)">S2</button>
+                <button type="button" class="sem-btn active" data-sem="S3" onclick="toggleContEditSemester('S3',this)">S3</button>
+                <button type="button" class="sem-btn active" data-sem="S4" onclick="toggleContEditSemester('S4',this)">S4</button>
+                <button type="button" class="sem-btn active" data-sem="S5" onclick="toggleContEditSemester('S5',this)">S5</button>
+                <button type="button" class="sem-btn active" data-sem="S6" onclick="toggleContEditSemester('S6',this)">S6</button>
+            </div>
+            <input type="text" id="cont-edit-search" placeholder="Rechercher une matière…"
+                   oninput="renderContentEdit()" style="margin-left:12px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+        </div>
         <div id="content-edit-list"><div class="spinner">Chargement…</div></div>
     </div>
 </div>
@@ -1213,6 +1226,16 @@ function toggleContSemester(code, btn) {
     renderContent();
 }
 
+// Filtres propres au sous-onglet « Mes matières »
+let _contEditSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
+
+function toggleContEditSemester(code, btn) {
+    if (_contEditSemesters.has(code)) _contEditSemesters.delete(code);
+    else _contEditSemesters.add(code);
+    btn.classList.toggle('active');
+    renderContentEdit();
+}
+
 // L'admin édite tout ; un enseignant édite uniquement les matières où il intervient
 function canEditCourseContent(c) {
     if (state.role === 'admin') return true;
@@ -1311,6 +1334,11 @@ function renderContentEdit() {
         el.innerHTML = '<div class="empty">Aucune matière modifiable pour votre compte.</div>';
         return;
     }
+    // Filtres semestre + recherche (comme dans Consultation)
+    const q = ((document.getElementById('cont-edit-search') || {}).value || '').trim().toLowerCase();
+    list = list.filter(c => _contEditSemesters.has(c.semester_code));
+    if (q) list = list.filter(c => ((c.code || '') + ' ' + (c.name || '')).toLowerCase().includes(q));
+    if (!list.length) { el.innerHTML = '<div class="empty">Aucune matière pour cette sélection.</div>'; return; }
     list.sort((a, b) => (_SEM_ORDER.indexOf(a.semester_code) - _SEM_ORDER.indexOf(b.semester_code))
                         || (a.code || '').localeCompare(b.code || ''));
     const isAdmin = state.role === 'admin';
