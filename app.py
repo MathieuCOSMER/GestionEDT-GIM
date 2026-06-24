@@ -561,7 +561,7 @@ def pn_pdf_info():
     p = _find_pn_pdf()
     if not p:
         return jsonify({'available': False})
-    return jsonify({'available': True, 'filename': os.path.basename(p)})
+    return jsonify({'available': True, 'filename': 'PN_GIM_ISP.pdf'})
 
 @app.route('/api/pn-pdf', methods=['GET'])
 def pn_pdf_download():
@@ -570,7 +570,7 @@ def pn_pdf_download():
     if not p:
         return error_response('Aucun PDF du Programme national disponible', 404)
     return send_file(p, mimetype='application/pdf', as_attachment=True,
-                     download_name=os.path.basename(p))
+                     download_name='PN_GIM_ISP.pdf')
 
 # ======================= TEACHERS CRUD =======================
 
