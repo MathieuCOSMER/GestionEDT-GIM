@@ -30,3 +30,6 @@ docs/*.pdf
 
 # Journaux d'audit (générés au runtime)
 logs/
+
+# Fichiers de contraintes déposés par les enseignants
+uploads/

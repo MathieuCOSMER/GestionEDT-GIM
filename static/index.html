@@ -284,6 +284,7 @@
         body.role-teacher #nav-repartition { order: 2; }
         body.role-teacher #nav-enseignants { order: 3; }
         body.role-teacher #nav-contenu { order: 4; }
+        body.role-teacher #nav-contraintes { order: 5; }
         body.role-teacher #nav-right { order: 99; }
         /* Case « Taux horaires » + Export : réservés à l'admin et aux titulaires */
         body.role-vacataire .rates-toggle,
@@ -320,6 +321,7 @@
     <button onclick="showPage('enseignants')" id="nav-enseignants">Liste des enseignants</button>
     <button onclick="showPage('journal')" id="nav-journal" class="admin-only">Journal</button>
     <button onclick="showPage('contenu')" id="nav-contenu">Contenu des matières</button>
+    <button onclick="showPage('contraintes')" id="nav-contraintes">Contraintes</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
         <span class="admin-only" style="font-size:.8rem;color:#6b7280;white-space:nowrap">Année :</span>
         <select id="year-select" onchange="switchYear()"
@@ -466,6 +468,14 @@
         <button class="btn btn-primary" onclick="openRoomModal()">+ Ajouter</button>
     </div>
     <div id="rooms-table"><div class="spinner">Chargement…</div></div>
+</div>
+
+<!-- ===== CONTRAINTES EMPLOI DU TEMPS ===== -->
+<div class="page" id="page-contraintes">
+    <div class="toolbar">
+        <h1 id="contraintes-title">Contraintes d'emploi du temps</h1>
+    </div>
+    <div id="contraintes-content"><div class="spinner">Chargement…</div></div>
 </div>
 
 <!-- ===== JOURNAL D'AUDIT (admin) ===== -->
@@ -1122,6 +1132,7 @@ async function loadPage(name, forceReload) {
             renderRooms();
         }
         else if (name === 'journal') { await loadJournal(); }
+        else if (name === 'contraintes') { await loadConstraints(); }
         else if (name === 'repartition-enseignant') {
             const [sessions, teachers, pg] = await Promise.all([
                 api('/course-sessions'), api('/teachers'), api('/promotion-groups')
@@ -1498,6 +1509,121 @@ async function deleteBackup(year, file) {
     } catch (e) {
         toast('Erreur : ' + e.message, 'error');
     }
+}
+
+// ===== CONTRAINTES EMPLOI DU TEMPS =====
+async function loadConstraints() {
+    const el = document.getElementById('contraintes-content');
+    el.innerHTML = '<div class="spinner">Chargement…</div>';
+    try {
+        if (state.role === 'admin') {
+            renderConstraintsAdmin(await api('/constraints') || []);
+        } else {
+            renderConstraintsTeacher(await api('/constraints/me') || {});
+        }
+    } catch (e) {
+        el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
+    }
+}
+
+// Vue enseignant : édition de SES contraintes (texte libre + fichier)
+function renderConstraintsTeacher(d) {
+    document.getElementById('contraintes-title').textContent = 'Mes contraintes d\'emploi du temps';
+    const el = document.getElementById('contraintes-content');
+    const fileBlock = d.has_file
+        ? `<div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+               <a class="btn btn-secondary btn-sm" href="/api/constraints/me/file">📎 ${esc(d.file_original || 'fichier')}</a>
+               <button class="btn btn-secondary btn-sm" style="color:#b91c1c" onclick="deleteConstraintFile()">Supprimer le fichier</button>
+           </div>`
+        : '<div style="margin-top:8px;color:#9ca3af">Aucun fichier déposé.</div>';
+    el.innerHTML = `
+        <div class="card" style="max-width:840px;border-left-color:#4f46e5">
+            <p style="color:#6b7280;margin:0 0 12px">Indiquez vos contraintes d'emploi du temps (indisponibilités, préférences…).
+               Vous pouvez saisir un texte libre <strong>et/ou</strong> déposer un fichier.</p>
+            <label style="font-weight:600;display:block;margin-bottom:4px">Texte libre</label>
+            <textarea id="constraints-text" rows="8"
+                style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #d1d5db;border-radius:6px;font:inherit;resize:vertical"
+                placeholder="Ex : indisponible le lundi matin ; pas de cours après 17h le mercredi ; …">${esc(d.content || '')}</textarea>
+            <div style="margin-top:6px;text-align:right">
+                <button class="btn btn-primary btn-sm" onclick="saveMyConstraints()">Enregistrer le texte</button>
+            </div>
+            <hr style="margin:16px 0;border:none;border-top:1px solid #e5e7eb">
+            <label style="font-weight:600;display:block;margin-bottom:4px">Fichier joint <span style="color:#9ca3af;font-weight:400">(PDF, Word, Excel, image — max 10 Mo)</span></label>
+            <input type="file" id="constraints-file" onchange="uploadConstraintFile(this)"
+                   accept=".pdf,.doc,.docx,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.png,.jpg,.jpeg">
+            ${fileBlock}
+            ${d.updated_at ? `<div style="margin-top:12px;color:#9ca3af;font-size:.8rem">Dernière mise à jour : ${esc(d.updated_at)}</div>` : ''}
+        </div>`;
+}
+
+async function saveMyConstraints() {
+    const content = (document.getElementById('constraints-text') || {}).value || '';
+    try {
+        const r = await fetch('/api/constraints/me', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content })
+        });
+        if (!r.ok) throw new Error(await r.text());
+        toast('Contraintes enregistrées');
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+async function uploadConstraintFile(input) {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    const fd = new FormData();
+    fd.append('file', f);
+    try {
+        const r = await fetch('/api/constraints/me/file', { method: 'POST', body: fd });
+        if (!r.ok) {
+            let msg = 'Échec de l\'envoi';
+            try { msg = JSON.parse(await r.text()).error || msg; } catch (_) {}
+            throw new Error(msg);
+        }
+        toast('Fichier déposé');
+        loadConstraints();
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+async function deleteConstraintFile() {
+    if (!confirm('Supprimer le fichier déposé ?')) return;
+    try {
+        const r = await fetch('/api/constraints/me/file', { method: 'DELETE' });
+        if (!r.ok) throw new Error(await r.text());
+        toast('Fichier supprimé');
+        loadConstraints();
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+// Vue admin : consultation des contraintes de tous les enseignants
+function renderConstraintsAdmin(list) {
+    document.getElementById('contraintes-title').textContent = 'Contraintes des enseignants';
+    const el = document.getElementById('contraintes-content');
+    if (!list.length) {
+        el.innerHTML = '<div class="empty">Aucune contrainte renseignée pour le moment.</div>';
+        return;
+    }
+    el.innerHTML = `<table class="pn-table"><thead><tr>
+            <th style="width:18%">Enseignant</th>
+            <th>Contraintes (texte)</th>
+            <th style="width:18%">Fichier</th>
+            <th style="width:140px">Mis à jour</th>
+        </tr></thead><tbody>` +
+        list.map(c => `<tr>
+            <td class="pn-mat"><strong>${esc(c.teacher_name || '')}</strong></td>
+            <td class="ens-cell${c.content ? '' : ' pn-empty'}">${c.content ? esc(c.content) : '—'}</td>
+            <td>${c.has_file
+                ? `<a class="btn btn-secondary btn-sm" href="/api/constraints/${c.teacher_id}/file">📎 ${esc(c.file_original || 'fichier')}</a>`
+                : '<span style="color:#9ca3af">—</span>'}</td>
+            <td style="white-space:nowrap;color:#6b7280;font-size:.8rem">${esc(c.updated_at || '')}</td>
+        </tr>`).join('') +
+        `</tbody></table>`;
 }
 
 // Découpe une ligne "date | EVENT | k=v | k=v" en {ts, event, fields}

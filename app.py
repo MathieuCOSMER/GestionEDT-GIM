@@ -5,6 +5,7 @@ Manages timetables for IUT GIM Toulon
 
 from flask import Flask, request, jsonify, send_file, send_from_directory, g, session, redirect
 from flask_cors import CORS
+from werkzeug.utils import secure_filename
 import sqlite3
 import os
 import json
@@ -60,6 +61,8 @@ SCHEMA_PATH = os.path.join(_BASE_DIR, 'schema.sql')
 # Dossier racine des bases, rangées par sous-dossier d'année : databases/<année>/edt_<année>.db
 _DB_DIR = os.environ.get('EDT_DB_DIR') or os.path.join(_BASE_DIR, 'databases')
 os.makedirs(_DB_DIR, exist_ok=True)
+# Dossier de stockage des fichiers de contraintes déposés par les enseignants
+_CONSTRAINTS_DIR = os.environ.get('EDT_CONSTRAINTS_DIR') or os.path.join(_BASE_DIR, 'uploads', 'contraintes')
 
 # ===== JOURNAL D'AUDIT (connexions + modifications) =====
 # Écrit dans logs/audit.log (rotation 1 Mo x 5). Lisible par l'admin via /api/audit-log.
@@ -345,6 +348,17 @@ def _apply_migrations(db):
         db.execute('ALTER TABLE courses ADD COLUMN content_pn TEXT')
     except sqlite3.OperationalError:
         pass
+    # Contraintes d'emploi du temps saisies par les enseignants (texte + fichier joint)
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS teacher_constraints (
+            teacher_id INTEGER PRIMARY KEY,
+            content TEXT,
+            file_path TEXT,
+            file_original TEXT,
+            updated_at TEXT,
+            FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE
+        )
+    ''')
     try:
         db.execute('ALTER TABLE course_sessions ADD COLUMN sessions_per_week_max INTEGER DEFAULT 1')
     except sqlite3.OperationalError:
@@ -618,9 +632,14 @@ def error_response(message, status_code=400):
 import re as _re
 # Reconnaît /api/courses/<id>/content (autorisé aux intervenants en écriture)
 _COURSE_CONTENT_RE = _re.compile(r'^/api/courses/\d+/content$')
+# Reconnaît /api/constraints/me[...] (l'enseignant gère SES propres contraintes)
+_CONSTRAINTS_SELF_RE = _re.compile(r'^/api/constraints/me(/file)?$')
 
 def _is_course_content_path(path):
     return bool(_COURSE_CONTENT_RE.match(path))
+
+def _is_constraints_self_path(path):
+    return bool(_CONSTRAINTS_SELF_RE.match(path))
 
 def teacher_intervenes_in_course(course_id, teacher_name):
     """Vrai si l'enseignant (par nom) intervient dans une session de la matière."""
@@ -671,7 +690,7 @@ def _require_auth():
     if role != 'admin' and request.method not in ('GET', 'HEAD'):
         # Exception : l'enseignant intervenant peut éditer le contenu de SA matière.
         # L'autorisation fine (intervenant ou non) est vérifiée dans le handler.
-        if role == 'teacher' and _is_course_content_path(path):
+        if role == 'teacher' and (_is_course_content_path(path) or _is_constraints_self_path(path)):
             return
         # Toute autre écriture (y compris la liste des enseignants) est réservée à l'admin
         return error_response('Accès en lecture seule', 403)
@@ -903,6 +922,165 @@ def delete_backup():
     os.remove(path)
     _audit('BACKUP_DELETE', ip=_client_ip(), user=session.get('user'), year=year, file=fname)
     return jsonify({'deleted': fname, 'year': year})
+
+# ======================= CONTRAINTES ENSEIGNANTS =======================
+_ALLOWED_CONSTRAINT_EXT = {'.pdf', '.doc', '.docx', '.odt', '.rtf', '.txt',
+                           '.xls', '.xlsx', '.ods', '.csv', '.png', '.jpg', '.jpeg'}
+_MAX_CONSTRAINT_FILE = 10 * 1024 * 1024   # 10 Mo
+
+def _current_teacher_id():
+    """id de l'enseignant connecté (d'après son nom en session), ou None."""
+    name = session.get('teacher_name')
+    if not name:
+        return None
+    row = get_db().execute('SELECT id FROM teachers WHERE LOWER(name)=LOWER(?)', (name,)).fetchone()
+    return row['id'] if row else None
+
+def _constraints_year_dir():
+    d = os.path.join(_CONSTRAINTS_DIR, get_current_year() or 'default')
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def _constraint_row(teacher_id):
+    return get_db().execute(
+        'SELECT teacher_id, content, file_path, file_original, updated_at '
+        'FROM teacher_constraints WHERE teacher_id=?', (teacher_id,)).fetchone()
+
+def _constraint_payload(row, teacher_name=None):
+    return {
+        'teacher_id': row['teacher_id'] if row else None,
+        'teacher_name': teacher_name,
+        'content': (row['content'] if row else '') or '',
+        'file_original': (row['file_original'] if row else '') or '',
+        'has_file': bool(row and row['file_path']),
+        'updated_at': (row['updated_at'] if row else '') or '',
+    }
+
+def _send_constraint_file(row):
+    """Envoie le fichier de contrainte en pièce jointe (anti path-traversal)."""
+    p = os.path.join(_CONSTRAINTS_DIR, row['file_path'])
+    base = os.path.abspath(_CONSTRAINTS_DIR)
+    if os.path.commonpath([os.path.abspath(p), base]) != base or not os.path.isfile(p):
+        return error_response('Fichier introuvable', 404)
+    return send_file(p, as_attachment=True,
+                     download_name=row['file_original'] or os.path.basename(p))
+
+@app.route('/api/constraints/me', methods=['GET'])
+def get_my_constraints():
+    tid = _current_teacher_id()
+    if not tid:
+        return error_response('Réservé aux enseignants', 403)
+    return jsonify(_constraint_payload(_constraint_row(tid), session.get('teacher_name')))
+
+@app.route('/api/constraints/me', methods=['PUT'])
+def save_my_constraints():
+    tid = _current_teacher_id()
+    if not tid:
+        return error_response('Réservé aux enseignants', 403)
+    content = (request.get_json() or {}).get('content')
+    content = content.strip() if isinstance(content, str) else None
+    db = get_db()
+    db.execute('''INSERT INTO teacher_constraints(teacher_id, content, updated_at)
+                  VALUES(?,?,CURRENT_TIMESTAMP)
+                  ON CONFLICT(teacher_id) DO UPDATE SET
+                    content=excluded.content, updated_at=CURRENT_TIMESTAMP''',
+               (tid, content or None))
+    db.commit()
+    _audit('CONSTRAINTS_SAVE', ip=_client_ip(), user=session.get('user'))
+    return jsonify({'content': content or ''})
+
+@app.route('/api/constraints/me/file', methods=['POST'])
+def upload_my_constraint_file():
+    tid = _current_teacher_id()
+    if not tid:
+        return error_response('Réservé aux enseignants', 403)
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return error_response('Aucun fichier reçu', 400)
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in _ALLOWED_CONSTRAINT_EXT:
+        return error_response('Type de fichier non autorisé', 400)
+    if request.content_length and request.content_length > _MAX_CONSTRAINT_FILE:
+        return error_response('Fichier trop volumineux (max 10 Mo)', 400)
+
+    safe = secure_filename(f.filename) or ('fichier' + ext)
+    dest = os.path.join(_constraints_year_dir(), f"{tid}_{safe}")
+    db = get_db()
+    old = _constraint_row(tid)
+    if old and old['file_path']:
+        oldp = os.path.join(_CONSTRAINTS_DIR, old['file_path'])
+        if os.path.isfile(oldp) and os.path.abspath(oldp) != os.path.abspath(dest):
+            try: os.remove(oldp)
+            except OSError: pass
+    f.save(dest)
+    if os.path.getsize(dest) > _MAX_CONSTRAINT_FILE:
+        os.remove(dest)
+        return error_response('Fichier trop volumineux (max 10 Mo)', 400)
+    rel = os.path.relpath(dest, _CONSTRAINTS_DIR)
+    db.execute('''INSERT INTO teacher_constraints(teacher_id, file_path, file_original, updated_at)
+                  VALUES(?,?,?,CURRENT_TIMESTAMP)
+                  ON CONFLICT(teacher_id) DO UPDATE SET
+                    file_path=excluded.file_path, file_original=excluded.file_original,
+                    updated_at=CURRENT_TIMESTAMP''',
+               (tid, rel, f.filename))
+    db.commit()
+    _audit('CONSTRAINTS_FILE', ip=_client_ip(), user=session.get('user'), file=f.filename)
+    return jsonify({'file_original': f.filename, 'has_file': True})
+
+@app.route('/api/constraints/me/file', methods=['GET'])
+def download_my_constraint_file():
+    tid = _current_teacher_id()
+    if not tid:
+        return error_response('Réservé aux enseignants', 403)
+    row = _constraint_row(tid)
+    if not row or not row['file_path']:
+        return error_response('Aucun fichier', 404)
+    return _send_constraint_file(row)
+
+@app.route('/api/constraints/me/file', methods=['DELETE'])
+def delete_my_constraint_file():
+    tid = _current_teacher_id()
+    if not tid:
+        return error_response('Réservé aux enseignants', 403)
+    db = get_db()
+    row = _constraint_row(tid)
+    if row and row['file_path']:
+        p = os.path.join(_CONSTRAINTS_DIR, row['file_path'])
+        if os.path.isfile(p):
+            try: os.remove(p)
+            except OSError: pass
+    db.execute('''UPDATE teacher_constraints SET file_path=NULL, file_original=NULL,
+                  updated_at=CURRENT_TIMESTAMP WHERE teacher_id=?''', (tid,))
+    db.commit()
+    return jsonify({'has_file': False})
+
+@app.route('/api/constraints', methods=['GET'])
+def list_constraints():
+    """Liste les contraintes renseignées (admin uniquement)."""
+    if session.get('role') != 'admin':
+        return error_response('Accès réservé à l\'administrateur', 403)
+    rows = get_db().execute('''
+        SELECT t.id AS teacher_id, t.name AS teacher_name,
+               tc.content, tc.file_path, tc.file_original, tc.updated_at
+        FROM teacher_constraints tc
+        JOIN teachers t ON t.id = tc.teacher_id
+        WHERE (tc.content IS NOT NULL AND tc.content <> '') OR tc.file_path IS NOT NULL
+        ORDER BY t.name''').fetchall()
+    return jsonify([{
+        'teacher_id': r['teacher_id'], 'teacher_name': r['teacher_name'],
+        'content': r['content'] or '', 'file_original': r['file_original'] or '',
+        'has_file': bool(r['file_path']), 'updated_at': r['updated_at'] or '',
+    } for r in rows])
+
+@app.route('/api/constraints/<int:teacher_id>/file', methods=['GET'])
+def download_constraint_file(teacher_id):
+    """Téléchargement du fichier d'un enseignant (admin uniquement)."""
+    if session.get('role') != 'admin':
+        return error_response('Accès réservé à l\'administrateur', 403)
+    row = _constraint_row(teacher_id)
+    if not row or not row['file_path']:
+        return error_response('Aucun fichier', 404)
+    return _send_constraint_file(row)
 
 # ======================= STATIC FILES =======================
 
