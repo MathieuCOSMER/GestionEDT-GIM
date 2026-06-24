@@ -310,8 +310,8 @@
     <button onclick="showPage('matieres')" id="nav-matieres">Matières</button>
     <button onclick="showPage('salles')" id="nav-salles">Salles</button>
     <button onclick="showPage('enseignants')" id="nav-enseignants">Liste des enseignants</button>
-    <button onclick="showPage('contenu')" id="nav-contenu" style="margin-left:auto">Contenu des matières</button>
-    <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:24px">
+    <button onclick="showPage('contenu')" id="nav-contenu">Contenu des matières</button>
+    <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
         <span class="admin-only" style="font-size:.8rem;color:#6b7280;white-space:nowrap">Année :</span>
         <select id="year-select" onchange="switchYear()"
                 style="padding:4px 10px;border-radius:6px;border:1px solid #c7d2fe;background:#eef2ff;color:#4f46e5;font-weight:700;font-size:.88rem;cursor:pointer">
@@ -391,6 +391,8 @@
             <select id="filter-room-matieres" onchange="renderCourses()">
                 <option value="">Toutes</option>
             </select>
+            <input type="text" id="filter-search-matieres" placeholder="Rechercher une matière…"
+                   oninput="renderCourses()" style="margin-left:12px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
             <button class="btn btn-primary" style="margin-left:12px" onclick="openCourseModal()">+ Ajouter</button>
         </div>
     </div>
@@ -480,6 +482,9 @@
                 <option value="1">ALT</option>
                 <option value="2">MUT</option>
             </select>
+            <label style="margin-left:12px">Matière :</label>
+            <input type="text" id="filter-search-rep" placeholder="Rechercher…"
+                   oninput="renderTeacherRepartition()" style="margin-left:4px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;width:150px">
         </div>
     </div>
     <div id="teacher-repartition-content"><div class="spinner">Chargement…</div></div>
@@ -513,6 +518,9 @@
             <select id="filter-room-repartition" onchange="filterRepartition()">
                 <option value="">Toutes</option>
             </select>
+            <label style="margin-left:12px">Matière :</label>
+            <input type="text" id="filter-search-repartition" placeholder="Rechercher…"
+                   oninput="filterRepartition()" style="margin-left:4px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;width:150px">
             <label style="margin-left:12px">Semestre :</label>
             <label style="font-weight:400;margin-left:4px"><input type="checkbox" id="cb-sem-odd" checked onchange="filterRepartition()"> Impair</label>
             <label style="font-weight:400;margin-left:6px"><input type="checkbox" id="cb-sem-even" checked onchange="filterRepartition()"> Pair</label>
@@ -1484,7 +1492,9 @@ function renderCourses() {
                  alt: keepAlt ? t.alt : 0, altT: keepAlt ? t.altT : null, altR: keepAlt ? t.altR : null };
     }).filter(t => t.ftp || t.alt);
 
-    const list = state.courses.filter(c => _matSemesters.has(c.semester_code));
+    const q = ((document.getElementById('filter-search-matieres') || {}).value || '').trim().toLowerCase();
+    let list = state.courses.filter(c => _matSemesters.has(c.semester_code));
+    if (q) list = list.filter(c => ((c.code || '') + ' ' + (c.name || '')).toLowerCase().includes(q));
     if (!list.length) { el.innerHTML = '<div class="empty">Aucune matière pour cette sélection.</div>'; return; }
 
     function hCell(h, teacher) {
@@ -2246,10 +2256,13 @@ function renderTeacherRepartition() {
     const yFilter = document.getElementById('filter-year-rep').value;
     const fFilter = document.getElementById('filter-formation-rep').value;
 
+    const mFilter = ((document.getElementById('filter-search-rep') || {}).value || '').trim().toLowerCase();
+
     let sessions = (state.sessions||[]).filter(s => s.teacher_id);
     if (tFilter) sessions = sessions.filter(s => String(s.teacher_id) === tFilter);
     if (yFilter) sessions = sessions.filter(s => String(s.year_group) === yFilter);
     if (fFilter) sessions = sessions.filter(s => String(s.formation_type) === fFilter);
+    if (mFilter) sessions = sessions.filter(s => ((s.course_code || '') + ' ' + (s.course_name || '')).toLowerCase().includes(mFilter));
 
     if (!sessions.length) {
         el.innerHTML = '<div class="empty">Aucune session pour ces filtres</div>';
@@ -2911,6 +2924,7 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
     const formFilter = document.getElementById('filter-formation-repartition').value; // '', 'ftp', 'alt'
     const teacherFilter = document.getElementById('filter-teacher-repartition').value; // '' = tous
     const roomFilter = document.getElementById('filter-room-repartition').value; // '' = toutes
+    const matFilter = ((document.getElementById('filter-search-repartition') || {}).value || '').trim().toLowerCase(); // recherche matière
     // Colonne où débute le semestre pair → double barre de séparation
     const evenStart = parseInt((state.config || {}).semester_even_start_week);
 
@@ -2936,6 +2950,7 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
     rows.forEach(r => {
         if (teacherFilter && r.teacher !== teacherFilter) return; // filtre enseignant
         if (roomFilter && r.room !== roomFilter) return;          // filtre salle
+        if (matFilter && !((r.course_code + ' ' + (r.course_name || '')).toLowerCase().includes(matFilter))) return; // filtre matière
         const key = r.course_code + '|' + r.semester;
         if (!byCode[key]) {
             byCode[key] = { code: r.course_code, name: r.course_name, sem: r.semester, ftp: [], alt: [], mut: [] };
