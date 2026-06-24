@@ -11,9 +11,12 @@ venv_Home/
 # Node
 node_modules/
 
-# SQLite databases
+# SQLite databases (à la racine ou rangées dans databases/<année>/)
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
+databases/
 
 # OS
 .DS_Store

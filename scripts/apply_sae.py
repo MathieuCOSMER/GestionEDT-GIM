@@ -29,11 +29,16 @@ def current_year():
     except Exception:
         return ""
 
+def db_path_for_year(year):
+    # Bases rangées dans databases/<année>/edt_<année>.db (EDT_DB_DIR pour surcharger)
+    db_dir = os.environ.get("EDT_DB_DIR") or os.path.join(BASE_DIR, "databases")
+    return os.path.join(db_dir, year, f"edt_{year}.db")
+
 def db_path_from_args():
     if "--db" in sys.argv:
         return sys.argv[sys.argv.index("--db") + 1]
     year = sys.argv[sys.argv.index("--year") + 1] if "--year" in sys.argv else current_year()
-    return os.path.join(BASE_DIR, f"edt_{year}.db") if year else os.path.join(BASE_DIR, "edt.db")
+    return db_path_for_year(year) if year else os.path.join(BASE_DIR, "edt.db")
 
 def sae_key(code, name):
     """Clé de la fiche SAÉ PN pour une matière SAÉ donnée."""

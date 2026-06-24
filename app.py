@@ -57,6 +57,9 @@ _PUBLIC_API = {'/api/login', '/api/logout', '/api/me'}
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE = os.environ.get('EDT_DB_PATH', os.path.join(_BASE_DIR, 'edt.db'))
 SCHEMA_PATH = os.path.join(_BASE_DIR, 'schema.sql')
+# Dossier racine des bases, rangées par sous-dossier d'année : databases/<année>/edt_<année>.db
+_DB_DIR = os.environ.get('EDT_DB_DIR') or os.path.join(_BASE_DIR, 'databases')
+os.makedirs(_DB_DIR, exist_ok=True)
 
 # ===== JOURNAL D'AUDIT (connexions + modifications) =====
 # Écrit dans logs/audit.log (rotation 1 Mo x 5). Lisible par l'admin via /api/audit-log.
@@ -105,18 +108,46 @@ def auto_detect_year():
     y = today.year
     return f"{y}-{y+1}" if today.month >= 8 else f"{y-1}-{y}"
 
+def _is_year(name):
+    """Vrai si name a le format AAAA-AAAA (ex : 2025-2026)."""
+    return (len(name) == 9 and name[4] == '-'
+            and name[:4].isdigit() and name[5:].isdigit())
+
 def db_path_for_year(year):
-    return os.path.join(_BASE_DIR, f'edt_{year}.db')
+    return os.path.join(_DB_DIR, year, f'edt_{year}.db')
 
 def get_current_year():
     return get_settings().get('current_year', '')
 
 def list_years():
     years = []
-    for fname in os.listdir(_BASE_DIR):
-        if fname.startswith('edt_') and fname.endswith('.db') and len(fname) == 16:
-            years.append(fname[4:-3])
+    if os.path.isdir(_DB_DIR):
+        for name in os.listdir(_DB_DIR):
+            if _is_year(name) and os.path.isfile(db_path_for_year(name)):
+                years.append(name)
     return sorted(years)
+
+def _migrate_db_layout():
+    """Déplace les bases edt_<année>.db de la racine vers databases/<année>/.
+    Migration unique et idempotente, exécutée au démarrage."""
+    for fname in os.listdir(_BASE_DIR):
+        if not (fname.startswith('edt_') and fname.endswith('.db') and len(fname) == 16):
+            continue
+        year = fname[4:-3]
+        if not _is_year(year):
+            continue
+        target = db_path_for_year(year)
+        if os.path.exists(target):
+            continue
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        # Déplace aussi les fichiers WAL/SHM associés s'ils existent
+        for suffix in ('', '-wal', '-shm'):
+            src = os.path.join(_BASE_DIR, fname + suffix)
+            if os.path.exists(src):
+                try:
+                    shutil.move(src, target + suffix)
+                except OSError:
+                    pass
 
 def school_week_key(w, start_week=36, max_week=52):
     """Clé de tri pour l'ordre scolaire : start_week est la semaine 0.
@@ -429,6 +460,7 @@ def resolve_course_weeks(course, cfg):
 
 def _init_fresh_db(path):
     """Crée une DB vierge depuis le schéma SQL"""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     db = sqlite3.connect(path)
     with open(SCHEMA_PATH, 'r') as f:
         db.executescript(f.read())
@@ -438,6 +470,7 @@ def _init_fresh_db(path):
 # Helper function to initialize database
 def init_db():
     """Initialise la DB pour l'année courante, migre depuis edt.db si besoin"""
+    _migrate_db_layout()   # range les bases existantes dans databases/<année>/
     settings = get_settings()
 
     if not settings.get('current_year'):
@@ -450,6 +483,7 @@ def init_db():
 
     if not os.path.exists(db_path):
         if os.path.exists(DATABASE):
+            os.makedirs(os.path.dirname(db_path), exist_ok=True)
             shutil.copy2(DATABASE, db_path)   # migration depuis edt.db legacy
         else:
             _init_fresh_db(db_path)
@@ -3599,6 +3633,7 @@ def create_year():
         src_path = db_path_for_year(copy_from)
         if not os.path.exists(src_path):
             return error_response(f"Année source {copy_from} introuvable", 404)
+        os.makedirs(os.path.dirname(new_path), exist_ok=True)
         shutil.copy2(src_path, new_path)
         # S'assurer que la copie est à jour schéma
         db = sqlite3.connect(new_path)

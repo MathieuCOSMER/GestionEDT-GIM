@@ -35,6 +35,11 @@ def current_year():
     except Exception:
         return ""
 
+def db_path_for_year(year):
+    # Bases rangées dans databases/<année>/edt_<année>.db (EDT_DB_DIR pour surcharger)
+    db_dir = os.environ.get("EDT_DB_DIR") or os.path.join(BASE_DIR, "databases")
+    return os.path.join(db_dir, year, f"edt_{year}.db")
+
 def db_path_from_args():
     if "--db" in sys.argv:
         return sys.argv[sys.argv.index("--db") + 1]
@@ -43,7 +48,7 @@ def db_path_from_args():
     else:
         year = current_year()
     if year:
-        return os.path.join(BASE_DIR, f"edt_{year}.db")
+        return db_path_for_year(year)
     return os.path.join(BASE_DIR, "edt.db")
 
 def main():
