@@ -221,6 +221,19 @@
         .subtab { padding: 8px 16px; border: none; background: none; color: #6b7280; font-weight: 600; font-size: .9rem; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -1px; }
         .subtab:hover { color: #4f46e5; }
         .subtab.active { color: #4f46e5; border-bottom-color: #4f46e5; }
+        /* Tableau Enseignant / PN dans l'onglet Contenu des matières */
+        .pn-table { table-layout: fixed; margin-bottom: 20px; }
+        .pn-table th, .pn-table td { border: 1px solid #e5e7eb; vertical-align: top; padding: 8px 10px; }
+        /* Trait leger entre sous-ressources, trait marque entre modules (fin de groupe) */
+        .pn-table tbody td { border-bottom: 1px solid #e5e7eb; }
+        .pn-table tbody tr.group-end td { border-bottom: 3px solid #475569; }
+        .pn-table td.pn-mat { font-size: .82rem; text-align: center; vertical-align: middle; }
+        .pn-table td.pn-mat strong { color: #4f46e5; }
+        .pn-table td.pn-cell, .pn-table td.ens-cell { white-space: pre-wrap; font-size: .82rem; line-height: 1.35; }
+        /* La cellule PN finit a la frontiere du module -> trait marque comme .group-end */
+        .pn-table td.pn-cell { background: #f9fafb; border-bottom: 3px solid #475569; }
+        .pn-table .pn-empty { color: #9ca3af; }
+        .pn-table textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font: inherit; font-size: .82rem; resize: vertical; }
         /* Édition inline répartition */
         .repartition-wrap td.cell-hours:hover, .repartition-wrap td.cell-empty:hover { outline: 2px solid #6366f1; outline-offset: -2px; cursor: pointer; }
         .cell-arrows { display: flex; flex-direction: column; align-items: center; gap: 0; line-height: 1; }
@@ -388,6 +401,8 @@
 <div class="page" id="page-contenu">
     <div class="toolbar">
         <h1>Contenu des matières</h1>
+        <a id="pn-pdf-btn" class="btn btn-secondary" href="/api/pn-pdf"
+           style="display:none;margin-left:auto;text-decoration:none">📄 Télécharger le PDF du PN</a>
     </div>
     <div class="subtabs" style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid #e5e7eb">
         <button type="button" id="cont-subtab-view" class="subtab active"
@@ -1010,6 +1025,7 @@ async function loadPage(name, forceReload) {
         else if (name === 'contenu') {
             state.courses = await api('/courses');
             showContentTab(_contTab);
+            checkPnPdf();
         }
         else if (name === 'salles') {
             if (forceReload || !state.rooms.length) state.rooms = await api('/rooms');
@@ -1233,21 +1249,58 @@ function renderContent() {
 
     list.sort((a, b) => (_SEM_ORDER.indexOf(a.semester_code) - _SEM_ORDER.indexOf(b.semester_code))
                         || (a.code || '').localeCompare(b.code || ''));
+    // Regroupement par semestre
+    const bySem = {};
+    list.forEach(c => { (bySem[c.semester_code] = bySem[c.semester_code] || []).push(c); });
     let html = '';
-    let curSem = null;
-    list.forEach(c => {
-        if (c.semester_code !== curSem) {
-            curSem = c.semester_code;
-            html += `<h2 style="margin:18px 0 8px;color:#4f46e5">${esc(curSem || '')}</h2>`;
+    _SEM_ORDER.forEach(sem => {
+        const rows = bySem[sem];
+        if (!rows || !rows.length) return;
+        html += `<h2 style="margin:18px 0 8px;color:#4f46e5">${esc(sem)}</h2>`;
+        html += `<table class="pn-table"><thead><tr>
+            <th style="width:22%">Matière</th>
+            <th style="width:39%">Enseignant</th>
+            <th style="width:39%">PN — Programme national</th>
+        </tr></thead><tbody>`;
+        for (let i = 0; i < rows.length; i++) {
+            const c = rows[i];
+            const key = pnBaseKey(c.code);
+            const teachers = c.teacher_names ? `<br><small style="color:#6b7280">${esc(c.teacher_names)}</small>` : '';
+            const content = c.content || '';
+            const groupEnd = (i === rows.length - 1) || (pnBaseKey(rows[i + 1].code) !== key);
+            html += `<tr${groupEnd ? ' class="group-end"' : ''}>
+                <td class="pn-mat"><strong>${esc(c.code || '')}</strong><br>${esc(c.name || '')}${teachers}</td>
+                <td class="ens-cell${content ? '' : ' pn-empty'}">${content ? esc(content) : 'Aucune description renseignée.'}</td>`;
+            // Cellule PN fusionnée : uniquement sur la 1re ligne du groupe
+            const groupStart = (i === 0) || (pnBaseKey(rows[i - 1].code) !== key);
+            if (groupStart) {
+                let span = 1;
+                while (i + span < rows.length && pnBaseKey(rows[i + span].code) === key) span++;
+                let pn = '';
+                for (let j = i; j < i + span; j++) { if (rows[j].content_pn) { pn = rows[j].content_pn; break; } }
+                html += `<td class="pn-cell${pn ? '' : ' pn-empty'}" rowspan="${span}">${pn ? esc(pn) : 'Aucun contenu renseigné.'}</td>`;
+            }
+            html += `</tr>`;
         }
-        const teachers = c.teacher_names ? `<small style="color:#6b7280"> · ${esc(c.teacher_names)}</small>` : '';
-        const content = c.content || '';
-        html += `<div class="card" style="border-left-color:#4f46e5;margin-bottom:12px">
-            <div style="margin-bottom:6px"><strong>${esc(c.code || '')}</strong> — ${esc(c.name || '')}${teachers}</div>
-            <div style="white-space:pre-wrap;color:${content ? '#374151' : '#9ca3af'}">${content ? esc(content) : 'Aucune description renseignée.'}</div>
-        </div>`;
+        html += `</tbody></table>`;
     });
     el.innerHTML = html;
+}
+
+// Clé de regroupement PN : code sans le suffixe de sous-ressource (R1.01a -> R1.01)
+function pnBaseKey(code) { return (code || '').replace(/[a-z]$/, ''); }
+
+// Affiche le bouton de téléchargement seulement si un PDF du PN est présent côté serveur
+async function checkPnPdf() {
+    const btn = document.getElementById('pn-pdf-btn');
+    if (!btn) return;
+    try {
+        const info = await api('/pn-pdf/info');
+        btn.style.display = info && info.available ? '' : 'none';
+        if (info && info.filename) btn.title = info.filename;
+    } catch (e) {
+        btn.style.display = 'none';
+    }
 }
 
 // Sous-onglet « Mes matières » : uniquement les matières modifiables par la personne connectée
@@ -1260,28 +1313,62 @@ function renderContentEdit() {
     }
     list.sort((a, b) => (_SEM_ORDER.indexOf(a.semester_code) - _SEM_ORDER.indexOf(b.semester_code))
                         || (a.code || '').localeCompare(b.code || ''));
+    const isAdmin = state.role === 'admin';
+    const bySem = {};
+    list.forEach(c => { (bySem[c.semester_code] = bySem[c.semester_code] || []).push(c); });
     let html = '';
-    let curSem = null;
-    list.forEach(c => {
-        if (c.semester_code !== curSem) {
-            curSem = c.semester_code;
-            html += `<h2 style="margin:18px 0 8px;color:#4f46e5">${esc(curSem || '')}</h2>`;
+    _SEM_ORDER.forEach(sem => {
+        const rows = bySem[sem];
+        if (!rows || !rows.length) return;
+        html += `<h2 style="margin:18px 0 8px;color:#4f46e5">${esc(sem)}</h2>`;
+        html += `<table class="pn-table"><thead><tr>
+            <th style="width:18%">Matière</th>
+            <th style="width:41%">Enseignant</th>
+            <th style="width:41%">PN — Programme national</th>
+        </tr></thead><tbody>`;
+        for (let i = 0; i < rows.length; i++) {
+            const c = rows[i];
+            const key = pnBaseKey(c.code);
+            const teachers = c.teacher_names ? `<br><small style="color:#6b7280">${esc(c.teacher_names)}</small>` : '';
+            const content = c.content || '';
+            const groupEnd = (i === rows.length - 1) || (pnBaseKey(rows[i + 1].code) !== key);
+            html += `<tr${groupEnd ? ' class="group-end"' : ''}>
+                <td class="pn-mat"><strong>${esc(c.code || '')}</strong><br>${esc(c.name || '')}${teachers}</td>
+                <td>
+                    <textarea id="cont-ta-${c.id}" rows="5" placeholder="Décrivez le contenu / programme de la matière…">${esc(content)}</textarea>
+                    <div style="margin-top:6px;text-align:right">
+                        <button class="btn btn-primary btn-sm" onclick="saveCourseContent(${c.id})">Enregistrer</button>
+                    </div>
+                </td>`;
+            // Cellule PN fusionnée par ressource
+            const groupStart = (i === 0) || (pnBaseKey(rows[i - 1].code) !== key);
+            if (groupStart) {
+                let span = 1;
+                const ids = [c.id];
+                while (i + span < rows.length && pnBaseKey(rows[i + span].code) === key) {
+                    ids.push(rows[i + span].id); span++;
+                }
+                let pn = '';
+                for (let j = i; j < i + span; j++) { if (rows[j].content_pn) { pn = rows[j].content_pn; break; } }
+                if (isAdmin) {
+                    html += `<td class="pn-cell" rowspan="${span}" style="background:#fff">
+                        <textarea id="cont-pn-${c.id}" rows="8" placeholder="Contenu officiel du Programme national…">${esc(pn)}</textarea>
+                        <div style="margin-top:6px;text-align:right">
+                            <button class="btn btn-primary btn-sm" onclick="savePnGroup(${c.id},[${ids.join(',')}])">Enregistrer le PN</button>
+                        </div>
+                    </td>`;
+                } else {
+                    html += `<td class="pn-cell${pn ? '' : ' pn-empty'}" rowspan="${span}">${pn ? esc(pn) : 'Aucun contenu renseigné.'}</td>`;
+                }
+            }
+            html += `</tr>`;
         }
-        const teachers = c.teacher_names ? `<small style="color:#6b7280"> · ${esc(c.teacher_names)}</small>` : '';
-        const content = c.content || '';
-        html += `<div class="card" style="border-left-color:#4f46e5;margin-bottom:12px">
-            <div style="margin-bottom:6px"><strong>${esc(c.code || '')}</strong> — ${esc(c.name || '')}${teachers}</div>
-            <textarea id="cont-ta-${c.id}" rows="5"
-                style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #d1d5db;border-radius:6px;font:inherit;resize:vertical"
-                placeholder="Décrivez le contenu / programme de la matière…">${esc(content)}</textarea>
-            <div style="margin-top:6px;text-align:right">
-                <button class="btn btn-primary btn-sm" onclick="saveCourseContent(${c.id})">Enregistrer</button>
-            </div>
-        </div>`;
+        html += `</tbody></table>`;
     });
     el.innerHTML = html;
 }
 
+// Enregistre le contenu « Enseignant » d'une matière (textarea par sous-ressource)
 async function saveCourseContent(id) {
     const ta = document.getElementById('cont-ta-' + id);
     if (!ta) return;
@@ -1298,6 +1385,28 @@ async function saveCourseContent(id) {
         const c = (state.courses || []).find(x => x.id === id);
         if (c) c.content = content.trim();
         toast('Contenu enregistré');
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+// Enregistre le PN (admin) : un seul contenu appliqué à toutes les sous-ressources du groupe
+async function savePnGroup(firstId, ids) {
+    const ta = document.getElementById('cont-pn-' + firstId);
+    if (!ta) return;
+    const content_pn = ta.value;
+    try {
+        for (const id of ids) {
+            const r = await fetch('/api/courses/' + id + '/content', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content_pn })
+            });
+            if (!r.ok) throw new Error(await r.text());
+            const c = (state.courses || []).find(x => x.id === id);
+            if (c) c.content_pn = content_pn.trim();
+        }
+        toast('Programme national enregistré');
     } catch (e) {
         toast('Erreur : ' + e.message, 'error');
     }

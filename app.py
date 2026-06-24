@@ -166,6 +166,11 @@ def _apply_migrations(db):
         db.execute('ALTER TABLE courses ADD COLUMN content TEXT')
     except sqlite3.OperationalError:
         pass
+    # Contenu officiel du Programme national (PN), éditable par l'admin uniquement
+    try:
+        db.execute('ALTER TABLE courses ADD COLUMN content_pn TEXT')
+    except sqlite3.OperationalError:
+        pass
     try:
         db.execute('ALTER TABLE course_sessions ADD COLUMN sessions_per_week_max INTEGER DEFAULT 1')
     except sqlite3.OperationalError:
@@ -534,6 +539,38 @@ def serve_root():
 def serve_static(path):
     """Serve static files"""
     return send_from_directory(_STATIC_DIR, path)
+
+# Dossier des documents téléchargeables (PDF du Programme national, etc.)
+_DOCS_DIR = os.path.join(_BASE_DIR, 'docs')
+
+def _find_pn_pdf():
+    """Chemin du PDF du Programme national s'il existe.
+    Priorité à la variable d'env EDT_PN_PDF, sinon le 1er .pdf du dossier docs/."""
+    env = os.environ.get('EDT_PN_PDF')
+    if env and os.path.isfile(env):
+        return env
+    if os.path.isdir(_DOCS_DIR):
+        pdfs = sorted(f for f in os.listdir(_DOCS_DIR) if f.lower().endswith('.pdf'))
+        if pdfs:
+            return os.path.join(_DOCS_DIR, pdfs[0])
+    return None
+
+@app.route('/api/pn-pdf/info', methods=['GET'])
+def pn_pdf_info():
+    """Indique si un PDF du Programme national est disponible au téléchargement."""
+    p = _find_pn_pdf()
+    if not p:
+        return jsonify({'available': False})
+    return jsonify({'available': True, 'filename': os.path.basename(p)})
+
+@app.route('/api/pn-pdf', methods=['GET'])
+def pn_pdf_download():
+    """Télécharge le PDF du Programme national déposé dans le dossier docs/."""
+    p = _find_pn_pdf()
+    if not p:
+        return error_response('Aucun PDF du Programme national disponible', 404)
+    return send_file(p, mimetype='application/pdf', as_attachment=True,
+                     download_name=os.path.basename(p))
 
 # ======================= TEACHERS CRUD =======================
 
@@ -1104,7 +1141,7 @@ def get_courses():
         cursor.execute('''
             SELECT c.id, c.code, c.name, c.semester_id, c.course_type,
                    c.start_week, c.end_week, c.default_weeks, c.mutualized,
-                   c.content, c.created_at, c.updated_at,
+                   c.content, c.content_pn, c.created_at, c.updated_at,
                    s.code as semester_code,
                    GROUP_CONCAT(DISTINCT t.name) as teacher_names,
                    COALESCE(SUM(CASE WHEN cs.teaching_type='CM' AND cs.formation_type IN (0,2)
@@ -1178,7 +1215,7 @@ def get_courses():
             LEFT JOIN teachers t ON cs.teacher_id = t.id
             GROUP BY c.id, c.code, c.name, c.semester_id, c.course_type,
                      c.start_week, c.end_week, c.default_weeks, c.mutualized,
-                     c.content, c.created_at, c.updated_at, s.code
+                     c.content, c.content_pn, c.created_at, c.updated_at, s.code
             ORDER BY s.code, c.code
         ''')
         courses = rows_to_list(cursor.fetchall())
@@ -1272,12 +1309,14 @@ def get_course(course_id):
 @app.route('/api/courses/<int:course_id>/content', methods=['PUT'])
 def update_course_content(course_id):
     """Met à jour la description / contenu pédagogique d'une matière.
-    Autorisé à l'admin ou à un enseignant intervenant dans la matière."""
+    - `content` (contenu Enseignant) : éditable par l'admin ou un enseignant intervenant.
+    - `content_pn` (Programme national) : éditable par l'admin uniquement."""
     try:
         db = get_db()
         cursor = db.cursor()
-        cursor.execute('SELECT id FROM courses WHERE id = ?', (course_id,))
-        if not cursor.fetchone():
+        cursor.execute('SELECT content, content_pn FROM courses WHERE id = ?', (course_id,))
+        row = cursor.fetchone()
+        if not row:
             return error_response('Course not found', 404)
 
         role = session.get('role')
@@ -1287,14 +1326,26 @@ def update_course_content(course_id):
                 return error_response("Vous n'intervenez pas dans cette matière", 403)
 
         data = request.get_json() or {}
-        content = data.get('content')
-        content = content.strip() if isinstance(content, str) else None
+
+        def _norm(v):
+            return v.strip() or None if isinstance(v, str) else None
+
+        content = row['content']
+        if 'content' in data:
+            content = _norm(data.get('content'))
+
+        content_pn = row['content_pn']
+        if 'content_pn' in data:
+            if role != 'admin':
+                return error_response("Seul l'administrateur peut modifier le Programme national", 403)
+            content_pn = _norm(data.get('content_pn'))
+
         cursor.execute(
-            'UPDATE courses SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-            (content or None, course_id)
+            'UPDATE courses SET content = ?, content_pn = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            (content, content_pn, course_id)
         )
         db.commit()
-        return jsonify({'id': course_id, 'content': content or ''}), 200
+        return jsonify({'id': course_id, 'content': content or '', 'content_pn': content_pn or ''}), 200
     except Exception as e:
         return error_response(f'Error updating course content: {str(e)}', 500)
 
