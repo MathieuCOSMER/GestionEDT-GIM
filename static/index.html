@@ -492,6 +492,8 @@
             <button class="btn btn-secondary btn-sm" style="margin-left:12px" onclick="loadJournal()">Rafraîchir</button>
         </div>
     </div>
+    <div id="journal-backups" style="margin-bottom:18px"></div>
+    <h3 style="margin:0 0 8px;color:#374151">Activité</h3>
     <div id="journal-content"><div class="spinner">Chargement…</div></div>
 </div>
 
@@ -1409,12 +1411,78 @@ async function loadJournal() {
     const el = document.getElementById('journal-content');
     const n = (document.getElementById('journal-lines') || {}).value || 200;
     el.innerHTML = '<div class="spinner">Chargement…</div>';
+    loadBackups();
     try {
         const data = await api('/audit-log?lines=' + n);
         _journalLines = (data && data.lines) || [];
         renderJournal();
     } catch (e) {
         el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
+    }
+}
+
+// ----- Sauvegardes (backups) -----
+async function loadBackups() {
+    const el = document.getElementById('journal-backups');
+    if (!el) return;
+    try {
+        const data = await api('/backups');
+        renderBackups((data && data.backups) || []);
+    } catch (e) {
+        el.innerHTML = '<div class="empty">Sauvegardes indisponibles : ' + esc(e.message) + '</div>';
+    }
+}
+
+function renderBackups(backups) {
+    const el = document.getElementById('journal-backups');
+    let html = `<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+            <h3 style="margin:0;color:#374151">Sauvegardes</h3>
+            <button class="btn btn-secondary btn-sm" onclick="createBackupNow()">Créer une sauvegarde maintenant</button>
+        </div>`;
+    if (!backups.length) {
+        html += '<div class="empty">Aucune sauvegarde pour le moment.</div>';
+        el.innerHTML = html;
+        return;
+    }
+    html += `<table class="journal-table"><thead><tr>
+            <th style="width:170px">Date / heure</th>
+            <th style="width:110px">Année</th>
+            <th style="width:100px">Taille</th>
+            <th>Fichier</th>
+            <th style="width:120px"></th>
+        </tr></thead><tbody>` +
+        backups.map(b => `<tr>
+            <td style="white-space:nowrap;color:#6b7280">${esc(b.datetime)}</td>
+            <td>${esc(b.year)}</td>
+            <td>${b.size_kb} Ko</td>
+            <td style="font-family:ui-monospace,monospace;font-size:.8rem">${esc(b.file)}</td>
+            <td><button class="btn btn-secondary btn-sm" onclick="restoreBackup('${esc(b.year)}','${esc(b.file)}')">Restaurer</button></td>
+        </tr>`).join('') +
+        `</tbody></table>`;
+    el.innerHTML = html;
+}
+
+async function createBackupNow() {
+    try {
+        const r = await api('/backups', { method: 'POST', body: JSON.stringify({}) });
+        toast(r && r.created ? 'Sauvegarde créée' : 'Sauvegarde effectuée');
+        loadBackups();
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+async function restoreBackup(year, file) {
+    if (!confirm(`Restaurer la sauvegarde du ${year} :\n${file}\n\n` +
+                 `La base actuelle sera remplacée (une copie de sécurité est créée avant). Continuer ?`)) return;
+    try {
+        await api('/backups/restore', { method: 'POST', body: JSON.stringify({ year, file }) });
+        toast('Sauvegarde restaurée — rechargement…');
+        // Recharge les données en vidant le cache local
+        state.courses = []; state.teachers = []; state.rooms = []; state.sessions = [];
+        setTimeout(() => location.reload(), 800);
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
     }
 }
 

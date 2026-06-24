@@ -149,6 +149,82 @@ def _migrate_db_layout():
                 except OSError:
                     pass
 
+# ===== SAUVEGARDES (BACKUPS) DES BASES =====
+# Backups rangés dans databases/<année>/backups/edt_<année>_<horodatage>.db
+_BACKUP_KEEP = 30   # nombre de sauvegardes conservées par année
+
+def _backup_dir_for_year(year):
+    return os.path.join(_DB_DIR, year, 'backups')
+
+def _db_mtime(year):
+    """Dernière modification de la base (inclut WAL/SHM), 0 si absente."""
+    mt = 0.0
+    for suffix in ('', '-wal', '-shm'):
+        p = db_path_for_year(year) + suffix
+        if os.path.exists(p):
+            mt = max(mt, os.path.getmtime(p))
+    return mt
+
+def _latest_backup_mtime(year):
+    bdir = _backup_dir_for_year(year)
+    if not os.path.isdir(bdir):
+        return 0.0
+    times = [os.path.getmtime(os.path.join(bdir, f))
+             for f in os.listdir(bdir) if f.endswith('.db')]
+    return max(times) if times else 0.0
+
+def _create_backup(year, tag=None):
+    """Copie cohérente de la base de l'année via l'API backup SQLite."""
+    src_path = db_path_for_year(year)
+    if not os.path.isfile(src_path):
+        return None
+    bdir = _backup_dir_for_year(year)
+    os.makedirs(bdir, exist_ok=True)
+    ts = datetime.now().strftime('%Y-%m-%d_%H%M%S')
+    name = f"edt_{year}_{ts}" + (f"_{tag}" if tag else "") + ".db"
+    dest = os.path.join(bdir, name)
+    src = sqlite3.connect(src_path)
+    dst = sqlite3.connect(dest)
+    try:
+        with dst:
+            src.backup(dst)
+    finally:
+        src.close()
+        dst.close()
+    _prune_backups(year)
+    return dest
+
+def _prune_backups(year, keep=_BACKUP_KEEP):
+    """Ne conserve que les `keep` sauvegardes les plus récentes."""
+    bdir = _backup_dir_for_year(year)
+    if not os.path.isdir(bdir):
+        return
+    files = sorted((f for f in os.listdir(bdir) if f.endswith('.db')),
+                   key=lambda f: os.path.getmtime(os.path.join(bdir, f)),
+                   reverse=True)
+    for f in files[keep:]:
+        try:
+            os.remove(os.path.join(bdir, f))
+        except OSError:
+            pass
+
+def backup_if_modified(year):
+    """Crée une sauvegarde uniquement si la base a changé depuis la dernière.
+    Retourne le chemin créé, ou None si rien à sauvegarder."""
+    if _db_mtime(year) <= _latest_backup_mtime(year):
+        return None
+    return _create_backup(year)
+
+def backup_all_if_modified():
+    """Sauvegarde chaque année modifiée. Retourne la liste des fichiers créés."""
+    created = []
+    for year in list_years():
+        path = backup_if_modified(year)
+        if path:
+            created.append(path)
+            _audit('BACKUP', year=year, file=os.path.basename(path))
+    return created
+
 def school_week_key(w, start_week=36, max_week=52):
     """Clé de tri pour l'ordre scolaire : start_week est la semaine 0.
     max_week = dernière semaine de la 1re année civile (52 ou 53 selon le calendrier ISO)."""
@@ -706,6 +782,75 @@ def audit_log_view():
     with open(AUDIT_LOG_PATH, encoding='utf-8') as f:
         lines = f.readlines()
     return jsonify({'lines': [l.rstrip('\n') for l in lines[-n:]][::-1]})
+
+@app.route('/api/backups', methods=['GET'])
+def list_backups():
+    """Liste les sauvegardes disponibles, toutes années (admin uniquement)."""
+    if session.get('role') != 'admin':
+        return error_response('Accès réservé à l\'administrateur', 403)
+    items = []
+    for year in list_years():
+        bdir = _backup_dir_for_year(year)
+        if not os.path.isdir(bdir):
+            continue
+        for f in os.listdir(bdir):
+            if not f.endswith('.db'):
+                continue
+            p = os.path.join(bdir, f)
+            items.append({
+                'year': year,
+                'file': f,
+                'datetime': datetime.fromtimestamp(os.path.getmtime(p)).strftime('%Y-%m-%d %H:%M:%S'),
+                'size_kb': round(os.path.getsize(p) / 1024),
+            })
+    items.sort(key=lambda x: x['datetime'], reverse=True)
+    return jsonify({'backups': items})
+
+@app.route('/api/backups', methods=['POST'])
+def create_backup_now():
+    """Crée immédiatement une sauvegarde de l'année courante (admin)."""
+    if session.get('role') != 'admin':
+        return error_response('Accès réservé à l\'administrateur', 403)
+    year = (request.get_json() or {}).get('year') or get_current_year()
+    if not year or not os.path.isfile(db_path_for_year(year)):
+        return error_response('Année introuvable', 404)
+    path = _create_backup(year, tag='manuel')
+    _audit('BACKUP_MANUEL', ip=_client_ip(), user=session.get('user'), year=year,
+           file=os.path.basename(path) if path else '-')
+    return jsonify({'created': os.path.basename(path) if path else None}), 201
+
+@app.route('/api/backups/restore', methods=['POST'])
+def restore_backup():
+    """Restaure une sauvegarde dans la base de son année (admin).
+    Une copie de sécurité de l'état courant est créée avant écrasement."""
+    if session.get('role') != 'admin':
+        return error_response('Accès réservé à l\'administrateur', 403)
+    data = request.get_json() or {}
+    year = (data.get('year') or '').strip()
+    fname = (data.get('file') or '').strip()
+    if not _is_year(year) or not fname:
+        return error_response('Paramètres invalides', 400)
+    bdir = _backup_dir_for_year(year)
+    path = os.path.join(bdir, fname)
+    # Anti path-traversal : le fichier doit bien être dans le dossier de sauvegardes
+    if (os.path.dirname(os.path.abspath(path)) != os.path.abspath(bdir)
+            or not os.path.isfile(path)):
+        return error_response('Sauvegarde introuvable', 404)
+    target = db_path_for_year(year)
+    if not os.path.isfile(target):
+        return error_response('Base cible introuvable', 404)
+    # Filet de sécurité : sauvegarde de l'état actuel avant restauration
+    _create_backup(year, tag='avant_restauration')
+    src = sqlite3.connect(path)
+    dst = sqlite3.connect(target)
+    try:
+        with dst:
+            src.backup(dst)
+    finally:
+        src.close()
+        dst.close()
+    _audit('RESTORE', ip=_client_ip(), user=session.get('user'), year=year, file=fname)
+    return jsonify({'restored': fname, 'year': year})
 
 # ======================= STATIC FILES =======================
 
