@@ -225,6 +225,30 @@ def backup_all_if_modified():
             _audit('BACKUP', year=year, file=os.path.basename(path))
     return created
 
+# Déclenchement « sans cron » : compte gratuit PythonAnywhere = pas de tâche
+# planifiée. À la 1re requête passé l'heure de backup (4h par défaut) chaque
+# jour, on lance la sauvegarde conditionnelle. Le script scripts/backup_db.py
+# reste utilisable pour une vraie planification (compte payant).
+_BACKUP_HOUR = int(os.environ.get('EDT_BACKUP_HOUR', '4'))
+_backup_check_lock = threading.Lock()
+_last_backup_check_date = None
+
+def _maybe_daily_backup():
+    """Lance au plus une vérification de sauvegarde par jour (après l'heure cible)."""
+    global _last_backup_check_date
+    now = datetime.now()
+    boundary = now.date() if now.hour >= _BACKUP_HOUR else (now.date() - timedelta(days=1))
+    if _last_backup_check_date == boundary:
+        return
+    with _backup_check_lock:
+        if _last_backup_check_date == boundary:
+            return
+        _last_backup_check_date = boundary   # une seule tentative par jour, même en cas d'erreur
+        try:
+            backup_all_if_modified()
+        except Exception as e:
+            _audit('BACKUP_ERROR', error=str(e))
+
 def school_week_key(w, start_week=36, max_week=52):
     """Clé de tri pour l'ordre scolaire : start_week est la semaine 0.
     max_week = dernière semaine de la 1re année civile (52 ou 53 selon le calendrier ISO)."""
@@ -622,6 +646,14 @@ def _force_https():
         return
     if not _is_https():
         return redirect(request.url.replace('http://', 'https://', 1), code=301)
+
+@app.before_request
+def _daily_backup_hook():
+    """Sauvegarde quotidienne déclenchée par le trafic (sans cron)."""
+    try:
+        _maybe_daily_backup()
+    except Exception:
+        pass
 
 @app.before_request
 def _require_auth():
