@@ -993,6 +993,31 @@ async function checkAuth() {
     }
 }
 
+let _loginLockTimer = null;
+
+// Verrouille le bouton de connexion pendant `secs` secondes avec compte à rebours
+function lockLoginButton(secs) {
+    const btn = document.querySelector('#login-card .btn') ||
+                document.querySelector('.login-card .btn');
+    if (!btn) return;
+    clearInterval(_loginLockTimer);
+    let left = secs;
+    btn.disabled = true;
+    const base = 'Se connecter';
+    const tick = () => {
+        if (left <= 0) {
+            clearInterval(_loginLockTimer);
+            btn.disabled = false;
+            btn.textContent = base;
+            return;
+        }
+        btn.textContent = `Patientez ${left}s…`;
+        left--;
+    };
+    tick();
+    _loginLockTimer = setInterval(tick, 1000);
+}
+
 async function doLogin() {
     const username = document.getElementById('login-user').value.trim();
     const password = document.getElementById('login-pass').value;
@@ -1005,7 +1030,13 @@ async function doLogin() {
         applyRole(me.role, me.username, me.teacher, me.status);
         goHome();
     } catch (e) {
-        errEl.textContent = 'Identifiant ou mot de passe incorrect';
+        // Message renvoyé par le serveur (ex. throttle « Réessayez dans N s »)
+        let msg = 'Identifiant ou mot de passe incorrect';
+        try { msg = JSON.parse(e.message).error || msg; } catch (_) { /* garde le défaut */ }
+        errEl.textContent = msg;
+        // Compte à rebours client si le serveur impose une attente
+        const m = /dans\s+(\d+)\s+seconde/i.exec(msg);
+        lockLoginButton(m ? parseInt(m[1], 10) : 5);
     }
 }
 

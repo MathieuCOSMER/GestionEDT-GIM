@@ -10,6 +10,9 @@ import os
 import json
 import math
 import shutil
+import hmac
+import time
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 import io
@@ -17,6 +20,17 @@ import io
 # Initialize Flask app
 app = Flask(__name__, static_folder='static', static_url_path='')
 app.secret_key = os.environ.get('EDT_SECRET_KEY', 'edt-gim-toulon-secret-2026')
+# Durcissement du cookie de session :
+# - HttpOnly : inaccessible au JavaScript (anti-vol via XSS)
+# - SameSite=Lax : limite l'envoi du cookie en cross-site (anti-CSRF)
+# - Secure : cookie envoyé uniquement en HTTPS (activer en prod via EDT_SECURE_COOKIES=1)
+# - durée de vie : session expirée après 12 h
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=os.environ.get('EDT_SECURE_COOKIES', '0') == '1',
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+)
 CORS(app, supports_credentials=True)
 
 # ======================= AUTHENTIFICATION =======================
@@ -479,8 +493,60 @@ def _require_auth():
         # Toute autre écriture (y compris la liste des enseignants) est réservée à l'admin
         return error_response('Accès en lecture seule', 403)
 
+@app.after_request
+def _security_headers(resp):
+    """En-têtes de sécurité HTTP appliqués à toutes les réponses."""
+    resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    resp.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')          # anti-clickjacking
+    resp.headers.setdefault('Referrer-Policy', 'same-origin')
+    # HSTS : force HTTPS pendant 6 mois (n'a d'effet que servi en HTTPS)
+    if request.is_secure:
+        resp.headers.setdefault('Strict-Transport-Security', 'max-age=15552000; includeSubDomains')
+    return resp
+
+# ---- Limitation des tentatives de connexion (anti-bruteforce) ----
+# Après un échec, toute nouvelle tentative depuis la même IP est refusée
+# pendant un délai minimum de 5 s, qui double à chaque échec (5, 10, 20… max 5 min).
+_LOGIN_LOCK = threading.Lock()
+_login_state = {}            # ip -> {'fails': int, 'until': float}
+_LOGIN_BASE_DELAY = 5        # secondes (minimum imposé)
+_LOGIN_MAX_DELAY = 300       # plafond : 5 min
+
+def _client_ip():
+    """IP réelle du client (gère le proxy de PythonAnywhere via X-Forwarded-For)."""
+    xff = request.headers.get('X-Forwarded-For', '')
+    if xff:
+        return xff.split(',')[0].strip()
+    return request.remote_addr or 'unknown'
+
+def _login_retry_after(ip):
+    """Secondes restantes avant qu'une nouvelle tentative soit autorisée (0 = OK)."""
+    st = _login_state.get(ip)
+    if not st:
+        return 0
+    return max(0, int(round(st['until'] - time.time())))
+
+def _register_login_failure(ip):
+    """Enregistre un échec et arme le délai d'attente (back-off exponentiel)."""
+    with _LOGIN_LOCK:
+        st = _login_state.get(ip) or {'fails': 0, 'until': 0}
+        st['fails'] += 1
+        delay = min(_LOGIN_BASE_DELAY * (2 ** (st['fails'] - 1)), _LOGIN_MAX_DELAY)
+        st['until'] = time.time() + delay
+        _login_state[ip] = st
+
+def _reset_login_failures(ip):
+    with _LOGIN_LOCK:
+        _login_state.pop(ip, None)
+
 @app.route('/api/login', methods=['POST'])
 def login():
+    ip = _client_ip()
+    wait = _login_retry_after(ip)
+    if wait > 0:
+        return error_response(
+            f'Trop de tentatives de connexion. Réessayez dans {wait} seconde(s).', 429)
+
     data = request.get_json() or {}
     username = (data.get('username') or '').strip()
     password = data.get('password') or ''
@@ -488,8 +554,11 @@ def login():
     key = next((k for k in AUTH_USERS if k.lower() == username.lower()), None)
     if key:
         user = AUTH_USERS[key]
-        if user['password'] != password:
+        # Comparaison en temps constant (anti timing-attack)
+        if not hmac.compare_digest(str(user['password']), str(password)):
+            _register_login_failure(ip)
             return error_response('Identifiant ou mot de passe incorrect', 401)
+        _reset_login_failures(ip)
         session.permanent = True
         session['user'] = key
         session['role'] = user['role']
@@ -500,6 +569,7 @@ def login():
         db = get_db()
         row = db.execute('SELECT name, status FROM teachers WHERE LOWER(name) = LOWER(?)', (username,)).fetchone()
         if row:
+            _reset_login_failures(ip)
             status = row['status'] or 'Titulaire'
             session.permanent = True
             session['user'] = row['name']
@@ -508,6 +578,7 @@ def login():
             session['teacher_status'] = status
             return jsonify({'username': row['name'], 'role': 'teacher',
                             'teacher': row['name'], 'status': status})
+    _register_login_failure(ip)
     return error_response('Identifiant ou mot de passe incorrect', 401)
 
 @app.route('/api/logout', methods=['POST'])
