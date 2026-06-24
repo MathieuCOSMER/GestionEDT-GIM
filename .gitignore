@@ -24,3 +24,6 @@ Thumbs.db
 
 # Documents déposés sur le serveur (PDF du PN, etc.) — gérés hors git
 docs/*.pdf
+
+# Journaux d'audit (générés au runtime)
+logs/

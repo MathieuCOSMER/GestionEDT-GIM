@@ -3,7 +3,7 @@ Flask backend application for IUT Gestion Emploi Du Temps (EDT)
 Manages timetables for IUT GIM Toulon
 """
 
-from flask import Flask, request, jsonify, send_file, send_from_directory, g, session
+from flask import Flask, request, jsonify, send_file, send_from_directory, g, session, redirect
 from flask_cors import CORS
 import sqlite3
 import os
@@ -13,6 +13,8 @@ import shutil
 import hmac
 import time
 import threading
+import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from pathlib import Path
 import io
@@ -31,7 +33,12 @@ app.config.update(
     SESSION_COOKIE_SECURE=os.environ.get('EDT_SECURE_COOKIES', '0') == '1',
     PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
 )
-CORS(app, supports_credentials=True)
+# CORS restreint : la SPA est servie en same-origin par Flask, donc aucune origine
+# externe n'est autorisée par défaut. Pour exposer l'API à un autre domaine,
+# lister les origines dans EDT_ALLOWED_ORIGINS (séparées par des virgules).
+_cors_origins = [o.strip() for o in os.environ.get('EDT_ALLOWED_ORIGINS', '').split(',') if o.strip()]
+if _cors_origins:
+    CORS(app, supports_credentials=True, origins=_cors_origins)
 
 # ======================= AUTHENTIFICATION =======================
 # Comptes : Admin (tous droits) + connexion enseignant par nom (lecture seule).
@@ -50,6 +57,28 @@ _PUBLIC_API = {'/api/login', '/api/logout', '/api/me'}
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE = os.environ.get('EDT_DB_PATH', os.path.join(_BASE_DIR, 'edt.db'))
 SCHEMA_PATH = os.path.join(_BASE_DIR, 'schema.sql')
+
+# ===== JOURNAL D'AUDIT (connexions + modifications) =====
+# Écrit dans logs/audit.log (rotation 1 Mo x 5). Lisible par l'admin via /api/audit-log.
+_LOG_DIR = os.path.join(_BASE_DIR, 'logs')
+os.makedirs(_LOG_DIR, exist_ok=True)
+AUDIT_LOG_PATH = os.path.join(_LOG_DIR, 'audit.log')
+audit_log = logging.getLogger('edt.audit')
+if not audit_log.handlers:
+    audit_log.setLevel(logging.INFO)
+    _audit_handler = RotatingFileHandler(AUDIT_LOG_PATH, maxBytes=1_000_000,
+                                         backupCount=5, encoding='utf-8')
+    _audit_handler.setFormatter(logging.Formatter('%(asctime)s | %(message)s'))
+    audit_log.addHandler(_audit_handler)
+    audit_log.propagate = False
+
+def _audit(event, **fields):
+    """Ajoute une ligne au journal d'audit (jamais bloquant)."""
+    try:
+        parts = [event] + [f'{k}={v}' for k, v in fields.items()]
+        audit_log.info(' | '.join(str(p) for p in parts))
+    except Exception:
+        pass
 
 # ===== GESTION DES ANNÉES UNIVERSITAIRES =====
 SETTINGS_PATH = os.path.join(_BASE_DIR, 'edt_settings.json')
@@ -472,6 +501,18 @@ def teacher_intervenes_in_course(course_id, teacher_name):
     ''', (course_id, teacher_name)).fetchone()
     return row is not None
 
+def _is_https():
+    """Vrai si la requête arrive en HTTPS (gère le proxy via X-Forwarded-Proto)."""
+    return request.is_secure or request.headers.get('X-Forwarded-Proto', '') == 'https'
+
+@app.before_request
+def _force_https():
+    """Redirige http -> https quand EDT_FORCE_HTTPS=1 (à activer en production)."""
+    if os.environ.get('EDT_FORCE_HTTPS', '0') != '1':
+        return
+    if not _is_https():
+        return redirect(request.url.replace('http://', 'https://', 1), code=301)
+
 @app.before_request
 def _require_auth():
     """Protège l'API : connexion obligatoire ; visiteur = lecture seule."""
@@ -493,6 +534,8 @@ def _require_auth():
         # Toute autre écriture (y compris la liste des enseignants) est réservée à l'admin
         return error_response('Accès en lecture seule', 403)
 
+_WRITE_METHODS = {'POST', 'PUT', 'DELETE', 'PATCH'}
+
 @app.after_request
 def _security_headers(resp):
     """En-têtes de sécurité HTTP appliqués à toutes les réponses."""
@@ -500,8 +543,22 @@ def _security_headers(resp):
     resp.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')          # anti-clickjacking
     resp.headers.setdefault('Referrer-Policy', 'same-origin')
     # HSTS : force HTTPS pendant 6 mois (n'a d'effet que servi en HTTPS)
-    if request.is_secure:
+    if _is_https():
         resp.headers.setdefault('Strict-Transport-Security', 'max-age=15552000; includeSubDomains')
+    return resp
+
+@app.after_request
+def _audit_writes(resp):
+    """Journalise toute modification de données (POST/PUT/DELETE/PATCH sur l'API).
+    Les connexions sont journalisées séparément dans la route /api/login."""
+    try:
+        if (request.path.startswith('/api/') and request.method in _WRITE_METHODS
+                and request.path not in ('/api/login', '/api/logout')):
+            _audit('WRITE', ip=_client_ip(), user=session.get('user') or '-',
+                   role=session.get('role') or '-', method=request.method,
+                   path=request.path, status=resp.status_code)
+    except Exception:
+        pass
     return resp
 
 # ---- Limitation des tentatives de connexion (anti-bruteforce) ----
@@ -544,6 +601,7 @@ def login():
     ip = _client_ip()
     wait = _login_retry_after(ip)
     if wait > 0:
+        _audit('LOGIN_BLOCKED', ip=ip, wait=wait)
         return error_response(
             f'Trop de tentatives de connexion. Réessayez dans {wait} seconde(s).', 429)
 
@@ -557,12 +615,14 @@ def login():
         # Comparaison en temps constant (anti timing-attack)
         if not hmac.compare_digest(str(user['password']), str(password)):
             _register_login_failure(ip)
+            _audit('LOGIN_FAIL', ip=ip, user=username, role='admin')
             return error_response('Identifiant ou mot de passe incorrect', 401)
         _reset_login_failures(ip)
         session.permanent = True
         session['user'] = key
         session['role'] = user['role']
         session.pop('teacher_name', None)
+        _audit('LOGIN_OK', ip=ip, user=key, role='admin')
         return jsonify({'username': key, 'role': user['role']})
     # Sinon : connexion enseignant par nom de famille (insensible à la casse)
     if username:
@@ -576,13 +636,17 @@ def login():
             session['role'] = 'teacher'
             session['teacher_name'] = row['name']
             session['teacher_status'] = status
+            _audit('LOGIN_OK', ip=ip, user=row['name'], role='teacher')
             return jsonify({'username': row['name'], 'role': 'teacher',
                             'teacher': row['name'], 'status': status})
     _register_login_failure(ip)
+    _audit('LOGIN_FAIL', ip=ip, user=username, role='-')
     return error_response('Identifiant ou mot de passe incorrect', 401)
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
+    if session.get('user'):
+        _audit('LOGOUT', ip=_client_ip(), user=session.get('user'), role=session.get('role'))
     session.clear()
     return jsonify({'message': 'Déconnecté'})
 
@@ -593,6 +657,21 @@ def me():
                         'teacher': session.get('teacher_name'),
                         'status': session.get('teacher_status')})
     return error_response('Non authentifié', 401)
+
+@app.route('/api/audit-log', methods=['GET'])
+def audit_log_view():
+    """Renvoie les dernières lignes du journal d'audit (admin uniquement)."""
+    if session.get('role') != 'admin':
+        return error_response('Accès réservé à l\'administrateur', 403)
+    try:
+        n = max(1, min(int(request.args.get('lines', 200)), 2000))
+    except (TypeError, ValueError):
+        n = 200
+    if not os.path.isfile(AUDIT_LOG_PATH):
+        return jsonify({'lines': []})
+    with open(AUDIT_LOG_PATH, encoding='utf-8') as f:
+        lines = f.readlines()
+    return jsonify({'lines': [l.rstrip('\n') for l in lines[-n:]][::-1]})
 
 # ======================= STATIC FILES =======================
 
