@@ -289,6 +289,15 @@
         /* Case « Taux horaires » + Export : réservés à l'admin et aux titulaires */
         body.role-vacataire .rates-toggle,
         body.role-vacataire .export-btn { display: none !important; }
+        /* ===== Grille de notes ===== */
+        .nz-table { border-collapse: separate; border-spacing: 0; font-size: .85rem; }
+        .nz-table th, .nz-table td { border-bottom: 1px solid #eef0f2; border-right: 1px solid #f1f3f5; vertical-align: middle; }
+        .nz-table thead th { position: sticky; top: 0; z-index: 3; background: #f8fafc; }
+        .nz-table .nz-sticky { position: sticky; left: 0; z-index: 2; background: #fff; box-shadow: 1px 0 0 #e5e7eb; }
+        .nz-table thead th.nz-sticky { z-index: 4; }
+        .nz-table input::-webkit-outer-spin-button,
+        .nz-table input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .nz-table input[type=number] { -moz-appearance: textfield; }
     </style>
 </head>
 <body>
@@ -322,6 +331,7 @@
     <button onclick="showPage('journal')" id="nav-journal" class="admin-only">Journal</button>
     <button onclick="showPage('contenu')" id="nav-contenu">Contenu des matières</button>
     <button onclick="showPage('contraintes')" id="nav-contraintes">Contraintes</button>
+    <button onclick="showPage('promotions')" id="nav-promotions" class="admin-only">Promotions</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
         <span class="admin-only" style="font-size:.8rem;color:#6b7280;white-space:nowrap">Année :</span>
         <select id="year-select" onchange="switchYear()"
@@ -477,6 +487,67 @@
     </div>
     <div id="contraintes-content"><div class="spinner">Chargement…</div></div>
 </div>
+
+<!-- ===== PROMOTIONS (admin) ===== -->
+<div class="page" id="page-promotions">
+    <div class="toolbar" style="margin-bottom:8px;align-items:center">
+        <h1 style="margin-right:18px">Promotions</h1>
+        <div class="subtabs" style="display:flex;gap:6px;border-bottom:none">
+            <button type="button" id="promo-subtab-effectif" class="subtab active" onclick="showPromoTab('effectif')">Effectif</button>
+            <button type="button" id="promo-subtab-coeff" class="subtab" onclick="showPromoTab('coeff')">Coefficients</button>
+            <button type="button" id="promo-subtab-notes" class="subtab" onclick="showPromoTab('notes')">Notes</button>
+        </div>
+    </div>
+    <div id="promo-tab-notes" style="display:none">
+        <div class="toolbar">
+            <div class="filters">
+                <label>Promotion :</label>
+                <select id="notes-promo-select" onchange="loadNotesGrid()"><option value="">—</option></select>
+                <label style="margin-left:12px">Semestre :</label>
+                <select id="notes-sem-select" onchange="loadNotesGrid()">
+                    <option value="">—</option>
+                    <option>S1</option><option>S2</option><option>S3</option>
+                    <option>S4</option><option>S5</option><option>S6</option>
+                </select>
+                <button class="btn btn-primary btn-sm" style="margin-left:14px" id="notes-save-btn" onclick="saveNotesMarks()" disabled>💾 Enregistrer les notes</button>
+                <button class="btn btn-secondary btn-sm" id="notes-import-btn" onclick="openNotesImport()" disabled>Importer les notes</button>
+            </div>
+        </div>
+        <div id="notes-content"><div style="color:#6b7280;padding:20px">Choisissez une promotion (de l'effectif) et un semestre pour saisir les notes.</div></div>
+    </div>
+    <div id="promo-tab-coeff" style="display:none">
+        <div class="toolbar">
+            <div class="filters">
+                <label>Semestres :</label>
+                <div id="promo-coeff-sem-toggle" class="sem-toggle">
+                    <button type="button" class="sem-btn active" data-sem="S1" onclick="togglePromoCoeffSem('S1',this)">S1</button>
+                    <button type="button" class="sem-btn active" data-sem="S2" onclick="togglePromoCoeffSem('S2',this)">S2</button>
+                    <button type="button" class="sem-btn active" data-sem="S3" onclick="togglePromoCoeffSem('S3',this)">S3</button>
+                    <button type="button" class="sem-btn active" data-sem="S4" onclick="togglePromoCoeffSem('S4',this)">S4</button>
+                    <button type="button" class="sem-btn active" data-sem="S5" onclick="togglePromoCoeffSem('S5',this)">S5</button>
+                    <button type="button" class="sem-btn active" data-sem="S6" onclick="togglePromoCoeffSem('S6',this)">S6</button>
+                </div>
+                <button class="btn btn-primary btn-sm" style="margin-left:14px" onclick="savePromoCoeff()">💾 Enregistrer</button>
+                <button class="btn btn-secondary btn-sm" onclick="resetPromoCoeff()">↺ Réinitialiser (fichier d'origine)</button>
+            </div>
+        </div>
+        <div id="promo-coeff-content"><div style="color:#6b7280;padding:20px">Chargement…</div></div>
+    </div>
+    <div id="promo-tab-effectif">
+        <div class="toolbar">
+            <div class="filters">
+                <label>Promotion :</label>
+                <select id="promo-select" onchange="onPromoChange()"><option value="">—</option></select>
+                <button class="btn btn-primary btn-sm" style="margin-left:12px" onclick="openNewPromotion()">+ Nouvelle promotion</button>
+                <button class="btn btn-secondary btn-sm" id="promo-import-btn" onclick="openPromoImport()" disabled>Importer un effectif</button>
+                <button class="btn btn-secondary btn-sm" id="promo-addstudent-btn" onclick="openAddStudent()" disabled>+ Étudiant</button>
+                <button class="btn btn-secondary btn-sm" id="promo-delete-btn" onclick="deletePromotion()" disabled>Supprimer la promotion</button>
+            </div>
+        </div>
+        <div id="promo-content"><div style="color:#6b7280;padding:20px">Créez une promotion ou sélectionnez-en une pour gérer son effectif.</div></div>
+    </div>
+</div>
+
 
 <!-- ===== JOURNAL D'AUDIT (admin) ===== -->
 <div class="page" id="page-journal">
@@ -747,6 +818,100 @@
                 <button type="submit" class="btn btn-primary">Créer et activer</button>
             </div>
         </form>
+    </div>
+</div>
+
+<!-- ===== MODAL NOUVELLE PROMOTION ===== -->
+<div class="modal-backdrop" id="modal-new-promotion">
+    <div class="modal">
+        <h2>Nouvelle promotion</h2>
+        <div class="form-group">
+            <label>Année de début (rentrée) *</label>
+            <input type="number" id="promo-start-year" min="2000" max="2100" placeholder="ex : 2025">
+            <small style="color:#6b7280">La promotion dure 3 ans. Le nom est généré automatiquement.</small>
+        </div>
+        <div class="form-group">
+            <label>Formation *</label>
+            <select id="promo-formation">
+                <option value="FTP">FTP (formation initiale)</option>
+                <option value="ALT">ALT (alternance)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Nom généré</label>
+            <input id="promo-name-preview" disabled style="background:#f9fafb;font-weight:600">
+        </div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-new-promotion')">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="submitNewPromotion()">Créer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL AJOUT ÉTUDIANT ===== -->
+<div class="modal-backdrop" id="modal-add-student">
+    <div class="modal">
+        <h2>Ajouter un étudiant</h2>
+        <div class="form-group"><label>Nom</label><input id="student-nom"></div>
+        <div class="form-group"><label>Prénom</label><input id="student-prenom"></div>
+        <div class="form-group"><label>N° Apogée</label><input id="student-numero"></div>
+        <div class="form-group"><label>Date de naissance</label><input id="student-naissance" placeholder="jj/mm/aaaa"></div>
+        <div class="form-group"><label>Statut</label>
+            <select id="student-statut" onchange="toggleAddStudentSem()">
+                <option>Actif</option><option>Abandon</option><option>Redoublant</option><option>Sortie</option>
+            </select>
+        </div>
+        <div class="form-group" id="student-sem-group" style="display:none"><label>Semestre d'abandon</label>
+            <select id="student-sem">
+                <option value="">— Choisir —</option>
+                <option>S1</option><option>S2</option><option>S3</option><option>S4</option><option>S5</option><option>S6</option>
+            </select>
+        </div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-add-student')">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="submitAddStudent()">Ajouter</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL IMPORT EFFECTIF ===== -->
+<div class="modal-backdrop" id="modal-promo-import">
+    <div class="modal">
+        <h2>Importer un effectif</h2>
+        <p style="color:#6b7280;font-size:.9rem;margin-top:0">
+            Fichier <code>.xlsm</code>/<code>.xlsx</code> : export <strong>Apogée</strong> (roster standard)
+            ou tableur simple avec en-têtes <em>Nom, Prénom, Numéro, Naissance</em> en première ligne.
+            Les étudiants déjà présents (même n° Apogée, ou même nom/prénom/naissance) ne sont pas réimportés.
+        </p>
+        <div class="form-group">
+            <label>Fichier *</label>
+            <input type="file" id="promo-import-file" accept=".xlsm,.xlsx">
+        </div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-promo-import')">Annuler</button>
+            <button type="button" class="btn btn-primary" id="promo-import-submit" onclick="submitPromoImport()">Importer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL IMPORT NOTES ===== -->
+<div class="modal-backdrop" id="modal-notes-import">
+    <div class="modal">
+        <h2>Importer les notes</h2>
+        <p style="color:#6b7280;font-size:.9rem;margin-top:0">
+            Fichier <code>.xlsm</code>/<code>.xlsx</code> — format <strong>Apogée</strong> (colonnes de notes
+            remplies) ou <strong>PV de jury</strong> (export des juris précédents), détecté automatiquement.
+            Les notes sont rattachées aux étudiants par <strong>n° Apogée</strong> et remplacent celles déjà
+            saisies pour ce semestre.
+        </p>
+        <div class="form-group">
+            <label>Fichier *</label>
+            <input type="file" id="notes-import-file" accept=".xlsm,.xlsx">
+        </div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-notes-import')">Annuler</button>
+            <button type="button" class="btn btn-primary" id="notes-import-submit" onclick="submitNotesImport()">Importer</button>
+        </div>
     </div>
 </div>
 
@@ -1134,6 +1299,7 @@ async function loadPage(name, forceReload) {
         }
         else if (name === 'journal') { await loadJournal(); }
         else if (name === 'contraintes') { await loadConstraints(); }
+        else if (name === 'promotions') { await loadPromotions(); }
         else if (name === 'repartition-enseignant') {
             const [sessions, teachers, pg] = await Promise.all([
                 api('/course-sessions'), api('/teachers'), api('/promotion-groups')
@@ -1191,6 +1357,8 @@ async function switchYear() {
         ['teachers', 'courses', 'rooms', 'sessions', 'semesters', 'promotionGroups'].forEach(k => { state[k] = []; });
         state.config = null;
         _repartitionData = null;
+        _coeffRef = null;
+        _notesData = null;
         await loadYears();
         showPage('repartition-enseignant');
         toast(`Année ${year} activée`);
@@ -1625,6 +1793,487 @@ function renderConstraintsAdmin(list) {
             <td style="white-space:nowrap;color:#6b7280;font-size:.8rem">${esc(c.updated_at || '')}</td>
         </tr>`).join('') +
         `</tbody></table>`;
+}
+
+// ===== PROMOTIONS (admin) =====
+let _promotions = [];
+let _promoData = null;
+let _promoId = null;
+
+let _promoCoeffSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
+
+function showPromoTab(tab) {
+    ['effectif', 'coeff', 'notes'].forEach(t => {
+        document.getElementById('promo-subtab-' + t).classList.toggle('active', tab === t);
+        document.getElementById('promo-tab-' + t).style.display = tab === t ? '' : 'none';
+    });
+    if (tab === 'coeff') loadPromoCoeff();
+    else if (tab === 'notes') loadNotes();
+}
+
+async function loadPromoCoeff() {
+    if (!_coeffRef) {
+        try { _coeffRef = await api('/grades/coeff-reference'); }
+        catch (e) {
+            document.getElementById('promo-coeff-content').innerHTML =
+                '<div class="empty">Erreur de chargement : ' + esc(e.message) + '</div>';
+            return;
+        }
+    }
+    renderPromoCoeffTables();
+}
+
+function togglePromoCoeffSem(code, btn) {
+    if (_promoCoeffSemesters.has(code)) _promoCoeffSemesters.delete(code);
+    else _promoCoeffSemesters.add(code);
+    btn.classList.toggle('active');
+    // On enregistre la saisie en cours avant de re-filtrer (évite de la perdre)
+    _collectPromoCoeff();
+    renderPromoCoeffTables();
+}
+
+function renderPromoCoeffTables() {
+    const el = document.getElementById('promo-coeff-content');
+    if (!_coeffRef) { el.innerHTML = '<div class="empty">Aucun coefficient.</div>'; return; }
+    const sems = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].filter(s => _coeffRef[s] && _promoCoeffSemesters.has(s));
+    const legend = [['SAE', 'SAÉ'], ['STAGE', 'Stage'], ['PORT', 'Portfolio'], ['RES', 'Ressource']]
+        .map(([k, lbl]) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:12px">
+            <span style="width:12px;height:12px;border-radius:3px;background:${_coeffKindColor(k)};display:inline-block"></span>${lbl}</span>`).join('');
+    const blocks = sems.map(sem => {
+        const d = _coeffRef[sem];
+        const comps = d.competences;
+        const totals = comps.map(c => Object.values(c.coeffs || {}).reduce((a, b) => a + Number(b), 0));
+        const head = `<tr><th class="nz-sticky" style="text-align:left;padding:4px 6px">Matière</th>` +
+            comps.map(c => `<th style="background:#ede9fe;width:72px;padding:6px 2px;vertical-align:middle;text-align:center"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600">${esc(c.name)}</div></th>`).join('') + `</tr>`;
+        const rows = d.components.map(co => {
+            const cells = comps.map((c, ci) => {
+                const v = (c.coeffs || {})[co.code];
+                return `<td style="padding:1px;text-align:center"><input type="number" min="0" step="0.5"
+                    class="pcf-coeff" data-sem="${sem}" data-ci="${ci}" data-code="${esc(co.code)}"
+                    value="${v === undefined || v === null ? '' : v}" oninput="updatePromoCoeffTotal('${sem}',${ci})"
+                    style="width:64px;padding:2px 1px;text-align:center;border:1px solid #d1d5db;border-radius:4px"></td>`;
+            }).join('');
+            return `<tr>
+                <td class="nz-sticky" style="padding:4px 6px"><div style="max-width:530px;white-space:normal;word-break:break-word;line-height:1.2"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${_coeffKindColor(co.kind)};margin-right:5px;vertical-align:middle"></span><strong>${esc(co.code)}</strong> <span style="color:#6b7280;font-size:.8rem">${esc(co.label || '')}</span></div></td>
+                ${cells}</tr>`;
+        }).join('');
+        const totalRow = `<tr style="background:#f9fafb;font-weight:600">
+            <td class="nz-sticky" style="background:#f9fafb;padding:4px 6px">Total</td>
+            ${comps.map((c, ci) => `<td class="pcf-total" data-sem="${sem}" data-ci="${ci}" style="text-align:center;padding:2px 1px">${Math.round(totals[ci] * 100) / 100}</td>`).join('')}</tr>`;
+        return `<h3 style="margin:18px 0 8px;color:#374151">${sem}</h3>
+            <div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;width:fit-content;max-width:90vw">
+                <table class="nz-table" style="table-layout:auto"><thead>${head}</thead><tbody>${rows}${totalRow}</tbody></table>
+            </div>`;
+    }).join('');
+    el.innerHTML = `
+        <div style="margin-bottom:6px;font-size:.8rem;color:#374151">${legend}</div>
+        <p style="font-size:.8rem;color:#6b7280;margin:0 0 4px">
+            Coefficient de chaque matière dans chaque compétence, par semestre (case vide = non prise en compte).
+            Le total par compétence vaut normalement 60.</p>
+        ${blocks || '<div class="empty">Aucun semestre sélectionné.</div>'}`;
+}
+
+function updatePromoCoeffTotal(sem, ci) {
+    let total = 0;
+    document.querySelectorAll(`#promo-coeff-content input.pcf-coeff[data-sem="${sem}"][data-ci="${ci}"]`).forEach(inp => {
+        const v = parseFloat(inp.value.replace(',', '.'));
+        if (!isNaN(v)) total += v;
+    });
+    const td = document.querySelector(`#promo-coeff-content td.pcf-total[data-sem="${sem}"][data-ci="${ci}"]`);
+    if (td) td.textContent = Math.round(total * 100) / 100;
+}
+
+// Lit les inputs affichés et met à jour _coeffRef (seuls les semestres visibles sont réécrits)
+function _collectPromoCoeff() {
+    if (!_coeffRef) return;
+    const touched = new Set();
+    document.querySelectorAll('#promo-coeff-content input.pcf-coeff').forEach(inp => {
+        const sem = inp.dataset.sem, ci = +inp.dataset.ci;
+        const comp = _coeffRef[sem] && _coeffRef[sem].competences[ci];
+        if (!comp) return;
+        const tkey = sem + '#' + ci;
+        if (!touched.has(tkey)) { comp.coeffs = {}; touched.add(tkey); }
+        const v = inp.value.trim().replace(',', '.');
+        if (v !== '' && !isNaN(parseFloat(v)) && parseFloat(v) !== 0) comp.coeffs[inp.dataset.code] = parseFloat(v);
+    });
+}
+
+async function savePromoCoeff() {
+    _collectPromoCoeff();
+    try {
+        _coeffRef = await api('/grades/coeff-reference', { method: 'PUT', body: JSON.stringify(_coeffRef) });
+        renderPromoCoeffTables();
+        toast('Coefficients enregistrés');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function resetPromoCoeff() {
+    if (!confirm('Réinitialiser tous les coefficients aux valeurs d\'origine du fichier de calcul ?')) return;
+    try {
+        _coeffRef = await api('/grades/coeff-reference/reset', { method: 'POST' });
+        renderPromoCoeffTables();
+        toast('Coefficients réinitialisés');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function loadPromotions() {
+    try { _promotions = await api('/promotions'); }
+    catch (e) { _promotions = []; }
+    const sel = document.getElementById('promo-select');
+    sel.innerHTML = '<option value="">—</option>' + _promotions.map(p =>
+        `<option value="${p.id}">${esc(p.name)} (${p.actifs}/${p.total})</option>`).join('');
+    if (_promoId && _promotions.some(p => p.id === _promoId)) {
+        sel.value = _promoId;
+        await onPromoChange();
+    } else {
+        _promoId = null; _promoData = null;
+        _togglePromoButtons(false);
+        document.getElementById('promo-content').innerHTML = _promotions.length
+            ? '<div style="color:#6b7280;padding:20px">Sélectionnez une promotion.</div>'
+            : '<div style="color:#6b7280;padding:20px">Aucune promotion. Cliquez sur « + Nouvelle promotion ».</div>';
+    }
+}
+
+function _togglePromoButtons(on) {
+    ['promo-import-btn', 'promo-addstudent-btn', 'promo-delete-btn'].forEach(id =>
+        document.getElementById(id).disabled = !on);
+}
+
+async function onPromoChange() {
+    const id = parseInt(document.getElementById('promo-select').value || '0');
+    if (!id) {
+        _promoId = null; _promoData = null; _togglePromoButtons(false);
+        document.getElementById('promo-content').innerHTML = '<div style="color:#6b7280;padding:20px">Sélectionnez une promotion.</div>';
+        return;
+    }
+    _promoId = id;
+    document.getElementById('promo-content').innerHTML = '<div class="spinner">Chargement…</div>';
+    try { _promoData = await api('/promotions/' + id); }
+    catch (e) { toast('Erreur : ' + e.message, 'error'); return; }
+    _togglePromoButtons(true);
+    renderPromoEffectif();
+}
+
+function _statutColor(s) {
+    return s === 'Actif' ? '#dcfce7' : (s === 'Abandon' ? '#fee2e2'
+        : (s === 'Redoublant' ? '#fef3c7' : '#e5e7eb'));
+}
+
+function renderPromoEffectif() {
+    const d = _promoData;
+    const el = document.getElementById('promo-content');
+    const badges = d.statuses.map(st =>
+        `<span style="display:inline-block;padding:3px 10px;border-radius:12px;margin-right:8px;font-size:.8rem;background:${_statutColor(st)}">${st} : <strong>${d.counts[st] || 0}</strong></span>`).join('') +
+        `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:.8rem;background:#e0e7ff">Total : <strong>${d.total}</strong></span>`;
+    if (!d.students.length) {
+        el.innerHTML = `<div style="margin-bottom:12px">${badges}</div><div class="empty">Aucun étudiant. Importez un effectif ou ajoutez un étudiant.</div>`;
+        return;
+    }
+    const optList = st => d.statuses.map(s => `<option ${s === st ? 'selected' : ''}>${s}</option>`).join('');
+    const semSelect = s => s.statut !== 'Abandon' ? '' :
+        `<select onchange="changeAbandonSemestre(${s.id}, this.value)"
+            style="margin-left:6px;padding:3px;border:1px solid #d1d5db;border-radius:4px">
+            <option value="">— sem. —</option>${d.semesters.map(se => `<option ${se === s.abandon_semestre ? 'selected' : ''}>${se}</option>`).join('')}</select>`;
+    const rows = d.students.map((s, i) => `<tr>
+        <td style="color:#9ca3af">${i + 1}</td>
+        <td><strong>${esc(s.nom || '')}</strong></td>
+        <td>${esc(s.prenom || '')}</td>
+        <td>${esc(s.numero || '')}</td>
+        <td>${esc(s.naissance || '')}</td>
+        <td style="white-space:nowrap"><select onchange="changeStudentStatus(${s.id}, this.value)"
+            style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${_statutColor(s.statut)}">${optList(s.statut)}</select>${semSelect(s)}</td>
+        <td><button class="btn btn-secondary btn-sm" title="Supprimer définitivement" onclick="deleteStudent(${s.id})">🗑</button></td>
+    </tr>`).join('');
+    el.innerHTML = `
+        <div style="margin-bottom:12px">${badges}</div>
+        <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px">
+            <table class="pn-table" style="table-layout:auto;width:100%">
+                <thead><tr><th style="width:40px">#</th><th>Nom</th><th>Prénom</th><th>N° Apogée</th><th>Naissance</th><th style="width:210px">Statut</th><th style="width:60px"></th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>`;
+}
+
+async function changeStudentStatus(sid, statut) {
+    try {
+        _promoData = await api(`/promotions/${_promoId}/students/${sid}`, { method: 'PUT', body: JSON.stringify({ statut }) });
+        renderPromoEffectif();
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function changeAbandonSemestre(sid, sem) {
+    try {
+        _promoData = await api(`/promotions/${_promoId}/students/${sid}`, { method: 'PUT', body: JSON.stringify({ abandon_semestre: sem }) });
+        renderPromoEffectif();
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function deleteStudent(sid) {
+    if (!confirm('Supprimer définitivement cet étudiant de la promotion ?')) return;
+    try {
+        _promoData = await api(`/promotions/${_promoId}/students/${sid}`, { method: 'DELETE' });
+        renderPromoEffectif();
+        toast('Étudiant supprimé');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+function _promoNamePreview(y, f) {
+    if (!y || y < 2000) return '';
+    const a = ('' + (y % 100)).padStart(2, '0');
+    const b = ('' + ((y + 3) % 100)).padStart(2, '0');
+    return `${a}-${b}_${f}`;
+}
+
+function updatePromoNamePreview() {
+    const y = parseInt(document.getElementById('promo-start-year').value || '0');
+    const f = document.getElementById('promo-formation').value;
+    document.getElementById('promo-name-preview').value = _promoNamePreview(y, f) || '—';
+}
+
+function openNewPromotion() {
+    document.getElementById('promo-start-year').value = '';
+    document.getElementById('promo-formation').value = 'FTP';
+    document.getElementById('promo-name-preview').value = '—';
+    document.getElementById('promo-start-year').oninput = updatePromoNamePreview;
+    document.getElementById('promo-formation').onchange = updatePromoNamePreview;
+    openModal('modal-new-promotion');
+}
+
+async function submitNewPromotion() {
+    const y = parseInt(document.getElementById('promo-start-year').value || '0');
+    const f = document.getElementById('promo-formation').value;
+    if (!y || y < 2000) { toast('Année de début invalide', 'error'); return; }
+    try {
+        const payload = await api('/promotions', { method: 'POST', body: JSON.stringify({ start_year: y, formation: f }) });
+        closeModal('modal-new-promotion');
+        _promoId = payload.promotion.id;
+        await loadPromotions();
+        toast('Promotion créée : ' + payload.promotion.name);
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+function toggleAddStudentSem() {
+    document.getElementById('student-sem-group').style.display =
+        document.getElementById('student-statut').value === 'Abandon' ? '' : 'none';
+}
+
+function openAddStudent() {
+    ['student-nom', 'student-prenom', 'student-numero', 'student-naissance'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('student-statut').value = 'Actif';
+    document.getElementById('student-sem').value = '';
+    toggleAddStudentSem();
+    openModal('modal-add-student');
+}
+
+async function submitAddStudent() {
+    const body = {
+        nom: document.getElementById('student-nom').value,
+        prenom: document.getElementById('student-prenom').value,
+        numero: document.getElementById('student-numero').value,
+        naissance: document.getElementById('student-naissance').value,
+        statut: document.getElementById('student-statut').value,
+        abandon_semestre: document.getElementById('student-sem').value,
+    };
+    if (!body.nom && !body.prenom && !body.numero) { toast('Renseignez au moins un nom ou un numéro', 'error'); return; }
+    try {
+        _promoData = await api(`/promotions/${_promoId}/students`, { method: 'POST', body: JSON.stringify(body) });
+        closeModal('modal-add-student');
+        renderPromoEffectif();
+        toast('Étudiant ajouté');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+function openPromoImport() {
+    document.getElementById('promo-import-file').value = '';
+    openModal('modal-promo-import');
+}
+
+async function submitPromoImport() {
+    const f = document.getElementById('promo-import-file').files[0];
+    if (!f) { toast('Choisissez un fichier', 'error'); return; }
+    const btn = document.getElementById('promo-import-submit');
+    btn.disabled = true; btn.textContent = 'Import en cours…';
+    try {
+        const fd = new FormData(); fd.append('file', f);
+        const r = await fetch(`/api/promotions/${_promoId}/students/import`, { method: 'POST', body: fd });
+        if (!r.ok) throw new Error(await r.text());
+        _promoData = await r.json();
+        closeModal('modal-promo-import');
+        renderPromoEffectif();
+        const rep = _promoData.import_report || {};
+        toast(`Import : ${rep.imported || 0} ajouté(s), ${rep.skipped || 0} déjà présent(s)`);
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+    finally { btn.disabled = false; btn.textContent = 'Importer'; }
+}
+
+async function deletePromotion() {
+    if (!_promoId || !_promoData) return;
+    if (!confirm('Supprimer la promotion « ' + _promoData.promotion.name + ' » et tout son effectif ?')) return;
+    try {
+        await api('/promotions/' + _promoId, { method: 'DELETE' });
+        _promoId = null; _promoData = null;
+        toast('Promotion supprimée');
+        await loadPromotions();
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// ===== NOTES (sous-onglet Promotions) — liées à l'effectif + référence coeff =====
+let _notesData = null;
+
+async function loadNotes() {
+    // Sélecteur de promotions = celles de l'effectif
+    if (!_promotions.length) {
+        try { _promotions = await api('/promotions'); } catch (e) { _promotions = []; }
+    }
+    const sel = document.getElementById('notes-promo-select');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">—</option>' + _promotions.map(p =>
+        `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+    if (cur && _promotions.some(p => p.id == cur)) sel.value = cur;
+    loadNotesGrid();
+}
+
+async function loadNotesGrid() {
+    const pid = document.getElementById('notes-promo-select').value;
+    const sem = document.getElementById('notes-sem-select').value;
+    const saveBtn = document.getElementById('notes-save-btn');
+    const impBtn = document.getElementById('notes-import-btn');
+    const el = document.getElementById('notes-content');
+    if (!pid || !sem) {
+        _notesData = null; saveBtn.disabled = true; impBtn.disabled = true;
+        el.innerHTML = '<div style="color:#6b7280;padding:20px">Choisissez une promotion et un semestre.</div>';
+        return;
+    }
+    el.innerHTML = '<div class="spinner">Chargement…</div>';
+    try { _notesData = await api(`/promotions/${pid}/notes/${sem}`); }
+    catch (e) { toast('Erreur : ' + e.message, 'error'); saveBtn.disabled = true; impBtn.disabled = true; return; }
+    saveBtn.disabled = false; impBtn.disabled = false;
+    renderNotesGrid();
+}
+
+function openNotesImport() {
+    const pid = document.getElementById('notes-promo-select').value;
+    const sem = document.getElementById('notes-sem-select').value;
+    if (!pid || !sem) { toast('Choisissez une promotion et un semestre', 'error'); return; }
+    document.getElementById('notes-import-file').value = '';
+    openModal('modal-notes-import');
+}
+
+async function submitNotesImport() {
+    const f = document.getElementById('notes-import-file').files[0];
+    if (!f) { toast('Choisissez un fichier', 'error'); return; }
+    const pid = document.getElementById('notes-promo-select').value;
+    const sem = document.getElementById('notes-sem-select').value;
+    const btn = document.getElementById('notes-import-submit');
+    btn.disabled = true; btn.textContent = 'Import en cours…';
+    try {
+        const fd = new FormData(); fd.append('file', f);
+        const r = await fetch(`/api/promotions/${pid}/notes/${sem}/import`, { method: 'POST', body: fd });
+        if (!r.ok) throw new Error(await r.text());
+        _notesData = await r.json();
+        closeModal('modal-notes-import');
+        renderNotesGrid();
+        const rep = _notesData.import_report || {};
+        toast(`Import : ${rep.notes || 0} note(s), ${rep.etudiants_rapproches || 0} étudiant(s) rapproché(s)`
+            + (rep.etudiants_non_trouves ? `, ${rep.etudiants_non_trouves} non trouvé(s)` : ''));
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+    finally { btn.disabled = false; btn.textContent = 'Importer'; }
+}
+
+function _fmtAvg(v) { return (v === null || v === undefined) ? '—' : Number(v).toFixed(2); }
+
+function renderNotesGrid() {
+    const d = _notesData;
+    const el = document.getElementById('notes-content');
+    if (!d.students.length) {
+        el.innerHTML = '<div class="empty">Cette promotion n\'a pas d\'étudiant — gérez l\'effectif dans le sous-onglet Effectif.</div>';
+        return;
+    }
+    if (!d.components.length) {
+        el.innerHTML = '<div class="empty">Aucune matière définie pour ce semestre (voir le sous-onglet Coefficients).</div>';
+        return;
+    }
+    const _semNum = parseInt((d.semester || 'S0').slice(1)) || 0;
+    // Portfolio non noté aux semestres impairs → masqué
+    const mats = (_semNum % 2 === 1) ? d.components.filter(m => m.kind !== 'PORT') : d.components;
+    const comps = d.competences, prev = d.previous || [];
+    // En-tête vertical (réduit la largeur des colonnes)
+    const vth = (txt, bg, extra, title, color) =>
+        `<th title="${esc(title || '')}" style="background:${bg};padding:6px 3px;vertical-align:bottom;text-align:center${extra || ''}"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600;font-size:.94rem${color ? ';color:' + color : ''}">${esc(txt)}</div></th>`;
+    // Étudiant | [compétences des semestres précédents] | matières (courant) | compétences (courant)
+    const head = `<tr><th class="nz-sticky" style="min-width:170px;vertical-align:bottom;font-size:1rem">Étudiant</th>` +
+        prev.map(g => g.competences.map((name, ci) =>
+            vth(g.short + ' ' + name, '#eef2ff', ci === 0 ? ';border-left:4px solid #6366f1' : '', g.label, '#3730a3')).join('')).join('') +
+        mats.map((m, mi) =>
+            vth(m.code, _coeffKindColor(m.kind), mi === 0 ? ';border-left:4px solid #6b7280' : '', m.label, '')).join('') +
+        comps.map((c, ci) => vth(c.name, '#ede9fe', ci === 0 ? ';border-left:4px solid #6b7280' : '', '', '')).join('') +
+        (d.year_competences || []).map((name, ci) =>
+            vth('Année ' + name, '#dcfce7', ci === 0 ? ';border-left:4px solid #22c55e' : '', 'Moyenne annuelle ' + (d.year_semesters || []).join('–'), '#166534')).join('') +
+        `</tr>`;
+    const statutBadge = st => (st && st !== 'Actif') ? ` <span style="font-size:.68rem;color:#9ca3af">(${esc(st)})</span>` : '';
+    const body = d.students.map(s => {
+        const prevCells = prev.map(g => {
+            const ga = g.averages[s.id] || {};
+            return g.competences.map((name, ci) =>
+                `<td style="text-align:center;background:#f5f7ff;color:#3730a3;font-size:.92rem;padding:1px 3px${ci === 0 ? ';border-left:4px solid #6366f1' : ''}">${_fmtAvg(ga[ci])}</td>`).join('');
+        }).join('');
+        const cells = mats.map((m, mi) => {
+            const v = d.marks[s.id + '_' + m.code];
+            return `<td style="padding:1px;text-align:center${mi === 0 ? ';border-left:4px solid #6b7280' : ''}"><input type="text" inputmode="decimal" maxlength="5"
+                class="nz-mark" data-sid="${s.id}" data-code="${esc(m.code)}"
+                value="${v === undefined || v === null ? '' : v}"
+                style="width:48px;padding:2px 1px;text-align:center;font-size:1rem;border:1px solid #d1d5db;border-radius:4px"></td>`;
+        }).join('');
+        const avg = d.averages[s.id] || {};
+        const avgCells = comps.map((c, ci) =>
+            `<td class="nz-avg" data-sid="${s.id}" data-ci="${ci}" style="text-align:center;font-weight:600;font-size:1rem;background:#faf5ff${ci === 0 ? ';border-left:4px solid #6b7280' : ''}">${_fmtAvg(avg[ci])}</td>`).join('');
+        const ya = (d.year_averages || {})[s.id] || {};
+        const yearCells = (d.year_competences || []).map((name, ci) =>
+            `<td style="text-align:center;font-weight:700;font-size:1rem;background:#f0fdf4;color:#166534${ci === 0 ? ';border-left:4px solid #22c55e' : ''}">${_fmtAvg(ya[ci])}</td>`).join('');
+        return `<tr><td class="nz-sticky" style="white-space:nowrap;font-size:1rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${prevCells}${cells}${avgCells}${yearCells}</tr>`;
+    }).join('');
+    el.innerHTML = `
+        <div style="font-size:.8rem;color:#6b7280;margin-bottom:10px">Notes sur 20. Case vide = note absente (le coefficient correspondant est retiré du calcul). Matières &amp; coefficients dans le sous-onglet <strong>Coefficients</strong>.</div>
+        <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px;width:90vw;margin-left:calc(50% - 45vw)">
+            <table class="nz-table"><thead>${head}</thead><tbody>${body}</tbody></table>
+        </div>`;
+}
+
+async function saveNotesMarks() {
+    if (!_notesData) return;
+    const pid = document.getElementById('notes-promo-select').value;
+    const sem = document.getElementById('notes-sem-select').value;
+    const marks = []; let invalid = false;
+    document.querySelectorAll('#notes-content input.nz-mark').forEach(inp => {
+        const raw = inp.value.trim();
+        let mark = null;
+        if (raw !== '') {
+            if (raw.toUpperCase() === 'ABI') {
+                mark = 'ABI'; inp.style.borderColor = '#d1d5db';
+            } else {
+                const note = parseFloat(raw.replace(',', '.'));
+                if (isNaN(note) || note < 0 || note > 20) { invalid = true; inp.style.borderColor = '#ef4444'; return; }
+                inp.style.borderColor = '#d1d5db';
+                mark = note;
+            }
+        }
+        marks.push({ student_id: +inp.dataset.sid, matiere_code: inp.dataset.code, note: mark });
+    });
+    if (invalid) { toast('Notes invalides (0–20).', 'error'); return; }
+    try {
+        _notesData = await api(`/promotions/${pid}/notes/${sem}`, { method: 'PUT', body: JSON.stringify({ marks }) });
+        renderNotesGrid();
+        toast('Notes enregistrées');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// ===== COEFFICIENTS (référence par semestre, partagée) =====
+// Édités dans Promotions → Coefficients. _coeffRef sert de cache partagé.
+let _coeffRef = null;
+
+function _coeffKindColor(k) {
+    return k === 'SAE' ? '#dbeafe' : (k === 'RES' ? '#dcfce7'
+        : (k === 'PORT' ? '#fef3c7' : (k === 'STAGE' ? '#fee2e2' : '#f3f4f6')));
 }
 
 // Découpe une ligne "date | EVENT | k=v | k=v" en {ts, event, fields}

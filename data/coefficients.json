@@ -1,0 +1,963 @@
+{
+  "S1": {
+    "components": [
+      {
+        "code": "SAE1.01",
+        "label": "Exécuter des opérations élémentaires de maintenance",
+        "kind": "SAE"
+      },
+      {
+        "code": "SAE1.02",
+        "label": "Remplacer un élément avec changement de modèle",
+        "kind": "SAE"
+      },
+      {
+        "code": "SAE1.03",
+        "label": "Préparer l’installation d’un équipement",
+        "kind": "SAE"
+      },
+      {
+        "code": "SAÉ 1.04",
+        "label": "Identifier les contraintes organisationnelles d’une entreprise et leur impact sur l’exploitation des moyens techniques",
+        "kind": "SAE"
+      },
+      {
+        "code": "SAE1.05",
+        "label": "Evaluer les risques lors d'une intervention simple",
+        "kind": "SAE"
+      },
+      {
+        "code": "PORTFOLIO",
+        "label": "Portfolio S1",
+        "kind": "PORT"
+      },
+      {
+        "code": "R1.01",
+        "label": "Mathématiques 1",
+        "kind": "RES"
+      },
+      {
+        "code": "R1.02",
+        "label": "Informatique 1",
+        "kind": "RES"
+      },
+      {
+        "code": "R1.03",
+        "label": "Mécanique et matériaux 1",
+        "kind": "RES"
+      },
+      {
+        "code": "R1.04",
+        "label": "Génie Electrique 1",
+        "kind": "RES"
+      },
+      {
+        "code": "R1.05",
+        "label": "Technologie Mécanique et Fluidique 1",
+        "kind": "RES"
+      },
+      {
+        "code": "R1.06",
+        "label": "Électricité et automatismes industriels 1",
+        "kind": "RES"
+      },
+      {
+        "code": "R1.07",
+        "label": "Méthodes et Outils de Maintenance 1",
+        "kind": "RES"
+      },
+      {
+        "code": "R1.08",
+        "label": "Organisation des systèmes industriels 1",
+        "kind": "RES"
+      },
+      {
+        "code": "R1.09",
+        "label": "Techniques d’Expression et de Communication 1",
+        "kind": "RES"
+      },
+      {
+        "code": "R1.10",
+        "label": "Anglais 1",
+        "kind": "RES"
+      },
+      {
+        "code": "R1.11",
+        "label": "Projet Personnel et Professionnel 1",
+        "kind": "RES"
+      }
+    ],
+    "competences": [
+      {
+        "name": "Maintenir",
+        "coeffs": {
+          "SAE1.01": 24.0,
+          "R1.01": 5.0,
+          "R1.02": 2.0,
+          "R1.03": 5.0,
+          "R1.04": 6.5,
+          "R1.05": 4.0,
+          "R1.06": 2.0,
+          "R1.07": 2.0,
+          "R1.08": 3.5,
+          "R1.09": 2.5,
+          "R1.10": 2.5,
+          "R1.11": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Améliorer",
+        "coeffs": {
+          "SAE1.02": 24.0,
+          "R1.01": 5.0,
+          "R1.02": 2.5,
+          "R1.03": 5.0,
+          "R1.04": 6.5,
+          "R1.05": 5.0,
+          "R1.06": 3.0,
+          "R1.07": 3.0,
+          "R1.09": 2.5,
+          "R1.10": 2.5,
+          "R1.11": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Installer",
+        "coeffs": {
+          "SAE1.03": 24.0,
+          "R1.01": 5.5,
+          "R1.02": 3.0,
+          "R1.03": 5.5,
+          "R1.04": 7.0,
+          "R1.05": 5.0,
+          "R1.06": 4.0,
+          "R1.09": 2.5,
+          "R1.10": 2.5,
+          "R1.11": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Manager",
+        "coeffs": {
+          "SAÉ 1.04": 24.0,
+          "R1.01": 5.0,
+          "R1.02": 2.0,
+          "R1.03": 5.0,
+          "R1.04": 6.5,
+          "R1.05": 4.0,
+          "R1.06": 2.0,
+          "R1.07": 2.0,
+          "R1.08": 3.5,
+          "R1.09": 2.5,
+          "R1.10": 2.5,
+          "R1.11": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Sécuriser",
+        "coeffs": {
+          "SAE1.05": 24.0,
+          "R1.01": 5.0,
+          "R1.02": 2.0,
+          "R1.03": 5.0,
+          "R1.04": 6.5,
+          "R1.05": 5.0,
+          "R1.06": 3.0,
+          "R1.08": 3.5,
+          "R1.09": 2.5,
+          "R1.10": 2.5,
+          "R1.11": 1.0
+        },
+        "denom": 60.0
+      }
+    ]
+  },
+  "S2": {
+    "components": [
+      {
+        "code": "SAE2.01",
+        "label": "Identifier et réaliser les opérations élémentaires de maintenance",
+        "kind": "SAE"
+      },
+      {
+        "code": "SAÉ 2.02",
+        "label": "Valider le remplacement d’un élément d’un système pluritechnique",
+        "kind": "SAE"
+      },
+      {
+        "code": "SAE2.03",
+        "label": "Réaliser et vérifier le raccordement d’un équipement",
+        "kind": "SAE"
+      },
+      {
+        "code": "SAÉ 2.04",
+        "label": "Identifier les contraintes organisationnelles d’une entreprise et leur impact sur l’exploitation des moyens techniques",
+        "kind": "SAE"
+      },
+      {
+        "code": "SAE2.05",
+        "label": "Utiliser les outils de contrôle et mesure dans le milieu industriel",
+        "kind": "SAE"
+      },
+      {
+        "code": "SAE2.PORTFOLIO",
+        "label": "Portfolio S2",
+        "kind": "PORT"
+      },
+      {
+        "code": "R2.01",
+        "label": "Mathématiques 2",
+        "kind": "RES"
+      },
+      {
+        "code": "R2.02",
+        "label": "Informatique 2",
+        "kind": "RES"
+      },
+      {
+        "code": "R2.03",
+        "label": "Mécanique et Matériaux 2",
+        "kind": "RES"
+      },
+      {
+        "code": "R2.04",
+        "label": "Génie électrique 2",
+        "kind": "RES"
+      },
+      {
+        "code": "R2.05",
+        "label": "Energie-Fluides-Thermique 2",
+        "kind": "RES"
+      },
+      {
+        "code": "R2.06",
+        "label": "Technologie Mécanique et Fluidique 2",
+        "kind": "RES"
+      },
+      {
+        "code": "R2.07",
+        "label": "Électricité et Automatismes Industriels 2",
+        "kind": "RES"
+      },
+      {
+        "code": "R2.08",
+        "label": "Méthodes et Outils en Maintenance 2",
+        "kind": "RES"
+      },
+      {
+        "code": "R2.09",
+        "label": "Habilitation électrique 2",
+        "kind": "RES"
+      },
+      {
+        "code": "R2.10",
+        "label": "Techniques d’Expression et de Communication 2",
+        "kind": "RES"
+      },
+      {
+        "code": "R2.11",
+        "label": "Anglais 2",
+        "kind": "RES"
+      },
+      {
+        "code": "R2.12",
+        "label": "Projet Personnel et Professionnel 2",
+        "kind": "RES"
+      }
+    ],
+    "competences": [
+      {
+        "name": "Maintenir",
+        "coeffs": {
+          "SAE2.01": 22.0,
+          "SAE2.PORTFOLIO": 2.0,
+          "R2.01": 4.0,
+          "R2.02": 2.5,
+          "R2.03": 4.5,
+          "R2.04": 5.0,
+          "R2.05": 1.5,
+          "R2.06": 3.0,
+          "R2.07": 5.5,
+          "R2.08": 4.0,
+          "R2.10": 2.5,
+          "R2.11": 2.5,
+          "R2.12": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Améliorer",
+        "coeffs": {
+          "SAÉ 2.02": 22.0,
+          "SAE2.PORTFOLIO": 2.0,
+          "R2.01": 4.0,
+          "R2.03": 5.0,
+          "R2.04": 5.5,
+          "R2.05": 2.0,
+          "R2.06": 3.0,
+          "R2.07": 6.0,
+          "R2.08": 4.5,
+          "R2.10": 2.5,
+          "R2.11": 2.5,
+          "R2.12": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Installer",
+        "coeffs": {
+          "SAE2.03": 22.0,
+          "SAE2.PORTFOLIO": 2.0,
+          "R2.01": 3.5,
+          "R2.02": 2.5,
+          "R2.03": 4.5,
+          "R2.04": 5.0,
+          "R2.05": 1.5,
+          "R2.06": 2.5,
+          "R2.07": 5.0,
+          "R2.08": 3.5,
+          "R2.09": 2.0,
+          "R2.10": 2.5,
+          "R2.11": 2.5,
+          "R2.12": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Manager",
+        "coeffs": {
+          "SAÉ 2.04": 22.0,
+          "SAE2.PORTFOLIO": 2.0,
+          "R2.01": 4.0,
+          "R2.02": 2.5,
+          "R2.03": 4.5,
+          "R2.04": 5.0,
+          "R2.05": 1.5,
+          "R2.06": 3.0,
+          "R2.07": 5.5,
+          "R2.08": 4.0,
+          "R2.10": 2.5,
+          "R2.11": 2.5,
+          "R2.12": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Sécuriser",
+        "coeffs": {
+          "SAE2.05": 22.0,
+          "SAE2.PORTFOLIO": 2.0,
+          "R2.01": 4.0,
+          "R2.03": 5.0,
+          "R2.04": 5.0,
+          "R2.05": 1.5,
+          "R2.06": 3.0,
+          "R2.07": 5.5,
+          "R2.08": 4.0,
+          "R2.09": 2.0,
+          "R2.10": 2.5,
+          "R2.11": 2.5,
+          "R2.12": 1.0
+        },
+        "denom": 60.0
+      }
+    ]
+  },
+  "S3": {
+    "components": [
+      {
+        "code": "SAÉ 3.ISP.01",
+        "label": "participer à une action de maintenance",
+        "kind": "SAE"
+      },
+      {
+        "code": "SAÉ 3.ISP.02",
+        "label": "adapter un système pluri technique",
+        "kind": "SAE"
+      },
+      {
+        "code": "SAE3.PORTFOLIO",
+        "label": "Portfolio S3",
+        "kind": "PORT"
+      },
+      {
+        "code": "R3.01",
+        "label": "Mathématiques 3",
+        "kind": "RES"
+      },
+      {
+        "code": "R3.02",
+        "label": "Informatique 3",
+        "kind": "RES"
+      },
+      {
+        "code": "R3.03",
+        "label": "Mécanique et Matériaux 3",
+        "kind": "RES"
+      },
+      {
+        "code": "R3.04",
+        "label": "Génie électrique 3",
+        "kind": "RES"
+      },
+      {
+        "code": "R3.05",
+        "label": "Energie-Fluides-Thermique 3",
+        "kind": "RES"
+      },
+      {
+        "code": "R3.06",
+        "label": "Technologie Mécanique et Fluidique 3",
+        "kind": "RES"
+      },
+      {
+        "code": "R3.07",
+        "label": "Automatismes Industriels 3",
+        "kind": "RES"
+      },
+      {
+        "code": "R3.08",
+        "label": "Automatique Appliquée 3",
+        "kind": "RES"
+      },
+      {
+        "code": "R3.09",
+        "label": "Maintenance 3",
+        "kind": "RES"
+      },
+      {
+        "code": "R3.10",
+        "label": "Organisation des Systèmes Industriels-Métrologie 3",
+        "kind": "RES"
+      },
+      {
+        "code": "R3.11",
+        "label": "Sécurité 3",
+        "kind": "RES"
+      },
+      {
+        "code": "R3.12",
+        "label": "Techniques d'Expression et Communication 3",
+        "kind": "RES"
+      },
+      {
+        "code": "R3.13",
+        "label": "Anglais 3",
+        "kind": "RES"
+      },
+      {
+        "code": "R3.14",
+        "label": "Projet Personnel et Professionnel 3",
+        "kind": "RES"
+      }
+    ],
+    "competences": [
+      {
+        "name": "Maintenir",
+        "coeffs": {
+          "SAÉ 3.ISP.01": 24.0,
+          "R3.01": 4.5,
+          "R3.02": 1.5,
+          "R3.03": 5.0,
+          "R3.04": 5.0,
+          "R3.05": 2.5,
+          "R3.06": 3.0,
+          "R3.07": 2.0,
+          "R3.08": 2.0,
+          "R3.09": 1.0,
+          "R3.10": 2.5,
+          "R3.11": 1.0,
+          "R3.12": 2.5,
+          "R3.13": 2.5,
+          "R3.14": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Améliorer",
+        "coeffs": {
+          "SAÉ 3.ISP.02": 24.0,
+          "R3.01": 4.5,
+          "R3.02": 1.5,
+          "R3.03": 5.0,
+          "R3.04": 5.0,
+          "R3.05": 2.5,
+          "R3.06": 3.0,
+          "R3.07": 2.0,
+          "R3.08": 2.0,
+          "R3.09": 1.0,
+          "R3.10": 2.5,
+          "R3.11": 1.0,
+          "R3.12": 2.5,
+          "R3.13": 2.5,
+          "R3.14": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Installer",
+        "coeffs": {
+          "SAÉ 3.ISP.02": 24.0,
+          "R3.01": 5.0,
+          "R3.02": 2.0,
+          "R3.03": 5.5,
+          "R3.04": 5.5,
+          "R3.05": 3.0,
+          "R3.06": 3.0,
+          "R3.07": 3.5,
+          "R3.11": 2.5,
+          "R3.12": 2.5,
+          "R3.13": 2.5,
+          "R3.14": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Manager",
+        "coeffs": {
+          "SAÉ 3.ISP.02": 24.0,
+          "R3.01": 4.5,
+          "R3.02": 1.5,
+          "R3.03": 5.0,
+          "R3.04": 5.0,
+          "R3.05": 2.5,
+          "R3.06": 3.0,
+          "R3.07": 2.0,
+          "R3.08": 2.0,
+          "R3.09": 1.0,
+          "R3.10": 2.5,
+          "R3.11": 1.0,
+          "R3.12": 2.5,
+          "R3.13": 2.5,
+          "R3.14": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Sécuriser",
+        "coeffs": {
+          "SAÉ 3.ISP.01": 24.0,
+          "R3.01": 4.5,
+          "R3.02": 1.5,
+          "R3.03": 5.0,
+          "R3.04": 5.0,
+          "R3.05": 2.5,
+          "R3.06": 3.0,
+          "R3.07": 2.5,
+          "R3.08": 2.5,
+          "R3.10": 2.5,
+          "R3.11": 1.0,
+          "R3.12": 2.5,
+          "R3.13": 2.5,
+          "R3.14": 1.0
+        },
+        "denom": 60.0
+      }
+    ]
+  },
+  "S4": {
+    "components": [
+      {
+        "code": "STAGEISP.",
+        "label": "STAGE",
+        "kind": "STAGE"
+      },
+      {
+        "code": "SAÉ 4.ISP.02",
+        "label": "mettre en place une action de maintenance",
+        "kind": "SAE"
+      },
+      {
+        "code": "SAE4.PORTFOLIO",
+        "label": "Portfolio S4",
+        "kind": "PORT"
+      },
+      {
+        "code": "R4.01",
+        "label": "Mathématiques 4",
+        "kind": "RES"
+      },
+      {
+        "code": "R4.02",
+        "label": "Mécanique et Matériaux 4",
+        "kind": "RES"
+      },
+      {
+        "code": "R4.03",
+        "label": "Génie Electrique 4",
+        "kind": "RES"
+      },
+      {
+        "code": "R4.04",
+        "label": "Energie-Fluides-Thermique 4",
+        "kind": "RES"
+      },
+      {
+        "code": "R4.ISP.05",
+        "label": "Mécatronique ISP 4",
+        "kind": "RES"
+      },
+      {
+        "code": "R4.ISP.06",
+        "label": "Maintenance ISP 4",
+        "kind": "RES"
+      },
+      {
+        "code": "R4.07",
+        "label": "Environnement 4",
+        "kind": "RES"
+      },
+      {
+        "code": "R4.08",
+        "label": "Techniques  d'Expression et Communication 4",
+        "kind": "RES"
+      },
+      {
+        "code": "R4.09",
+        "label": "Anglais 4",
+        "kind": "RES"
+      },
+      {
+        "code": "R4.10",
+        "label": "Projet Personnel et Professionnel 4",
+        "kind": "RES"
+      }
+    ],
+    "competences": [
+      {
+        "name": "Maintenir",
+        "coeffs": {
+          "STAGEISP.": 16.0,
+          "SAÉ 4.ISP.02": 18.0,
+          "SAE4.PORTFOLIO": 2.0,
+          "R4.01": 4.0,
+          "R4.02": 3.0,
+          "R4.03": 6.0,
+          "R4.04": 2.0,
+          "R4.ISP.06": 4.0,
+          "R4.08": 2.0,
+          "R4.09": 2.0,
+          "R4.10": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Améliorer",
+        "coeffs": {
+          "STAGEISP.": 32.0,
+          "SAE4.PORTFOLIO": 4.0,
+          "R4.01": 3.5,
+          "R4.02": 2.5,
+          "R4.03": 5.5,
+          "R4.04": 1.5,
+          "R4.ISP.05": 3.0,
+          "R4.ISP.06": 1.0,
+          "R4.07": 2.0,
+          "R4.08": 2.0,
+          "R4.09": 2.0,
+          "R4.10": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Installer",
+        "coeffs": {
+          "STAGEISP.": 32.0,
+          "SAE4.PORTFOLIO": 4.0,
+          "R4.01": 3.5,
+          "R4.02": 2.5,
+          "R4.03": 5.5,
+          "R4.04": 1.5,
+          "R4.ISP.05": 3.0,
+          "R4.ISP.06": 1.0,
+          "R4.07": 2.0,
+          "R4.08": 2.0,
+          "R4.09": 2.0,
+          "R4.10": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Manager",
+        "coeffs": {
+          "STAGEISP.": 32.0,
+          "SAE4.PORTFOLIO": 4.0,
+          "R4.01": 3.5,
+          "R4.02": 2.5,
+          "R4.03": 5.5,
+          "R4.04": 1.5,
+          "R4.ISP.05": 3.0,
+          "R4.ISP.06": 1.0,
+          "R4.07": 2.0,
+          "R4.08": 2.0,
+          "R4.09": 2.0,
+          "R4.10": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Sécuriser",
+        "coeffs": {
+          "STAGEISP.": 16.0,
+          "SAÉ 4.ISP.02": 18.0,
+          "SAE4.PORTFOLIO": 2.0,
+          "R4.01": 3.5,
+          "R4.02": 3.0,
+          "R4.03": 5.5,
+          "R4.04": 2.0,
+          "R4.ISP.05": 3.0,
+          "R4.07": 2.0,
+          "R4.08": 2.0,
+          "R4.09": 2.0,
+          "R4.10": 1.0
+        },
+        "denom": 60.0
+      }
+    ]
+  },
+  "S5": {
+    "components": [
+      {
+        "code": "SAÉ 5.ISP.01",
+        "label": "Faire évoluer un système",
+        "kind": "SAE"
+      },
+      {
+        "code": "SAÉ 5.ISP.02",
+        "label": "installer un système en équipe",
+        "kind": "SAE"
+      },
+      {
+        "code": "PORTFOLIO",
+        "label": "Portfolio S5",
+        "kind": "PORT"
+      },
+      {
+        "code": "R5.01",
+        "label": "Mathématiques 5",
+        "kind": "RES"
+      },
+      {
+        "code": "R5.02",
+        "label": "Informatique 5",
+        "kind": "RES"
+      },
+      {
+        "code": "R5.03",
+        "label": "Mécanique et Matériaux 5",
+        "kind": "RES"
+      },
+      {
+        "code": "R5.04",
+        "label": "Génie électrique 5",
+        "kind": "RES"
+      },
+      {
+        "code": "R5.05",
+        "label": "Energie-Fluides-Thermique 5",
+        "kind": "RES"
+      },
+      {
+        "code": "R5.ISP.06",
+        "label": "Automatismes Industriels ISP 5",
+        "kind": "RES"
+      },
+      {
+        "code": "R5.ISP.07",
+        "label": "Mécatronique ISP 5",
+        "kind": "RES"
+      },
+      {
+        "code": "R5.ISP.08",
+        "label": "Maintenance ISP 5",
+        "kind": "RES"
+      },
+      {
+        "code": "R5.09",
+        "label": "Suivi d'affaires - contrat 5",
+        "kind": "RES"
+      },
+      {
+        "code": "R5.10",
+        "label": "Référentiel Sécurité 5",
+        "kind": "RES"
+      },
+      {
+        "code": "R5.11",
+        "label": "Techniques d'Expression et Communication 5",
+        "kind": "RES"
+      },
+      {
+        "code": "R5.12",
+        "label": "Anglais 5",
+        "kind": "RES"
+      },
+      {
+        "code": "R5.13",
+        "label": "Projet Personnel et Professionnel 5",
+        "kind": "RES"
+      }
+    ],
+    "competences": [
+      {
+        "name": "Améliorer",
+        "coeffs": {
+          "SAÉ 5.ISP.01": 24.0,
+          "R5.01": 3.0,
+          "R5.02": 2.0,
+          "R5.03": 3.5,
+          "R5.04": 6.0,
+          "R5.05": 3.0,
+          "R5.ISP.06": 4.5,
+          "R5.ISP.07": 3.0,
+          "R5.ISP.08": 3.5,
+          "R5.09": 1.5,
+          "R5.11": 2.5,
+          "R5.12": 2.5,
+          "R5.13": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Installer",
+        "coeffs": {
+          "SAÉ 5.ISP.02": 24.0,
+          "R5.01": 3.0,
+          "R5.02": 2.0,
+          "R5.03": 3.5,
+          "R5.04": 6.0,
+          "R5.05": 3.0,
+          "R5.ISP.06": 4.0,
+          "R5.ISP.07": 2.5,
+          "R5.ISP.08": 3.0,
+          "R5.09": 1.5,
+          "R5.10": 1.5,
+          "R5.11": 2.5,
+          "R5.12": 2.5,
+          "R5.13": 1.0
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Manager",
+        "coeffs": {
+          "SAÉ 5.ISP.02": 24.0,
+          "R5.01": 3.0,
+          "R5.02": 2.0,
+          "R5.03": 3.5,
+          "R5.04": 6.0,
+          "R5.05": 3.0,
+          "R5.ISP.06": 4.0,
+          "R5.ISP.07": 2.5,
+          "R5.ISP.08": 3.0,
+          "R5.09": 1.5,
+          "R5.10": 1.5,
+          "R5.11": 2.5,
+          "R5.12": 2.5,
+          "R5.13": 1.0
+        },
+        "denom": 60.0
+      }
+    ]
+  },
+  "S6": {
+    "components": [
+      {
+        "code": "STAGEISP.",
+        "label": "STAGE",
+        "kind": "STAGE"
+      },
+      {
+        "code": "PORTFOLIO",
+        "label": "Portfolio S6",
+        "kind": "PORT"
+      },
+      {
+        "code": "R6.01",
+        "label": "Mathématiques 6",
+        "kind": "RES"
+      },
+      {
+        "code": "R6.02",
+        "label": "Mécanique et Matériaux 6",
+        "kind": "RES"
+      },
+      {
+        "code": "R6.03",
+        "label": "Génie Electrique 6",
+        "kind": "RES"
+      },
+      {
+        "code": "R6.04",
+        "label": "Energie-Fluides-Thermique 6",
+        "kind": "RES"
+      },
+      {
+        "code": "R6.ISP.05",
+        "label": "Supervision 6",
+        "kind": "RES"
+      },
+      {
+        "code": "R6.06",
+        "label": "Techniques d'Expression et de Communication 6",
+        "kind": "RES"
+      },
+      {
+        "code": "R6.07",
+        "label": "Anglais 6",
+        "kind": "RES"
+      }
+    ],
+    "competences": [
+      {
+        "name": "Améliorer",
+        "coeffs": {
+          "STAGEISP.": 32.0,
+          "PORTFOLIO": 4.0,
+          "R6.01": 4.5,
+          "R6.02": 3.5,
+          "R6.03": 3.5,
+          "R6.04": 3.0,
+          "R6.ISP.05": 4.5,
+          "R6.06": 2.5,
+          "R6.07": 2.5
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Installer",
+        "coeffs": {
+          "STAGEISP.": 32.0,
+          "PORTFOLIO": 4.0,
+          "R6.01": 4.5,
+          "R6.02": 3.5,
+          "R6.03": 3.5,
+          "R6.04": 3.0,
+          "R6.ISP.05": 4.5,
+          "R6.06": 2.5,
+          "R6.07": 2.5
+        },
+        "denom": 60.0
+      },
+      {
+        "name": "Manager",
+        "coeffs": {
+          "STAGEISP.": 32.0,
+          "PORTFOLIO": 4.0,
+          "R6.01": 4.5,
+          "R6.02": 3.5,
+          "R6.03": 3.5,
+          "R6.04": 3.0,
+          "R6.ISP.05": 4.5,
+          "R6.06": 2.5,
+          "R6.07": 2.5
+        },
+        "denom": 60.0
+      }
+    ]
+  }
+}

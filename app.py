@@ -8,6 +8,7 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import sqlite3
 import os
+import re
 import json
 import math
 import shutil
@@ -19,6 +20,31 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from pathlib import Path
 import io
+
+
+def _load_local_env():
+    """Charge un fichier .env local (lignes KEY=VALUE) s'il existe, pour le
+    développement. N'écrase jamais une variable déjà définie dans l'environnement :
+    en production, définissez les variables côté hébergeur (le .env n'y est pas)."""
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+    if not os.path.isfile(env_path):
+        return
+    try:
+        with open(env_path, encoding='utf-8') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                key, _, value = line.partition('=')
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except OSError:
+        pass
+
+
+_load_local_env()
 
 # Initialize Flask app
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -301,6 +327,90 @@ def close_db(exception):
     db = g.pop('_db', None)
     if db is not None:
         db.close()
+    pdb = g.pop('_pdb', None)
+    if pdb is not None:
+        pdb.close()
+
+# ===== Base des PROMOTIONS (cohorte sur 3 ans, indépendante de l'année) =====
+# Stockée à part car une promotion suit ses étudiants/résultats d'année en année.
+_PROMOTIONS_DB = os.environ.get('EDT_PROMOTIONS_DB') or os.path.join(_DB_DIR, 'promotions.db')
+_STUDENT_STATUSES = ['Actif', 'Abandon', 'Redoublant', 'Sortie']
+_PROMO_SEMESTERS = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6']
+
+def _open_promotions_db():
+    db = sqlite3.connect(_PROMOTIONS_DB, timeout=10)
+    db.row_factory = sqlite3.Row
+    db.execute('PRAGMA foreign_keys = ON')
+    return db
+
+def get_promotions_db():
+    """Connexion à la base des promotions (partagée entre toutes les années)."""
+    try:
+        if '_pdb' not in g:
+            g._pdb = _open_promotions_db()
+        return g._pdb
+    except RuntimeError:
+        return _open_promotions_db()
+
+def _apply_promotions_migrations(db):
+    db.execute('PRAGMA journal_mode=WAL')
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS promotions (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT NOT NULL UNIQUE,   -- '25-28_ALT'
+            formation  TEXT NOT NULL,          -- 'ALT' / 'FTP'
+            start_year INTEGER NOT NULL,        -- 2025
+            end_year   INTEGER NOT NULL,        -- 2028
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT
+        )
+    ''')
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS promotion_students (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            promotion_id INTEGER NOT NULL,
+            numero       TEXT,
+            nom          TEXT,
+            prenom       TEXT,
+            naissance    TEXT,
+            statut       TEXT DEFAULT 'Actif',
+            created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE
+        )
+    ''')
+    # Semestre d'abandon (S1..S6), renseigné quand statut = 'Abandon'
+    try:
+        db.execute("ALTER TABLE promotion_students ADD COLUMN abandon_semestre TEXT")
+    except sqlite3.OperationalError:
+        pass
+    # Notes par étudiant : (promotion, semestre, étudiant, matière) -> note.
+    # Les matières (codes) viennent de la référence des coefficients ; suivi pluriannuel.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS student_marks (
+            promotion_id INTEGER NOT NULL,
+            semester     TEXT NOT NULL,
+            student_id   INTEGER NOT NULL,
+            matiere_code TEXT NOT NULL,
+            note         REAL,
+            PRIMARY KEY (promotion_id, semester, student_id, matiere_code),
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
+    # Mention affichée à la place de la note (ex 'ABI' = absence, comptée 0)
+    try:
+        db.execute("ALTER TABLE student_marks ADD COLUMN mention TEXT")
+    except sqlite3.OperationalError:
+        pass
+    db.commit()
+
+def _init_promotions_db():
+    os.makedirs(os.path.dirname(_PROMOTIONS_DB), exist_ok=True)
+    db = _open_promotions_db()
+    try:
+        _apply_promotions_migrations(db)
+    finally:
+        db.close()
 
 def _apply_migrations(db):
     """Applique toutes les migrations de schéma sur une connexion DB ouverte"""
@@ -523,6 +633,81 @@ def _apply_migrations(db):
                 (year_group, formation_type, cm_groups, td_groups, tp_groups, pt_groups)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (yg, ft, cm, td, tp, pt))
+
+    # ======================= GESTION DES NOTES (admin) =======================
+    # Promotion de notes (1 fichier Apogée importé = 1 promo, ex: BUT1 FI S2)
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS grade_promos (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            code        TEXT NOT NULL UNIQUE,   -- ex 'T3GIMS2FI1'
+            label       TEXT,                   -- intitulé lu dans le fichier (E4)
+            semester    TEXT,                   -- 'S2' / 'S4' / 'S6'
+            formation   TEXT,                   -- 'FI' / 'APP'
+            template     TEXT,                  -- chemin relatif du .xlsm modèle (export)
+            template_orig TEXT,                 -- nom d'origine du fichier importé
+            updated_at  TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    # Éléments pédagogiques (ELP) : SAÉ, ressources, portfolio — colonnes du fichier
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS grade_elps (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            promo_id   INTEGER NOT NULL,
+            ordre      INTEGER,
+            code       TEXT,
+            title      TEXT,
+            kind       TEXT,        -- 'SAE' / 'RES' / 'PORT'
+            note_col   INTEGER,     -- index colonne Note dans le modèle
+            bareme_col INTEGER,     -- index colonne Barème dans le modèle
+            FOREIGN KEY (promo_id) REFERENCES grade_promos(id) ON DELETE CASCADE
+        )
+    ''')
+    # Étudiants (roster importé du fichier standard)
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS grade_students (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            promo_id   INTEGER NOT NULL,
+            ordre      INTEGER,
+            src_row    INTEGER,     -- ligne d'origine dans le modèle (export)
+            numero     TEXT,
+            nom        TEXT,
+            prenom     TEXT,
+            naissance  TEXT,
+            FOREIGN KEY (promo_id) REFERENCES grade_promos(id) ON DELETE CASCADE
+        )
+    ''')
+    # Notes saisies (étudiant × ELP)
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS grade_marks (
+            student_id INTEGER NOT NULL,
+            elp_id     INTEGER NOT NULL,
+            note       REAL,
+            PRIMARY KEY (student_id, elp_id),
+            FOREIGN KEY (student_id) REFERENCES grade_students(id) ON DELETE CASCADE,
+            FOREIGN KEY (elp_id)     REFERENCES grade_elps(id) ON DELETE CASCADE
+        )
+    ''')
+    # Compétences (5 max BUT GIM) calculées à partir des ELP par coefficients
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS grade_competences (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            promo_id  INTEGER NOT NULL,
+            ordre     INTEGER,
+            name      TEXT,
+            FOREIGN KEY (promo_id) REFERENCES grade_promos(id) ON DELETE CASCADE
+        )
+    ''')
+    # Coefficients compétence × ELP (renormalisation auto si note manquante)
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS grade_coefficients (
+            competence_id INTEGER NOT NULL,
+            elp_id        INTEGER NOT NULL,
+            coeff         REAL DEFAULT 0,
+            PRIMARY KEY (competence_id, elp_id),
+            FOREIGN KEY (competence_id) REFERENCES grade_competences(id) ON DELETE CASCADE,
+            FOREIGN KEY (elp_id)        REFERENCES grade_elps(id) ON DELETE CASCADE
+        )
+    ''')
     db.commit()
 
 def get_year_config():
@@ -1081,6 +1266,1040 @@ def download_constraint_file(teacher_id):
     if not row or not row['file_path']:
         return error_response('Aucun fichier', 404)
     return _send_constraint_file(row)
+
+# ======================= GESTION DES NOTES (admin) =======================
+# Onglet admin : import d'un fichier Apogée par promo (roster + ELP), saisie des
+# notes, coefficients de compétences éditables (renormalisation si note absente),
+# export du PV au format Apogée (.xlsm rempli).
+
+_NOTES_DIR = os.environ.get('EDT_NOTES_DIR') or os.path.join(_BASE_DIR, 'uploads', 'notes')
+_ALLOWED_GRADE_EXT = {'.xlsm', '.xlsx'}
+_MAX_GRADE_FILE = 15 * 1024 * 1024   # 15 Mo
+
+# Noms standard des compétences BUT GIM par semestre (source : fichier de calcul)
+_COMP_NAMES_5 = ['Maintenir', 'Améliorer', 'Installer', 'Manager', 'Sécuriser']
+_COMP_NAMES_3 = ['Améliorer', 'Installer', 'Manager']
+_COMP_BY_SEM = {
+    'S1': _COMP_NAMES_5, 'S2': _COMP_NAMES_5, 'S3': _COMP_NAMES_5,
+    'S4': _COMP_NAMES_5, 'S5': _COMP_NAMES_3, 'S6': _COMP_NAMES_3,
+}
+
+# Référence des coefficients par semestre, extraite une fois pour toutes du fichier
+# de calcul (data/coefficients.json). Sert de défaut ; les éventuelles modifications
+# sont stockées par année dans app_settings['grade_coeff_reference'].
+_REF_COEFF_FILE = os.path.join(_BASE_DIR, 'data', 'coefficients.json')
+
+def _ref_coeffs_defaults():
+    try:
+        with open(_REF_COEFF_FILE, encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+def _load_ref_coeffs(db):
+    """Coefficients de référence : surcharge stockée en base si présente, sinon fichier."""
+    row = db.execute("SELECT value FROM app_settings WHERE key='grade_coeff_reference'").fetchone()
+    if row and row['value']:
+        try:
+            return json.loads(row['value'])
+        except ValueError:
+            pass
+    return _ref_coeffs_defaults()
+
+def _seed_promo_competences(db, promo_id, semester):
+    """Crée les compétences + coefficients d'une promo depuis la référence du
+    semestre (mapping composant→ELP par index : groupe IS = SAÉ+STAGE, PORT, RES)."""
+    ref = _load_ref_coeffs(db).get(semester)
+    elps = db.execute('SELECT id, kind FROM grade_elps WHERE promo_id=? ORDER BY ordre',
+                      (promo_id,)).fetchall()
+    sae = [e['id'] for e in elps if e['kind'] == 'SAE']
+    port = [e['id'] for e in elps if e['kind'] == 'PORT']
+    res = [e['id'] for e in elps if e['kind'] == 'RES']
+    code2elp = {}
+    if ref:
+        ref_is = [c for c in ref['components'] if c['kind'] in ('SAE', 'STAGE')]
+        ref_port = [c for c in ref['components'] if c['kind'] == 'PORT']
+        ref_res = [c for c in ref['components'] if c['kind'] == 'RES']
+        for grp, target in ((ref_is, sae), (ref_port, port), (ref_res, res)):
+            for i, c in enumerate(grp):
+                if i < len(target):
+                    code2elp[c['code']] = target[i]
+        comps = ref['competences']
+    else:
+        comps = [{'name': n, 'coeffs': {}} for n in _COMP_BY_SEM.get(semester, _COMP_NAMES_5)]
+    for i, comp in enumerate(comps, start=1):
+        cid = db.execute('INSERT INTO grade_competences(promo_id, ordre, name) VALUES(?,?,?)',
+                         (promo_id, i, comp['name'])).lastrowid
+        for code, coeff in (comp.get('coeffs') or {}).items():
+            eid = code2elp.get(code)
+            if eid and coeff:
+                db.execute('INSERT INTO grade_coefficients(competence_id, elp_id, coeff) VALUES(?,?,?)',
+                           (cid, eid, coeff))
+
+def _require_admin():
+    """Renvoie une réponse 403 si l'utilisateur courant n'est pas admin, sinon None."""
+    if session.get('role') != 'admin':
+        return error_response('Accès réservé à l\'administrateur', 403)
+    return None
+
+def _notes_year_dir():
+    d = os.path.join(_NOTES_DIR, get_current_year() or 'default')
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def _grade_promo_row(promo_id):
+    return get_db().execute(
+        'SELECT * FROM grade_promos WHERE id=?', (promo_id,)).fetchone()
+
+def _promo_meta(filename, label):
+    """Déduit (code, semestre, formation) du nom de fichier et de l'intitulé."""
+    base = os.path.splitext(os.path.basename(filename))[0]
+    text = (base + ' ' + (label or '')).upper()
+    m = re.search(r'S\s*([1-6])', text)
+    semester = ('S' + m.group(1)) if m else ''
+    formation = 'APP' if 'APP' in text else ('FI' if 'FI' in text else '')
+    return base, semester, formation
+
+def _parse_apogee(path):
+    """Lit un fichier Apogée : (label, [elps], [students])."""
+    import openpyxl
+    is_xlsm = path.lower().endswith('.xlsm')
+    wb = openpyxl.load_workbook(path, data_only=True, keep_vba=is_xlsm)
+    ws = wb.active
+    label = ws.cell(4, 5).value or ws.cell(1, 10).value or ''
+    label = str(label).strip()
+    elps, ordre = [], 0
+    for c in range(5, ws.max_column + 1):
+        typ = ws.cell(13, c).value
+        code = ws.cell(8, c).value
+        if typ == 'N' and code:
+            title = ws.cell(14, c).value or code
+            bareme_col = c + 1 if ws.cell(13, c + 1).value == 'B' else None
+            scode = str(code).upper()
+            title_l = str(title).lower()
+            if 'portfolio' in title_l:
+                kind = 'PORT'
+            elif 'IS' in scode:
+                kind = 'SAE'
+            elif 'IR' in scode:
+                kind = 'RES'
+            else:
+                kind = 'AUTRE'
+            ordre += 1
+            elps.append({'ordre': ordre, 'code': str(code).strip(),
+                         'title': str(title).strip(), 'kind': kind,
+                         'note_col': c, 'bareme_col': bareme_col})
+    students, r, o = [], 18, 0
+    def _txt(v):
+        return ('' if v is None else str(v)).strip()
+    while r <= 1000:
+        num = ws.cell(r, 1).value
+        if num in (None, ''):
+            break
+        o += 1
+        students.append({'ordre': o, 'src_row': r, 'numero': _txt(num),
+                         'nom': _txt(ws.cell(r, 2).value),
+                         'prenom': _txt(ws.cell(r, 3).value),
+                         'naissance': _txt(ws.cell(r, 4).value)})
+        r += 1
+    return label, elps, students
+
+def _competence_averages(db, promo_id):
+    """Moyenne par compétence et par étudiant, avec renormalisation : seuls les
+    coefficients dont la note existe entrent au numérateur ET au dénominateur."""
+    elp_ids = [r['id'] for r in db.execute(
+        'SELECT id FROM grade_elps WHERE promo_id=?', (promo_id,))]
+    comps = db.execute(
+        'SELECT id FROM grade_competences WHERE promo_id=? ORDER BY ordre, id',
+        (promo_id,)).fetchall()
+    coeffs = {}
+    for r in db.execute('''SELECT c.competence_id, c.elp_id, c.coeff
+                           FROM grade_coefficients c
+                           JOIN grade_competences gc ON gc.id = c.competence_id
+                           WHERE gc.promo_id=?''', (promo_id,)):
+        coeffs[(r['competence_id'], r['elp_id'])] = r['coeff'] or 0
+    marks = {}
+    for r in db.execute('''SELECT m.student_id, m.elp_id, m.note FROM grade_marks m
+                           JOIN grade_students s ON s.id = m.student_id
+                           WHERE s.promo_id=? AND m.note IS NOT NULL''', (promo_id,)):
+        marks[(r['student_id'], r['elp_id'])] = r['note']
+    students = [r['id'] for r in db.execute(
+        'SELECT id FROM grade_students WHERE promo_id=?', (promo_id,))]
+    out = {}
+    for sid in students:
+        row = {}
+        for c in comps:
+            cid = c['id']
+            num = den = 0.0
+            for eid in elp_ids:
+                coeff = coeffs.get((cid, eid), 0) or 0
+                if coeff and (sid, eid) in marks:
+                    num += coeff * marks[(sid, eid)]
+                    den += coeff
+            row[str(cid)] = round(num / den, 3) if den > 0 else None
+        out[str(sid)] = row
+    return out
+
+def _promo_payload(db, promo_id):
+    promo = _grade_promo_row(promo_id)
+    if not promo:
+        return None
+    elps = [dict(r) for r in db.execute(
+        'SELECT id, ordre, code, title, kind, note_col, bareme_col '
+        'FROM grade_elps WHERE promo_id=? ORDER BY ordre, id', (promo_id,))]
+    students = [dict(r) for r in db.execute(
+        'SELECT id, ordre, numero, nom, prenom, naissance '
+        'FROM grade_students WHERE promo_id=? ORDER BY ordre, id', (promo_id,))]
+    comps = [dict(r) for r in db.execute(
+        'SELECT id, ordre, name FROM grade_competences WHERE promo_id=? ORDER BY ordre, id',
+        (promo_id,))]
+    marks = {}
+    for r in db.execute('''SELECT m.student_id, m.elp_id, m.note FROM grade_marks m
+                           JOIN grade_students s ON s.id = m.student_id
+                           WHERE s.promo_id=?''', (promo_id,)):
+        marks[f"{r['student_id']}_{r['elp_id']}"] = r['note']
+    coeffs = {}
+    for r in db.execute('''SELECT c.competence_id, c.elp_id, c.coeff
+                           FROM grade_coefficients c
+                           JOIN grade_competences gc ON gc.id = c.competence_id
+                           WHERE gc.promo_id=?''', (promo_id,)):
+        coeffs[f"{r['competence_id']}_{r['elp_id']}"] = r['coeff']
+    return {
+        'promo': {'id': promo['id'], 'code': promo['code'], 'label': promo['label'],
+                  'semester': promo['semester'], 'formation': promo['formation'],
+                  'template_orig': promo['template_orig'], 'updated_at': promo['updated_at']},
+        'elps': elps, 'students': students, 'competences': comps,
+        'marks': marks, 'coefficients': coeffs,
+        'averages': _competence_averages(db, promo_id),
+    }
+
+@app.route('/api/grades/promos', methods=['GET'])
+def list_grade_promos():
+    err = _require_admin()
+    if err:
+        return err
+    rows = get_db().execute('''SELECT p.id, p.code, p.label, p.semester, p.formation,
+                                      p.template_orig, p.updated_at,
+                                      (SELECT COUNT(*) FROM grade_students s WHERE s.promo_id=p.id) AS nb_students,
+                                      (SELECT COUNT(*) FROM grade_elps e WHERE e.promo_id=p.id) AS nb_elps
+                               FROM grade_promos p ORDER BY p.semester, p.formation, p.code''').fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/grades/promos/<int:promo_id>', methods=['GET'])
+def get_grade_promo(promo_id):
+    err = _require_admin()
+    if err:
+        return err
+    payload = _promo_payload(get_db(), promo_id)
+    if not payload:
+        return error_response('Promo introuvable', 404)
+    return jsonify(payload)
+
+@app.route('/api/grades/promos/import', methods=['POST'])
+def import_grade_promo():
+    err = _require_admin()
+    if err:
+        return err
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return error_response('Aucun fichier reçu', 400)
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in _ALLOWED_GRADE_EXT:
+        return error_response('Type de fichier non autorisé (.xlsm/.xlsx)', 400)
+    if request.content_length and request.content_length > _MAX_GRADE_FILE:
+        return error_response('Fichier trop volumineux (max 15 Mo)', 400)
+
+    # Sauvegarde temporaire pour lecture
+    safe = secure_filename(f.filename) or ('promo' + ext)
+    dest = os.path.join(_notes_year_dir(), safe)
+    f.save(dest)
+    if os.path.getsize(dest) > _MAX_GRADE_FILE:
+        os.remove(dest)
+        return error_response('Fichier trop volumineux (max 15 Mo)', 400)
+    try:
+        label, elps, students = _parse_apogee(dest)
+    except Exception as e:
+        try: os.remove(dest)
+        except OSError: pass
+        return error_response(f'Lecture impossible : {e}', 400)
+    if not elps or not students:
+        try: os.remove(dest)
+        except OSError: pass
+        return error_response('Fichier non reconnu (aucun ELP / étudiant détecté)', 400)
+
+    code, semester, formation = _promo_meta(f.filename, label)
+    rel = os.path.relpath(dest, _NOTES_DIR)
+    db = get_db()
+    # Remplace une promo de même code (réimport) en conservant l'id si possible
+    existing = db.execute('SELECT id FROM grade_promos WHERE code=?', (code,)).fetchone()
+    if existing:
+        pid = existing['id']
+        db.execute('DELETE FROM grade_elps WHERE promo_id=?', (pid,))
+        db.execute('DELETE FROM grade_students WHERE promo_id=?', (pid,))
+        db.execute('DELETE FROM grade_competences WHERE promo_id=?', (pid,))
+        db.execute('''UPDATE grade_promos SET label=?, semester=?, formation=?,
+                      template=?, template_orig=?, updated_at=CURRENT_TIMESTAMP WHERE id=?''',
+                   (label, semester, formation, rel, f.filename, pid))
+    else:
+        cur = db.execute('''INSERT INTO grade_promos(code, label, semester, formation,
+                            template, template_orig, updated_at)
+                            VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP)''',
+                         (code, label, semester, formation, rel, f.filename))
+        pid = cur.lastrowid
+    for e in elps:
+        db.execute('''INSERT INTO grade_elps(promo_id, ordre, code, title, kind, note_col, bareme_col)
+                      VALUES(?,?,?,?,?,?,?)''',
+                   (pid, e['ordre'], e['code'], e['title'], e['kind'], e['note_col'], e['bareme_col']))
+    for s in students:
+        db.execute('''INSERT INTO grade_students(promo_id, ordre, src_row, numero, nom, prenom, naissance)
+                      VALUES(?,?,?,?,?,?,?)''',
+                   (pid, s['ordre'], s['src_row'], s['numero'], s['nom'], s['prenom'], s['naissance']))
+    _seed_promo_competences(db, pid, semester)
+    db.commit()
+    _audit('GRADES_IMPORT', ip=_client_ip(), user=session.get('user'), file=f.filename)
+    return jsonify(_promo_payload(db, pid))
+
+@app.route('/api/grades/promos/<int:promo_id>', methods=['DELETE'])
+def delete_grade_promo(promo_id):
+    err = _require_admin()
+    if err:
+        return err
+    db = get_db()
+    promo = _grade_promo_row(promo_id)
+    if not promo:
+        return error_response('Promo introuvable', 404)
+    if promo['template']:
+        p = os.path.join(_NOTES_DIR, promo['template'])
+        if os.path.isfile(p):
+            try: os.remove(p)
+            except OSError: pass
+    db.execute('DELETE FROM grade_promos WHERE id=?', (promo_id,))
+    db.commit()
+    return jsonify({'deleted': True})
+
+@app.route('/api/grades/promos/<int:promo_id>/marks', methods=['PUT'])
+def save_grade_marks(promo_id):
+    err = _require_admin()
+    if err:
+        return err
+    if not _grade_promo_row(promo_id):
+        return error_response('Promo introuvable', 404)
+    data = request.get_json() or {}
+    marks = data.get('marks') or []
+    db = get_db()
+    valid_students = {r['id'] for r in db.execute(
+        'SELECT id FROM grade_students WHERE promo_id=?', (promo_id,))}
+    valid_elps = {r['id'] for r in db.execute(
+        'SELECT id FROM grade_elps WHERE promo_id=?', (promo_id,))}
+    for m in marks:
+        try:
+            sid = int(m.get('student_id')); eid = int(m.get('elp_id'))
+        except (TypeError, ValueError):
+            continue
+        if sid not in valid_students or eid not in valid_elps:
+            continue
+        note = m.get('note')
+        if note in (None, ''):
+            db.execute('DELETE FROM grade_marks WHERE student_id=? AND elp_id=?', (sid, eid))
+        else:
+            try:
+                note = float(note)
+            except (TypeError, ValueError):
+                continue
+            db.execute('''INSERT INTO grade_marks(student_id, elp_id, note) VALUES(?,?,?)
+                          ON CONFLICT(student_id, elp_id) DO UPDATE SET note=excluded.note''',
+                       (sid, eid, note))
+    db.commit()
+    return jsonify({'averages': _competence_averages(db, promo_id)})
+
+@app.route('/api/grades/promos/<int:promo_id>/competences', methods=['PUT'])
+def save_grade_competences(promo_id):
+    """Remplace l'ensemble compétences + coefficients de la promo."""
+    err = _require_admin()
+    if err:
+        return err
+    if not _grade_promo_row(promo_id):
+        return error_response('Promo introuvable', 404)
+    data = request.get_json() or {}
+    comps = data.get('competences') or []
+    db = get_db()
+    valid_elps = {r['id'] for r in db.execute(
+        'SELECT id FROM grade_elps WHERE promo_id=?', (promo_id,))}
+    db.execute('DELETE FROM grade_competences WHERE promo_id=?', (promo_id,))
+    for i, c in enumerate(comps, start=1):
+        name = (c.get('name') or '').strip() or f'Compétence {i}'
+        cur = db.execute('INSERT INTO grade_competences(promo_id, ordre, name) VALUES(?,?,?)',
+                         (promo_id, i, name))
+        cid = cur.lastrowid
+        for eid_str, coeff in (c.get('coeffs') or {}).items():
+            try:
+                eid = int(eid_str); cval = float(coeff)
+            except (TypeError, ValueError):
+                continue
+            if eid in valid_elps and cval:
+                db.execute('INSERT INTO grade_coefficients(competence_id, elp_id, coeff) VALUES(?,?,?)',
+                           (cid, eid, cval))
+    db.commit()
+    return jsonify(_promo_payload(db, promo_id))
+
+@app.route('/api/grades/coeff-reference', methods=['GET'])
+def get_coeff_reference():
+    """Coefficients de référence par semestre (édités dans Matières → Coefficients)."""
+    err = _require_admin()
+    if err:
+        return err
+    return jsonify(_load_ref_coeffs(get_db()))
+
+@app.route('/api/grades/coeff-reference', methods=['PUT'])
+def save_coeff_reference():
+    err = _require_admin()
+    if err:
+        return err
+    data = request.get_json()
+    if not isinstance(data, dict):
+        return error_response('Format invalide', 400)
+    db = get_db()
+    db.execute('''INSERT INTO app_settings(key, value) VALUES('grade_coeff_reference', ?)
+                  ON CONFLICT(key) DO UPDATE SET value=excluded.value''',
+               (json.dumps(data, ensure_ascii=False),))
+    db.commit()
+    return jsonify(_load_ref_coeffs(db))
+
+@app.route('/api/grades/coeff-reference/reset', methods=['POST'])
+def reset_coeff_reference():
+    """Réinitialise les coefficients aux valeurs d'origine du fichier de calcul."""
+    err = _require_admin()
+    if err:
+        return err
+    db = get_db()
+    db.execute("DELETE FROM app_settings WHERE key='grade_coeff_reference'")
+    db.commit()
+    return jsonify(_ref_coeffs_defaults())
+
+@app.route('/api/grades/promos/<int:promo_id>/coefficients/reseed', methods=['POST'])
+def reseed_grade_coefficients(promo_id):
+    """Recharge les compétences/coefficients de la promo depuis la référence du semestre."""
+    err = _require_admin()
+    if err:
+        return err
+    promo = _grade_promo_row(promo_id)
+    if not promo:
+        return error_response('Promo introuvable', 404)
+    db = get_db()
+    db.execute('DELETE FROM grade_competences WHERE promo_id=?', (promo_id,))
+    _seed_promo_competences(db, promo_id, promo['semester'])
+    db.commit()
+    return jsonify(_promo_payload(db, promo_id))
+
+@app.route('/api/grades/promos/<int:promo_id>/export', methods=['GET'])
+def export_grade_promo(promo_id):
+    err = _require_admin()
+    if err:
+        return err
+    import openpyxl, io
+    db = get_db()
+    promo = _grade_promo_row(promo_id)
+    if not promo:
+        return error_response('Promo introuvable', 404)
+    if not promo['template']:
+        return error_response('Aucun modèle disponible pour cette promo', 404)
+    tpath = os.path.join(_NOTES_DIR, promo['template'])
+    if not os.path.isfile(tpath):
+        return error_response('Modèle introuvable sur le serveur', 404)
+    is_xlsm = tpath.lower().endswith('.xlsm')
+    wb = openpyxl.load_workbook(tpath, keep_vba=is_xlsm)
+    ws = wb.active
+    elps = db.execute('SELECT id, note_col, bareme_col FROM grade_elps WHERE promo_id=?',
+                      (promo_id,)).fetchall()
+    students = db.execute('SELECT id, src_row FROM grade_students WHERE promo_id=?',
+                          (promo_id,)).fetchall()
+    marks = {}
+    for r in db.execute('''SELECT m.student_id, m.elp_id, m.note FROM grade_marks m
+                           JOIN grade_students s ON s.id = m.student_id
+                           WHERE s.promo_id=? AND m.note IS NOT NULL''', (promo_id,)):
+        marks[(r['student_id'], r['elp_id'])] = r['note']
+    for s in students:
+        row = s['src_row']
+        if not row:
+            continue
+        for e in elps:
+            note = marks.get((s['id'], e['id']))
+            if note is not None and e['note_col']:
+                ws.cell(row=row, column=e['note_col']).value = note
+                if e['bareme_col'] and ws.cell(row=row, column=e['bareme_col']).value in (None, ''):
+                    ws.cell(row=row, column=e['bareme_col']).value = 20
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    ext = '.xlsm' if is_xlsm else '.xlsx'
+    fname = (promo['template_orig'] or (promo['code'] + ext))
+    mime = ('application/vnd.ms-excel.sheet.macroEnabled.12' if is_xlsm
+            else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    _audit('GRADES_EXPORT', ip=_client_ip(), user=session.get('user'), promo=promo['code'])
+    return send_file(bio, as_attachment=True, download_name=fname, mimetype=mime)
+
+# ======================= GESTION DES PROMOTIONS (admin) =======================
+# Une promotion = cohorte d'étudiants sur 3 ans (ex 25-28_ALT), stockée dans une
+# base séparée (databases/promotions.db) pour un suivi pluriannuel des résultats.
+
+def _promotion_name(start_year, formation):
+    return f"{start_year % 100:02d}-{(start_year + 3) % 100:02d}_{formation}"
+
+def _parse_student_list(path):
+    """Lit une liste d'étudiants : auto-détection format Apogée (.xlsm/.xlsx,
+    roster ligne 18+) ou tableur simple (en-têtes ligne 1). Retourne
+    [{numero, nom, prenom, naissance}]."""
+    import openpyxl
+    import unicodedata
+    is_xlsm = path.lower().endswith('.xlsm')
+    wb = openpyxl.load_workbook(path, data_only=True, keep_vba=is_xlsm)
+    ws = wb.active
+
+    def txt(v):
+        return ('' if v is None else str(v)).strip()
+
+    # Détection Apogée : marqueur 'apoL_a01_code' en A6 ou 'Numéro' en A17
+    a6 = txt(ws.cell(6, 1).value).lower()
+    h17 = txt(ws.cell(17, 1).value).lower()
+    if a6 == 'apol_a01_code' or h17 in ('numéro', 'numero'):
+        students, r = [], 18
+        while r <= 2000:
+            num = ws.cell(r, 1).value
+            if num in (None, ''):
+                break
+            students.append({'numero': txt(num), 'nom': txt(ws.cell(r, 2).value),
+                             'prenom': txt(ws.cell(r, 3).value), 'naissance': txt(ws.cell(r, 4).value)})
+            r += 1
+        return students
+
+    # Format simple : en-têtes ligne 1
+    def norm(s):
+        s = unicodedata.normalize('NFD', txt(s)).encode('ascii', 'ignore').decode().lower().strip()
+        return s
+    headers = {}
+    for c in range(1, ws.max_column + 1):
+        h = norm(ws.cell(1, c).value)
+        if not h:
+            continue
+        if h in ('nom', 'name', 'nom de famille', 'last name'):
+            headers.setdefault('nom', c)
+        elif h in ('prenom', 'first name'):
+            headers.setdefault('prenom', c)
+        elif h in ('numero', 'n', 'no', 'num', 'code', 'code apogee', 'apogee', 'matricule', 'n etudiant'):
+            headers.setdefault('numero', c)
+        elif 'naiss' in h or h in ('ne le', 'nee le', 'dob', 'date de naissance'):
+            headers.setdefault('naissance', c)
+    students = []
+    if not headers:
+        return students
+    r = 2
+    while r <= 5000:
+        if all(ws.cell(r, c).value in (None, '') for c in range(1, ws.max_column + 1)):
+            break
+        rec = {'numero': '', 'nom': '', 'prenom': '', 'naissance': ''}
+        for key, col in headers.items():
+            rec[key] = txt(ws.cell(r, col).value)
+        if rec['nom'] or rec['prenom'] or rec['numero']:
+            students.append(rec)
+        r += 1
+    return students
+
+def _dedup_key(s):
+    """Clé d'unicité d'un étudiant : numéro si présent, sinon nom+prénom+naissance."""
+    num = (s.get('numero') or '').strip().lower()
+    if num:
+        return ('num', num)
+    return ('id', (s.get('nom') or '').strip().lower(),
+            (s.get('prenom') or '').strip().lower(),
+            (s.get('naissance') or '').strip().lower())
+
+def _promotion_payload(db, pid):
+    promo = db.execute('SELECT * FROM promotions WHERE id=?', (pid,)).fetchone()
+    if not promo:
+        return None
+    students = [dict(r) for r in db.execute(
+        '''SELECT id, numero, nom, prenom, naissance, statut, abandon_semestre FROM promotion_students
+           WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,))]
+    counts = {st: 0 for st in _STUDENT_STATUSES}
+    for s in students:
+        counts[s['statut']] = counts.get(s['statut'], 0) + 1
+    return {'promotion': dict(promo), 'students': students, 'counts': counts,
+            'total': len(students), 'statuses': _STUDENT_STATUSES, 'semesters': _PROMO_SEMESTERS}
+
+@app.route('/api/promotions', methods=['GET'])
+def list_promotions():
+    err = _require_admin()
+    if err:
+        return err
+    rows = get_promotions_db().execute('''
+        SELECT p.*,
+               (SELECT COUNT(*) FROM promotion_students s WHERE s.promotion_id=p.id) AS total,
+               (SELECT COUNT(*) FROM promotion_students s WHERE s.promotion_id=p.id AND s.statut='Actif') AS actifs
+        FROM promotions p ORDER BY p.start_year DESC, p.formation''').fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/promotions', methods=['POST'])
+def create_promotion():
+    err = _require_admin()
+    if err:
+        return err
+    data = request.get_json() or {}
+    try:
+        start = int(data.get('start_year'))
+    except (TypeError, ValueError):
+        return error_response('Année de début invalide', 400)
+    formation = (data.get('formation') or '').strip().upper()
+    if formation not in ('ALT', 'FTP'):
+        return error_response('Formation invalide (ALT ou FTP)', 400)
+    if start < 2000 or start > 2100:
+        return error_response('Année de début hors limites', 400)
+    name = _promotion_name(start, formation)
+    db = get_promotions_db()
+    if db.execute('SELECT 1 FROM promotions WHERE name=?', (name,)).fetchone():
+        return error_response(f'La promotion « {name} » existe déjà', 409)
+    cur = db.execute('''INSERT INTO promotions(name, formation, start_year, end_year, updated_at)
+                        VALUES(?,?,?,?,CURRENT_TIMESTAMP)''', (name, formation, start, start + 3))
+    db.commit()
+    _audit('PROMO_CREATE', ip=_client_ip(), user=session.get('user'), promo=name)
+    return jsonify(_promotion_payload(db, cur.lastrowid))
+
+@app.route('/api/promotions/<int:pid>', methods=['GET'])
+def get_promotion(pid):
+    err = _require_admin()
+    if err:
+        return err
+    payload = _promotion_payload(get_promotions_db(), pid)
+    if not payload:
+        return error_response('Promotion introuvable', 404)
+    return jsonify(payload)
+
+@app.route('/api/promotions/<int:pid>', methods=['DELETE'])
+def delete_promotion(pid):
+    err = _require_admin()
+    if err:
+        return err
+    db = get_promotions_db()
+    if not db.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    db.execute('DELETE FROM promotions WHERE id=?', (pid,))
+    db.commit()
+    return jsonify({'deleted': True})
+
+@app.route('/api/promotions/<int:pid>/students', methods=['POST'])
+def add_promotion_student(pid):
+    err = _require_admin()
+    if err:
+        return err
+    db = get_promotions_db()
+    if not db.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    data = request.get_json() or {}
+    nom = (data.get('nom') or '').strip()
+    prenom = (data.get('prenom') or '').strip()
+    numero = (data.get('numero') or '').strip()
+    if not (nom or prenom or numero):
+        return error_response('Renseignez au moins un nom ou un numéro', 400)
+    statut = (data.get('statut') or 'Actif').strip()
+    if statut not in _STUDENT_STATUSES:
+        statut = 'Actif'
+    sem = (data.get('abandon_semestre') or '').strip()
+    if statut != 'Abandon' or sem not in _PROMO_SEMESTERS:
+        sem = None
+    db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance, statut, abandon_semestre)
+                  VALUES(?,?,?,?,?,?,?)''',
+               (pid, numero, nom, prenom, (data.get('naissance') or '').strip(), statut, sem))
+    db.commit()
+    return jsonify(_promotion_payload(db, pid))
+
+@app.route('/api/promotions/<int:pid>/students/<int:sid>', methods=['PUT'])
+def update_promotion_student(pid, sid):
+    err = _require_admin()
+    if err:
+        return err
+    db = get_promotions_db()
+    row = db.execute('SELECT 1 FROM promotion_students WHERE id=? AND promotion_id=?', (sid, pid)).fetchone()
+    if not row:
+        return error_response('Étudiant introuvable', 404)
+    data = request.get_json() or {}
+    fields, params = [], []
+    for key in ('numero', 'nom', 'prenom', 'naissance'):
+        if key in data:
+            fields.append(f'{key}=?'); params.append((data.get(key) or '').strip())
+    new_statut = None
+    if 'statut' in data:
+        st = (data.get('statut') or 'Actif').strip()
+        if st in _STUDENT_STATUSES:
+            new_statut = st
+            fields.append('statut=?'); params.append(st)
+    # Semestre d'abandon : effacé si le statut n'est plus « Abandon »
+    if new_statut is not None and new_statut != 'Abandon':
+        fields.append('abandon_semestre=?'); params.append(None)
+    elif 'abandon_semestre' in data:
+        sem = (data.get('abandon_semestre') or '').strip()
+        fields.append('abandon_semestre=?'); params.append(sem if sem in _PROMO_SEMESTERS else None)
+    if fields:
+        params += [sid, pid]
+        db.execute(f'UPDATE promotion_students SET {", ".join(fields)} WHERE id=? AND promotion_id=?', params)
+        db.commit()
+    return jsonify(_promotion_payload(db, pid))
+
+@app.route('/api/promotions/<int:pid>/students/<int:sid>', methods=['DELETE'])
+def delete_promotion_student(pid, sid):
+    err = _require_admin()
+    if err:
+        return err
+    db = get_promotions_db()
+    db.execute('DELETE FROM promotion_students WHERE id=? AND promotion_id=?', (sid, pid))
+    db.commit()
+    return jsonify(_promotion_payload(db, pid))
+
+@app.route('/api/promotions/<int:pid>/students/import', methods=['POST'])
+def import_promotion_students(pid):
+    err = _require_admin()
+    if err:
+        return err
+    db = get_promotions_db()
+    if not db.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return error_response('Aucun fichier reçu', 400)
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in _ALLOWED_GRADE_EXT:
+        return error_response('Type de fichier non autorisé (.xlsm/.xlsx)', 400)
+    if request.content_length and request.content_length > _MAX_GRADE_FILE:
+        return error_response('Fichier trop volumineux (max 15 Mo)', 400)
+    import tempfile
+    tmp = os.path.join(tempfile.gettempdir(), secure_filename(f.filename) or ('import' + ext))
+    f.save(tmp)
+    try:
+        students = _parse_student_list(tmp)
+    except Exception as e:
+        return error_response(f'Lecture impossible : {e}', 400)
+    finally:
+        try: os.remove(tmp)
+        except OSError: pass
+    if not students:
+        return error_response('Aucun étudiant détecté dans le fichier', 400)
+    # Dédoublonnage : on n'importe pas un étudiant déjà présent dans la promotion
+    existing = {_dedup_key(dict(r)) for r in db.execute(
+        'SELECT numero, nom, prenom, naissance FROM promotion_students WHERE promotion_id=?', (pid,))}
+    imported = skipped = 0
+    for s in students:
+        key = _dedup_key(s)
+        if key in existing:
+            skipped += 1
+            continue
+        existing.add(key)
+        db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance, statut)
+                      VALUES(?,?,?,?,?,'Actif')''',
+                   (pid, s['numero'], s['nom'], s['prenom'], s['naissance']))
+        imported += 1
+    db.commit()
+    _audit('PROMO_IMPORT', ip=_client_ip(), user=session.get('user'),
+           imported=imported, skipped=skipped)
+    payload = _promotion_payload(db, pid)
+    payload['import_report'] = {'imported': imported, 'skipped': skipped, 'total_fichier': len(students)}
+    return jsonify(payload)
+
+# ---- Notes d'une promotion pour un semestre (matières/compétences = référence) ----
+
+def _semester_competence_averages(pdb, pid, semester, competences):
+    """Moyennes de compétences {student_id: {ci: avg}} pour un semestre donné."""
+    marks = {}
+    for r in pdb.execute('''SELECT student_id, matiere_code, note FROM student_marks
+                            WHERE promotion_id=? AND semester=? AND note IS NOT NULL''', (pid, semester)):
+        marks[f"{r['student_id']}_{r['matiere_code']}"] = r['note']
+    students = [r['id'] for r in pdb.execute(
+        'SELECT id FROM promotion_students WHERE promotion_id=?', (pid,))]
+    averages = {}
+    for sid in students:
+        row = {}
+        for ci, comp in enumerate(competences):
+            num = den = 0.0
+            for code, coeff in (comp.get('coeffs') or {}).items():
+                coeff = coeff or 0
+                key = f"{sid}_{code}"
+                if coeff and key in marks:
+                    num += coeff * marks[key]
+                    den += coeff
+            row[str(ci)] = round(num / den, 2) if den > 0 else None
+        averages[str(sid)] = row
+    return averages
+
+def _year_competence_averages(pdb, pid, s_odd, s_even, ref_all):
+    """Moyenne annuelle par compétence = moyenne des 2 semestres. Retourne (averages, noms)."""
+    comps_odd = (ref_all.get(s_odd) or {}).get('competences', [])
+    names = [c.get('name', '') for c in comps_odd]
+    avg_odd = _semester_competence_averages(pdb, pid, s_odd, comps_odd)
+    comps_even = (ref_all.get(s_even) or {}).get('competences', [])
+    avg_even = _semester_competence_averages(pdb, pid, s_even, comps_even)
+    out = {}
+    for r in pdb.execute('SELECT id FROM promotion_students WHERE promotion_id=?', (pid,)):
+        sid = str(r['id'])
+        row = {}
+        for ci in range(len(names)):
+            vals = [v for v in ((avg_odd.get(sid) or {}).get(str(ci)),
+                                (avg_even.get(sid) or {}).get(str(ci))) if v is not None]
+            row[str(ci)] = round(sum(vals) / len(vals), 2) if vals else None
+        out[sid] = row
+    return out, names
+
+def _promo_notes_payload(pdb, pid, semester):
+    """Construit le tableau de notes : étudiants (effectif) × matières (référence),
+    notes saisies, moyennes de compétences, rappels (semestre antérieur / année précédente)
+    et moyenne annuelle courante."""
+    ref_all = _load_ref_coeffs(get_db()) or {}
+    ref = ref_all.get(semester) or {'components': [], 'competences': []}
+    components = ref.get('components', [])
+    competences = ref.get('competences', [])
+    students = [dict(r) for r in pdb.execute(
+        '''SELECT id, numero, nom, prenom, statut FROM promotion_students
+           WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,))]
+    marks = {}
+    for r in pdb.execute('''SELECT student_id, matiere_code, note, mention FROM student_marks
+                            WHERE promotion_id=? AND semester=? AND note IS NOT NULL''', (pid, semester)):
+        marks[f"{r['student_id']}_{r['matiere_code']}"] = r['mention'] if r['mention'] else r['note']
+    averages = _semester_competence_averages(pdb, pid, semester, competences)
+    sem_num = int(semester[1:])
+    year = (sem_num + 1) // 2   # 1,1,2,2,3,3
+    # Rappels : année précédente (si semestre > 2) puis semestre antérieur (si semestre pair)
+    previous = []
+    if sem_num > 2:
+        py = year - 1
+        po, pe = f'S{py * 2 - 1}', f'S{py * 2}'
+        yavg, ynames = _year_competence_averages(pdb, pid, po, pe, ref_all)
+        if ynames:
+            previous.append({'short': f'{po}-{pe}', 'label': f'Année {py} ({po}–{pe})',
+                             'competences': ynames, 'averages': yavg})
+    if sem_num % 2 == 0:
+        psem = f'S{sem_num - 1}'
+        pcomps = (ref_all.get(psem) or {}).get('competences', [])
+        if pcomps:
+            previous.append({'short': psem, 'label': f'Semestre {psem}',
+                             'competences': [c.get('name', '') for c in pcomps],
+                             'averages': _semester_competence_averages(pdb, pid, psem, pcomps)})
+    # Moyenne annuelle courante = moyenne des 2 semestres de l'année (S1+S2, S3+S4, S5+S6)
+    s_odd, s_even = f'S{year * 2 - 1}', f'S{year * 2}'
+    year_averages, year_competences = _year_competence_averages(pdb, pid, s_odd, s_even, ref_all)
+    return {'semester': semester, 'components': components,
+            'competences': [{'name': c.get('name', ''), 'coeffs': c.get('coeffs', {})} for c in competences],
+            'students': students, 'marks': marks, 'averages': averages, 'previous': previous,
+            'year_semesters': [s_odd, s_even], 'year_competences': year_competences,
+            'year_averages': year_averages}
+
+@app.route('/api/promotions/<int:pid>/notes/<semester>', methods=['GET'])
+def get_promotion_notes(pid, semester):
+    err = _require_admin()
+    if err:
+        return err
+    if semester not in _PROMO_SEMESTERS:
+        return error_response('Semestre invalide', 400)
+    pdb = get_promotions_db()
+    promo = pdb.execute('SELECT id FROM promotions WHERE id=?', (pid,)).fetchone()
+    if not promo:
+        return error_response('Promotion introuvable', 404)
+    return jsonify(_promo_notes_payload(pdb, pid, semester))
+
+@app.route('/api/promotions/<int:pid>/notes/<semester>', methods=['PUT'])
+def save_promotion_notes(pid, semester):
+    err = _require_admin()
+    if err:
+        return err
+    if semester not in _PROMO_SEMESTERS:
+        return error_response('Semestre invalide', 400)
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    valid_students = {r['id'] for r in pdb.execute(
+        'SELECT id FROM promotion_students WHERE promotion_id=?', (pid,))}
+    for m in (request.get_json() or {}).get('marks') or []:
+        try:
+            sid = int(m.get('student_id'))
+        except (TypeError, ValueError):
+            continue
+        code = (m.get('matiere_code') or '').strip()
+        if sid not in valid_students or not code:
+            continue
+        note = m.get('note')
+        if note in (None, ''):
+            pdb.execute('''DELETE FROM student_marks WHERE promotion_id=? AND semester=?
+                           AND student_id=? AND matiere_code=?''', (pid, semester, sid, code))
+            continue
+        if isinstance(note, str) and note.strip().upper() == 'ABI':
+            note_num, mention = 0.0, 'ABI'
+        else:
+            try:
+                note_num, mention = float(note), None
+            except (TypeError, ValueError):
+                continue
+        pdb.execute('''INSERT INTO student_marks(promotion_id, semester, student_id, matiere_code, note, mention)
+                       VALUES(?,?,?,?,?,?)
+                       ON CONFLICT(promotion_id, semester, student_id, matiere_code)
+                       DO UPDATE SET note=excluded.note, mention=excluded.mention''',
+                    (pid, semester, sid, code, note_num, mention))
+    pdb.commit()
+    return jsonify(_promo_notes_payload(pdb, pid, semester))
+
+def _cell_txt(v):
+    return ('' if v is None else str(v)).strip()
+
+def _note_value(v):
+    """Note d'une cellule : nombre tel quel, 'ABI' = mention (comptée 0), sinon None (absent)."""
+    if isinstance(v, (int, float)):
+        return float(v)
+    if _cell_txt(v).upper() == 'ABI':
+        return 'ABI'
+    return None
+
+def _kind_from_code(code, title=''):
+    cu = str(code).upper()
+    if 'portfolio' in str(title).lower():
+        return 'PORT'
+    if 'IS' in cu:
+        return 'SAE'
+    if 'IR' in cu:
+        return 'RES'
+    return 'AUTRE'
+
+def _apogee_marks_ws(ws):
+    """Layout Apogée : ELP en ligne 8 (code) / 13 (type N) / 14 (titre), notes lignes 18+, n° col A."""
+    elps = []
+    for c in range(5, ws.max_column + 1):
+        if ws.cell(13, c).value == 'N' and ws.cell(8, c).value:
+            elps.append({'note_col': c, 'kind': _kind_from_code(ws.cell(8, c).value, ws.cell(14, c).value)})
+    rows, r = [], 18
+    while r <= 2000:
+        num = ws.cell(r, 1).value
+        if num in (None, ''):
+            break
+        notes = {}
+        for e in elps:
+            nv = _note_value(ws.cell(r, e['note_col']).value)
+            if nv is not None:
+                notes[e['note_col']] = nv
+        rows.append({'numero': _cell_txt(num), 'notes': notes})
+        r += 1
+    return elps, rows
+
+def _pv_marks_ws(ws):
+    """Layout PV de jury : codes matière T3IS../T3IR.. en ligne 6, notes lignes 8+, n° col B."""
+    elps = []
+    for c in range(1, ws.max_column + 1):
+        code = _cell_txt(ws.cell(6, c).value)
+        if re.match(r'^T3I[SR]\d', code, re.I):
+            elps.append({'note_col': c, 'kind': _kind_from_code(code, ws.cell(7, c).value)})
+    rows = []
+    for r in range(8, ws.max_row + 1):
+        num = _cell_txt(ws.cell(r, 2).value)
+        if not num or not num[0].isdigit():
+            continue
+        notes = {}
+        for e in elps:
+            nv = _note_value(ws.cell(r, e['note_col']).value)
+            if nv is not None:
+                notes[e['note_col']] = nv
+        rows.append({'numero': num, 'notes': notes})
+    return elps, rows
+
+def _parse_notes_file(path):
+    """Lit un fichier de notes (Apogée ou PV de jury), auto-détection.
+    Retourne ([elps {note_col, kind}], [rows {numero, notes:{note_col:val}}])."""
+    import openpyxl
+    is_xlsm = path.lower().endswith('.xlsm')
+    wb = openpyxl.load_workbook(path, data_only=True, keep_vba=is_xlsm)
+    ws = wb.active
+    # PV de jury : 'N° Étudiant' en B5, ou codes matière en ligne 6
+    b5 = _cell_txt(ws.cell(5, 2).value).lower()
+    has_t3i_row6 = any(re.match(r'^T3I[SR]\d', _cell_txt(ws.cell(6, c).value), re.I)
+                       for c in range(1, ws.max_column + 1))
+    if 'tudiant' in b5 or has_t3i_row6:
+        return _pv_marks_ws(ws)
+    return _apogee_marks_ws(ws)
+
+@app.route('/api/promotions/<int:pid>/notes/<semester>/import', methods=['POST'])
+def import_promotion_notes(pid, semester):
+    """Importe les notes depuis un fichier Apogée OU un PV de jury (auto-détection).
+    Les colonnes de notes sont mappées aux matières de la référence (par index SAÉ/Stage/PORT/RES) ;
+    les notes sont rattachées aux étudiants de l'effectif via le n° Apogée."""
+    err = _require_admin()
+    if err:
+        return err
+    if semester not in _PROMO_SEMESTERS:
+        return error_response('Semestre invalide', 400)
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return error_response('Aucun fichier reçu', 400)
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in _ALLOWED_GRADE_EXT:
+        return error_response('Type de fichier non autorisé (.xlsm/.xlsx)', 400)
+    if request.content_length and request.content_length > _MAX_GRADE_FILE:
+        return error_response('Fichier trop volumineux (max 15 Mo)', 400)
+    import tempfile
+    tmp = os.path.join(tempfile.gettempdir(), secure_filename(f.filename) or ('notes' + ext))
+    f.save(tmp)
+    try:
+        elps, rows = _parse_notes_file(tmp)
+    except Exception as e:
+        return error_response(f'Lecture impossible : {e}', 400)
+    finally:
+        try: os.remove(tmp)
+        except OSError: pass
+    if not elps:
+        return error_response('Aucune colonne de note détectée (fichier Apogée attendu)', 400)
+
+    # Mapping colonne note (fichier) -> code matière (référence du semestre), par index
+    ref = (_load_ref_coeffs(get_db()) or {}).get(semester) or {}
+    components = ref.get('components', [])
+    is_codes = [c['code'] for c in components if c.get('kind') in ('SAE', 'STAGE')]
+    port_codes = [c['code'] for c in components if c.get('kind') == 'PORT']
+    res_codes = [c['code'] for c in components if c.get('kind') == 'RES']
+    col2code = {}
+    for grp_kind, codes in (('SAE', is_codes), ('PORT', port_codes), ('RES', res_codes)):
+        i = 0
+        for e in elps:
+            if e['kind'] == grp_kind:
+                if i < len(codes):
+                    col2code[e['note_col']] = codes[i]
+                i += 1
+    if not col2code:
+        return error_response('Aucune correspondance matière (vérifiez la référence des coefficients)', 400)
+
+    # Index des étudiants de l'effectif par numéro
+    students_by_num = {}
+    for s in pdb.execute('SELECT id, numero FROM promotion_students WHERE promotion_id=?', (pid,)):
+        num = (s['numero'] or '').strip().lower()
+        if num:
+            students_by_num[num] = s['id']
+    notes_set = 0
+    matched = unmatched = 0
+    for row in rows:
+        sid = students_by_num.get(row['numero'].lower())
+        if not sid:
+            unmatched += 1
+            continue
+        matched += 1
+        for note_col, val in row['notes'].items():
+            code = col2code.get(note_col)
+            if not code:
+                continue
+            note_num, mention = (0.0, 'ABI') if isinstance(val, str) else (val, None)
+            pdb.execute('''INSERT INTO student_marks(promotion_id, semester, student_id, matiere_code, note, mention)
+                           VALUES(?,?,?,?,?,?)
+                           ON CONFLICT(promotion_id, semester, student_id, matiere_code)
+                           DO UPDATE SET note=excluded.note, mention=excluded.mention''',
+                        (pid, semester, sid, code, note_num, mention))
+            notes_set += 1
+    pdb.commit()
+    _audit('NOTES_IMPORT', ip=_client_ip(), user=session.get('user'),
+           promo=pid, semester=semester, notes=notes_set)
+    payload = _promo_notes_payload(pdb, pid, semester)
+    payload['import_report'] = {'notes': notes_set, 'etudiants_rapproches': matched,
+                                'etudiants_non_trouves': unmatched, 'matieres_mappees': len(col2code)}
+    return jsonify(payload)
 
 # ======================= STATIC FILES =======================
 
@@ -4865,6 +6084,7 @@ def optimize_repartition():
 # Initialize database on module load (works with any WSGI runner)
 os.makedirs('static', exist_ok=True)
 init_db()
+_init_promotions_db()
 
 if __name__ == '__main__':
     # Run Flask app
