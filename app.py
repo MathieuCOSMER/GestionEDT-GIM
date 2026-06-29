@@ -2146,16 +2146,32 @@ def _ensure_bonus_pen(coeffs):
                     changed = True
     return changed
 
+# Types de matières retenus : SAE, RES, PEN, BONUS. Stage et Portfolio = SAÉ.
+_KIND_REMAP = {'STAGE': 'SAE', 'PORT': 'SAE'}
+
+def _normalize_kinds(coeffs):
+    """Convertit les types Stage/Portfolio en SAÉ. Retourne True si modifié."""
+    changed = False
+    for d in (coeffs or {}).values():
+        for c in d.get('components', []):
+            if c.get('kind') in _KIND_REMAP:
+                c['kind'] = _KIND_REMAP[c['kind']]
+                changed = True
+    return changed
+
 def _promo_coeffs(pdb, pid, seed=True):
     """Coefficients d'une promotion : copie stockée si présente, sinon (par défaut)
     initialisée depuis la référence globale puis persistée pour devenir indépendante.
-    Les lignes BONUS/PEN manquantes sont complétées de façon non destructive."""
+    Les lignes BONUS/PEN manquantes sont complétées et les types Stage/Portfolio
+    normalisés en SAÉ, de façon non destructive."""
     row = pdb.execute('SELECT data FROM promotion_coefficients WHERE promotion_id=?',
                       (pid,)).fetchone()
     if row and row['data']:
         try:
             coeffs = json.loads(row['data'])
-            if _ensure_bonus_pen(coeffs):
+            changed = _ensure_bonus_pen(coeffs)
+            changed = _normalize_kinds(coeffs) or changed
+            if changed:
                 _store_promo_coeffs(pdb, pid, coeffs)
                 pdb.commit()
             return coeffs
@@ -2163,6 +2179,7 @@ def _promo_coeffs(pdb, pid, seed=True):
             pass
     ref = _load_ref_coeffs(get_db()) or {}
     _ensure_bonus_pen(ref)
+    _normalize_kinds(ref)
     if seed:
         _store_promo_coeffs(pdb, pid, ref)
         pdb.commit()
@@ -2243,6 +2260,38 @@ def reset_promotion_coefficients(pid):
     _store_promo_coeffs(pdb, pid, ref)
     pdb.commit()
     return jsonify(ref)
+
+@app.route('/api/promotions/<int:pid>/coefficients/save-as-default', methods=['POST'])
+def save_promo_coeffs_as_default(pid):
+    """Écrase le fichier d'origine (data/coefficients.json) avec les coefficients de la
+    promotion : ils deviennent le modèle par défaut des nouvelles promotions et la cible
+    du bouton « Réinitialiser ». L'ancien fichier est sauvegardé (horodaté)."""
+    err = _require_admin()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    coeffs = _promo_coeffs(pdb, pid)
+    backup = None
+    try:
+        os.makedirs(os.path.dirname(_REF_COEFF_FILE), exist_ok=True)
+        if os.path.isfile(_REF_COEFF_FILE):
+            ts = datetime.now().strftime('%Y%m%d-%H%M%S')
+            backup = os.path.join(os.path.dirname(_REF_COEFF_FILE),
+                                  f'coefficients.backup-{ts}.json')
+            shutil.copy2(_REF_COEFF_FILE, backup)
+        with open(_REF_COEFF_FILE, 'w', encoding='utf-8') as f:
+            json.dump(coeffs, f, ensure_ascii=False, indent=2)
+            f.write('\n')
+    except OSError as e:
+        return error_response(f'Écriture du fichier d\'origine impossible : {e}', 500)
+    # On retire l'éventuelle surcharge en base pour que le fichier fasse foi
+    db = get_db()
+    db.execute("DELETE FROM app_settings WHERE key='grade_coeff_reference'")
+    db.commit()
+    _audit('COEFF_DEFAULT_OVERWRITE', ip=_client_ip(), user=session.get('user'), promo=pid)
+    return jsonify({'ok': True, 'backup': os.path.basename(backup) if backup else None})
 
 _VALID_MIN_COMP = 3   # une année est validée si ≥ 3 compétences validées (règlement IUT Toulon)
 

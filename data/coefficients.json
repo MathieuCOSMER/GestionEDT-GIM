@@ -41,7 +41,7 @@
         "apogee_name": "Portfolio",
         "code": "SAE1.06",
         "label": "Portfolio",
-        "kind": "PORT"
+        "kind": "SAE"
       },
       {
         "apogee_code": "T3IR101",
@@ -270,7 +270,7 @@
         "apogee_name": "Portfolio",
         "code": "SAE2.06",
         "label": "Portfolio",
-        "kind": "PORT"
+        "kind": "SAE"
       },
       {
         "apogee_code": "T3IR201",
@@ -487,7 +487,7 @@
         "apogee_name": "Démarche portfolio",
         "code": "SAE3.03",
         "label": "Démarche portfolio",
-        "kind": "PORT"
+        "kind": "SAE"
       },
       {
         "apogee_code": "T3IR301",
@@ -717,7 +717,7 @@
         "apogee_name": "Stage",
         "code": "SAE4.01",
         "label": "Stage",
-        "kind": "STAGE"
+        "kind": "SAE"
       },
       {
         "apogee_code": "T3IS402",
@@ -731,7 +731,7 @@
         "apogee_name": "Démarche portfolio",
         "code": "SAE4.03",
         "label": "Démarche portfolio",
-        "kind": "PORT"
+        "kind": "SAE"
       },
       {
         "apogee_code": "T3IR401",
@@ -924,6 +924,14 @@
         "kind": "SAE"
       },
       {
+        "apogee_code": "T3IS503",
+        "apogee_name": "Démarche portfolio",
+        "code": "SAE5.03",
+        "short_label": "Portfolio",
+        "label": "Démarche portfolio",
+        "kind": "SAE"
+      },
+      {
         "apogee_code": "T3IR501",
         "apogee_name": "Mathématiques 5",
         "code": "R5.01",
@@ -1104,14 +1112,14 @@
         "apogee_name": "Stage",
         "code": "SAE6.01",
         "label": "Stage",
-        "kind": "STAGE"
+        "kind": "SAE"
       },
       {
         "apogee_code": "T3IS602",
         "apogee_name": "Démarche portfolio",
         "code": "SAE6.02",
         "label": "Démarche portfolio",
-        "kind": "PORT"
+        "kind": "SAE"
       },
       {
         "apogee_code": "T3IR601",

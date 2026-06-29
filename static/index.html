@@ -534,6 +534,7 @@
                 <button class="btn btn-secondary btn-sm" id="coeff-copy-btn" onclick="openCoeffCopy()" disabled>Copier vers…</button>
                 <button class="btn btn-primary btn-sm" id="coeff-save-btn" onclick="savePromoCoeff()" disabled>💾 Enregistrer</button>
                 <button class="btn btn-secondary btn-sm" id="coeff-reset-btn" onclick="resetPromoCoeff()" disabled>↺ Réinitialiser (fichier d'origine)</button>
+                <button class="btn btn-secondary btn-sm" id="coeff-default-btn" onclick="saveAsDefaultCoeff()" disabled title="Définir les coefficients de cette promotion comme modèle par défaut">⤓ Écraser le fichier d'origine</button>
             </div>
         </div>
         <div id="promo-coeff-content"><div style="color:#6b7280;padding:20px">Choisissez une promotion pour afficher ses coefficients.</div></div>
@@ -936,13 +937,10 @@
         </div>
         <div class="form-group"><label>Type</label>
             <select id="coeff-mat-kind">
-                <option value="RES">Ressource</option>
                 <option value="SAE">SAE</option>
-                <option value="STAGE">Stage</option>
-                <option value="PORT">Portfolio</option>
-                <option value="BONUS">Bonus</option>
+                <option value="RES">Ressource</option>
                 <option value="PEN">Pénalité</option>
-                <option value="AUTRE">Autre</option>
+                <option value="BONUS">Bonus</option>
             </select>
         </div>
         <div class="form-group"><label>Code * <span style="color:#6b7280;font-weight:400">(ex. R3.01, SAE3.02)</span></label>
@@ -1894,7 +1892,7 @@ async function _ensurePromotionsList() {
 }
 
 function _setCoeffButtonsEnabled(on) {
-    ['coeff-new-mat-btn', 'coeff-copy-btn', 'coeff-save-btn', 'coeff-reset-btn'].forEach(id => {
+    ['coeff-new-mat-btn', 'coeff-copy-btn', 'coeff-save-btn', 'coeff-reset-btn', 'coeff-default-btn'].forEach(id => {
         const b = document.getElementById(id); if (b) b.disabled = !on;
     });
 }
@@ -1952,8 +1950,7 @@ function togglePromoCoeffSem(code, btn) {
 }
 
 function _coeffKindOptions(sel) {
-    return [['RES', 'Ressource'], ['SAE', 'SAE'], ['STAGE', 'Stage'], ['PORT', 'Portfolio'],
-            ['BONUS', 'Bonus'], ['PEN', 'Pénalité'], ['AUTRE', 'Autre']]
+    return [['SAE', 'SAE'], ['RES', 'Ressource'], ['PEN', 'Pénalité'], ['BONUS', 'Bonus']]
         .map(([k, l]) => `<option value="${k}"${k === sel ? ' selected' : ''}>${l}</option>`).join('');
 }
 
@@ -1961,7 +1958,7 @@ function renderPromoCoeffTables() {
     const el = document.getElementById('promo-coeff-content');
     if (!_coeffRef) { el.innerHTML = '<div class="empty">Aucun coefficient.</div>'; return; }
     const sems = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].filter(s => _coeffRef[s] && _promoCoeffSemesters.has(s));
-    const legend = [['SAE', 'SAE'], ['STAGE', 'Stage'], ['PORT', 'Portfolio'], ['RES', 'Ressource']]
+    const legend = [['SAE', 'SAE'], ['RES', 'Ressource']]
         .map(([k, lbl]) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:12px">
             <span style="width:12px;height:12px;border-radius:3px;background:${_coeffKindColor(k)};display:inline-block"></span>${lbl}</span>`).join('');
     const inS = 'padding:2px 4px;border:1px solid #d1d5db;border-radius:4px';
@@ -1970,16 +1967,18 @@ function renderPromoCoeffTables() {
         const comps = d.competences || [];
         const totals = comps.map(c => Object.values(c.coeffs || {}).reduce((a, b) => a + Number(b), 0));
         const head = `<tr>
-            <th style="width:28px;padding:4px 2px"></th>
+            <th style="width:58px;padding:4px 2px">Ordre</th>
             <th style="padding:4px 6px;text-align:left">Type</th>
             <th style="padding:4px 6px;text-align:left">Code Apogée</th>
             <th style="padding:4px 6px;text-align:left">Code</th>
             <th style="padding:4px 6px;text-align:left">Libellé court</th>
             <th style="padding:4px 6px;text-align:left">Libellé</th>` +
             comps.map(c => `<th style="background:#ede9fe;width:64px;padding:6px 2px;vertical-align:middle;text-align:center"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600">${esc(c.name)}</div></th>`).join('') + `</tr>`;
-        const rows = (d.components || []).map((co, mi) => {
+        const mlist = d.components || [];
+        const rows = mlist.map((co, mi) => {
             // Bonus / pénalité / aide à la réussite : pas de coefficient → cellules non éditables
             const special = _coeffSansCoefficient(co);
+            const isFirst = mi === 0, isLast = mi === mlist.length - 1;
             const cells = comps.map((c, ci) => {
                 if (special) return `<td style="padding:1px;text-align:center;color:#9ca3af" title="Calculé automatiquement (barème), sans coefficient">—</td>`;
                 const v = (c.coeffs || {})[co.code];
@@ -1988,8 +1987,9 @@ function renderPromoCoeffTables() {
                     value="${v === undefined || v === null ? '' : v}" oninput="updatePromoCoeffTotal('${sem}',${ci})"
                     style="width:60px;padding:2px 1px;text-align:center;border:1px solid #d1d5db;border-radius:4px"></td>`;
             }).join('');
+            const mvBtn = (sym, t, dis, dir) => `<button type="button" title="${t}" ${dis ? 'disabled' : ''} onclick="moveCoeffMatiere('${sem}',${mi},${dir})" style="border:none;background:none;font-size:.72rem;line-height:1;padding:0;cursor:${dis ? 'default' : 'pointer'};color:${dis ? '#d1d5db' : '#6b7280'}">${sym}</button>`;
             const def = `
-                <td style="padding:1px 3px;text-align:center"><button type="button" title="Supprimer la matière" onclick="removeCoeffMatiere('${sem}',${mi})" style="border:none;background:none;cursor:pointer;color:#b91c1c;font-size:1rem">🗑</button></td>
+                <td style="padding:1px 2px;text-align:center;white-space:nowrap">${mvBtn('▲', 'Monter', isFirst, -1)}${mvBtn('▼', 'Descendre', isLast, 1)} <button type="button" title="Supprimer la matière" onclick="removeCoeffMatiere('${sem}',${mi})" style="border:none;background:none;cursor:pointer;color:#b91c1c;font-size:.95rem;padding:0">🗑</button></td>
                 <td style="padding:1px"><select class="pcf-kind" onchange="this.style.background=_coeffKindColor(this.value)" style="background:${_coeffKindColor(co.kind)};${inS};font-size:.8rem">${_coeffKindOptions(co.kind)}</select></td>
                 <td style="padding:1px"><input class="pcf-apogee" value="${esc(co.apogee_code || '')}" placeholder="—" style="width:92px;${inS}"></td>
                 <td style="padding:1px"><input class="pcf-code" value="${esc(co.code || '')}" style="width:84px;${inS};font-weight:600"></td>
@@ -2063,6 +2063,16 @@ function _collectPromoCoeff() {
     });
 }
 
+function moveCoeffMatiere(sem, mi, dir) {
+    if (!_coeffRef || !_coeffRef[sem]) return;
+    _collectPromoCoeff();
+    const comps = _coeffRef[sem].components || [];
+    const j = mi + dir;
+    if (j < 0 || j >= comps.length) return;
+    const tmp = comps[mi]; comps[mi] = comps[j]; comps[j] = tmp;
+    renderPromoCoeffTables();
+}
+
 function removeCoeffMatiere(sem, mi) {
     if (!_coeffRef || !_coeffRef[sem]) return;
     _collectPromoCoeff();
@@ -2131,6 +2141,22 @@ async function resetPromoCoeff() {
         _coeffRef = await api(`/promotions/${_coeffPromoId}/coefficients/reset`, { method: 'POST' });
         renderPromoCoeffTables();
         toast('Coefficients réinitialisés');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function saveAsDefaultCoeff() {
+    if (!_coeffPromoId || !_coeffRef) { toast('Choisissez une promotion', 'error'); return; }
+    const src = _promotions.find(p => String(p.id) === String(_coeffPromoId));
+    if (!confirm(`Écraser le fichier d'origine avec les coefficients de « ${src ? src.name : ''} » ?\n\n`
+        + `Toutes les NOUVELLES promotions et le bouton « Réinitialiser » utiliseront ce modèle.\n`
+        + `L'ancien fichier est sauvegardé automatiquement. Les promotions existantes ne sont pas modifiées.`)) return;
+    try {
+        // On enregistre d'abord la promo pour écrire l'état affiché
+        _collectPromoCoeff();
+        _coeffRef = await api(`/promotions/${_coeffPromoId}/coefficients`, { method: 'PUT', body: JSON.stringify(_coeffRef) });
+        const r = await api(`/promotions/${_coeffPromoId}/coefficients/save-as-default`, { method: 'POST' });
+        renderPromoCoeffTables();
+        toast('Fichier d\'origine mis à jour' + (r && r.backup ? ' (sauvegarde : ' + r.backup + ')' : ''));
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
