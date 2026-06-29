@@ -2244,6 +2244,51 @@ def reset_promotion_coefficients(pid):
     pdb.commit()
     return jsonify(ref)
 
+_VALID_MIN_COMP = 3   # une année est validée si ≥ 3 compétences validées (règlement IUT Toulon)
+
+def _year_validation(pdb, pid, ref_all, target_year):
+    """Statut de validation de l'année `target_year` par étudiant, selon la règle :
+    une année est validée si au moins 3 compétences sont validées (moyenne annuelle
+    du regroupement ≥ 10). Cascade : valider une compétence à un niveau supérieur
+    valide automatiquement les niveaux inférieurs (compétence repérée par son nom).
+    Retourne {sid: {'validated', 'total', 'status'}} avec status ok/ko/partial/none."""
+    # Moyennes annuelles par année et par compétence (nom) : {year: {nom: {sid: avg}}}
+    by_year = {}
+    for y in (1, 2, 3):
+        avgs, names = _year_competence_averages(pdb, pid, f'S{2*y-1}', f'S{2*y}', ref_all)
+        m = {}
+        for ci, nm in enumerate(names):
+            if nm:
+                m[nm] = {sid: row.get(str(ci)) for sid, row in avgs.items()}
+        by_year[y] = m
+    target_names = list(by_year.get(target_year, {}).keys())
+    total = len(target_names)
+    out = {}
+    for r in pdb.execute('SELECT id FROM promotion_students WHERE promotion_id=?', (pid,)):
+        sid = str(r['id'])
+        validated = evaluated = 0
+        for nm in target_names:
+            # Meilleure moyenne annuelle de cette compétence au niveau cible ou supérieur
+            best = None
+            for y in range(target_year, 4):
+                avg = (by_year.get(y, {}).get(nm, {}) or {}).get(sid)
+                if avg is not None:
+                    best = avg if best is None else max(best, avg)
+            if best is not None:
+                evaluated += 1
+                if best >= 10:
+                    validated += 1
+        if evaluated == 0:
+            status = 'none'
+        elif validated >= _VALID_MIN_COMP:
+            status = 'ok'
+        elif validated + (total - evaluated) < _VALID_MIN_COMP:
+            status = 'ko'           # impossible d'atteindre 3 même en validant le reste
+        else:
+            status = 'partial'      # des compétences restent à évaluer
+        out[sid] = {'validated': validated, 'total': total, 'status': status}
+    return out
+
 def _promo_notes_payload(pdb, pid, semester):
     """Construit le tableau de notes : étudiants (effectif) × matières (référence),
     notes saisies, moyennes de compétences, rappels (semestre antérieur / année précédente)
@@ -2286,7 +2331,8 @@ def _promo_notes_payload(pdb, pid, semester):
             'competences': [{'name': c.get('name', ''), 'coeffs': c.get('coeffs', {})} for c in competences],
             'students': students, 'marks': marks, 'averages': averages, 'previous': previous,
             'year_semesters': [s_odd, s_even], 'year_competences': year_competences,
-            'year_averages': year_averages}
+            'year_averages': year_averages,
+            'year_validation': _year_validation(pdb, pid, ref_all, year)}
 
 @app.route('/api/promotions/<int:pid>/notes/<semester>', methods=['GET'])
 def get_promotion_notes(pid, semester):

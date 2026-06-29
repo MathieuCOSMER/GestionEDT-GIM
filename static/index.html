@@ -2575,8 +2575,8 @@ function renderNotesGrid() {
                 : (st === 'ko' ? 'background:#fee2e2;color:#b91c1c' : 'background:#f0fdf4;color:#166534');
             return `<td title="${st === 'ok' ? 'UE acquise (≥10)' : (st === 'ko' ? 'UE non acquise (<10)' : 'Non évaluée')}" style="text-align:center;font-weight:700;font-size:1rem;${stl}${ci === 0 ? ';border-left:4px solid #22c55e' : ''}">${_fmtAvg(ya[ci])}</td>`;
         }).join('');
-        const ys = _yearStatus(ya, (d.year_competences || []).length);
-        const yearStatusCell = `<td style="text-align:center;white-space:nowrap;padding:2px 8px;border-left:4px solid #22c55e"><span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:.8rem;font-weight:700;${_YS_STYLE[ys.cls]}">${ys.label}</span></td>`;
+        const ys = _yearStatusBadge((d.year_validation || {})[s.id]);
+        const yearStatusCell = `<td title="${ys.title}" style="text-align:center;white-space:nowrap;padding:2px 8px;border-left:4px solid #22c55e"><span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:.8rem;font-weight:700;${_YS_STYLE[ys.cls]}">${ys.label}</span></td>`;
         return `<tr><td class="nz-sticky" style="white-space:nowrap;font-size:1rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${prevCells}${cells}${avgCells}${yearCells}${yearStatusCell}</tr>`;
     }).join('');
     el.innerHTML = `
@@ -2590,7 +2590,7 @@ function renderNotesGrid() {
             <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:13px;height:13px;border-radius:3px;background:#dcfce7;border:1px solid #86efac"></span>acquise (≥&nbsp;10)</span>
             <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:13px;height:13px;border-radius:3px;background:#fef9c3;border:1px solid #fde047"></span>compensée (regroupement&nbsp;≥&nbsp;10)</span>
             <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:13px;height:13px;border-radius:3px;background:#fee2e2;border:1px solid #fca5a5"></span>non acquise (&lt;&nbsp;10)</span>
-            <span style="color:#6b7280">— L'<strong>année est validée</strong> quand toutes les UE sont acquises ou compensées.</span>
+            <span style="color:#6b7280">— L'<strong>année est validée</strong> si <strong>≥ 3 compétences</strong> sont validées (moyenne annuelle ≥ 10 ; valider un niveau supérieur valide l'inférieur).</span>
         </div>
         <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px;width:90vw;margin-left:calc(50% - 45vw)">
             <table class="nz-table"><thead>${head}</thead><tbody>${body}</tbody></table>
@@ -2649,16 +2649,14 @@ function _yearUeStatus(annual) {
     if (annual === undefined || annual === null) return 'none';
     return annual >= 10 ? 'ok' : 'ko';
 }
-function _yearStatus(ya, n) {
-    const present = [];
-    for (let ci = 0; ci < n; ci++) {
-        const v = ya[ci];
-        if (v !== undefined && v !== null) present.push(v);
-    }
-    if (!present.length) return { cls: 'none', label: '—' };
-    if (present.some(v => v < 10)) return { cls: 'ko', label: '✗ Non validée' };
-    if (present.length < n) return { cls: 'comp', label: 'Incomplète' };
-    return { cls: 'ok', label: '✓ Validée' };
+// Badge de statut année à partir de year_validation (calculé côté serveur) :
+// une année est validée si ≥ 3 compétences validées (cascade des niveaux incluse).
+function _yearStatusBadge(yv) {
+    if (!yv || yv.status === 'none') return { cls: 'none', label: '—', title: 'Aucune note' };
+    const count = yv.validated + '/' + yv.total + ' compétence(s) validée(s)';
+    if (yv.status === 'ok') return { cls: 'ok', label: '✓ Validée', title: count + ' — année validée (≥ 3)' };
+    if (yv.status === 'partial') return { cls: 'comp', label: 'Incomplète ' + yv.validated + '/' + yv.total, title: count + ' — des compétences restent à évaluer' };
+    return { cls: 'ko', label: '✗ Non validée ' + yv.validated + '/' + yv.total, title: count + ' — moins de 3 compétences validées' };
 }
 const _YS_STYLE = {
     ok: 'background:#16a34a;color:#fff', ko: 'background:#dc2626;color:#fff',
