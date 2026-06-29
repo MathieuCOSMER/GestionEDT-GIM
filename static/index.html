@@ -531,6 +531,7 @@
                     <button type="button" class="sem-btn active" data-sem="S6" onclick="togglePromoCoeffSem('S6',this)">S6</button>
                 </div>
                 <button class="btn btn-secondary btn-sm" id="coeff-new-mat-btn" style="margin-left:14px" onclick="openNewCoeffMatiere()" disabled>+ Créer matière</button>
+                <button class="btn btn-secondary btn-sm" id="coeff-copy-btn" onclick="openCoeffCopy()" disabled>Copier vers…</button>
                 <button class="btn btn-primary btn-sm" id="coeff-save-btn" onclick="savePromoCoeff()" disabled>💾 Enregistrer</button>
                 <button class="btn btn-secondary btn-sm" id="coeff-reset-btn" onclick="resetPromoCoeff()" disabled>↺ Réinitialiser (fichier d'origine)</button>
             </div>
@@ -955,6 +956,29 @@
         <div class="form-actions">
             <button type="button" class="btn btn-secondary" onclick="closeModal('modal-coeff-matiere')">Annuler</button>
             <button type="button" class="btn btn-primary" onclick="submitNewCoeffMatiere()">Ajouter</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL COPIER COEFFICIENTS VERS D'AUTRES PROMOTIONS ===== -->
+<div class="modal-backdrop" id="modal-coeff-copy">
+    <div class="modal">
+        <h2>Copier des semestres vers d'autres promotions</h2>
+        <p style="color:#6b7280;font-size:.9rem;margin-top:0">
+            Les semestres choisis de <strong id="coeff-copy-source"></strong> (matières + coefficients)
+            <strong>remplaceront</strong> ceux des promotions cochées. La source est d'abord enregistrée.
+        </p>
+        <div class="form-group">
+            <label>Semestres à copier</label>
+            <div id="coeff-copy-sems" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:4px"></div>
+        </div>
+        <div class="form-group">
+            <label>Promotions cibles</label>
+            <div id="coeff-copy-targets" style="display:flex;flex-direction:column;gap:4px;margin-top:4px;max-height:200px;overflow:auto;border:1px solid #e5e7eb;border-radius:6px;padding:8px"></div>
+        </div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-coeff-copy')">Annuler</button>
+            <button type="button" class="btn btn-primary" id="coeff-copy-submit" onclick="submitCoeffCopy()">Copier</button>
         </div>
     </div>
 </div>
@@ -1870,7 +1894,7 @@ async function _ensurePromotionsList() {
 }
 
 function _setCoeffButtonsEnabled(on) {
-    ['coeff-new-mat-btn', 'coeff-save-btn', 'coeff-reset-btn'].forEach(id => {
+    ['coeff-new-mat-btn', 'coeff-copy-btn', 'coeff-save-btn', 'coeff-reset-btn'].forEach(id => {
         const b = document.getElementById(id); if (b) b.disabled = !on;
     });
 }
@@ -1954,8 +1978,8 @@ function renderPromoCoeffTables() {
             <th style="padding:4px 6px;text-align:left">Libellé</th>` +
             comps.map(c => `<th style="background:#ede9fe;width:64px;padding:6px 2px;vertical-align:middle;text-align:center"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600">${esc(c.name)}</div></th>`).join('') + `</tr>`;
         const rows = (d.components || []).map((co, mi) => {
-            // Bonus / pénalité : pas de coefficient (calculés par barème) → cellules non éditables
-            const special = co.kind === 'BONUS' || co.kind === 'PEN';
+            // Bonus / pénalité / aide à la réussite : pas de coefficient → cellules non éditables
+            const special = _coeffSansCoefficient(co);
             const cells = comps.map((c, ci) => {
                 if (special) return `<td style="padding:1px;text-align:center;color:#9ca3af" title="Calculé automatiquement (barème), sans coefficient">—</td>`;
                 const v = (c.coeffs || {})[co.code];
@@ -1987,8 +2011,8 @@ function renderPromoCoeffTables() {
             Définition des matières (Type / Code / Libellé court / Libellé) et coefficient de chaque matière
             dans chaque compétence, par semestre (case vide = non prise en compte). Le total par compétence
             vaut normalement 60. Ces coefficients sont propres à la promotion sélectionnée.
-            Les lignes <strong>Bonus</strong> et <strong>Pénalité</strong> n'ont pas de coefficient : elles sont
-            calculées automatiquement selon le barème (saisie dans l'onglet Notes).</p>
+            Les lignes <strong>Bonus</strong>, <strong>Pénalité</strong> et <strong>Aide à la réussite</strong>
+            n'ont pas de coefficient (calculées à part / non comptées).</p>
         ${blocks || '<div class="empty">Aucun semestre sélectionné.</div>'}`;
 }
 
@@ -2108,6 +2132,51 @@ async function resetPromoCoeff() {
         renderPromoCoeffTables();
         toast('Coefficients réinitialisés');
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+function openCoeffCopy() {
+    if (!_coeffPromoId || !_coeffRef) { toast('Choisissez une promotion', 'error'); return; }
+    const src = _promotions.find(p => String(p.id) === String(_coeffPromoId));
+    document.getElementById('coeff-copy-source').textContent = src ? src.name : '';
+    // Semestres : présents dans la source, pré-cochés = ceux affichés
+    const sems = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].filter(s => _coeffRef[s]);
+    document.getElementById('coeff-copy-sems').innerHTML = sems.map(s =>
+        `<label style="display:inline-flex;align-items:center;gap:4px;font-weight:500">
+            <input type="checkbox" class="cc-sem" value="${s}"${_promoCoeffSemesters.has(s) ? ' checked' : ''}> ${s}</label>`).join('')
+        || '<span style="color:#9ca3af">Aucun semestre</span>';
+    // Promotions cibles : toutes sauf la source
+    const targets = _promotions.filter(p => String(p.id) !== String(_coeffPromoId));
+    document.getElementById('coeff-copy-targets').innerHTML = targets.length ? targets.map(p =>
+        `<label style="display:flex;align-items:center;gap:6px">
+            <input type="checkbox" class="cc-target" value="${p.id}"> ${esc(p.name)}</label>`).join('')
+        : '<span style="color:#9ca3af">Aucune autre promotion disponible</span>';
+    openModal('modal-coeff-copy');
+}
+
+async function submitCoeffCopy() {
+    const sems = Array.from(document.querySelectorAll('#coeff-copy-sems .cc-sem:checked')).map(c => c.value);
+    const targets = Array.from(document.querySelectorAll('#coeff-copy-targets .cc-target:checked')).map(c => +c.value);
+    if (!sems.length) { toast('Sélectionnez au moins un semestre', 'error'); return; }
+    if (!targets.length) { toast('Sélectionnez au moins une promotion cible', 'error'); return; }
+    const names = targets.map(t => (_promotions.find(p => p.id === t) || {}).name || t).join(', ');
+    if (!confirm(`Copier ${sems.join(', ')} vers : ${names} ?\nLes semestres correspondants y seront remplacés.`)) return;
+    const btn = document.getElementById('coeff-copy-submit');
+    btn.disabled = true; btn.textContent = 'Copie…';
+    try {
+        // On enregistre d'abord la source pour copier l'état affiché
+        _collectPromoCoeff();
+        _coeffRef = await api(`/promotions/${_coeffPromoId}/coefficients`, { method: 'PUT', body: JSON.stringify(_coeffRef) });
+        const r = await api(`/promotions/${_coeffPromoId}/coefficients/copy`, {
+            method: 'POST', body: JSON.stringify({ semesters: sems, targets })
+        });
+        closeModal('modal-coeff-copy');
+        renderPromoCoeffTables();
+        toast(`Copié vers ${r.targets} promotion(s) (${r.copied} semestre(s))`);
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    } finally {
+        btn.disabled = false; btn.textContent = 'Copier';
+    }
 }
 
 async function loadPromotions() {
@@ -2484,10 +2553,14 @@ function renderNotesGrid() {
         }).join('');
         const cells = mats.map((m, mi) => {
             const v = d.marks[s.id + '_' + m.code];
+            const special = m.kind === 'PEN' || m.kind === 'BONUS';
+            const calc = special
+                ? `<div class="nz-calc" style="font-size:.7rem;font-weight:600;margin-top:1px;min-height:.85rem;color:${m.kind === 'PEN' ? '#b91c1c' : '#15803d'}">${_notesCalcText(m.kind, v)}</div>`
+                : '';
             return `<td style="padding:1px;text-align:center${mi === 0 ? ';border-left:4px solid #6b7280' : ''}"><input type="text" inputmode="decimal" maxlength="5"
                 class="nz-mark" data-sid="${s.id}" data-code="${esc(m.code)}" data-kind="${esc(m.kind || '')}"
-                value="${v === undefined || v === null ? '' : v}"
-                style="width:48px;padding:2px 1px;text-align:center;font-size:1rem;border:1px solid #d1d5db;border-radius:4px"></td>`;
+                value="${v === undefined || v === null ? '' : v}"${special ? ' oninput="onNotesSpecialInput(this)"' : ''}
+                style="width:48px;padding:2px 1px;text-align:center;font-size:1rem;border:1px solid #d1d5db;border-radius:4px">${calc}</td>`;
         }).join('');
         const avg = d.averages[s.id] || {};
         const avgCells = comps.map((c, ci) =>
@@ -2506,6 +2579,32 @@ function renderNotesGrid() {
         <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px;width:90vw;margin-left:calc(50% - 45vw)">
             <table class="nz-table"><thead>${head}</thead><tbody>${body}</tbody></table>
         </div>`;
+}
+
+// Barème bonus/pénalité (miroir du backend) pour l'affichage en direct des points
+function notesPenaltyPoints(h) {
+    if (isNaN(h) || h <= 8) return 0;
+    let p = 0.05 * (Math.min(h, 18) - 8);
+    if (h > 18) p += 0.1 * (h - 18);
+    return Math.round(p * 100) / 100;
+}
+function notesBonusPoints(n) {
+    if (isNaN(n)) return 0;
+    return Math.round(Math.min(0.5, Math.max(0, 0.05 * (n - 10))) * 100) / 100;
+}
+function _fmtPts(p) { return (Math.round(p * 100) / 100).toString().replace('.', ','); }
+
+function _notesCalcText(kind, raw) {
+    const n = parseFloat(String(raw == null ? '' : raw).replace(',', '.'));
+    if (isNaN(n)) return '';
+    if (kind === 'PEN') { const p = notesPenaltyPoints(n); return '−' + _fmtPts(p) + ' pt'; }
+    if (kind === 'BONUS') { const p = notesBonusPoints(n); return '+' + _fmtPts(p) + ' pt'; }
+    return '';
+}
+
+function onNotesSpecialInput(inp) {
+    const calc = inp.parentElement.querySelector('.nz-calc');
+    if (calc) calc.textContent = _notesCalcText(inp.dataset.kind, inp.value);
 }
 
 async function saveNotesMarks() {
@@ -2546,6 +2645,13 @@ let _coeffRef = null;
 function _coeffKindColor(k) {
     return k === 'SAE' ? '#dbeafe' : (k === 'RES' ? '#dcfce7'
         : (k === 'PORT' ? '#fef3c7' : (k === 'STAGE' ? '#fee2e2' : '#f3f4f6')));
+}
+
+// Matières sans coefficient (calculées à part) : bonus, pénalité, aide à la réussite
+function _coeffSansCoefficient(co) {
+    if (co.kind === 'BONUS' || co.kind === 'PEN') return true;
+    const lbl = ((co.label || '') + ' ' + (co.short_label || '')).toLowerCase();
+    return /aide\s+à\s+la\s+r[ée]ussite/.test(lbl);
 }
 
 // Découpe une ligne "date | EVENT | k=v | k=v" en {ts, event, fields}

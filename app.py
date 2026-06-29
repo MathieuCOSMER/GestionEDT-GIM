@@ -2193,6 +2193,43 @@ def save_promotion_coefficients(pid):
     pdb.commit()
     return jsonify(_promo_coeffs(pdb, pid))
 
+@app.route('/api/promotions/<int:pid>/coefficients/copy', methods=['POST'])
+def copy_promotion_coefficients(pid):
+    """Copie les semestres choisis (matières + coefficients) de la promotion source
+    vers une ou plusieurs promotions cibles : les semestres concernés y sont remplacés."""
+    err = _require_admin()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion source introuvable', 404)
+    data = request.get_json() or {}
+    semesters = [s for s in (data.get('semesters') or []) if s in _PROMO_SEMESTERS]
+    targets = []
+    for t in (data.get('targets') or []):
+        try:
+            tid = int(t)
+        except (TypeError, ValueError):
+            continue
+        if tid != pid and tid not in targets:
+            targets.append(tid)
+    if not semesters or not targets:
+        return error_response('Sélectionnez au moins un semestre et une promotion cible', 400)
+    src = _promo_coeffs(pdb, pid)
+    copied = done = 0
+    for tid in targets:
+        if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (tid,)).fetchone():
+            continue
+        tgt = _promo_coeffs(pdb, tid)
+        for sem in semesters:
+            if sem in src:
+                tgt[sem] = json.loads(json.dumps(src[sem], ensure_ascii=False))
+                copied += 1
+        _store_promo_coeffs(pdb, tid, tgt)
+        done += 1
+    pdb.commit()
+    return jsonify({'copied': copied, 'targets': done, 'semesters': semesters})
+
 @app.route('/api/promotions/<int:pid>/coefficients/reset', methods=['POST'])
 def reset_promotion_coefficients(pid):
     """Réinitialise les coefficients de la promotion aux valeurs d'origine du fichier."""
