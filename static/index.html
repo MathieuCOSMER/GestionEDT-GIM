@@ -2535,7 +2535,7 @@ function renderNotesGrid() {
     const vth = (txt, bg, extra, title, color) =>
         `<th title="${esc(title || '')}" style="background:${bg};padding:6px 2px;vertical-align:bottom;text-align:center${extra || ''}"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600;font-size:.85rem${color ? ';color:' + color : ''}">${esc(txt)}</div></th>`;
     // Étudiant | [compétences des semestres précédents] | matières (courant) | compétences (courant)
-    const head = `<tr><th class="nz-sticky" style="min-width:119px;max-width:119px;vertical-align:bottom;font-size:.8rem">Étudiant</th>` +
+    const head = `<tr><th class="nz-sticky" style="min-width:155px;max-width:155px;vertical-align:bottom;font-size:.8rem">Étudiant</th>` +
         prev.map(g => g.competences.map((name, ci) =>
             vth(g.short + ' ' + name, '#eef2ff', ci === 0 ? ';border-left:4px solid #6366f1' : '', g.label, '#3730a3')).join('')).join('') +
         mats.map((m, mi) =>
@@ -2543,7 +2543,7 @@ function renderNotesGrid() {
         comps.map((c, ci) => vth(c.name, '#ede9fe', ci === 0 ? ';border-left:4px solid #6b7280' : '', '', '')).join('') +
         (d.year_competences || []).map((name, ci) =>
             vth('Année ' + name, '#dcfce7', ci === 0 ? ';border-left:4px solid #22c55e' : '', 'Moyenne annuelle ' + (d.year_semesters || []).join('–'), '#166534')).join('') +
-        `<th style="background:#dcfce7;padding:6px 8px;vertical-align:bottom;text-align:center;font-weight:700;color:#166534;min-width:96px;border-left:4px solid #22c55e">Statut<br>année</th>` +
+        `<th style="background:#dcfce7;padding:6px 4px;vertical-align:bottom;text-align:center;font-weight:700;color:#166534;font-size:.78rem;min-width:46px;border-left:4px solid #22c55e">Statut<br>année</th>` +
         `</tr>`;
     const statutBadge = st => (st && st !== 'Actif') ? ` <span style="font-size:.68rem;color:#9ca3af">(${esc(st)})</span>` : '';
     const body = d.students.map(s => {
@@ -2576,8 +2576,8 @@ function renderNotesGrid() {
             return `<td title="${st === 'ok' ? 'UE acquise (≥10)' : (st === 'ko' ? 'UE non acquise (<10)' : 'Non évaluée')}" style="text-align:center;font-weight:700;font-size:.9rem;${stl}${ci === 0 ? ';border-left:4px solid #22c55e' : ''}">${_fmtAvg(ya[ci])}</td>`;
         }).join('');
         const ys = _yearStatusBadge((d.year_validation || {})[s.id]);
-        const yearStatusCell = `<td title="${ys.title}" style="text-align:center;white-space:nowrap;padding:2px 8px;border-left:4px solid #22c55e"><span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:.8rem;font-weight:700;${_YS_STYLE[ys.cls]}">${ys.label}</span></td>`;
-        return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || ''))}" style="max-width:119px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${prevCells}${cells}${avgCells}${yearCells}${yearStatusCell}</tr>`;
+        const yearStatusCell = `<td title="${ys.title}" style="text-align:center;white-space:nowrap;padding:2px 3px;border-left:4px solid #22c55e"><span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:.78rem;font-weight:700;${_YS_STYLE[ys.cls]}">${ys.label}</span></td>`;
+        return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || ''))}" style="max-width:155px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${prevCells}${cells}${avgCells}${yearCells}${yearStatusCell}</tr>`;
     }).join('');
     el.innerHTML = `
         <div style="font-size:.8rem;color:#6b7280;margin-bottom:10px">Notes sur 20. Case vide = note absente (le coefficient correspondant est retiré du calcul).
@@ -2654,9 +2654,9 @@ function _yearUeStatus(annual) {
 function _yearStatusBadge(yv) {
     if (!yv || yv.status === 'none') return { cls: 'none', label: '—', title: 'Aucune note' };
     const count = yv.validated + '/' + yv.total + ' compétence(s) validée(s)';
-    if (yv.status === 'ok') return { cls: 'ok', label: '✓ Validée', title: count + ' — année validée (≥ 3)' };
-    if (yv.status === 'partial') return { cls: 'comp', label: 'Incomplète ' + yv.validated + '/' + yv.total, title: count + ' — des compétences restent à évaluer' };
-    return { cls: 'ko', label: '✗ Non validée ' + yv.validated + '/' + yv.total, title: count + ' — moins de 3 compétences validées' };
+    if (yv.status === 'ok') return { cls: 'ok', label: 'OK', title: count + ' — année validée (≥ 3)' };
+    if (yv.status === 'partial') return { cls: 'comp', label: 'INC', title: count + ' — incomplète : des compétences restent à évaluer' };
+    return { cls: 'ko', label: 'NOK', title: count + ' — non validée : moins de 3 compétences validées' };
 }
 const _YS_STYLE = {
     ok: 'background:#16a34a;color:#fff', ko: 'background:#dc2626;color:#fff',
