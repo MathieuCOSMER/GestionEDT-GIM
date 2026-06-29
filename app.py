@@ -2027,16 +2027,51 @@ def import_promotion_students(pid):
 
 # ---- Notes d'une promotion pour un semestre (matières/compétences = référence) ----
 
-def _semester_competence_averages(pdb, pid, semester, competences):
-    """Moyennes de compétences {student_id: {ci: avg}} pour un semestre donné."""
+# Bonus / pénalité d'assiduité — barème IUT de Toulon (règlement intérieur des études en BUT).
+def _penalty_points(hours):
+    """Malus d'assiduité à retrancher de la moyenne de CHAQUE UE du semestre.
+    Barème : 0 jusqu'à 8 h d'absences injustifiées (tolérance), −0,05 pt/h de la 9e à
+    la 18e h, puis −0,1 pt/h à partir de la 19e h. Retourne un nombre de points ≥ 0."""
+    try:
+        h = float(hours)
+    except (TypeError, ValueError):
+        return 0.0
+    if h <= 8:
+        return 0.0
+    p = 0.05 * (min(h, 18.0) - 8.0)
+    if h > 18:
+        p += 0.1 * (h - 18.0)
+    return round(p, 2)
+
+def _bonus_points(note):
+    """Bonification sport/art : 0,05 pt par point de note (/20) au-dessus de 10,
+    plafonnée à 0,5 pt. S'ajoute à la moyenne d'UE de l'année."""
+    try:
+        n = float(note)
+    except (TypeError, ValueError):
+        return 0.0
+    return round(min(0.5, max(0.0, 0.05 * (n - 10.0))), 2)
+
+def _code_by_kind(components, kind):
+    for c in (components or []):
+        if c.get('kind') == kind:
+            return c.get('code')
+    return None
+
+def _semester_competence_averages(pdb, pid, semester, competences, components=None):
+    """Moyennes de compétences {student_id: {ci: avg}} pour un semestre donné.
+    Le malus d'assiduité (heures saisies sur la matière de type PEN) est retranché
+    de la moyenne de chaque UE, conformément au règlement (IUT de Toulon)."""
     marks = {}
     for r in pdb.execute('''SELECT student_id, matiere_code, note FROM student_marks
                             WHERE promotion_id=? AND semester=? AND note IS NOT NULL''', (pid, semester)):
         marks[f"{r['student_id']}_{r['matiere_code']}"] = r['note']
     students = [r['id'] for r in pdb.execute(
         'SELECT id FROM promotion_students WHERE promotion_id=?', (pid,))]
+    pen_code = _code_by_kind(components, 'PEN')
     averages = {}
     for sid in students:
+        malus = _penalty_points(marks.get(f"{sid}_{pen_code}")) if pen_code else 0.0
         row = {}
         for ci, comp in enumerate(competences):
             num = den = 0.0
@@ -2046,25 +2081,40 @@ def _semester_competence_averages(pdb, pid, semester, competences):
                 if coeff and key in marks:
                     num += coeff * marks[key]
                     den += coeff
-            row[str(ci)] = round(num / den, 2) if den > 0 else None
+            row[str(ci)] = round(max(0.0, num / den - malus), 2) if den > 0 else None
         averages[str(sid)] = row
     return averages
 
 def _year_competence_averages(pdb, pid, s_odd, s_even, ref_all):
-    """Moyenne annuelle par compétence = moyenne des 2 semestres. Retourne (averages, noms)."""
-    comps_odd = (ref_all.get(s_odd) or {}).get('competences', [])
+    """Moyenne annuelle par compétence = moyenne des 2 semestres (malus d'assiduité inclus),
+    augmentée de la bonification sport/art (meilleure note des 2 semestres, max 0,5).
+    Retourne (averages, noms)."""
+    d_odd, d_even = (ref_all.get(s_odd) or {}), (ref_all.get(s_even) or {})
+    comps_odd = d_odd.get('competences', [])
     names = [c.get('name', '') for c in comps_odd]
-    avg_odd = _semester_competence_averages(pdb, pid, s_odd, comps_odd)
-    comps_even = (ref_all.get(s_even) or {}).get('competences', [])
-    avg_even = _semester_competence_averages(pdb, pid, s_even, comps_even)
+    avg_odd = _semester_competence_averages(pdb, pid, s_odd, comps_odd, d_odd.get('components', []))
+    comps_even = d_even.get('competences', [])
+    avg_even = _semester_competence_averages(pdb, pid, s_even, comps_even, d_even.get('components', []))
+    # Note de bonus (sport/art) : on retient la meilleure note saisie sur les 2 semestres
+    bonus_note = {}
+    for sem, comps_d in ((s_odd, d_odd), (s_even, d_even)):
+        bcode = _code_by_kind(comps_d.get('components', []), 'BONUS')
+        if not bcode:
+            continue
+        for r in pdb.execute('''SELECT student_id, note FROM student_marks
+                                WHERE promotion_id=? AND semester=? AND matiere_code=? AND note IS NOT NULL''',
+                             (pid, sem, bcode)):
+            sid = str(r['student_id'])
+            bonus_note[sid] = max(bonus_note.get(sid, 0.0), r['note'])
     out = {}
     for r in pdb.execute('SELECT id FROM promotion_students WHERE promotion_id=?', (pid,)):
         sid = str(r['id'])
+        bonus = _bonus_points(bonus_note.get(sid)) if sid in bonus_note else 0.0
         row = {}
         for ci in range(len(names)):
             vals = [v for v in ((avg_odd.get(sid) or {}).get(str(ci)),
                                 (avg_even.get(sid) or {}).get(str(ci))) if v is not None]
-            row[str(ci)] = round(sum(vals) / len(vals), 2) if vals else None
+            row[str(ci)] = round(min(20.0, sum(vals) / len(vals) + bonus), 2) if vals else None
         out[sid] = row
     return out, names
 
@@ -2077,17 +2127,42 @@ def _store_promo_coeffs(pdb, pid, data):
                      SET data=excluded.data, updated_at=CURRENT_TIMESTAMP''',
                 (pid, json.dumps(data, ensure_ascii=False)))
 
+def _ensure_bonus_pen(coeffs):
+    """Garantit qu'un composant BONUS et un composant PEN existent pour chaque semestre
+    (ajout non destructif depuis les valeurs par défaut). Retourne True si modifié."""
+    defaults = _ref_coeffs_defaults()
+    changed = False
+    for sem, d in (coeffs or {}).items():
+        comps = d.get('components')
+        if comps is None:
+            continue
+        have = {c.get('kind') for c in comps}
+        for kind in ('BONUS', 'PEN'):
+            if kind not in have:
+                src = next((c for c in defaults.get(sem, {}).get('components', [])
+                            if c.get('kind') == kind), None)
+                if src:
+                    comps.append(dict(src))
+                    changed = True
+    return changed
+
 def _promo_coeffs(pdb, pid, seed=True):
     """Coefficients d'une promotion : copie stockée si présente, sinon (par défaut)
-    initialisée depuis la référence globale puis persistée pour devenir indépendante."""
+    initialisée depuis la référence globale puis persistée pour devenir indépendante.
+    Les lignes BONUS/PEN manquantes sont complétées de façon non destructive."""
     row = pdb.execute('SELECT data FROM promotion_coefficients WHERE promotion_id=?',
                       (pid,)).fetchone()
     if row and row['data']:
         try:
-            return json.loads(row['data'])
+            coeffs = json.loads(row['data'])
+            if _ensure_bonus_pen(coeffs):
+                _store_promo_coeffs(pdb, pid, coeffs)
+                pdb.commit()
+            return coeffs
         except ValueError:
             pass
     ref = _load_ref_coeffs(get_db()) or {}
+    _ensure_bonus_pen(ref)
     if seed:
         _store_promo_coeffs(pdb, pid, ref)
         pdb.commit()
@@ -2147,7 +2222,7 @@ def _promo_notes_payload(pdb, pid, semester):
     for r in pdb.execute('''SELECT student_id, matiere_code, note, mention FROM student_marks
                             WHERE promotion_id=? AND semester=? AND note IS NOT NULL''', (pid, semester)):
         marks[f"{r['student_id']}_{r['matiere_code']}"] = r['mention'] if r['mention'] else r['note']
-    averages = _semester_competence_averages(pdb, pid, semester, competences)
+    averages = _semester_competence_averages(pdb, pid, semester, competences, components)
     sem_num = int(semester[1:])
     year = (sem_num + 1) // 2   # 1,1,2,2,3,3
     # Rappels : toutes les années précédentes (moyennes annuelles) puis le semestre antérieur
@@ -2160,11 +2235,13 @@ def _promo_notes_payload(pdb, pid, semester):
                              'competences': ynames, 'averages': yavg})
     if sem_num % 2 == 0:
         psem = f'S{sem_num - 1}'
-        pcomps = (ref_all.get(psem) or {}).get('competences', [])
+        pdata = ref_all.get(psem) or {}
+        pcomps = pdata.get('competences', [])
         if pcomps:
             previous.append({'short': psem, 'label': f'Semestre {psem}',
                              'competences': [c.get('name', '') for c in pcomps],
-                             'averages': _semester_competence_averages(pdb, pid, psem, pcomps)})
+                             'averages': _semester_competence_averages(
+                                 pdb, pid, psem, pcomps, pdata.get('components', []))})
     # Moyenne annuelle courante = moyenne des 2 semestres de l'année (S1+S2, S3+S4, S5+S6)
     s_odd, s_even = f'S{year * 2 - 1}', f'S{year * 2}'
     year_averages, year_competences = _year_competence_averages(pdb, pid, s_odd, s_even, ref_all)

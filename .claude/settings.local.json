@@ -143,7 +143,14 @@
       "Bash(venv_Pro/Scripts/python.exe -c \"import ast; ast.parse\\(open\\('app.py',encoding='utf-8'\\).read\\(\\)\\); print\\('app.py OK'\\)\")",
       "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -c \"import ast; ast.parse\\(open\\('app.py',encoding='utf-8'\\).read\\(\\)\\); print\\('app.py OK'\\)\")",
       "PowerShell(& \".\\\\venv_Pro\\\\Scripts\\\\python.exe\" \"$env:TEMP\\\\claude\\\\C--Users-MathieuRICHIER-OneDrive---Universit--de-Toulon-2-Enseignements-1-GIM-Hypperplanning-GestionEDT\\\\d7ae9387-23a3-4ec4-ab30-0417aa86ea13\\\\scratchpad\\\\test_coeff.py\")",
-      "PowerShell($env:PYTHONPATH = \\(Get-Location\\).Path; & \".\\\\venv_Pro\\\\Scripts\\\\python.exe\" \"$env:TEMP\\\\claude\\\\C--Users-MathieuRICHIER-OneDrive---Universit--de-Toulon-2-Enseignements-1-GIM-Hypperplanning-GestionEDT\\\\d7ae9387-23a3-4ec4-ab30-0417aa86ea13\\\\scratchpad\\\\test_coeff.py\")"
+      "PowerShell($env:PYTHONPATH = \\(Get-Location\\).Path; & \".\\\\venv_Pro\\\\Scripts\\\\python.exe\" \"$env:TEMP\\\\claude\\\\C--Users-MathieuRICHIER-OneDrive---Universit--de-Toulon-2-Enseignements-1-GIM-Hypperplanning-GestionEDT\\\\d7ae9387-23a3-4ec4-ab30-0417aa86ea13\\\\scratchpad\\\\test_coeff.py\")",
+      "WebSearch",
+      "WebFetch(domain:iut.univ-tln.fr)",
+      "PowerShell(& \".\\\\venv_Pro\\\\Scripts\\\\python.exe\" \"$env:TEMP\\\\claude\\\\C--Users-MathieuRICHIER-OneDrive---Universit--de-Toulon-2-Enseignements-1-GIM-Hypperplanning-GestionEDT\\\\d7ae9387-23a3-4ec4-ab30-0417aa86ea13\\\\scratchpad\\\\fix_coeffs.py\")",
+      "PowerShell(& \".\\\\venv_Pro\\\\Scripts\\\\python.exe\" -c \"import ast; ast.parse\\(open\\('app.py',encoding='utf-8'\\).read\\(\\)\\); print\\('app.py OK'\\)\"; $env:PYTHONPATH=\\(Get-Location\\).Path; & \".\\\\venv_Pro\\\\Scripts\\\\python.exe\" \"$env:TEMP\\\\claude\\\\C--Users-MathieuRICHIER-OneDrive---Universit--de-Toulon-2-Enseignements-1-GIM-Hypperplanning-GestionEDT\\\\d7ae9387-23a3-4ec4-ab30-0417aa86ea13\\\\scratchpad\\\\test_penalty.py\")",
+      "PowerShell($env:PYTHONPATH=\\(Get-Location\\).Path; & \".\\\\venv_Pro\\\\Scripts\\\\python.exe\" \"$env:TEMP\\\\claude\\\\C--Users-MathieuRICHIER-OneDrive---Universit--de-Toulon-2-Enseignements-1-GIM-Hypperplanning-GestionEDT\\\\d7ae9387-23a3-4ec4-ab30-0417aa86ea13\\\\scratchpad\\\\test_penalty.py\")",
+      "PowerShell(& \".\\\\venv_Pro\\\\Scripts\\\\python.exe\" -c \"import json; json.load\\(open\\('data/coefficients.json',encoding='utf-8'\\)\\); print\\('coefficients.json valide'\\)\"; git diff --stat)",
+      "PowerShell(git log --oneline -3; \"---- status ----\"; git status --short)"
     ]
   }
 }

@@ -1954,7 +1954,10 @@ function renderPromoCoeffTables() {
             <th style="padding:4px 6px;text-align:left">Libellé</th>` +
             comps.map(c => `<th style="background:#ede9fe;width:64px;padding:6px 2px;vertical-align:middle;text-align:center"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600">${esc(c.name)}</div></th>`).join('') + `</tr>`;
         const rows = (d.components || []).map((co, mi) => {
+            // Bonus / pénalité : pas de coefficient (calculés par barème) → cellules non éditables
+            const special = co.kind === 'BONUS' || co.kind === 'PEN';
             const cells = comps.map((c, ci) => {
+                if (special) return `<td style="padding:1px;text-align:center;color:#9ca3af" title="Calculé automatiquement (barème), sans coefficient">—</td>`;
                 const v = (c.coeffs || {})[co.code];
                 return `<td style="padding:1px;text-align:center"><input type="number" min="0" step="0.5"
                     class="pcf-coeff" data-sem="${sem}" data-ci="${ci}" data-mi="${mi}"
@@ -1983,7 +1986,9 @@ function renderPromoCoeffTables() {
         <p style="font-size:.8rem;color:#6b7280;margin:0 0 4px">
             Définition des matières (Type / Code / Libellé court / Libellé) et coefficient de chaque matière
             dans chaque compétence, par semestre (case vide = non prise en compte). Le total par compétence
-            vaut normalement 60. Ces coefficients sont propres à la promotion sélectionnée.</p>
+            vaut normalement 60. Ces coefficients sont propres à la promotion sélectionnée.
+            Les lignes <strong>Bonus</strong> et <strong>Pénalité</strong> n'ont pas de coefficient : elles sont
+            calculées automatiquement selon le barème (saisie dans l'onglet Notes).</p>
         ${blocks || '<div class="empty">Aucun semestre sélectionné.</div>'}`;
 }
 
@@ -2480,7 +2485,7 @@ function renderNotesGrid() {
         const cells = mats.map((m, mi) => {
             const v = d.marks[s.id + '_' + m.code];
             return `<td style="padding:1px;text-align:center${mi === 0 ? ';border-left:4px solid #6b7280' : ''}"><input type="text" inputmode="decimal" maxlength="5"
-                class="nz-mark" data-sid="${s.id}" data-code="${esc(m.code)}"
+                class="nz-mark" data-sid="${s.id}" data-code="${esc(m.code)}" data-kind="${esc(m.kind || '')}"
                 value="${v === undefined || v === null ? '' : v}"
                 style="width:48px;padding:2px 1px;text-align:center;font-size:1rem;border:1px solid #d1d5db;border-radius:4px"></td>`;
         }).join('');
@@ -2493,7 +2498,11 @@ function renderNotesGrid() {
         return `<tr><td class="nz-sticky" style="white-space:nowrap;font-size:1rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${prevCells}${cells}${avgCells}${yearCells}</tr>`;
     }).join('');
     el.innerHTML = `
-        <div style="font-size:.8rem;color:#6b7280;margin-bottom:10px">Notes sur 20. Case vide = note absente (le coefficient correspondant est retiré du calcul). Matières &amp; coefficients dans le sous-onglet <strong>Coefficients</strong>.</div>
+        <div style="font-size:.8rem;color:#6b7280;margin-bottom:10px">Notes sur 20. Case vide = note absente (le coefficient correspondant est retiré du calcul).
+            Colonne <strong>Pénalité</strong> = nombre d'<strong>heures</strong> d'absences injustifiées (le malus est calculé selon le barème IUT&nbsp;Toulon
+            et retranché de chaque UE du semestre). Colonne <strong>Bonus</strong> = meilleure note sport/art <strong>/20</strong>
+            (bonification calculée, max&nbsp;0,5&nbsp;pt, ajoutée à la moyenne d'UE de l'<strong>année</strong>).
+            Matières &amp; coefficients dans le sous-onglet <strong>Coefficients</strong>.</div>
         <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px;width:90vw;margin-left:calc(50% - 45vw)">
             <table class="nz-table"><thead>${head}</thead><tbody>${body}</tbody></table>
         </div>`;
@@ -2506,13 +2515,16 @@ async function saveNotesMarks() {
     const marks = []; let invalid = false;
     document.querySelectorAll('#notes-content input.nz-mark').forEach(inp => {
         const raw = inp.value.trim();
+        const kind = inp.dataset.kind || '';
         let mark = null;
         if (raw !== '') {
-            if (raw.toUpperCase() === 'ABI') {
+            if (raw.toUpperCase() === 'ABI' && kind !== 'PEN') {
                 mark = 'ABI'; inp.style.borderColor = '#d1d5db';
             } else {
                 const note = parseFloat(raw.replace(',', '.'));
-                if (isNaN(note) || note < 0 || note > 20) { invalid = true; inp.style.borderColor = '#ef4444'; return; }
+                // PEN = heures d'absence (pas de plafond à 20) ; autres = note /20
+                const max = kind === 'PEN' ? 9999 : 20;
+                if (isNaN(note) || note < 0 || note > max) { invalid = true; inp.style.borderColor = '#ef4444'; return; }
                 inp.style.borderColor = '#d1d5db';
                 mark = note;
             }

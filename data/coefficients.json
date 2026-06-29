@@ -129,16 +129,18 @@
       },
       {
         "apogee_code": "T3BONIF1",
-        "apogee_name": "Bonus S1",
+        "apogee_name": "Bonus",
         "code": "BONUS",
-        "label": "Bonus S1",
+        "short_label": "Bonus",
+        "label": "Bonus sport/art S1",
         "kind": "BONUS"
       },
       {
         "apogee_code": "T3PEN1S",
-        "apogee_name": "Pénalité absences S1",
+        "apogee_name": "Pénalité absences",
         "code": "PEN",
-        "label": "Pénalité absences S1",
+        "short_label": "Pénalité",
+        "label": "Pénalité absences S1 (heures)",
         "kind": "PEN"
       }
     ],
@@ -353,6 +355,22 @@
         "code": "R2.12",
         "label": "PPP 2",
         "kind": "RES"
+      },
+      {
+        "apogee_code": "T3BONIF2",
+        "apogee_name": "Bonus",
+        "code": "BONUS",
+        "short_label": "Bonus",
+        "label": "Bonus sport/art S2",
+        "kind": "BONUS"
+      },
+      {
+        "apogee_code": "T3PEN2S",
+        "apogee_name": "Pénalité absences",
+        "code": "PEN",
+        "short_label": "Pénalité",
+        "label": "Pénalité absences S2 (heures)",
+        "kind": "PEN"
       }
     ],
     "competences": [
@@ -577,17 +595,19 @@
         "kind": "RES"
       },
       {
-        "apogee_code": "T3BONIF1",
-        "apogee_name": "Bonus S1",
+        "apogee_code": "T3BONIF3",
+        "apogee_name": "Bonus",
         "code": "BONUS",
-        "label": "Bonus S1",
+        "short_label": "Bonus",
+        "label": "Bonus sport/art S3",
         "kind": "BONUS"
       },
       {
-        "apogee_code": "T3PEN1S",
-        "apogee_name": "Pénalité absences S1",
+        "apogee_code": "T3PEN3S",
+        "apogee_name": "Pénalité absences",
         "code": "PEN",
-        "label": "Pénalité absences S1",
+        "short_label": "Pénalité",
+        "label": "Pénalité absences S3 (heures)",
         "kind": "PEN"
       }
     ],
@@ -782,6 +802,22 @@
         "code": "R4.10",
         "label": "PPP 4",
         "kind": "RES"
+      },
+      {
+        "apogee_code": "T3BONIF4",
+        "apogee_name": "Bonus",
+        "code": "BONUS",
+        "short_label": "Bonus",
+        "label": "Bonus sport/art S4",
+        "kind": "BONUS"
+      },
+      {
+        "apogee_code": "T3PEN4S",
+        "apogee_name": "Pénalité absences",
+        "code": "PEN",
+        "short_label": "Pénalité",
+        "label": "Pénalité absences S4 (heures)",
+        "kind": "PEN"
       }
     ],
     "competences": [
@@ -986,10 +1022,19 @@
         "kind": "RES"
       },
       {
-        "apogee_code": "T3PEN1S",
-        "apogee_name": "Pénalité pour absences - S5",
+        "apogee_code": "T3BONIF5",
+        "apogee_name": "Bonus",
+        "code": "BONUS",
+        "short_label": "Bonus",
+        "label": "Bonus sport/art S5",
+        "kind": "BONUS"
+      },
+      {
+        "apogee_code": "T3PEN5S",
+        "apogee_name": "Pénalité absences",
         "code": "PEN",
-        "label": "Pénalité pour absences - S5",
+        "short_label": "Pénalité",
+        "label": "Pénalité absences S5 (heures)",
         "kind": "PEN"
       }
     ],
@@ -1116,6 +1161,22 @@
         "code": "R6.07",
         "label": "Anglais 6",
         "kind": "RES"
+      },
+      {
+        "apogee_code": "T3BONIF6",
+        "apogee_name": "Bonus",
+        "code": "BONUS",
+        "short_label": "Bonus",
+        "label": "Bonus sport/art S6",
+        "kind": "BONUS"
+      },
+      {
+        "apogee_code": "T3PEN6S",
+        "apogee_name": "Pénalité absences",
+        "code": "PEN",
+        "short_label": "Pénalité",
+        "label": "Pénalité absences S6 (heures)",
+        "kind": "PEN"
       }
     ],
     "competences": [
