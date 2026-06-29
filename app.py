@@ -146,6 +146,16 @@ def db_path_for_year(year):
     return os.path.join(_DB_DIR, year, f'edt_{year}.db')
 
 def get_current_year():
+    """Année universitaire active pour la requête courante.
+    Priorité à l'année choisie par l'utilisateur dans SA session (vue
+    personnelle, sans impact sur les autres), sinon le défaut global.
+    Hors contexte requête (init, backups, scripts) : défaut global."""
+    try:
+        y = session.get('year')
+        if y and os.path.isfile(db_path_for_year(y)):
+            return y
+    except RuntimeError:
+        pass  # hors contexte requête Flask
     return get_settings().get('current_year', '')
 
 def list_years():
@@ -402,6 +412,16 @@ def _apply_promotions_migrations(db):
         db.execute("ALTER TABLE student_marks ADD COLUMN mention TEXT")
     except sqlite3.OperationalError:
         pass
+    # Coefficients (matières + compétences) propres à chaque promotion : copie JSON,
+    # initialisée depuis la référence globale puis éditable indépendamment.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS promotion_coefficients (
+            promotion_id INTEGER PRIMARY KEY,
+            data         TEXT NOT NULL,
+            updated_at   TEXT,
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE
+        )
+    ''')
     db.commit()
 
 def _init_promotions_db():
@@ -876,6 +896,9 @@ def _require_auth():
         # Exception : l'enseignant intervenant peut éditer le contenu de SA matière.
         # L'autorisation fine (intervenant ou non) est vérifiée dans le handler.
         if role == 'teacher' and (_is_course_content_path(path) or _is_constraints_self_path(path)):
+            return
+        # Le choix de l'année universitaire est personnel à la session : autorisé à tous
+        if path == '/api/years/session':
             return
         # Toute autre écriture (y compris la liste des enseignants) est réservée à l'admin
         return error_response('Accès en lecture seule', 403)
@@ -2045,11 +2068,75 @@ def _year_competence_averages(pdb, pid, s_odd, s_even, ref_all):
         out[sid] = row
     return out, names
 
+# ---- Coefficients propres à une promotion (copie indépendante de la référence) ----
+
+def _store_promo_coeffs(pdb, pid, data):
+    pdb.execute('''INSERT INTO promotion_coefficients(promotion_id, data, updated_at)
+                   VALUES(?,?,CURRENT_TIMESTAMP)
+                   ON CONFLICT(promotion_id) DO UPDATE
+                     SET data=excluded.data, updated_at=CURRENT_TIMESTAMP''',
+                (pid, json.dumps(data, ensure_ascii=False)))
+
+def _promo_coeffs(pdb, pid, seed=True):
+    """Coefficients d'une promotion : copie stockée si présente, sinon (par défaut)
+    initialisée depuis la référence globale puis persistée pour devenir indépendante."""
+    row = pdb.execute('SELECT data FROM promotion_coefficients WHERE promotion_id=?',
+                      (pid,)).fetchone()
+    if row and row['data']:
+        try:
+            return json.loads(row['data'])
+        except ValueError:
+            pass
+    ref = _load_ref_coeffs(get_db()) or {}
+    if seed:
+        _store_promo_coeffs(pdb, pid, ref)
+        pdb.commit()
+    return ref
+
+@app.route('/api/promotions/<int:pid>/coefficients', methods=['GET'])
+def get_promotion_coefficients(pid):
+    err = _require_admin()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    return jsonify(_promo_coeffs(pdb, pid))
+
+@app.route('/api/promotions/<int:pid>/coefficients', methods=['PUT'])
+def save_promotion_coefficients(pid):
+    err = _require_admin()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    data = request.get_json()
+    if not isinstance(data, dict):
+        return error_response('Format invalide', 400)
+    _store_promo_coeffs(pdb, pid, data)
+    pdb.commit()
+    return jsonify(_promo_coeffs(pdb, pid))
+
+@app.route('/api/promotions/<int:pid>/coefficients/reset', methods=['POST'])
+def reset_promotion_coefficients(pid):
+    """Réinitialise les coefficients de la promotion aux valeurs d'origine du fichier."""
+    err = _require_admin()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    ref = _ref_coeffs_defaults()
+    _store_promo_coeffs(pdb, pid, ref)
+    pdb.commit()
+    return jsonify(ref)
+
 def _promo_notes_payload(pdb, pid, semester):
     """Construit le tableau de notes : étudiants (effectif) × matières (référence),
     notes saisies, moyennes de compétences, rappels (semestre antérieur / année précédente)
     et moyenne annuelle courante."""
-    ref_all = _load_ref_coeffs(get_db()) or {}
+    ref_all = _promo_coeffs(pdb, pid) or {}
     ref = ref_all.get(semester) or {'components': [], 'competences': []}
     components = ref.get('components', [])
     competences = ref.get('competences', [])
@@ -2063,10 +2150,9 @@ def _promo_notes_payload(pdb, pid, semester):
     averages = _semester_competence_averages(pdb, pid, semester, competences)
     sem_num = int(semester[1:])
     year = (sem_num + 1) // 2   # 1,1,2,2,3,3
-    # Rappels : année précédente (si semestre > 2) puis semestre antérieur (si semestre pair)
+    # Rappels : toutes les années précédentes (moyennes annuelles) puis le semestre antérieur
     previous = []
-    if sem_num > 2:
-        py = year - 1
+    for py in range(1, year):
         po, pe = f'S{py * 2 - 1}', f'S{py * 2}'
         yavg, ynames = _year_competence_averages(pdb, pid, po, pe, ref_all)
         if ynames:
@@ -2167,7 +2253,8 @@ def _apogee_marks_ws(ws):
     elps = []
     for c in range(5, ws.max_column + 1):
         if ws.cell(13, c).value == 'N' and ws.cell(8, c).value:
-            elps.append({'note_col': c, 'kind': _kind_from_code(ws.cell(8, c).value, ws.cell(14, c).value)})
+            elps.append({'note_col': c, 'code': _cell_txt(ws.cell(8, c).value),
+                         'kind': _kind_from_code(ws.cell(8, c).value, ws.cell(14, c).value)})
     rows, r = [], 18
     while r <= 2000:
         num = ws.cell(r, 1).value
@@ -2188,7 +2275,8 @@ def _pv_marks_ws(ws):
     for c in range(1, ws.max_column + 1):
         code = _cell_txt(ws.cell(6, c).value)
         if re.match(r'^T3I[SR]\d', code, re.I):
-            elps.append({'note_col': c, 'kind': _kind_from_code(code, ws.cell(7, c).value)})
+            elps.append({'note_col': c, 'code': code,
+                         'kind': _kind_from_code(code, ws.cell(7, c).value)})
     rows = []
     for r in range(8, ws.max_row + 1):
         num = _cell_txt(ws.cell(r, 2).value)
@@ -2251,20 +2339,28 @@ def import_promotion_notes(pid, semester):
     if not elps:
         return error_response('Aucune colonne de note détectée (fichier Apogée attendu)', 400)
 
-    # Mapping colonne note (fichier) -> code matière (référence du semestre), par index
-    ref = (_load_ref_coeffs(get_db()) or {}).get(semester) or {}
+    # Mapping colonne note (fichier) -> code matière (référence du semestre).
+    # Priorité à la correspondance EXACTE par code Apogée (T3IR202, …) ; repli
+    # sur l'appariement par index/type (SAÉ/Stage, Portfolio, Ressource).
+    ref = (_promo_coeffs(pdb, pid) or {}).get(semester) or {}
     components = ref.get('components', [])
-    is_codes = [c['code'] for c in components if c.get('kind') in ('SAE', 'STAGE')]
-    port_codes = [c['code'] for c in components if c.get('kind') == 'PORT']
-    res_codes = [c['code'] for c in components if c.get('kind') == 'RES']
+    apo2disp = {c['apogee_code']: c['code'] for c in components if c.get('apogee_code')}
     col2code = {}
-    for grp_kind, codes in (('SAE', is_codes), ('PORT', port_codes), ('RES', res_codes)):
-        i = 0
-        for e in elps:
-            if e['kind'] == grp_kind:
-                if i < len(codes):
-                    col2code[e['note_col']] = codes[i]
-                i += 1
+    for e in elps:
+        disp = apo2disp.get(e.get('code'))
+        if disp:
+            col2code[e['note_col']] = disp
+    if not col2code:
+        is_codes = [c['code'] for c in components if c.get('kind') in ('SAE', 'STAGE')]
+        port_codes = [c['code'] for c in components if c.get('kind') == 'PORT']
+        res_codes = [c['code'] for c in components if c.get('kind') == 'RES']
+        for grp_kind, codes in (('SAE', is_codes), ('PORT', port_codes), ('RES', res_codes)):
+            i = 0
+            for e in elps:
+                if e['kind'] == grp_kind:
+                    if i < len(codes):
+                        col2code[e['note_col']] = codes[i]
+                    i += 1
     if not col2code:
         return error_response('Aucune correspondance matière (vérifiez la référence des coefficients)', 400)
 
@@ -2300,6 +2396,129 @@ def import_promotion_notes(pid, semester):
     payload['import_report'] = {'notes': notes_set, 'etudiants_rapproches': matched,
                                 'etudiants_non_trouves': unmatched, 'matieres_mappees': len(col2code)}
     return jsonify(payload)
+
+# Couleur d'en-tête par type de matière (cohérent avec _coeffKindColor côté frontend)
+_NOTES_KIND_FILL = {'SAE': 'DBEAFE', 'RES': 'DCFCE7', 'PORT': 'FEF3C7',
+                    'STAGE': 'FEE2E2'}
+
+@app.route('/api/promotions/<int:pid>/notes/<semester>/export', methods=['GET'])
+def export_promotion_notes(pid, semester):
+    """Exporte les notes d'une promo/semestre en .xlsx (disposition type Apogée :
+    Numéro / Nom / Prénom / Naissance + une colonne par matière)."""
+    err = _require_admin()
+    if err:
+        return err
+    if semester not in _PROMO_SEMESTERS:
+        return error_response('Semestre invalide', 400)
+    import openpyxl, io
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    pdb = get_promotions_db()
+    promo = pdb.execute('SELECT id, name, formation FROM promotions WHERE id=?', (pid,)).fetchone()
+    if not promo:
+        return error_response('Promotion introuvable', 404)
+
+    ref = (_promo_coeffs(pdb, pid) or {}).get(semester) or {}
+    components = ref.get('components', [])
+    # Portfolio non noté aux semestres impairs → masqué (cohérent avec la grille de saisie)
+    if int(semester[1:]) % 2 == 1:
+        components = [m for m in components if m.get('kind') != 'PORT']
+    students = pdb.execute(
+        '''SELECT id, numero, nom, prenom, naissance FROM promotion_students
+           WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,)).fetchall()
+    marks = {}
+    for r in pdb.execute('''SELECT student_id, matiere_code, note, mention FROM student_marks
+                            WHERE promotion_id=? AND semester=? AND note IS NOT NULL''', (pid, semester)):
+        marks[(r['student_id'], r['matiere_code'])] = r['mention'] if r['mention'] else r['note']
+
+    formation = (promo['formation'] or '').upper()
+    year = get_current_year() or ''
+    year_start = year[:4] if len(year) >= 4 and year[:4].isdigit() else ''
+    year_slash = year.replace('-', '/')
+
+    # Disposition reproduite à l'identique de la feuille `imp_exp` du fichier
+    # d'import Apogée (lignes apoL_*/ELP/Code/Type Rés./libellés, étudiants à
+    # partir de la ligne 18, paires Note/Barème) — sans les macros. La secrétaire
+    # n'a plus qu'à copier-coller le bloc dans le vrai fichier Apogée.
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'imp_exp'
+    center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    bold = Font(bold=True)
+
+    n = len(components)
+    last_bareme_col = 4 + 2 * n   # barème de la dernière matière
+
+    # --- Métadonnées (lignes 1-4) ---
+    ws.cell(1, 5, 'Apogée')
+    ws.cell(3, 1, ' Fichier :')
+    ws.cell(3, 2, f"t3gim{semester}{formation}{year}.txt".lower())
+    ws.cell(3, 5, 'Version de diplôme :')
+    ws.cell(3, 7, 'T3GIM'); ws.cell(3, 8, 840)
+    ws.cell(3, 9, 'BUT TER GIM ISP')
+    ws.cell(4, 5, f"{semester} {formation} {year}")
+    ws.cell(4, 12, ' Année :'); ws.cell(4, 13, year_slash)
+
+    # --- Étiquettes de structure en colonne A ---
+    ws.cell(6, 1, 'apoL_a01_code'); ws.cell(6, 2, 'apoL_a02_nom')
+    ws.cell(6, 3, 'apoL_a03_prenom'); ws.cell(6, 4, 'apoL_a04_naissance')
+    ws.cell(7, 1, 'Type Objet'); ws.cell(8, 1, 'Code'); ws.cell(9, 1, 'Version')
+    ws.cell(10, 1, 'Année'); ws.cell(11, 1, 'Session')
+    ws.cell(12, 1, 'Admission/Admissibilité'); ws.cell(13, 1, 'Type Rés.')
+    ws.cell(15, 4, 'Session'); ws.cell(16, 1, 'Etudiant'); ws.cell(16, 4, 'Admissibilité')
+    for col, txt in enumerate(['Numéro', 'Nom', 'Prénom', 'Naissance'], start=1):
+        ws.cell(17, col, txt).font = bold
+
+    # --- Colonnes des matières (paires Note/Barème) ---
+    for i, m in enumerate(components):
+        nc = 5 + 2 * i          # colonne Note
+        bc = nc + 1             # colonne Barème
+        # Code et nom exacts Apogée (le code d'affichage R/SAE n'est qu'interne)
+        apo = m.get('apogee_code') or m.get('code', '')
+        aname = m.get('apogee_name') or m.get('label', '')
+        kind_fill = PatternFill('solid', fgColor=_NOTES_KIND_FILL.get(m.get('kind'), 'F3F4F6'))
+        ws.cell(6, nc, f"apoL_c{2 * i + 1:04d}"); ws.cell(6, bc, f"apoL_c{2 * i + 2:04d}")
+        ws.cell(7, nc, 'ELP')
+        ws.cell(7, bc, 'APO_COL_VAL_FIN' if bc == last_bareme_col else 'ELP')
+        ws.cell(8, nc, apo); ws.cell(8, bc, apo)
+        if year_start:
+            ws.cell(10, nc, int(year_start)); ws.cell(10, bc, int(year_start))
+        ws.cell(11, nc, 0); ws.cell(11, bc, 0)
+        ws.cell(12, nc, 1); ws.cell(12, bc, 1)
+        ws.cell(13, nc, 'N'); ws.cell(13, bc, 'B')
+        ws.cell(15, nc, 0); ws.cell(15, bc, 0)
+        lab = ws.cell(14, nc, f"{apo} - {aname}")
+        lab.font = Font(bold=True, size=9); lab.alignment = center; lab.fill = kind_fill
+        ws.cell(17, nc, 'Note').font = bold
+        ws.cell(17, bc, 'Barème').font = bold
+
+    # --- Étudiants (ligne 18+) : notes dans les colonnes Note, barème = 20 partout ---
+    row = 18
+    for s in students:
+        ws.cell(row, 1, s['numero']); ws.cell(row, 2, s['nom'])
+        ws.cell(row, 3, s['prenom']); ws.cell(row, 4, s['naissance'])
+        for i, m in enumerate(components):
+            nc = 5 + 2 * i
+            val = marks.get((s['id'], m.get('code')))
+            ws.cell(row, nc, val if val is not None else None).alignment = center
+            ws.cell(row, nc + 1, 20).alignment = center   # barème toujours 20, prérempli
+        row += 1
+
+    for col, wd in ((1, 12), (2, 18), (3, 14), (4, 12)):
+        ws.column_dimensions[get_column_letter(col)].width = wd
+    for i in range(2 * n):
+        ws.column_dimensions[get_column_letter(5 + i)].width = 8
+    ws.row_dimensions[14].height = 42
+    ws.freeze_panes = ws.cell(row=18, column=5)
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    fname = f"T3GIM_{semester}_{formation}_{year}.xlsx"
+    _audit('NOTES_EXPORT', ip=_client_ip(), user=session.get('user'),
+           promo=pid, semester=semester)
+    return send_file(bio, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 # ======================= STATIC FILES =======================
 
@@ -5241,6 +5460,10 @@ def create_year():
 
 @app.route('/api/years/current', methods=['PUT'])
 def set_current_year():
+    """Change le défaut global de l'établissement (admin uniquement)."""
+    err = _require_admin()
+    if err:
+        return err
     data = request.get_json() or {}
     year = (data.get('year') or '').strip()
     if not year:
@@ -5250,6 +5473,23 @@ def set_current_year():
     settings = get_settings()
     settings['current_year'] = year
     save_settings(settings)
+    return jsonify({'current': year})
+
+@app.route('/api/years/session', methods=['PUT'])
+def set_session_year():
+    """Choisit l'année universitaire pour CETTE session uniquement.
+    Vue personnelle (enseignant ou admin) sans impact sur le défaut global."""
+    if not session.get('role'):
+        return error_response('Authentification requise', 401)
+    data = request.get_json() or {}
+    year = (data.get('year') or '').strip()
+    if not year:
+        # Réinitialise : revient au défaut global de l'établissement
+        session.pop('year', None)
+        return jsonify({'current': get_current_year()})
+    if not os.path.exists(db_path_for_year(year)):
+        return error_response(f"Année {year} introuvable", 404)
+    session['year'] = year
     return jsonify({'current': year})
 
 # ======================= ERROR HANDLERS =======================

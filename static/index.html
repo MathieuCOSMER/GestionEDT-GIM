@@ -333,7 +333,7 @@
     <button onclick="showPage('contraintes')" id="nav-contraintes">Contraintes</button>
     <button onclick="showPage('promotions')" id="nav-promotions" class="admin-only">Promotions</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
-        <span class="admin-only" style="font-size:.8rem;color:#6b7280;white-space:nowrap">Année :</span>
+        <span style="font-size:.8rem;color:#6b7280;white-space:nowrap">Année :</span>
         <select id="year-select" onchange="switchYear()"
                 style="padding:4px 10px;border-radius:6px;border:1px solid #c7d2fe;background:#eef2ff;color:#4f46e5;font-weight:700;font-size:.88rem;cursor:pointer">
             <option>…</option>
@@ -511,6 +511,7 @@
                 </select>
                 <button class="btn btn-primary btn-sm" style="margin-left:14px" id="notes-save-btn" onclick="saveNotesMarks()" disabled>💾 Enregistrer les notes</button>
                 <button class="btn btn-secondary btn-sm" id="notes-import-btn" onclick="openNotesImport()" disabled>Importer les notes</button>
+                <button class="btn btn-secondary btn-sm" id="notes-export-btn" onclick="exportNotes()" disabled>⬇ Exporter (.xlsx)</button>
             </div>
         </div>
         <div id="notes-content"><div style="color:#6b7280;padding:20px">Choisissez une promotion (de l'effectif) et un semestre pour saisir les notes.</div></div>
@@ -518,7 +519,9 @@
     <div id="promo-tab-coeff" style="display:none">
         <div class="toolbar">
             <div class="filters">
-                <label>Semestres :</label>
+                <label>Promotion :</label>
+                <select id="coeff-promo-select" onchange="onCoeffPromoChange()"><option value="">—</option></select>
+                <label style="margin-left:12px">Semestres :</label>
                 <div id="promo-coeff-sem-toggle" class="sem-toggle">
                     <button type="button" class="sem-btn active" data-sem="S1" onclick="togglePromoCoeffSem('S1',this)">S1</button>
                     <button type="button" class="sem-btn active" data-sem="S2" onclick="togglePromoCoeffSem('S2',this)">S2</button>
@@ -527,11 +530,12 @@
                     <button type="button" class="sem-btn active" data-sem="S5" onclick="togglePromoCoeffSem('S5',this)">S5</button>
                     <button type="button" class="sem-btn active" data-sem="S6" onclick="togglePromoCoeffSem('S6',this)">S6</button>
                 </div>
-                <button class="btn btn-primary btn-sm" style="margin-left:14px" onclick="savePromoCoeff()">💾 Enregistrer</button>
-                <button class="btn btn-secondary btn-sm" onclick="resetPromoCoeff()">↺ Réinitialiser (fichier d'origine)</button>
+                <button class="btn btn-secondary btn-sm" id="coeff-new-mat-btn" style="margin-left:14px" onclick="openNewCoeffMatiere()" disabled>+ Créer matière</button>
+                <button class="btn btn-primary btn-sm" id="coeff-save-btn" onclick="savePromoCoeff()" disabled>💾 Enregistrer</button>
+                <button class="btn btn-secondary btn-sm" id="coeff-reset-btn" onclick="resetPromoCoeff()" disabled>↺ Réinitialiser (fichier d'origine)</button>
             </div>
         </div>
-        <div id="promo-coeff-content"><div style="color:#6b7280;padding:20px">Chargement…</div></div>
+        <div id="promo-coeff-content"><div style="color:#6b7280;padding:20px">Choisissez une promotion pour afficher ses coefficients.</div></div>
     </div>
     <div id="promo-tab-effectif">
         <div class="toolbar">
@@ -915,6 +919,46 @@
     </div>
 </div>
 
+<!-- ===== MODAL CRÉER MATIÈRE (coefficients) ===== -->
+<div class="modal-backdrop" id="modal-coeff-matiere">
+    <div class="modal">
+        <h2>Créer une matière</h2>
+        <p style="color:#6b7280;font-size:.9rem;margin-top:0">
+            La matière est ajoutée aux coefficients de la promotion sélectionnée. Pensez à
+            <strong>Enregistrer</strong> après création.
+        </p>
+        <div class="form-group"><label>Semestre *</label>
+            <select id="coeff-mat-sem">
+                <option>S1</option><option>S2</option><option>S3</option>
+                <option>S4</option><option>S5</option><option>S6</option>
+            </select>
+        </div>
+        <div class="form-group"><label>Type</label>
+            <select id="coeff-mat-kind">
+                <option value="RES">Ressource</option>
+                <option value="SAE">SAE</option>
+                <option value="STAGE">Stage</option>
+                <option value="PORT">Portfolio</option>
+                <option value="BONUS">Bonus</option>
+                <option value="PEN">Pénalité</option>
+                <option value="AUTRE">Autre</option>
+            </select>
+        </div>
+        <div class="form-group"><label>Code * <span style="color:#6b7280;font-weight:400">(ex. R3.01, SAE3.02)</span></label>
+            <input id="coeff-mat-code" placeholder="R3.01"></div>
+        <div class="form-group"><label>Libellé court</label>
+            <input id="coeff-mat-short" placeholder="Maths 3"></div>
+        <div class="form-group"><label>Libellé</label>
+            <input id="coeff-mat-label" placeholder="Mathématiques 3"></div>
+        <div class="form-group"><label>Code Apogée <span style="color:#6b7280;font-weight:400">(optionnel, pour l'import)</span></label>
+            <input id="coeff-mat-apogee" placeholder="T3IR301"></div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-coeff-matiere')">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="submitNewCoeffMatiere()">Ajouter</button>
+        </div>
+    </div>
+</div>
+
 <!-- ===== MODAL ENSEIGNANT ===== -->
 <div class="modal-backdrop" id="modal-teacher">
     <div class="modal">
@@ -1129,8 +1173,10 @@ function maxWeek() { return (state.config && state.config.academic_max_week) || 
 // ===== API =====
 async function api(endpoint, opts = {}) {
     const method = (opts.method || 'GET').toUpperCase();
-    // Garde côté client : visiteur / enseignant = lecture seule (le serveur l'impose aussi)
-    if (state.role === 'teacher' && method !== 'GET' && method !== 'HEAD') {
+    // Garde côté client : visiteur / enseignant = lecture seule (le serveur l'impose aussi).
+    // Exception : le choix de l'année universitaire est personnel à la session.
+    if (state.role === 'teacher' && method !== 'GET' && method !== 'HEAD'
+            && endpoint !== '/years/session') {
         toast('Lecture seule', 'error');
         throw new Error('Lecture seule');
     }
@@ -1184,14 +1230,15 @@ function applyRole(role, user, teacher, status) {
     document.querySelectorAll('nav button[id^="nav-"]').forEach(b => {
         b.style.display = (role === 'teacher' && !teacherTabs.includes(b.id)) ? 'none' : '';
     });
-    // Le changement d'année est une écriture → réservé à l'admin
+    // Chaque utilisateur (admin ou enseignant) peut choisir son année de consultation.
+    // Pour l'admin c'est le défaut global ; pour l'enseignant, une vue personnelle de session.
     const ys = document.getElementById('year-select');
-    if (ys) ys.disabled = (role !== 'admin');
+    if (ys) ys.disabled = false;
 }
 
 function goHome() {
-    // L'admin a besoin de la liste des années (chargée auparavant par le tableau de bord)
-    if (state.role === 'admin') loadYears();
+    // Liste des années chargée pour tous : admin (défaut global) et enseignant (vue de session)
+    loadYears();
     // Premier onglet selon le rôle : admin → Répartition Calendaire ; enseignant → Globale
     showPage(state.role === 'teacher' ? 'repartition-enseignant' : 'repartition');
 }
@@ -1352,7 +1399,10 @@ async function switchYear() {
     const year = document.getElementById('year-select').value;
     if (!year) return;
     try {
-        await api('/years/current', { method: 'PUT', body: JSON.stringify({ year }) });
+        // Admin : change le défaut global de l'établissement.
+        // Enseignant : choix personnel limité à sa session (n'affecte personne d'autre).
+        const endpoint = state.role === 'admin' ? '/years/current' : '/years/session';
+        await api(endpoint, { method: 'PUT', body: JSON.stringify({ year }) });
         // Réinitialiser les données (sans toucher à l'authentification) pour forcer un rechargement
         ['teachers', 'courses', 'rooms', 'sessions', 'semesters', 'promotionGroups'].forEach(k => { state[k] = []; });
         state.config = null;
@@ -1360,7 +1410,7 @@ async function switchYear() {
         _coeffRef = null;
         _notesData = null;
         await loadYears();
-        showPage('repartition-enseignant');
+        showPage(state.role === 'teacher' ? 'repartition-enseignant' : 'repartition');
         toast(`Année ${year} activée`);
     } catch(e) { toast('Erreur : ' + e.message, 'error'); }
 }
@@ -1801,6 +1851,7 @@ let _promoData = null;
 let _promoId = null;
 
 let _promoCoeffSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
+let _coeffPromoId = null;   // promotion dont on édite les coefficients
 
 function showPromoTab(tab) {
     ['effectif', 'coeff', 'notes'].forEach(t => {
@@ -1811,15 +1862,58 @@ function showPromoTab(tab) {
     else if (tab === 'notes') loadNotes();
 }
 
-async function loadPromoCoeff() {
-    if (!_coeffRef) {
-        try { _coeffRef = await api('/grades/coeff-reference'); }
-        catch (e) {
-            document.getElementById('promo-coeff-content').innerHTML =
-                '<div class="empty">Erreur de chargement : ' + esc(e.message) + '</div>';
-            return;
-        }
+async function _ensurePromotionsList() {
+    if (!_promotions || !_promotions.length) {
+        try { _promotions = await api('/promotions'); } catch (e) { _promotions = []; }
     }
+    return _promotions;
+}
+
+function _setCoeffButtonsEnabled(on) {
+    ['coeff-new-mat-btn', 'coeff-save-btn', 'coeff-reset-btn'].forEach(id => {
+        const b = document.getElementById(id); if (b) b.disabled = !on;
+    });
+}
+
+function _coeffPlaceholder(msg) {
+    document.getElementById('promo-coeff-content').innerHTML =
+        '<div style="color:#6b7280;padding:20px">' + msg + '</div>';
+}
+
+async function loadPromoCoeff() {
+    await _ensurePromotionsList();
+    const sel = document.getElementById('coeff-promo-select');
+    const cur = _coeffPromoId || '';
+    sel.innerHTML = '<option value="">—</option>' + _promotions.map(p =>
+        `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+    if (cur && _promotions.some(p => String(p.id) === String(cur))) {
+        sel.value = cur;
+        await onCoeffPromoChange();
+    } else {
+        _coeffPromoId = null; _coeffRef = null;
+        _setCoeffButtonsEnabled(false);
+        _coeffPlaceholder('Choisissez une promotion pour afficher ses coefficients.');
+    }
+}
+
+async function onCoeffPromoChange() {
+    _coeffPromoId = document.getElementById('coeff-promo-select').value || null;
+    if (!_coeffPromoId) {
+        _coeffRef = null;
+        _setCoeffButtonsEnabled(false);
+        _coeffPlaceholder('Choisissez une promotion pour afficher ses coefficients.');
+        return;
+    }
+    _coeffPlaceholder('Chargement…');
+    try {
+        _coeffRef = await api(`/promotions/${_coeffPromoId}/coefficients`);
+    } catch (e) {
+        _setCoeffButtonsEnabled(false);
+        document.getElementById('promo-coeff-content').innerHTML =
+            '<div class="empty">Erreur de chargement : ' + esc(e.message) + '</div>';
+        return;
+    }
+    _setCoeffButtonsEnabled(true);
     renderPromoCoeffTables();
 }
 
@@ -1827,49 +1921,69 @@ function togglePromoCoeffSem(code, btn) {
     if (_promoCoeffSemesters.has(code)) _promoCoeffSemesters.delete(code);
     else _promoCoeffSemesters.add(code);
     btn.classList.toggle('active');
+    if (!_coeffRef) return;
     // On enregistre la saisie en cours avant de re-filtrer (évite de la perdre)
     _collectPromoCoeff();
     renderPromoCoeffTables();
+}
+
+function _coeffKindOptions(sel) {
+    return [['RES', 'Ressource'], ['SAE', 'SAE'], ['STAGE', 'Stage'], ['PORT', 'Portfolio'],
+            ['BONUS', 'Bonus'], ['PEN', 'Pénalité'], ['AUTRE', 'Autre']]
+        .map(([k, l]) => `<option value="${k}"${k === sel ? ' selected' : ''}>${l}</option>`).join('');
 }
 
 function renderPromoCoeffTables() {
     const el = document.getElementById('promo-coeff-content');
     if (!_coeffRef) { el.innerHTML = '<div class="empty">Aucun coefficient.</div>'; return; }
     const sems = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].filter(s => _coeffRef[s] && _promoCoeffSemesters.has(s));
-    const legend = [['SAE', 'SAÉ'], ['STAGE', 'Stage'], ['PORT', 'Portfolio'], ['RES', 'Ressource']]
+    const legend = [['SAE', 'SAE'], ['STAGE', 'Stage'], ['PORT', 'Portfolio'], ['RES', 'Ressource']]
         .map(([k, lbl]) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:12px">
             <span style="width:12px;height:12px;border-radius:3px;background:${_coeffKindColor(k)};display:inline-block"></span>${lbl}</span>`).join('');
+    const inS = 'padding:2px 4px;border:1px solid #d1d5db;border-radius:4px';
     const blocks = sems.map(sem => {
         const d = _coeffRef[sem];
-        const comps = d.competences;
+        const comps = d.competences || [];
         const totals = comps.map(c => Object.values(c.coeffs || {}).reduce((a, b) => a + Number(b), 0));
-        const head = `<tr><th class="nz-sticky" style="text-align:left;padding:4px 6px">Matière</th>` +
-            comps.map(c => `<th style="background:#ede9fe;width:72px;padding:6px 2px;vertical-align:middle;text-align:center"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600">${esc(c.name)}</div></th>`).join('') + `</tr>`;
-        const rows = d.components.map(co => {
+        const head = `<tr>
+            <th style="width:28px;padding:4px 2px"></th>
+            <th style="padding:4px 6px;text-align:left">Type</th>
+            <th style="padding:4px 6px;text-align:left">Code Apogée</th>
+            <th style="padding:4px 6px;text-align:left">Code</th>
+            <th style="padding:4px 6px;text-align:left">Libellé court</th>
+            <th style="padding:4px 6px;text-align:left">Libellé</th>` +
+            comps.map(c => `<th style="background:#ede9fe;width:64px;padding:6px 2px;vertical-align:middle;text-align:center"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600">${esc(c.name)}</div></th>`).join('') + `</tr>`;
+        const rows = (d.components || []).map((co, mi) => {
             const cells = comps.map((c, ci) => {
                 const v = (c.coeffs || {})[co.code];
                 return `<td style="padding:1px;text-align:center"><input type="number" min="0" step="0.5"
-                    class="pcf-coeff" data-sem="${sem}" data-ci="${ci}" data-code="${esc(co.code)}"
+                    class="pcf-coeff" data-sem="${sem}" data-ci="${ci}" data-mi="${mi}"
                     value="${v === undefined || v === null ? '' : v}" oninput="updatePromoCoeffTotal('${sem}',${ci})"
-                    style="width:64px;padding:2px 1px;text-align:center;border:1px solid #d1d5db;border-radius:4px"></td>`;
+                    style="width:60px;padding:2px 1px;text-align:center;border:1px solid #d1d5db;border-radius:4px"></td>`;
             }).join('');
-            return `<tr>
-                <td class="nz-sticky" style="padding:4px 6px"><div style="max-width:530px;white-space:normal;word-break:break-word;line-height:1.2"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${_coeffKindColor(co.kind)};margin-right:5px;vertical-align:middle"></span><strong>${esc(co.code)}</strong> <span style="color:#6b7280;font-size:.8rem">${esc(co.label || '')}</span></div></td>
-                ${cells}</tr>`;
+            const def = `
+                <td style="padding:1px 3px;text-align:center"><button type="button" title="Supprimer la matière" onclick="removeCoeffMatiere('${sem}',${mi})" style="border:none;background:none;cursor:pointer;color:#b91c1c;font-size:1rem">🗑</button></td>
+                <td style="padding:1px"><select class="pcf-kind" onchange="this.style.background=_coeffKindColor(this.value)" style="background:${_coeffKindColor(co.kind)};${inS};font-size:.8rem">${_coeffKindOptions(co.kind)}</select></td>
+                <td style="padding:1px"><input class="pcf-apogee" value="${esc(co.apogee_code || '')}" placeholder="—" style="width:92px;${inS}"></td>
+                <td style="padding:1px"><input class="pcf-code" value="${esc(co.code || '')}" style="width:84px;${inS};font-weight:600"></td>
+                <td style="padding:1px"><input class="pcf-short" value="${esc(co.short_label || '')}" placeholder="—" style="width:130px;${inS}"></td>
+                <td style="padding:1px"><input class="pcf-label" value="${esc(co.label || '')}" placeholder="—" style="width:230px;${inS}"></td>`;
+            return `<tr data-mi="${mi}">${def}${cells}</tr>`;
         }).join('');
         const totalRow = `<tr style="background:#f9fafb;font-weight:600">
-            <td class="nz-sticky" style="background:#f9fafb;padding:4px 6px">Total</td>
+            <td colspan="6" style="background:#f9fafb;padding:4px 8px;text-align:right">Total</td>
             ${comps.map((c, ci) => `<td class="pcf-total" data-sem="${sem}" data-ci="${ci}" style="text-align:center;padding:2px 1px">${Math.round(totals[ci] * 100) / 100}</td>`).join('')}</tr>`;
         return `<h3 style="margin:18px 0 8px;color:#374151">${sem}</h3>
-            <div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;width:fit-content;max-width:90vw">
-                <table class="nz-table" style="table-layout:auto"><thead>${head}</thead><tbody>${rows}${totalRow}</tbody></table>
+            <div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;width:fit-content;max-width:95vw">
+                <table class="nz-table" data-sem="${sem}" style="table-layout:auto"><thead>${head}</thead><tbody>${rows}${totalRow}</tbody></table>
             </div>`;
     }).join('');
     el.innerHTML = `
         <div style="margin-bottom:6px;font-size:.8rem;color:#374151">${legend}</div>
         <p style="font-size:.8rem;color:#6b7280;margin:0 0 4px">
-            Coefficient de chaque matière dans chaque compétence, par semestre (case vide = non prise en compte).
-            Le total par compétence vaut normalement 60.</p>
+            Définition des matières (Type / Code / Libellé court / Libellé) et coefficient de chaque matière
+            dans chaque compétence, par semestre (case vide = non prise en compte). Le total par compétence
+            vaut normalement 60. Ces coefficients sont propres à la promotion sélectionnée.</p>
         ${blocks || '<div class="empty">Aucun semestre sélectionné.</div>'}`;
 }
 
@@ -1883,34 +1997,109 @@ function updatePromoCoeffTotal(sem, ci) {
     if (td) td.textContent = Math.round(total * 100) / 100;
 }
 
-// Lit les inputs affichés et met à jour _coeffRef (seuls les semestres visibles sont réécrits)
+// Reconstruit _coeffRef à partir des tableaux affichés (semestres visibles uniquement) :
+// définition des matières (Type/Code/Libellés) + coefficients par compétence.
 function _collectPromoCoeff() {
     if (!_coeffRef) return;
-    const touched = new Set();
-    document.querySelectorAll('#promo-coeff-content input.pcf-coeff').forEach(inp => {
-        const sem = inp.dataset.sem, ci = +inp.dataset.ci;
-        const comp = _coeffRef[sem] && _coeffRef[sem].competences[ci];
-        if (!comp) return;
-        const tkey = sem + '#' + ci;
-        if (!touched.has(tkey)) { comp.coeffs = {}; touched.add(tkey); }
-        const v = inp.value.trim().replace(',', '.');
-        if (v !== '' && !isNaN(parseFloat(v)) && parseFloat(v) !== 0) comp.coeffs[inp.dataset.code] = parseFloat(v);
+    document.querySelectorAll('#promo-coeff-content table[data-sem]').forEach(tbl => {
+        const sem = tbl.dataset.sem;
+        const d = _coeffRef[sem];
+        if (!d) return;
+        const comps = (d.competences || []).map(c => ({ name: c.name, coeffs: {} }));
+        const components = [];
+        const codeByMi = {};
+        tbl.querySelectorAll('tr[data-mi]').forEach(tr => {
+            const mi = +tr.dataset.mi;
+            const orig = (d.components && d.components[mi]) || {};
+            const q = sel => { const e = tr.querySelector(sel); return e ? e.value.trim() : ''; };
+            const code = q('.pcf-code');
+            codeByMi[mi] = code;
+            components.push({
+                apogee_code: q('.pcf-apogee'),
+                apogee_name: orig.apogee_name || '',
+                code,
+                short_label: q('.pcf-short'),
+                label: q('.pcf-label'),
+                kind: q('.pcf-kind') || orig.kind || 'RES'
+            });
+        });
+        tbl.querySelectorAll('input.pcf-coeff').forEach(inp => {
+            const ci = +inp.dataset.ci, code = codeByMi[+inp.dataset.mi];
+            const v = inp.value.trim().replace(',', '.');
+            if (code && comps[ci] && v !== '' && !isNaN(parseFloat(v)) && parseFloat(v) !== 0)
+                comps[ci].coeffs[code] = parseFloat(v);
+        });
+        d.components = components;
+        d.competences = comps;
     });
 }
 
+function removeCoeffMatiere(sem, mi) {
+    if (!_coeffRef || !_coeffRef[sem]) return;
+    _collectPromoCoeff();
+    const comp = (_coeffRef[sem].components || [])[mi];
+    if (!comp) return;
+    if (!confirm(`Supprimer la matière « ${comp.code || comp.label || ''} » du semestre ${sem} ?`)) return;
+    _coeffRef[sem].components.splice(mi, 1);
+    if (comp.code) (_coeffRef[sem].competences || []).forEach(c => { if (c.coeffs) delete c.coeffs[comp.code]; });
+    renderPromoCoeffTables();
+}
+
+function openNewCoeffMatiere() {
+    if (!_coeffPromoId || !_coeffRef) { toast('Choisissez une promotion', 'error'); return; }
+    const firstSem = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].find(s => _promoCoeffSemesters.has(s)) || 'S1';
+    document.getElementById('coeff-mat-sem').value = firstSem;
+    document.getElementById('coeff-mat-kind').value = 'RES';
+    ['coeff-mat-code', 'coeff-mat-short', 'coeff-mat-label', 'coeff-mat-apogee']
+        .forEach(id => document.getElementById(id).value = '');
+    openModal('modal-coeff-matiere');
+}
+
+function submitNewCoeffMatiere() {
+    if (!_coeffRef) return;
+    const sem = document.getElementById('coeff-mat-sem').value;
+    const code = document.getElementById('coeff-mat-code').value.trim();
+    if (!code) { toast('Le code est obligatoire', 'error'); return; }
+    _collectPromoCoeff();
+    if (!_coeffRef[sem]) _coeffRef[sem] = { components: [], competences: [] };
+    _coeffRef[sem].components = _coeffRef[sem].components || [];
+    if (_coeffRef[sem].components.some(c => (c.code || '').toLowerCase() === code.toLowerCase())) {
+        toast('Ce code existe déjà pour ' + sem, 'error'); return;
+    }
+    const label = document.getElementById('coeff-mat-label').value.trim();
+    _coeffRef[sem].components.push({
+        apogee_code: document.getElementById('coeff-mat-apogee').value.trim(),
+        apogee_name: label,
+        code,
+        short_label: document.getElementById('coeff-mat-short').value.trim(),
+        label,
+        kind: document.getElementById('coeff-mat-kind').value
+    });
+    if (!_promoCoeffSemesters.has(sem)) {
+        _promoCoeffSemesters.add(sem);
+        const btn = document.querySelector(`#promo-coeff-sem-toggle .sem-btn[data-sem="${sem}"]`);
+        if (btn) btn.classList.add('active');
+    }
+    closeModal('modal-coeff-matiere');
+    renderPromoCoeffTables();
+    toast('Matière ajoutée — pensez à enregistrer');
+}
+
 async function savePromoCoeff() {
+    if (!_coeffPromoId || !_coeffRef) { toast('Choisissez une promotion', 'error'); return; }
     _collectPromoCoeff();
     try {
-        _coeffRef = await api('/grades/coeff-reference', { method: 'PUT', body: JSON.stringify(_coeffRef) });
+        _coeffRef = await api(`/promotions/${_coeffPromoId}/coefficients`, { method: 'PUT', body: JSON.stringify(_coeffRef) });
         renderPromoCoeffTables();
         toast('Coefficients enregistrés');
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
 async function resetPromoCoeff() {
-    if (!confirm('Réinitialiser tous les coefficients aux valeurs d\'origine du fichier de calcul ?')) return;
+    if (!_coeffPromoId) return;
+    if (!confirm('Réinitialiser les coefficients de cette promotion aux valeurs d\'origine du fichier de calcul ?')) return;
     try {
-        _coeffRef = await api('/grades/coeff-reference/reset', { method: 'POST' });
+        _coeffRef = await api(`/promotions/${_coeffPromoId}/coefficients/reset`, { method: 'POST' });
         renderPromoCoeffTables();
         toast('Coefficients réinitialisés');
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
@@ -2138,17 +2327,26 @@ async function loadNotesGrid() {
     const sem = document.getElementById('notes-sem-select').value;
     const saveBtn = document.getElementById('notes-save-btn');
     const impBtn = document.getElementById('notes-import-btn');
+    const expBtn = document.getElementById('notes-export-btn');
     const el = document.getElementById('notes-content');
     if (!pid || !sem) {
-        _notesData = null; saveBtn.disabled = true; impBtn.disabled = true;
+        _notesData = null; saveBtn.disabled = true; impBtn.disabled = true; expBtn.disabled = true;
         el.innerHTML = '<div style="color:#6b7280;padding:20px">Choisissez une promotion et un semestre.</div>';
         return;
     }
     el.innerHTML = '<div class="spinner">Chargement…</div>';
     try { _notesData = await api(`/promotions/${pid}/notes/${sem}`); }
-    catch (e) { toast('Erreur : ' + e.message, 'error'); saveBtn.disabled = true; impBtn.disabled = true; return; }
-    saveBtn.disabled = false; impBtn.disabled = false;
+    catch (e) { toast('Erreur : ' + e.message, 'error'); saveBtn.disabled = true; impBtn.disabled = true; expBtn.disabled = true; return; }
+    saveBtn.disabled = false; impBtn.disabled = false; expBtn.disabled = false;
     renderNotesGrid();
+}
+
+// Télécharge les notes de la promo/semestre au format Apogée (.xlsx)
+function exportNotes() {
+    const pid = document.getElementById('notes-promo-select').value;
+    const sem = document.getElementById('notes-sem-select').value;
+    if (!pid || !sem) { toast('Choisissez une promotion et un semestre', 'error'); return; }
+    window.location = `/api/promotions/${pid}/notes/${sem}/export`;
 }
 
 function openNotesImport() {
@@ -2182,6 +2380,68 @@ async function submitNotesImport() {
 
 function _fmtAvg(v) { return (v === null || v === undefined) ? '—' : Number(v).toFixed(2); }
 
+// Acronyme court d'un intitulé de matière (référentiel GIM) pour les en-têtes
+const _MAT_ACRONYMS = {
+    'mathematiques': 'Maths',
+    'informatique': 'Info',
+    'mecanique et materiaux': 'Méca-Mat', 'mecaniques et materiaux': 'Méca-Mat',
+    'genie electrique': 'Génie Élec',
+    'technologie mecanique et fluidique': 'Techno MF', 'techno meca fluid': 'Techno MF',
+    'electricite et automatismes industriels': 'Élec-Autom', 'electrici et autom indus': 'Élec-Autom',
+    'methodes et outils de maintenance': 'Méth-Maint', 'methodes et outils en maintenance': 'Méth-Maint',
+    'methodes et outilsmaint': 'Méth-Maint', 'methodes outils maint': 'Méth-Maint',
+    'organisation des systemes industriels': 'Orga SI',
+    'organisation des systemes industriels metrologie': 'Orga SI-Métro',
+    'techniques d expression et de communication': 'TEC', 'tech expres et com': 'TEC',
+    'techniques d expression et communication': 'TEC',
+    'anglais': 'Anglais',
+    'projet personnel et professionnel': 'PPP', 'ppp': 'PPP',
+    'energie fluides thermique': 'Énergie-FT', 'energie flui thermique': 'Énergie-FT',
+    'energie fluide thermique': 'Énergie-FT', 'energie fluides thermiq': 'Énergie-FT',
+    'habilitation electrique': 'Habil. Élec',
+    'automatismes industriels': 'Autom. Ind', 'automatique appliquee': 'Autom. App',
+    'maintenance': 'Maintenance', 'maintenance isp': 'Maint. ISP',
+    'securite': 'Sécurité', 'metrologie': 'Métrologie', 'environnement': 'Environ.',
+    'mecatronique isp': 'Mécatro ISP', 'mecatronique': 'Mécatro',
+    'supervision': 'Supervision', 'aide a la reussite': 'Aide réussite', 'stage': 'Stage',
+    'portfolio': 'Portfolio',
+    // SAE
+    'executer des operations elementaires de maintenance': 'Exécuter op.',
+    'identifier et realiser les operations elementaires de maintenance': 'Ident./réal. op.',
+    'ident & real ope ele main': 'Ident./réal. op.',
+    'remplacer un element avec changement de modele': 'Remplacer élément',
+    'valider le remplacement d un element d un systeme pluritechnique': 'Valider rempl.',
+    'valider remplac ele syst': 'Valider rempl.',
+    'preparer l installation d un equipement': 'Préparer install.',
+    'realiser et verifier le raccordement d un equipement': 'Raccordement',
+    'real & verif raccordement': 'Raccordement',
+    'evaluer les risques lors d une intervention simple': 'Évaluer risques',
+    'utiliser les outils de controle et mesure dans le milieu industriel': 'Contrôle/mesure',
+    'outils controle et mesure': 'Contrôle/mesure',
+    'exploiter des donnees': 'Exploiter données',
+    'participer a une action de maintenance': 'Action maint.',
+    'adapter un systeme pluri technique': 'Adapter système',
+    'mettre en place une action de maintenanc': 'Action maint.',
+    'mettre en place une action de maintenance': 'Action maint.',
+    'demarche portfolio': 'Portfolio',
+};
+
+function matAcronym(label) {
+    if (!label) return '';
+    const key = String(label)
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+        .replace(/\s*\d+\s*$/, '').trim();
+    if (key.indexOf('portfolio') === 0) return 'Portfolio';
+    if (_MAT_ACRONYMS[key]) return _MAT_ACRONYMS[key];
+    const short = String(label).replace(/\s*\d+\s*$/, '').trim();
+    if (short.length <= 14) return short;
+    const stop = ['des', 'les', 'une', 'aux', 'par', 'sur', 'pour', 'dans', 'avec', 'son', 'leur', 'leurs'];
+    const initials = key.split(' ').filter(w => w.length > 2 && !stop.includes(w))
+        .slice(0, 3).map(w => w[0].toUpperCase()).join('');
+    return initials || short.slice(0, 12);
+}
+
 function renderNotesGrid() {
     const d = _notesData;
     const el = document.getElementById('notes-content');
@@ -2205,7 +2465,7 @@ function renderNotesGrid() {
         prev.map(g => g.competences.map((name, ci) =>
             vth(g.short + ' ' + name, '#eef2ff', ci === 0 ? ';border-left:4px solid #6366f1' : '', g.label, '#3730a3')).join('')).join('') +
         mats.map((m, mi) =>
-            vth(m.code, _coeffKindColor(m.kind), mi === 0 ? ';border-left:4px solid #6b7280' : '', m.label, '')).join('') +
+            vth(m.code + ' · ' + (m.short_label || matAcronym(m.label)), _coeffKindColor(m.kind), mi === 0 ? ';border-left:4px solid #6b7280' : '', (m.apogee_code ? m.apogee_code + ' — ' : '') + m.label, '')).join('') +
         comps.map((c, ci) => vth(c.name, '#ede9fe', ci === 0 ? ';border-left:4px solid #6b7280' : '', '', '')).join('') +
         (d.year_competences || []).map((name, ci) =>
             vth('Année ' + name, '#dcfce7', ci === 0 ? ';border-left:4px solid #22c55e' : '', 'Moyenne annuelle ' + (d.year_semesters || []).join('–'), '#166534')).join('') +
