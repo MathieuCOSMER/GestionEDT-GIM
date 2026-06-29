@@ -2533,9 +2533,9 @@ function renderNotesGrid() {
     const comps = d.competences, prev = d.previous || [];
     // En-tête vertical (réduit la largeur des colonnes)
     const vth = (txt, bg, extra, title, color) =>
-        `<th title="${esc(title || '')}" style="background:${bg};padding:6px 3px;vertical-align:bottom;text-align:center${extra || ''}"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600;font-size:.94rem${color ? ';color:' + color : ''}">${esc(txt)}</div></th>`;
+        `<th title="${esc(title || '')}" style="background:${bg};padding:6px 2px;vertical-align:bottom;text-align:center${extra || ''}"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600;font-size:.85rem${color ? ';color:' + color : ''}">${esc(txt)}</div></th>`;
     // Étudiant | [compétences des semestres précédents] | matières (courant) | compétences (courant)
-    const head = `<tr><th class="nz-sticky" style="min-width:170px;vertical-align:bottom;font-size:1rem">Étudiant</th>` +
+    const head = `<tr><th class="nz-sticky" style="min-width:119px;max-width:119px;vertical-align:bottom;font-size:.8rem">Étudiant</th>` +
         prev.map(g => g.competences.map((name, ci) =>
             vth(g.short + ' ' + name, '#eef2ff', ci === 0 ? ';border-left:4px solid #6366f1' : '', g.label, '#3730a3')).join('')).join('') +
         mats.map((m, mi) =>
@@ -2550,7 +2550,7 @@ function renderNotesGrid() {
         const prevCells = prev.map(g => {
             const ga = g.averages[s.id] || {};
             return g.competences.map((name, ci) =>
-                `<td style="text-align:center;background:#f5f7ff;color:#3730a3;font-size:.92rem;padding:1px 3px${ci === 0 ? ';border-left:4px solid #6366f1' : ''}">${_fmtAvg(ga[ci])}</td>`).join('');
+                `<td style="text-align:center;background:#f5f7ff;color:#3730a3;font-size:.83rem;padding:1px 2px${ci === 0 ? ';border-left:4px solid #6366f1' : ''}">${_fmtAvg(ga[ci])}</td>`).join('');
         }).join('');
         const cells = mats.map((m, mi) => {
             const v = d.marks[s.id + '_' + m.code];
@@ -2561,23 +2561,23 @@ function renderNotesGrid() {
             return `<td style="padding:1px;text-align:center${mi === 0 ? ';border-left:4px solid #6b7280' : ''}"><input type="text" inputmode="decimal" maxlength="5"
                 class="nz-mark" data-sid="${s.id}" data-code="${esc(m.code)}" data-kind="${esc(m.kind || '')}"
                 value="${v === undefined || v === null ? '' : v}"${special ? ' oninput="onNotesSpecialInput(this)"' : ''}
-                style="width:48px;padding:2px 1px;text-align:center;font-size:1rem;border:1px solid #d1d5db;border-radius:4px">${calc}</td>`;
+                style="width:43px;padding:2px 1px;text-align:center;font-size:.9rem;border:1px solid #d1d5db;border-radius:4px">${calc}</td>`;
         }).join('');
         const avg = d.averages[s.id] || {};
         const ya = (d.year_averages || {})[s.id] || {};
         const avgCells = comps.map((c, ci) => {
             const st = _ueStatus(avg[ci], ya[ci]);
-            return `<td class="nz-avg" data-sid="${s.id}" data-ci="${ci}" title="${_UE_TITLE[st]}" style="text-align:center;font-weight:600;font-size:1rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #6b7280' : ''}">${_fmtAvg(avg[ci])}</td>`;
+            return `<td class="nz-avg" data-sid="${s.id}" data-ci="${ci}" title="${_UE_TITLE[st]}" style="text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #6b7280' : ''}">${_fmtAvg(avg[ci])}</td>`;
         }).join('');
         const yearCells = (d.year_competences || []).map((name, ci) => {
             const st = _yearUeStatus(ya[ci]);
             const stl = st === 'ok' ? 'background:#dcfce7;color:#166534'
                 : (st === 'ko' ? 'background:#fee2e2;color:#b91c1c' : 'background:#f0fdf4;color:#166534');
-            return `<td title="${st === 'ok' ? 'UE acquise (≥10)' : (st === 'ko' ? 'UE non acquise (<10)' : 'Non évaluée')}" style="text-align:center;font-weight:700;font-size:1rem;${stl}${ci === 0 ? ';border-left:4px solid #22c55e' : ''}">${_fmtAvg(ya[ci])}</td>`;
+            return `<td title="${st === 'ok' ? 'UE acquise (≥10)' : (st === 'ko' ? 'UE non acquise (<10)' : 'Non évaluée')}" style="text-align:center;font-weight:700;font-size:.9rem;${stl}${ci === 0 ? ';border-left:4px solid #22c55e' : ''}">${_fmtAvg(ya[ci])}</td>`;
         }).join('');
         const ys = _yearStatusBadge((d.year_validation || {})[s.id]);
         const yearStatusCell = `<td title="${ys.title}" style="text-align:center;white-space:nowrap;padding:2px 8px;border-left:4px solid #22c55e"><span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:.8rem;font-weight:700;${_YS_STYLE[ys.cls]}">${ys.label}</span></td>`;
-        return `<tr><td class="nz-sticky" style="white-space:nowrap;font-size:1rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${prevCells}${cells}${avgCells}${yearCells}${yearStatusCell}</tr>`;
+        return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || ''))}" style="max-width:119px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${prevCells}${cells}${avgCells}${yearCells}${yearStatusCell}</tr>`;
     }).join('');
     el.innerHTML = `
         <div style="font-size:.8rem;color:#6b7280;margin-bottom:10px">Notes sur 20. Case vide = note absente (le coefficient correspondant est retiré du calcul).
