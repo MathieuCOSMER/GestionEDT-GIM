@@ -415,7 +415,7 @@
                 <option value="">Toutes</option>
             </select>
             <input type="text" id="filter-search-matieres" placeholder="Rechercher une matière…"
-                   oninput="renderCourses()" style="margin-left:12px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+                   oninput="renderCourses()" style="flex:1 1 160px;min-width:140px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
         </div>
     </div>
     <div id="courses-table"><div class="spinner">Chargement…</div></div>
@@ -569,7 +569,7 @@
         <h3 style="color:#374151;margin:8px 0">Coefficients de conversion en HETD</h3>
         <p style="color:#6b7280;font-size:.9rem;margin-top:0">
             Heures Équivalent TD utilisées pour le calcul du service (onglet <strong>Bilan global</strong>)
-            et la colonne <strong>Heures / HETD</strong> de l'onglet Matières. 1 heure de chaque type est
+            et la colonne <strong>Heures</strong> de l'onglet Matières. 1 heure de chaque type est
             multipliée par son coefficient.
         </p>
         <div style="display:flex;gap:14px;flex-wrap:wrap;margin:12px 0">
@@ -3447,10 +3447,10 @@ function renderCourses() {
     function courseRows(c) {
         const types = filterTypes(c);
         const nRows = types.length || 1;
-        const actions = `<td${types.length ? ` rowspan="${nRows}"` : ''} style="white-space:nowrap">
-                    <button class="btn btn-secondary btn-sm" onclick="openCourseModal(${c.id})">Éditer</button>
-                    <button class="btn btn-secondary btn-sm" onclick="openWeeklyModal(${c.id})" title="Répartition hebdomadaire">Répartition</button>
-                    <button class="btn btn-danger btn-sm" onclick="deleteCourse(${c.id})">Supprimer</button>
+        const actions = `<td${types.length ? ` rowspan="${nRows}"` : ''} style="white-space:nowrap;text-align:center">
+                    <button class="btn btn-secondary btn-sm" title="Éditer" onclick="openCourseModal(${c.id})">✎</button>
+                    <button class="btn btn-secondary btn-sm" title="Répartition hebdomadaire" onclick="openWeeklyModal(${c.id})">📅</button>
+                    <button class="btn btn-danger btn-sm" title="Supprimer" onclick="deleteCourse(${c.id})">🗑</button>
                 </td>`;
         const weeksCell = c.start_week && c.end_week ? c.start_week + ' → ' + c.end_week : '<span style="color:#9ca3af">—</span>';
         const badge = `<span class="badge badge-${(c.course_type||'ressource').toLowerCase().slice(0,3)}">${esc(c.course_type||'')}</span>`;
@@ -3488,7 +3488,7 @@ function renderCourses() {
     function parentLeftTd(comp, fallbackCode, sem, rowspan, orphanRed) {
         if (comp) {
             const code = comp.code || '';
-            return `<td rowspan="${rowspan}" style="background:#f5f3ff;vertical-align:top;width:116px;min-width:116px;border-right:2px solid #ddd6fe">
+            return `<td rowspan="${rowspan}" style="background:#f5f3ff;vertical-align:top;width:151px;min-width:151px;border-right:2px solid #ddd6fe">
                 <strong style="color:#5b21b6">${esc(code)}</strong>
                 <div style="color:#374151;margin-top:1px">${esc(comp.label || '')}</div>
                 <button class="btn btn-secondary btn-sm" style="margin-top:6px"
@@ -3498,7 +3498,7 @@ function renderCourses() {
         // Sans programme pour ce semestre : cellule neutre (pas d'alerte rouge)
         const red = orphanRed;
         const bg = red ? '#fef2f2' : '#f9fafb', bd = red ? '#fecaca' : '#e5e7eb', col = red ? '#991b1b' : '#374151';
-        return `<td rowspan="${rowspan}" style="background:${bg};vertical-align:top;width:116px;min-width:116px;border-right:2px solid ${bd}">
+        return `<td rowspan="${rowspan}" style="background:${bg};vertical-align:top;width:151px;min-width:151px;border-right:2px solid ${bd}">
             <strong style="color:${col}">${esc(fallbackCode || '')}</strong>
             ${red ? '<div style="font-size:.72rem;color:#b91c1c;margin-top:2px">⚠ hors programme</div>' : ''}
             <button class="btn btn-secondary btn-sm" style="margin-top:6px"
@@ -3506,27 +3506,33 @@ function renderCourses() {
         </td>`;
     }
 
-    // Cellule « Heures / HETD » (à GAUCHE de la matière), fusionnée sur tout le groupe :
-    // volumes PN CM/TD/TP/PT + HETD du programme + HETD réels des sous-matières FTP et ALT.
-    function hetdLeftTd(comp, subs, rowspan) {
-        const v = (comp && comp.volumes) || {};
-        const hv = k => (v[k] == null || v[k] === '') ? '—' : v[k];
-        const hetdPN = comp ? fmtH(hetd(v.cm, v.td, v.tp, v.pt)) : null;
-        let ftp = 0, alt = 0;
+    // Cellule « Heures » (fusionnée sur tout le groupe) : mini-tableau à 3 sous-colonnes
+    // [type CM/TD/TP/PT | FTP | ALT] avec les heures sommées des sous-matières + ligne HETD.
+    function hetdLeftTd(subs, rowspan) {
+        const f = { cm: 0, td: 0, tp: 0, pt: 0 }, a = { cm: 0, td: 0, tp: 0, pt: 0 };
         (subs || []).forEach(c => {
-            ftp += hetd(c.cm_hours, c.td_hours, c.tp_hours, c.pt_hours);
-            alt += hetd(c.alt_cm_hours, c.alt_td_hours, c.alt_tp_hours, c.alt_pt_hours);
+            f.cm += Number(c.cm_hours) || 0; f.td += Number(c.td_hours) || 0;
+            f.tp += Number(c.tp_hours) || 0; f.pt += Number(c.pt_hours) || 0;
+            a.cm += Number(c.alt_cm_hours) || 0; a.td += Number(c.alt_td_hours) || 0;
+            a.tp += Number(c.alt_tp_hours) || 0; a.pt += Number(c.alt_pt_hours) || 0;
         });
-        const line = (lbl, val, extra) => `<div style="${extra || ''}">${lbl} : ${val}</div>`;
-        return `<td rowspan="${rowspan}" style="background:#f0f9ff;vertical-align:top;font-size:.72rem;
-                white-space:nowrap;padding:4px 6px;border-right:2px solid #e0f2fe;color:#0c4a6e">
-            ${line('CM', hv('cm') === '—' ? '—' : hv('cm') + ' h')}
-            ${line('TD', hv('td') === '—' ? '—' : hv('td') + ' h')}
-            ${line('TP', hv('tp') === '—' ? '—' : hv('tp') + ' h')}
-            ${line('PT', hv('pt') === '—' ? '—' : hv('pt') + ' h')}
-            ${line('HETD PN', hetdPN == null ? '—' : hetdPN, 'margin-top:3px;border-top:1px solid #cbd5e1;padding-top:2px;font-weight:600')}
-            ${line('HETD FTP', fmtH(ftp), 'color:#0369a1')}
-            ${line('HETD ALT', fmtH(alt), 'color:#9a3412')}
+        const cell = x => x ? fmtH(x) : '';
+        const row = (lbl, fv, av, extra) => `<tr style="${extra || ''}">
+            <td style="padding:0 8px 0 0;color:#6b7280">${lbl}</td>
+            <td style="text-align:right;padding:0 8px;color:#0369a1">${cell(fv)}</td>
+            <td style="text-align:right;color:#9a3412">${cell(av)}</td></tr>`;
+        const hF = hetd(f.cm, f.td, f.tp, f.pt), hA = hetd(a.cm, a.td, a.tp, a.pt);
+        return `<td rowspan="${rowspan}" style="background:#f0f9ff;vertical-align:top;padding:4px 6px;border-right:2px solid #e0f2fe">
+            <table style="border-collapse:collapse;font-size:.72rem"><tbody>
+                <tr style="font-weight:600;color:#374151"><td></td>
+                    <td style="text-align:right;padding:0 8px;color:#0369a1">FTP</td>
+                    <td style="text-align:right;color:#9a3412">ALT</td></tr>
+                ${row('CM', f.cm, a.cm)}
+                ${row('TD', f.td, a.td)}
+                ${row('TP', f.tp, a.tp)}
+                ${row('PT', f.pt, a.pt)}
+                ${row('HETD', hF, hA, 'font-weight:700;border-top:1px solid #cbd5e1')}
+            </tbody></table>
         </td>`;
     }
 
@@ -3536,11 +3542,11 @@ function renderCourses() {
         (subs || []).forEach(c => { all = all.concat(courseRows(c)); });
         if (!all.length) {
             if (comp) {  // matière du programme sans sous-matière : invite à en créer
-                return `<tr>${parentLeftTd(comp, null, sem, 1, orphanRed)}${hetdLeftTd(comp, [], 1)}<td colspan="${ncol - 2}" style="color:#9ca3af;font-size:.85rem;padding:8px">Aucune sous-matière pour l'instant.</td></tr>`;
+                return `<tr>${parentLeftTd(comp, null, sem, 1, orphanRed)}${hetdLeftTd([], 1)}<td colspan="${ncol - 2}" style="color:#9ca3af;font-size:.85rem;padding:8px">Aucune sous-matière pour l'instant.</td></tr>`;
             }
             return '';
         }
-        const leftCells = parentLeftTd(comp, fallbackCode, sem, all.length, orphanRed) + hetdLeftTd(comp, subs, all.length);
+        const leftCells = parentLeftTd(comp, fallbackCode, sem, all.length, orphanRed) + hetdLeftTd(subs, all.length);
         all[0] = all[0].replace(/^(\s*<tr[^>]*>)/, (m) => m + leftCells);
         return all.join('');
     }
@@ -3560,13 +3566,14 @@ function renderCourses() {
 
     const head = `<thead><tr>
         <th>Matière (programme)</th>
-        <th style="text-align:center">Heures / HETD</th>
-        <th>Sous-matière</th><th>Intitulé</th><th>Semaines</th><th>Type</th>
+        <th style="text-align:center">Heures</th>
+        <th style="width:64px">Sous-matière</th><th>Intitulé</th>
+        <th style="width:58px">Semaines</th><th style="width:62px">Type</th>
         <th style="text-align:center"></th>
         <th style="text-align:center">Salle</th>
         ${showFtpCol ? '<th style="text-align:center;color:#0369a1">FTP</th>' : ''}
         ${showAltCol ? '<th style="text-align:center;color:#9a3412">ALT</th>' : ''}
-        <th>Actions</th>
+        <th style="width:90px">Actions</th>
     </tr></thead>`;
 
     const sems = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].filter(s => _matSemesters.has(s));
@@ -3585,8 +3592,9 @@ function renderCourses() {
             body += renderGroup(null, k, semCourses[k], sem, semHasProg);
         });
         if (!body) body = `<tr><td colspan="${ncol}" style="color:#9ca3af;padding:10px">Aucune matière pour ce semestre.</td></tr>`;
-        return `<h3 style="margin:18px 0 6px;color:#374151">${sem}</h3>
-            <div class="overflow-x"><table>${head}<tbody>${body}</tbody></table></div>`;
+        // Première ligne fusionnée : nom du semestre, centré
+        const semBanner = `<tr><td colspan="${ncol}" style="text-align:center;font-weight:700;font-size:1.05rem;background:#eef2ff;color:#3730a3;padding:7px;border-bottom:2px solid #c7d2fe">${sem}</td></tr>`;
+        return `<div class="overflow-x" style="margin-top:14px"><table>${head}<tbody>${semBanner}${body}</tbody></table></div>`;
     }).join('');
 
     const warn = hasAny ? '' :
