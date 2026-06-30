@@ -3560,19 +3560,19 @@ function renderCourses() {
     const heuresCols = 1 + (showFtpCol ? 1 : 0) + (showAltCol ? 1 : 0);  // (type) + FTP? + ALT?
     const head = `<thead>
         <tr>
-            <th rowspan="2">Matière (programme)</th>
-            <th rowspan="2" style="width:64px">Sous-matière</th>
-            <th rowspan="2">Intitulé</th>
-            <th rowspan="2" style="width:58px">Semaines</th>
-            <th rowspan="2" style="width:62px">Type</th>
+            <th rowspan="2" style="width:150px">Matière (programme)</th>
+            <th rowspan="2" style="width:72px">Sous-matière</th>
+            <th rowspan="2" style="width:160px">Intitulé</th>
+            <th rowspan="2" style="width:56px">Semaines</th>
+            <th rowspan="2" style="width:58px">Type</th>
             <th colspan="${heuresCols}" style="text-align:center;border-bottom:1px solid #e5e7eb">Heures</th>
-            <th rowspan="2" style="text-align:center">Salle</th>
-            <th rowspan="2" style="width:90px">Actions</th>
+            <th rowspan="2" style="width:70px;text-align:center">Salle</th>
+            <th rowspan="2" style="width:84px">Actions</th>
         </tr>
         <tr>
-            <th style="text-align:center"></th>
-            ${showFtpCol ? '<th style="text-align:center;color:#0369a1">FTP</th>' : ''}
-            ${showAltCol ? '<th style="text-align:center;color:#9a3412">ALT</th>' : ''}
+            <th style="width:38px;text-align:center"></th>
+            ${showFtpCol ? '<th style="width:48px;text-align:center;color:#0369a1">FTP</th>' : ''}
+            ${showAltCol ? '<th style="width:48px;text-align:center;color:#9a3412">ALT</th>' : ''}
         </tr>
     </thead>`;
 
@@ -3594,7 +3594,7 @@ function renderCourses() {
         if (!body) body = `<tr><td colspan="${ncol}" style="color:#9ca3af;padding:10px">Aucune matière pour ce semestre.</td></tr>`;
         // Première ligne fusionnée : nom du semestre, centré
         const semBanner = `<tr><td colspan="${ncol}" style="text-align:center;font-weight:700;font-size:1.05rem;background:#eef2ff;color:#3730a3;padding:7px;border-bottom:2px solid #c7d2fe">${sem}</td></tr>`;
-        return `<div class="overflow-x" style="margin-top:14px"><table>${head}<tbody>${semBanner}${body}</tbody></table></div>`;
+        return `<div class="overflow-x" style="margin-top:14px"><table style="width:auto;max-width:100%">${head}<tbody>${semBanner}${body}</tbody></table></div>`;
     }).join('');
 
     const warn = hasAny ? '' :
