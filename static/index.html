@@ -3410,7 +3410,7 @@ function renderCourses() {
     const showFtpCol = formFilter !== 'alt';
     const showAltCol = formFilter !== 'ftp';
     const noCellFilter = formFilter === '' && !teacherFilter && !roomFilter;
-    const ncol = 9 + (showFtpCol ? 1 : 0) + (showAltCol ? 1 : 0);
+    const ncol = 8 + (showFtpCol ? 1 : 0) + (showAltCol ? 1 : 0);
     const q = ((document.getElementById('filter-search-matieres') || {}).value || '').trim().toLowerCase();
 
     // Conversion en HETD via le réglage partagé _HETD_COEFS (onglet Paramètres)
@@ -3463,12 +3463,13 @@ function renderCourses() {
                 <td style="text-align:center;white-space:nowrap">${weeksCell}</td>
                 <td>${badge}</td>
                 <td style="text-align:center;color:#bbb">—</td>
-                <td style="text-align:center;color:#bbb">—</td>
                 ${showFtpCol ? '<td style="text-align:center;color:#bbb">—</td>' : ''}
                 ${showAltCol ? '<td style="text-align:center;color:#bbb">—</td>' : ''}
+                <td style="text-align:center;color:#bbb">—</td>
                 ${actions}
             </tr>`];
         }
+        // Sous-colonnes du groupe « Heures » : [type | FTP | ALT], puis Salle, puis Actions
         return types.map((t, i) => `<tr${i === 0 ? ' class="course-sep"' : ''}>
                 ${i === 0 ? `
                 <td rowspan="${nRows}">${codeCell}</td>
@@ -3476,9 +3477,9 @@ function renderCourses() {
                 <td rowspan="${nRows}" style="text-align:center;white-space:nowrap">${weeksCell}</td>
                 <td rowspan="${nRows}">${badge}</td>` : ''}
                 <td style="font-size:.75rem;font-weight:600;text-align:center">${t.label}</td>
-                ${salleCell(t)}
                 ${showFtpCol ? hCell(t.ftp, t.ftpT) : ''}
                 ${showAltCol ? hCell(t.alt, t.altT) : ''}
+                ${salleCell(t)}
                 ${i === 0 ? actions : ''}
             </tr>`);
     }
@@ -3506,9 +3507,9 @@ function renderCourses() {
         </td>`;
     }
 
-    // Cellule « Heures » (fusionnée sur tout le groupe) : mini-tableau à 3 sous-colonnes
-    // [type CM/TD/TP/PT | FTP | ALT] avec les heures sommées des sous-matières + ligne HETD.
-    function hetdLeftTd(subs, rowspan) {
+    // Ligne « HETD » récapitulative d'une matière : totaux HETD des sous-matières, sous les
+    // sous-colonnes FTP/ALT du groupe « Heures ». Pas de cellule Matière (rowspan au-dessus).
+    function hetdSummaryRow(subs) {
         const f = { cm: 0, td: 0, tp: 0, pt: 0 }, a = { cm: 0, td: 0, tp: 0, pt: 0 };
         (subs || []).forEach(c => {
             f.cm += Number(c.cm_hours) || 0; f.td += Number(c.td_hours) || 0;
@@ -3516,39 +3517,31 @@ function renderCourses() {
             a.cm += Number(c.alt_cm_hours) || 0; a.td += Number(c.alt_td_hours) || 0;
             a.tp += Number(c.alt_tp_hours) || 0; a.pt += Number(c.alt_pt_hours) || 0;
         });
-        const cell = x => x ? fmtH(x) : '';
-        const row = (lbl, fv, av, extra) => `<tr style="${extra || ''}">
-            <td style="padding:0 8px 0 0;color:#6b7280">${lbl}</td>
-            <td style="text-align:right;padding:0 8px;color:#0369a1">${cell(fv)}</td>
-            <td style="text-align:right;color:#9a3412">${cell(av)}</td></tr>`;
         const hF = hetd(f.cm, f.td, f.tp, f.pt), hA = hetd(a.cm, a.td, a.tp, a.pt);
-        return `<td rowspan="${rowspan}" style="background:#f0f9ff;vertical-align:top;padding:4px 6px;border-right:2px solid #e0f2fe">
-            <table style="border-collapse:collapse;font-size:.72rem"><tbody>
-                <tr style="font-weight:600;color:#374151"><td></td>
-                    <td style="text-align:right;padding:0 8px;color:#0369a1">FTP</td>
-                    <td style="text-align:right;color:#9a3412">ALT</td></tr>
-                ${row('CM', f.cm, a.cm)}
-                ${row('TD', f.td, a.td)}
-                ${row('TP', f.tp, a.tp)}
-                ${row('PT', f.pt, a.pt)}
-                ${row('HETD', hF, hA, 'font-weight:700;border-top:1px solid #cbd5e1')}
-            </tbody></table>
-        </td>`;
+        return `<tr style="background:#f8fafc;font-weight:700">
+            <td colspan="4"></td>
+            <td style="text-align:center;font-size:.7rem;color:#374151">HETD</td>
+            ${showFtpCol ? `<td style="text-align:center;color:#0369a1">${fmtH(hF)}</td>` : ''}
+            ${showAltCol ? `<td style="text-align:center;color:#9a3412">${fmtH(hA)}</td>` : ''}
+            <td></td><td></td>
+        </tr>`;
     }
 
-    // Un groupe = une matière générale (programme ou hors-programme) + ses sous-matières.
+    // Un groupe = une matière générale (programme ou hors-programme) + ses sous-matières
+    // + une ligne HETD récapitulative.
     function renderGroup(comp, fallbackCode, subs, sem, orphanRed) {
         let all = [];
         (subs || []).forEach(c => { all = all.concat(courseRows(c)); });
         if (!all.length) {
             if (comp) {  // matière du programme sans sous-matière : invite à en créer
-                return `<tr>${parentLeftTd(comp, null, sem, 1, orphanRed)}${hetdLeftTd([], 1)}<td colspan="${ncol - 2}" style="color:#9ca3af;font-size:.85rem;padding:8px">Aucune sous-matière pour l'instant.</td></tr>`;
+                return `<tr>${parentLeftTd(comp, null, sem, 1, orphanRed)}<td colspan="${ncol - 1}" style="color:#9ca3af;font-size:.85rem;padding:8px">Aucune sous-matière pour l'instant.</td></tr>`;
             }
             return '';
         }
-        const leftCells = parentLeftTd(comp, fallbackCode, sem, all.length, orphanRed) + hetdLeftTd(subs, all.length);
-        all[0] = all[0].replace(/^(\s*<tr[^>]*>)/, (m) => m + leftCells);
-        return all.join('');
+        const summary = hetdSummaryRow(subs);
+        // La cellule Matière fusionne sur toutes les lignes de sous-matières + la ligne HETD.
+        all[0] = all[0].replace(/^(\s*<tr[^>]*>)/, (m) => m + parentLeftTd(comp, fallbackCode, sem, all.length + 1, orphanRed));
+        return all.join('') + summary;
     }
 
     // Index des courses de l'année par (semestre, clé de base)
@@ -3564,17 +3557,24 @@ function renderCourses() {
     const prog = (_matProg && _matProg.semesters) || {};
     const hasAny = !!(_matProg && _matProg.has_any);
 
-    const head = `<thead><tr>
-        <th>Matière (programme)</th>
-        <th style="text-align:center">Heures</th>
-        <th style="width:64px">Sous-matière</th><th>Intitulé</th>
-        <th style="width:58px">Semaines</th><th style="width:62px">Type</th>
-        <th style="text-align:center"></th>
-        <th style="text-align:center">Salle</th>
-        ${showFtpCol ? '<th style="text-align:center;color:#0369a1">FTP</th>' : ''}
-        ${showAltCol ? '<th style="text-align:center;color:#9a3412">ALT</th>' : ''}
-        <th style="width:90px">Actions</th>
-    </tr></thead>`;
+    const heuresCols = 1 + (showFtpCol ? 1 : 0) + (showAltCol ? 1 : 0);  // (type) + FTP? + ALT?
+    const head = `<thead>
+        <tr>
+            <th rowspan="2">Matière (programme)</th>
+            <th rowspan="2" style="width:64px">Sous-matière</th>
+            <th rowspan="2">Intitulé</th>
+            <th rowspan="2" style="width:58px">Semaines</th>
+            <th rowspan="2" style="width:62px">Type</th>
+            <th colspan="${heuresCols}" style="text-align:center;border-bottom:1px solid #e5e7eb">Heures</th>
+            <th rowspan="2" style="text-align:center">Salle</th>
+            <th rowspan="2" style="width:90px">Actions</th>
+        </tr>
+        <tr>
+            <th style="text-align:center"></th>
+            ${showFtpCol ? '<th style="text-align:center;color:#0369a1">FTP</th>' : ''}
+            ${showAltCol ? '<th style="text-align:center;color:#9a3412">ALT</th>' : ''}
+        </tr>
+    </thead>`;
 
     const sems = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].filter(s => _matSemesters.has(s));
     const blocks = sems.map(sem => {
