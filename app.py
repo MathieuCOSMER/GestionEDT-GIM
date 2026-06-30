@@ -1978,6 +1978,48 @@ def promotion_matieres(pid):
         out[sem] = {'components': comps}
     return jsonify({'has_programme': has_prog, 'semesters': out})
 
+@app.route('/api/matieres-programme', methods=['GET'])
+def matieres_programme():
+    """Pour l'ANNÉE ACTIVE : matières du programme par semestre, en résolvant
+    automatiquement la cohorte de chaque semestre (S1/S2→1re année, S3/S4→2e, S5/S6→3e).
+    FTP et ALT d'une même année partageant le même programme, on prend l'une ou l'autre.
+    Lecture seule (tous utilisateurs connectés) — alimente l'onglet Matières."""
+    try:
+        start = int(str(get_current_year() or '').split('-')[0])
+    except (ValueError, IndexError):
+        start = None
+    pdb = get_promotions_db()
+    prog_names = {}
+    try:
+        for r in get_programmes_db().execute('SELECT id, name FROM programmes').fetchall():
+            prog_names[r['id']] = r['name']
+    except sqlite3.Error:
+        pass
+    out = {}
+    any_prog = False
+    for n in range(1, 7):
+        sem = 'S%d' % n
+        year_group = (n + 1) // 2          # S1/S2→1, S3/S4→2, S5/S6→3
+        comps, promo_name, prog_name = [], None, None
+        if start is not None:
+            cohort_year = start - (year_group - 1)
+            row = pdb.execute(
+                '''SELECT id, name, programme_id FROM promotions WHERE start_year=?
+                   ORDER BY (programme_id IS NULL), formation LIMIT 1''',
+                (cohort_year,)).fetchone()
+            if row:
+                promo_name = row['name']
+                if row['programme_id']:
+                    d = (_promo_coeffs(pdb, row['id']) or {}).get(sem) or {}
+                    comps = [{k: c.get(k) for k in ('code', 'label', 'short_label',
+                                                    'apogee_code', 'kind', 'volumes')}
+                             for c in d.get('components', [])]
+                    prog_name = prog_names.get(row['programme_id'])
+                    if comps:
+                        any_prog = True
+        out[sem] = {'components': comps, 'promo_name': promo_name, 'programme_name': prog_name}
+    return jsonify({'has_any': any_prog, 'semesters': out})
+
 @app.route('/api/promotions', methods=['POST'])
 def create_promotion():
     err = _require_admin()

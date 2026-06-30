@@ -390,9 +390,7 @@
     <div class="toolbar">
         <h1>Matières</h1>
         <div class="filters">
-            <label>Promotion :</label>
-            <select id="filter-promo-matieres" onchange="onMatPromoChange()"><option value="">— Promotion —</option></select>
-            <label style="margin-left:12px">Semestres :</label>
+            <label>Semestres :</label>
             <div id="mat-sem-toggle" class="sem-toggle">
                 <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleMatSemester('S1',this)">S1</button>
                 <button type="button" class="sem-btn active" data-sem="S2" onclick="toggleMatSemester('S2',this)">S2</button>
@@ -1406,7 +1404,7 @@ async function loadPage(name, forceReload) {
         }
         else if (name === 'matieres') {
             if (forceReload || !state.courses.length) [state.courses, state.semesters] = await Promise.all([api('/courses'), api('/semesters')]);
-            await loadMatPromos();
+            await loadMatProg();
             renderCourses();
         }
         else if (name === 'contenu') {
@@ -1591,9 +1589,7 @@ async function deleteTeacher(id) {
 // ===== MATIERES =====
 // Filtres repris de l'onglet Répartition (semestres, formation, enseignant, salle)
 let _matSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
-let _matPromos = [];        // promotions (liste légère) pour le sélecteur Matières
-let _matPromoId = null;     // promotion sélectionnée → fournit le programme
-let _matProg = null;        // { has_programme, semesters: {S1:{components:[...]}} }
+let _matProg = null;        // { has_any, semesters: {S1:{components, promo_name, programme_name}} }
 
 // Clé de regroupement matière : enlève une lettre finale (R1.03a→R1.03) et normalise
 // le dernier groupe numérique sur 2 chiffres (SAE1.1→SAE1.01) pour matcher le programme.
@@ -1603,28 +1599,12 @@ function matBaseKey(code) {
     return c;
 }
 
-async function loadMatPromos() {
-    try { _matPromos = await api('/promotions-lite'); } catch (e) { _matPromos = []; }
-    const sel = document.getElementById('filter-promo-matieres');
-    if (!sel) return;
-    const cur = _matPromoId || '';
-    sel.innerHTML = '<option value="">— Promotion —</option>' +
-        _matPromos.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
-    if (cur && _matPromos.some(p => String(p.id) === String(cur))) sel.value = cur;
-    else _matPromoId = null;
-    await loadMatProg();
-}
-
+// Programme par semestre, résolu automatiquement (cohorte de l'année active).
+// FTP et ALT d'une même année partagent le même programme → pas de choix de promo.
 async function loadMatProg() {
-    _matPromoId = (document.getElementById('filter-promo-matieres') || {}).value || null;
-    _matProg = null;
-    if (_matPromoId) {
-        try { _matProg = await api(`/promotions/${_matPromoId}/matieres`); }
-        catch (e) { _matProg = null; }
-    }
+    try { _matProg = await api('/matieres-programme'); }
+    catch (e) { _matProg = null; }
 }
-
-function onMatPromoChange() { loadMatProg().then(renderCourses); }
 
 function toggleMatSemester(code, btn) {
     if (_matSemesters.has(code)) _matSemesters.delete(code);
@@ -3383,10 +3363,6 @@ function renderCourses() {
     const roomFilter    = (document.getElementById('filter-room-matieres') || {}).value || '';
     const el = document.getElementById('courses-table');
 
-    if (!_matPromoId) {
-        el.innerHTML = '<div style="color:#6b7280;padding:20px">Choisissez une <strong>promotion</strong> : les matières affichées proviennent de son programme (onglet Programme).</div>';
-        return;
-    }
     if (!_matSemesters.size) {
         el.innerHTML = '<div class="empty">Sélectionnez au moins un semestre.</div>';
         return;
@@ -3464,7 +3440,7 @@ function renderCourses() {
     }
 
     // Cellule « Matière générale » (colonne de gauche), fusionnée (rowspan) sur tout le groupe.
-    function parentLeftTd(comp, fallbackCode, sem, rowspan) {
+    function parentLeftTd(comp, fallbackCode, sem, rowspan, orphanRed) {
         if (comp) {
             const v = comp.volumes || {};
             const vparts = [['CM', v.cm], ['TD', v.td], ['TP', v.tp], ['PT', v.pt]]
@@ -3478,25 +3454,28 @@ function renderCourses() {
                     onclick="openSubMatiere('${esc(code)}','${sem}','${esc(comp.kind || '')}')">+ sous-matière</button>
             </td>`;
         }
-        return `<td rowspan="${rowspan}" style="background:#fef2f2;vertical-align:top;min-width:165px;border-right:2px solid #fecaca">
-            <strong style="color:#991b1b">${esc(fallbackCode || '')}</strong>
-            <div style="font-size:.72rem;color:#b91c1c;margin-top:2px">⚠ hors programme</div>
+        // Sans programme pour ce semestre : cellule neutre (pas d'alerte rouge)
+        const red = orphanRed;
+        const bg = red ? '#fef2f2' : '#f9fafb', bd = red ? '#fecaca' : '#e5e7eb', col = red ? '#991b1b' : '#374151';
+        return `<td rowspan="${rowspan}" style="background:${bg};vertical-align:top;min-width:165px;border-right:2px solid ${bd}">
+            <strong style="color:${col}">${esc(fallbackCode || '')}</strong>
+            ${red ? '<div style="font-size:.72rem;color:#b91c1c;margin-top:2px">⚠ hors programme</div>' : ''}
             <button class="btn btn-secondary btn-sm" style="margin-top:6px"
                 onclick="openSubMatiere('${esc(fallbackCode || '')}','${sem}','')">+ sous-matière</button>
         </td>`;
     }
 
     // Un groupe = une matière générale (programme ou hors-programme) + ses sous-matières.
-    function renderGroup(comp, fallbackCode, subs, sem) {
+    function renderGroup(comp, fallbackCode, subs, sem, orphanRed) {
         let all = [];
         (subs || []).forEach(c => { all = all.concat(courseRows(c)); });
         if (!all.length) {
             if (comp) {  // matière du programme sans sous-matière : invite à en créer
-                return `<tr>${parentLeftTd(comp, null, sem, 1)}<td colspan="${ncol - 1}" style="color:#9ca3af;font-size:.85rem;padding:8px">Aucune sous-matière pour l'instant.</td></tr>`;
+                return `<tr>${parentLeftTd(comp, null, sem, 1, orphanRed)}<td colspan="${ncol - 1}" style="color:#9ca3af;font-size:.85rem;padding:8px">Aucune sous-matière pour l'instant.</td></tr>`;
             }
             return '';
         }
-        const leftTd = parentLeftTd(comp, fallbackCode, sem, all.length);
+        const leftTd = parentLeftTd(comp, fallbackCode, sem, all.length, orphanRed);
         all[0] = all[0].replace(/^(\s*<tr[^>]*>)/, (m) => m + leftTd);
         return all.join('');
     }
@@ -3512,7 +3491,7 @@ function renderCourses() {
     });
 
     const prog = (_matProg && _matProg.semesters) || {};
-    const hasProg = !!(_matProg && _matProg.has_programme);
+    const hasAny = !!(_matProg && _matProg.has_any);
 
     const head = `<thead><tr>
         <th>Matière (programme)</th>
@@ -3527,26 +3506,27 @@ function renderCourses() {
     const sems = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].filter(s => _matSemesters.has(s));
     const blocks = sems.map(sem => {
         const semCourses = bySem[sem] || {};
-        const comps = hasProg ? ((prog[sem] || {}).components || []) : [];
+        const comps = (prog[sem] || {}).components || [];
+        const semHasProg = comps.length > 0;   // orphelins en rouge seulement si programme connu
         const used = new Set();
         let body = '';
         comps.forEach(comp => {
             const key = matBaseKey(comp.code);
             used.add(key);
-            body += renderGroup(comp, null, semCourses[key] || [], sem);
+            body += renderGroup(comp, null, semCourses[key] || [], sem, semHasProg);
         });
         Object.keys(semCourses).filter(k => !used.has(k)).sort().forEach(k => {
-            body += renderGroup(null, k, semCourses[k], sem);
+            body += renderGroup(null, k, semCourses[k], sem, semHasProg);
         });
         if (!body) body = `<tr><td colspan="${ncol}" style="color:#9ca3af;padding:10px">Aucune matière pour ce semestre.</td></tr>`;
         return `<h3 style="margin:18px 0 6px;color:#374151">${sem}</h3>
             <div class="overflow-x"><table>${head}<tbody>${body}</tbody></table></div>`;
     }).join('');
 
-    const warn = hasProg ? '' :
+    const warn = hasAny ? '' :
         `<div style="background:#fffbeb;border:1px solid #fcd34d;color:#92400e;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:.85rem">
-            Cette promotion n'a pas de <strong>programme</strong> affecté — les matières sont affichées sans regroupement (colonne « hors programme »).
-            Affecte un programme dans l'onglet <strong>Promotions → Effectif</strong>.</div>`;
+            Aucun <strong>programme</strong> n'est rattaché aux promotions de l'année active — les matières sont affichées sans regroupement.
+            Affecte un programme aux promotions dans l'onglet <strong>Promotions → Effectif</strong> (FTP et ALT d'une même année partagent le même programme).</div>`;
 
     el.innerHTML = warn + blocks;
 }
