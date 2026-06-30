@@ -3422,8 +3422,9 @@ function renderCourses() {
         if (t.alt && t.altR && !rs.includes(t.altR)) rs.push(t.altR);
         return `<td style="text-align:center;font-size:.8rem">${rs.length ? esc(rs.join(' / ')) : '<span style="color:#bbb">—</span>'}</td>`;
     }
-    // Rend les lignes (par type) d'UNE sous-matière (course). Réutilise la mise en forme EDT.
-    function courseRowsHtml(c) {
+    // Lignes (par type) d'UNE sous-matière (course), SANS la colonne « Matière générale »
+    // (ajoutée par renderGroup sur la 1re ligne du groupe). Renvoie un tableau de <tr>.
+    function courseRows(c) {
         const types = filterTypes(c);
         const nRows = types.length || 1;
         const actions = `<td${types.length ? ` rowspan="${nRows}"` : ''} style="white-space:nowrap">
@@ -3433,12 +3434,12 @@ function renderCourses() {
                 </td>`;
         const weeksCell = c.start_week && c.end_week ? c.start_week + ' → ' + c.end_week : '<span style="color:#9ca3af">—</span>';
         const badge = `<span class="badge badge-${(c.course_type||'ressource').toLowerCase().slice(0,3)}">${esc(c.course_type||'')}</span>`;
+        const codeCell = `<strong>${esc(c.code||'')}</strong>${c.mutualized ? ' <span class="badge badge-mut" style="font-size:.6rem">MUT</span>' : ''}`;
         if (!types.length) {
-            if (!noCellFilter) return '';
-            return `<tr>
-                <td><strong>${esc(c.code||'')}</strong></td>
+            if (!noCellFilter) return [];
+            return [`<tr>
+                <td>${codeCell}</td>
                 <td>${esc(c.name||'')}</td>
-                <td>${esc(c.semester_code||'')}</td>
                 <td style="text-align:center;white-space:nowrap">${weeksCell}</td>
                 <td>${badge}</td>
                 <td style="text-align:center;color:#bbb">—</td>
@@ -3446,13 +3447,12 @@ function renderCourses() {
                 ${showFtpCol ? '<td style="text-align:center;color:#bbb">—</td>' : ''}
                 ${showAltCol ? '<td style="text-align:center;color:#bbb">—</td>' : ''}
                 ${actions}
-            </tr>`;
+            </tr>`];
         }
         return types.map((t, i) => `<tr${i === 0 ? ' class="course-sep"' : ''}>
                 ${i === 0 ? `
-                <td rowspan="${nRows}"><strong>${esc(c.code||'')}</strong>${c.mutualized ? ' <span class="badge badge-mut" style="font-size:.6rem">MUT</span>' : ''}</td>
+                <td rowspan="${nRows}">${codeCell}</td>
                 <td rowspan="${nRows}">${esc(c.name||'')}</td>
-                <td rowspan="${nRows}">${esc(c.semester_code||'')}</td>
                 <td rowspan="${nRows}" style="text-align:center;white-space:nowrap">${weeksCell}</td>
                 <td rowspan="${nRows}">${badge}</td>` : ''}
                 <td style="font-size:.75rem;font-weight:600;text-align:center">${t.label}</td>
@@ -3460,24 +3460,45 @@ function renderCourses() {
                 ${showFtpCol ? hCell(t.ftp, t.ftpT) : ''}
                 ${showAltCol ? hCell(t.alt, t.altT) : ''}
                 ${i === 0 ? actions : ''}
-            </tr>`).join('');
+            </tr>`);
     }
 
-    // Bandeau « matière parente » (issu du programme) + bouton de création de sous-matière
-    function parentBanner(comp, sem) {
-        const v = comp.volumes || {};
-        const vparts = [['CM', v.cm], ['TD', v.td], ['TP', v.tp], ['PT', v.pt]]
-            .filter(x => x[1] != null && x[1] !== '').map(x => `${x[0]} ${x[1]}h`).join(' · ');
-        const kb = (String(comp.kind || '').toUpperCase() === 'SAE') ? 'sae' : 'res';
-        return `<tr class="course-sep" style="background:#f5f3ff;border-top:2px solid #ddd6fe">
-            <td colspan="${ncol}" style="padding:6px 10px">
-                <strong style="color:#5b21b6">${esc(comp.code || '')}</strong>
-                <span style="margin-left:6px">${esc(comp.label || '')}</span>
-                <span class="badge badge-${kb}" style="margin-left:6px">${esc(comp.kind || '')}</span>
-                ${vparts ? `<span style="margin-left:10px;font-size:.8rem;color:#6b7280">PN : ${vparts}</span>` : ''}
-                <button class="btn btn-secondary btn-sm" style="float:right"
-                    onclick="openSubMatiere('${esc(comp.code || '')}','${sem}','${esc(comp.kind || '')}')">+ sous-matière</button>
-            </td></tr>`;
+    // Cellule « Matière générale » (colonne de gauche), fusionnée (rowspan) sur tout le groupe.
+    function parentLeftTd(comp, fallbackCode, sem, rowspan) {
+        if (comp) {
+            const v = comp.volumes || {};
+            const vparts = [['CM', v.cm], ['TD', v.td], ['TP', v.tp], ['PT', v.pt]]
+                .filter(x => x[1] != null && x[1] !== '').map(x => `${x[0]} ${x[1]}h`).join(' · ');
+            const code = comp.code || '';
+            return `<td rowspan="${rowspan}" style="background:#f5f3ff;vertical-align:top;min-width:165px;border-right:2px solid #ddd6fe">
+                <strong style="color:#5b21b6">${esc(code)}</strong>
+                <div style="font-size:.8rem;color:#374151;margin-top:1px">${esc(comp.label || '')}</div>
+                ${vparts ? `<div style="font-size:.72rem;color:#6b7280;margin-top:2px">PN : ${vparts}</div>` : ''}
+                <button class="btn btn-secondary btn-sm" style="margin-top:6px"
+                    onclick="openSubMatiere('${esc(code)}','${sem}','${esc(comp.kind || '')}')">+ sous-matière</button>
+            </td>`;
+        }
+        return `<td rowspan="${rowspan}" style="background:#fef2f2;vertical-align:top;min-width:165px;border-right:2px solid #fecaca">
+            <strong style="color:#991b1b">${esc(fallbackCode || '')}</strong>
+            <div style="font-size:.72rem;color:#b91c1c;margin-top:2px">⚠ hors programme</div>
+            <button class="btn btn-secondary btn-sm" style="margin-top:6px"
+                onclick="openSubMatiere('${esc(fallbackCode || '')}','${sem}','')">+ sous-matière</button>
+        </td>`;
+    }
+
+    // Un groupe = une matière générale (programme ou hors-programme) + ses sous-matières.
+    function renderGroup(comp, fallbackCode, subs, sem) {
+        let all = [];
+        (subs || []).forEach(c => { all = all.concat(courseRows(c)); });
+        if (!all.length) {
+            if (comp) {  // matière du programme sans sous-matière : invite à en créer
+                return `<tr>${parentLeftTd(comp, null, sem, 1)}<td colspan="${ncol - 1}" style="color:#9ca3af;font-size:.85rem;padding:8px">Aucune sous-matière pour l'instant.</td></tr>`;
+            }
+            return '';
+        }
+        const leftTd = parentLeftTd(comp, fallbackCode, sem, all.length);
+        all[0] = all[0].replace(/^(\s*<tr[^>]*>)/, (m) => m + leftTd);
+        return all.join('');
     }
 
     // Index des courses de l'année par (semestre, clé de base)
@@ -3492,10 +3513,10 @@ function renderCourses() {
 
     const prog = (_matProg && _matProg.semesters) || {};
     const hasProg = !!(_matProg && _matProg.has_programme);
-    const progName = (_matPromos.find(p => String(p.id) === String(_matPromoId)) || {}).programme_name || '';
 
     const head = `<thead><tr>
-        <th>Code</th><th>Intitulé</th><th>Sem.</th><th>Semaines</th><th>Type</th>
+        <th>Matière (programme)</th>
+        <th>Sous-matière</th><th>Intitulé</th><th>Semaines</th><th>Type</th>
         <th style="text-align:center"></th>
         <th style="text-align:center">Salle</th>
         ${showFtpCol ? '<th style="text-align:center;color:#0369a1">FTP</th>' : ''}
@@ -3512,16 +3533,11 @@ function renderCourses() {
         comps.forEach(comp => {
             const key = matBaseKey(comp.code);
             used.add(key);
-            body += parentBanner(comp, sem);
-            (semCourses[key] || []).forEach(c => { body += courseRowsHtml(c); });
+            body += renderGroup(comp, null, semCourses[key] || [], sem);
         });
-        const orphanKeys = Object.keys(semCourses).filter(k => !used.has(k)).sort();
-        if (orphanKeys.length) {
-            body += hasProg
-                ? `<tr class="course-sep"><td colspan="${ncol}" style="background:#fef2f2;color:#991b1b;font-weight:600;padding:6px 10px">⚠ Hors programme${progName ? ' ' + esc(progName) : ''} — matières EDT non listées dans le programme</td></tr>`
-                : '';
-            orphanKeys.forEach(k => semCourses[k].forEach(c => { body += courseRowsHtml(c); }));
-        }
+        Object.keys(semCourses).filter(k => !used.has(k)).sort().forEach(k => {
+            body += renderGroup(null, k, semCourses[k], sem);
+        });
         if (!body) body = `<tr><td colspan="${ncol}" style="color:#9ca3af;padding:10px">Aucune matière pour ce semestre.</td></tr>`;
         return `<h3 style="margin:18px 0 6px;color:#374151">${sem}</h3>
             <div class="overflow-x"><table>${head}<tbody>${body}</tbody></table></div>`;
@@ -3529,7 +3545,7 @@ function renderCourses() {
 
     const warn = hasProg ? '' :
         `<div style="background:#fffbeb;border:1px solid #fcd34d;color:#92400e;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:.85rem">
-            Cette promotion n'a pas de <strong>programme</strong> affecté — les matières sont affichées sans regroupement.
+            Cette promotion n'a pas de <strong>programme</strong> affecté — les matières sont affichées sans regroupement (colonne « hors programme »).
             Affecte un programme dans l'onglet <strong>Promotions → Effectif</strong>.</div>`;
 
     el.innerHTML = warn + blocks;
