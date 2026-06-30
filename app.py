@@ -5114,6 +5114,47 @@ def update_config():
     db.commit()
     return jsonify({'message': 'Configuration mise à jour'})
 
+# Coefficients de conversion en HETD (Heures Équivalent TD) — réglage unique (onglet
+# Paramètres), utilisé par le Bilan global ET la colonne Heures/HETD des Matières.
+_HETD_DEFAULTS = {'cm': 1.5, 'td': 1.0, 'tp': 2.0 / 3.0, 'pt': 1.0}
+
+def _get_hetd_coeffs(db):
+    row = db.execute("SELECT value FROM app_settings WHERE key='hetd_coeffs'").fetchone()
+    if row and row['value']:
+        try:
+            d = json.loads(row['value'])
+            return {k: float(d.get(k, _HETD_DEFAULTS[k])) for k in _HETD_DEFAULTS}
+        except (ValueError, TypeError):
+            pass
+    return dict(_HETD_DEFAULTS)
+
+@app.route('/api/hetd-coeffs', methods=['GET'])
+def get_hetd_coeffs():
+    """Coefficients HETD (CM/TD/TP/PT) — lecture seule, tous utilisateurs connectés."""
+    return jsonify(_get_hetd_coeffs(get_db()))
+
+@app.route('/api/hetd-coeffs', methods=['PUT'])
+def put_hetd_coeffs():
+    err = _require_admin()
+    if err:
+        return err
+    data = request.get_json() or {}
+    coeffs = {}
+    for k in _HETD_DEFAULTS:
+        try:
+            v = float(data.get(k))
+        except (TypeError, ValueError):
+            return error_response(f'Coefficient {k.upper()} invalide', 400)
+        if v < 0 or v > 10:
+            return error_response(f'Coefficient {k.upper()} hors plage (0–10)', 400)
+        coeffs[k] = v
+    db = get_db()
+    db.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('hetd_coeffs', ?)",
+               (json.dumps(coeffs),))
+    db.commit()
+    _audit('HETD_COEFFS_UPDATE', ip=_client_ip(), user=session.get('user'))
+    return jsonify(coeffs)
+
 @app.route('/api/repartition', methods=['GET'])
 def get_repartition():
     """Tableau pivot : pour un semestre donné, heures par cours et par semaine"""

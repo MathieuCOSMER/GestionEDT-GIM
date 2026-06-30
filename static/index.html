@@ -333,6 +333,7 @@
     <button onclick="showPage('contraintes')" id="nav-contraintes">Contraintes</button>
     <button onclick="showPage('programme')" id="nav-programme" class="admin-only">Programme</button>
     <button onclick="showPage('promotions')" id="nav-promotions" class="admin-only">Promotions</button>
+    <button onclick="showPage('parametres')" id="nav-parametres" class="admin-only">Paramètres</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
         <span style="font-size:.8rem;color:#6b7280;white-space:nowrap">Année :</span>
         <select id="year-select" onchange="switchYear()"
@@ -559,6 +560,27 @@
         </div>
     </div>
     <div id="prog-content"><div style="color:#6b7280;padding:20px">Choisissez ou créez un programme pour définir ses matières, compétences (UE), coefficients et heures.</div></div>
+</div>
+
+<!-- ===== PARAMÈTRES (admin) ===== -->
+<div class="page" id="page-parametres">
+    <div class="toolbar"><h1>Paramètres</h1></div>
+    <div style="max-width:560px">
+        <h3 style="color:#374151;margin:8px 0">Coefficients de conversion en HETD</h3>
+        <p style="color:#6b7280;font-size:.9rem;margin-top:0">
+            Heures Équivalent TD utilisées pour le calcul du service (onglet <strong>Bilan global</strong>)
+            et la colonne <strong>Heures / HETD</strong> de l'onglet Matières. 1 heure de chaque type est
+            multipliée par son coefficient.
+        </p>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin:12px 0">
+            <label style="font-size:.9rem">CM<br><input type="number" id="hetd-cm" min="0" max="10" step="0.05" style="width:90px;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+            <label style="font-size:.9rem">TD<br><input type="number" id="hetd-td" min="0" max="10" step="0.05" style="width:90px;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+            <label style="font-size:.9rem">TP<br><input type="number" id="hetd-tp" min="0" max="10" step="0.05" style="width:90px;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+            <label style="font-size:.9rem">PT<br><input type="number" id="hetd-pt" min="0" max="10" step="0.05" style="width:90px;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+        </div>
+        <div style="font-size:.8rem;color:#6b7280;margin-bottom:12px">Valeurs usuelles : CM 1,5 · TD 1 · TP 0,667 (2/3) · PT 1.</div>
+        <button class="btn btn-primary" id="hetd-save-btn" onclick="saveHetdCoefs()">💾 Enregistrer</button>
+    </div>
 </div>
 
 <!-- ===== JOURNAL D'AUDIT (admin) ===== -->
@@ -1400,7 +1422,7 @@ async function loadPage(name, forceReload) {
         }
         else if (name === 'matieres') {
             if (forceReload || !state.courses.length) [state.courses, state.semesters] = await Promise.all([api('/courses'), api('/semesters')]);
-            await loadMatProg();
+            await Promise.all([loadMatProg(), loadHetdCoefs()]);
             renderCourses();
         }
         else if (name === 'contenu') {
@@ -1416,10 +1438,12 @@ async function loadPage(name, forceReload) {
         else if (name === 'contraintes') { await loadConstraints(); }
         else if (name === 'programme') { await loadProgramme(); }
         else if (name === 'promotions') { await loadPromotions(); }
+        else if (name === 'parametres') { await loadParametres(); }
         else if (name === 'repartition-enseignant') {
             const [sessions, teachers, pg] = await Promise.all([
                 api('/course-sessions'), api('/teachers'), api('/promotion-groups')
             ]);
+            await loadHetdCoefs();
             state.sessions = sessions;
             state.teachers = teachers;
             state.promotionGroups = pg;
@@ -3389,10 +3413,9 @@ function renderCourses() {
     const ncol = 9 + (showFtpCol ? 1 : 0) + (showAltCol ? 1 : 0);
     const q = ((document.getElementById('filter-search-matieres') || {}).value || '').trim().toLowerCase();
 
-    // Conversion en HETD (Heures Équivalent TD) : CM=1,5 · TD=1 · TP=2/3 · PT=1
-    const HETD_COEF = { cm: 1.5, td: 1, tp: 2 / 3, pt: 1 };
-    const hetd = (cm, td, tp, pt) => (Number(cm) || 0) * HETD_COEF.cm + (Number(td) || 0) * HETD_COEF.td
-        + (Number(tp) || 0) * HETD_COEF.tp + (Number(pt) || 0) * HETD_COEF.pt;
+    // Conversion en HETD via le réglage partagé _HETD_COEFS (onglet Paramètres)
+    const hetd = (cm, td, tp, pt) => (Number(cm) || 0) * _HETD_COEFS.CM + (Number(td) || 0) * _HETD_COEFS.TD
+        + (Number(tp) || 0) * _HETD_COEFS.TP + (Number(pt) || 0) * _HETD_COEFS.PT;
     const fmtH = x => Math.round(x * 100) / 100;
 
     // Ne garde une face (FTP/ALT) d'un type que si elle passe les filtres formation/enseignant/salle
@@ -3513,11 +3536,11 @@ function renderCourses() {
         (subs || []).forEach(c => { all = all.concat(courseRows(c)); });
         if (!all.length) {
             if (comp) {  // matière du programme sans sous-matière : invite à en créer
-                return `<tr>${hetdLeftTd(comp, [], 1)}${parentLeftTd(comp, null, sem, 1, orphanRed)}<td colspan="${ncol - 2}" style="color:#9ca3af;font-size:.85rem;padding:8px">Aucune sous-matière pour l'instant.</td></tr>`;
+                return `<tr>${parentLeftTd(comp, null, sem, 1, orphanRed)}${hetdLeftTd(comp, [], 1)}<td colspan="${ncol - 2}" style="color:#9ca3af;font-size:.85rem;padding:8px">Aucune sous-matière pour l'instant.</td></tr>`;
             }
             return '';
         }
-        const leftCells = hetdLeftTd(comp, subs, all.length) + parentLeftTd(comp, fallbackCode, sem, all.length, orphanRed);
+        const leftCells = parentLeftTd(comp, fallbackCode, sem, all.length, orphanRed) + hetdLeftTd(comp, subs, all.length);
         all[0] = all[0].replace(/^(\s*<tr[^>]*>)/, (m) => m + leftCells);
         return all.join('');
     }
@@ -3536,8 +3559,8 @@ function renderCourses() {
     const hasAny = !!(_matProg && _matProg.has_any);
 
     const head = `<thead><tr>
-        <th style="text-align:center">Heures / HETD</th>
         <th>Matière (programme)</th>
+        <th style="text-align:center">Heures / HETD</th>
         <th>Sous-matière</th><th>Intitulé</th><th>Semaines</th><th>Type</th>
         <th style="text-align:center"></th>
         <th style="text-align:center">Salle</th>
@@ -4257,7 +4280,42 @@ function renderSessions() {
 }
 
 // ===== REPARTITION PAR ENSEIGNANT =====
+// Coefficients HETD : valeurs par défaut, écrasées par le réglage serveur (onglet Paramètres).
 const _HETD_COEFS = { CM: 1.5, TD: 1.0, TP: 2/3, PT: 1.0 };
+
+// Charge les coefficients HETD partagés (Bilan global + Matières) depuis le serveur.
+async function loadHetdCoefs() {
+    try {
+        const c = await api('/hetd-coeffs');
+        Object.assign(_HETD_COEFS, { CM: +c.cm, TD: +c.td, TP: +c.tp, PT: +c.pt });
+    } catch (e) { /* garde les valeurs par défaut */ }
+}
+
+async function loadParametres() {
+    let c = { cm: _HETD_COEFS.CM, td: _HETD_COEFS.TD, tp: _HETD_COEFS.TP, pt: _HETD_COEFS.PT };
+    try { c = await api('/hetd-coeffs'); } catch (e) { /* défauts */ }
+    document.getElementById('hetd-cm').value = c.cm;
+    document.getElementById('hetd-td').value = c.td;
+    document.getElementById('hetd-tp').value = Math.round(c.tp * 1000) / 1000;
+    document.getElementById('hetd-pt').value = c.pt;
+}
+
+async function saveHetdCoefs() {
+    const body = {
+        cm: parseFloat(document.getElementById('hetd-cm').value),
+        td: parseFloat(document.getElementById('hetd-td').value),
+        tp: parseFloat(document.getElementById('hetd-tp').value),
+        pt: parseFloat(document.getElementById('hetd-pt').value),
+    };
+    for (const k of ['cm', 'td', 'tp', 'pt']) {
+        if (isNaN(body[k]) || body[k] < 0 || body[k] > 10) { toast('Coefficient ' + k.toUpperCase() + ' invalide (0–10)', 'error'); return; }
+    }
+    try {
+        const c = await api('/hetd-coeffs', { method: 'PUT', body: JSON.stringify(body) });
+        Object.assign(_HETD_COEFS, { CM: +c.cm, TD: +c.td, TP: +c.tp, PT: +c.pt });
+        toast('Coefficients HETD enregistrés');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
 
 function _ttKey(tt) {
     const u = (tt||'').toUpperCase().replace(/\s/g,'');
