@@ -1071,6 +1071,7 @@
 <div class="modal-backdrop" id="modal-course">
     <div class="modal modal-wide">
         <h2 id="modal-course-title">Ajouter une matière</h2>
+        <div id="course-parent-info" style="display:none;margin:-6px 0 12px;padding:6px 10px;background:#f5f3ff;border-left:3px solid #8b5cf6;border-radius:4px;font-size:.85rem;color:#5b21b6"></div>
         <form id="form-course" onsubmit="submitCourse(event)">
             <input type="hidden" id="course-id">
             <div class="form-row">
@@ -3385,8 +3386,14 @@ function renderCourses() {
     const showFtpCol = formFilter !== 'alt';
     const showAltCol = formFilter !== 'ftp';
     const noCellFilter = formFilter === '' && !teacherFilter && !roomFilter;
-    const ncol = 8 + (showFtpCol ? 1 : 0) + (showAltCol ? 1 : 0);
+    const ncol = 9 + (showFtpCol ? 1 : 0) + (showAltCol ? 1 : 0);
     const q = ((document.getElementById('filter-search-matieres') || {}).value || '').trim().toLowerCase();
+
+    // Conversion en HETD (Heures Équivalent TD) : CM=1,5 · TD=1 · TP=2/3 · PT=1
+    const HETD_COEF = { cm: 1.5, td: 1, tp: 2 / 3, pt: 1 };
+    const hetd = (cm, td, tp, pt) => (Number(cm) || 0) * HETD_COEF.cm + (Number(td) || 0) * HETD_COEF.td
+        + (Number(tp) || 0) * HETD_COEF.tp + (Number(pt) || 0) * HETD_COEF.pt;
+    const fmtH = x => Math.round(x * 100) / 100;
 
     // Ne garde une face (FTP/ALT) d'un type que si elle passe les filtres formation/enseignant/salle
     const filterTypes = c => [
@@ -3454,16 +3461,13 @@ function renderCourses() {
     }
 
     // Cellule « Matière générale » (colonne de gauche), fusionnée (rowspan) sur tout le groupe.
+    // Nom de la matière affiché à la même taille que le code ; colonne réduite de ~30 %.
     function parentLeftTd(comp, fallbackCode, sem, rowspan, orphanRed) {
         if (comp) {
-            const v = comp.volumes || {};
-            const vparts = [['CM', v.cm], ['TD', v.td], ['TP', v.tp], ['PT', v.pt]]
-                .filter(x => x[1] != null && x[1] !== '').map(x => `${x[0]} ${x[1]}h`).join(' · ');
             const code = comp.code || '';
-            return `<td rowspan="${rowspan}" style="background:#f5f3ff;vertical-align:top;min-width:165px;border-right:2px solid #ddd6fe">
+            return `<td rowspan="${rowspan}" style="background:#f5f3ff;vertical-align:top;width:116px;min-width:116px;border-right:2px solid #ddd6fe">
                 <strong style="color:#5b21b6">${esc(code)}</strong>
-                <div style="font-size:.8rem;color:#374151;margin-top:1px">${esc(comp.label || '')}</div>
-                ${vparts ? `<div style="font-size:.72rem;color:#6b7280;margin-top:2px">PN : ${vparts}</div>` : ''}
+                <div style="color:#374151;margin-top:1px">${esc(comp.label || '')}</div>
                 <button class="btn btn-secondary btn-sm" style="margin-top:6px"
                     onclick="openSubMatiere('${esc(code)}','${sem}','${esc(comp.kind || '')}')">+ sous-matière</button>
             </td>`;
@@ -3471,11 +3475,35 @@ function renderCourses() {
         // Sans programme pour ce semestre : cellule neutre (pas d'alerte rouge)
         const red = orphanRed;
         const bg = red ? '#fef2f2' : '#f9fafb', bd = red ? '#fecaca' : '#e5e7eb', col = red ? '#991b1b' : '#374151';
-        return `<td rowspan="${rowspan}" style="background:${bg};vertical-align:top;min-width:165px;border-right:2px solid ${bd}">
+        return `<td rowspan="${rowspan}" style="background:${bg};vertical-align:top;width:116px;min-width:116px;border-right:2px solid ${bd}">
             <strong style="color:${col}">${esc(fallbackCode || '')}</strong>
             ${red ? '<div style="font-size:.72rem;color:#b91c1c;margin-top:2px">⚠ hors programme</div>' : ''}
             <button class="btn btn-secondary btn-sm" style="margin-top:6px"
                 onclick="openSubMatiere('${esc(fallbackCode || '')}','${sem}','')">+ sous-matière</button>
+        </td>`;
+    }
+
+    // Cellule « Heures / HETD » (à GAUCHE de la matière), fusionnée sur tout le groupe :
+    // volumes PN CM/TD/TP/PT + HETD du programme + HETD réels des sous-matières FTP et ALT.
+    function hetdLeftTd(comp, subs, rowspan) {
+        const v = (comp && comp.volumes) || {};
+        const hv = k => (v[k] == null || v[k] === '') ? '—' : v[k];
+        const hetdPN = comp ? fmtH(hetd(v.cm, v.td, v.tp, v.pt)) : null;
+        let ftp = 0, alt = 0;
+        (subs || []).forEach(c => {
+            ftp += hetd(c.cm_hours, c.td_hours, c.tp_hours, c.pt_hours);
+            alt += hetd(c.alt_cm_hours, c.alt_td_hours, c.alt_tp_hours, c.alt_pt_hours);
+        });
+        const line = (lbl, val, extra) => `<div style="${extra || ''}">${lbl} : ${val}</div>`;
+        return `<td rowspan="${rowspan}" style="background:#f0f9ff;vertical-align:top;font-size:.72rem;
+                white-space:nowrap;padding:4px 6px;border-right:2px solid #e0f2fe;color:#0c4a6e">
+            ${line('CM', hv('cm') === '—' ? '—' : hv('cm') + ' h')}
+            ${line('TD', hv('td') === '—' ? '—' : hv('td') + ' h')}
+            ${line('TP', hv('tp') === '—' ? '—' : hv('tp') + ' h')}
+            ${line('PT', hv('pt') === '—' ? '—' : hv('pt') + ' h')}
+            ${line('HETD PN', hetdPN == null ? '—' : hetdPN, 'margin-top:3px;border-top:1px solid #cbd5e1;padding-top:2px;font-weight:600')}
+            ${line('HETD FTP', fmtH(ftp), 'color:#0369a1')}
+            ${line('HETD ALT', fmtH(alt), 'color:#9a3412')}
         </td>`;
     }
 
@@ -3485,12 +3513,12 @@ function renderCourses() {
         (subs || []).forEach(c => { all = all.concat(courseRows(c)); });
         if (!all.length) {
             if (comp) {  // matière du programme sans sous-matière : invite à en créer
-                return `<tr>${parentLeftTd(comp, null, sem, 1, orphanRed)}<td colspan="${ncol - 1}" style="color:#9ca3af;font-size:.85rem;padding:8px">Aucune sous-matière pour l'instant.</td></tr>`;
+                return `<tr>${hetdLeftTd(comp, [], 1)}${parentLeftTd(comp, null, sem, 1, orphanRed)}<td colspan="${ncol - 2}" style="color:#9ca3af;font-size:.85rem;padding:8px">Aucune sous-matière pour l'instant.</td></tr>`;
             }
             return '';
         }
-        const leftTd = parentLeftTd(comp, fallbackCode, sem, all.length, orphanRed);
-        all[0] = all[0].replace(/^(\s*<tr[^>]*>)/, (m) => m + leftTd);
+        const leftCells = hetdLeftTd(comp, subs, all.length) + parentLeftTd(comp, fallbackCode, sem, all.length, orphanRed);
+        all[0] = all[0].replace(/^(\s*<tr[^>]*>)/, (m) => m + leftCells);
         return all.join('');
     }
 
@@ -3508,6 +3536,7 @@ function renderCourses() {
     const hasAny = !!(_matProg && _matProg.has_any);
 
     const head = `<thead><tr>
+        <th style="text-align:center">Heures / HETD</th>
         <th>Matière (programme)</th>
         <th>Sous-matière</th><th>Intitulé</th><th>Semaines</th><th>Type</th>
         <th style="text-align:center"></th>
@@ -3688,7 +3717,24 @@ async function openSubMatiere(code, sem, kind) {
         (String(kind || '').toUpperCase() === 'SAE') ? 'SAE' : 'Ressource';
     const s = state.semesters.find(x => x.code === sem);
     if (s) document.getElementById('course-semester').value = s.id;
+    setCourseParentInfo(code, sem);
     codeInput.focus();
+}
+
+// Affiche la matière (programme) parente de la sous-matière éditée, d'après le code + semestre.
+function setCourseParentInfo(code, semesterCode) {
+    const el = document.getElementById('course-parent-info');
+    if (!el) return;
+    const comps = ((_matProg && _matProg.semesters && _matProg.semesters[semesterCode]) || {}).components || [];
+    const key = matBaseKey(code || '');
+    const comp = comps.find(c => matBaseKey(c.code) === key);
+    if (comp) {
+        el.style.display = '';
+        el.innerHTML = 'Matière (programme) : <strong>' + esc(comp.code) + '</strong>'
+            + (comp.label ? ' — ' + esc(comp.label) : '');
+    } else {
+        el.style.display = 'none'; el.innerHTML = '';
+    }
 }
 
 async function openCourseModal(id = null) {
@@ -3716,6 +3762,7 @@ async function openCourseModal(id = null) {
     });
     document.getElementById('course-code').value = '';
     document.getElementById('course-name').value = '';
+    { const pi = document.getElementById('course-parent-info'); if (pi) { pi.style.display = 'none'; pi.innerHTML = ''; } }
     document.getElementById('course-type').value = 'Ressource';
     document.getElementById('course-semester').value = '';
     document.getElementById('course-start-week').value = '';
@@ -3742,6 +3789,7 @@ async function openCourseModal(id = null) {
         if (c) {
             document.getElementById('course-code').value = c.code || '';
             document.getElementById('course-name').value = c.name || '';
+            setCourseParentInfo(c.code, c.semester_code);
             document.getElementById('course-type').value = c.course_type || 'Ressource';
             document.getElementById('course-semester').value = c.semester_id || '';
             document.getElementById('course-start-week').value = c.start_week || '';
