@@ -3545,10 +3545,18 @@ function renderCourses() {
         return all.join('');
     }
 
+    // Sous-matières (cours) jamais affichées dans Matières : Aide à la réussite, Bonus, Pénalité.
+    // Détection par nom/code car ces cours n'ont pas toujours de matière programme correspondante.
+    const isSansCoeffCourse = c => {
+        const t = ((c.name || '') + ' ' + (c.code || '')).toLowerCase();
+        return /\baar\b/.test(t) || /aide\s+à\s+la\s+r[ée]ussite/.test(t)
+            || /\bbonus\b/.test(t) || /p[ée]nalit/.test(t);
+    };
     // Index des courses de l'année par (semestre, clé de base)
     const bySem = {};
     state.courses.forEach(c => {
         if (!_matSemesters.has(c.semester_code)) return;
+        if (isSansCoeffCourse(c)) return;
         if (q && !((c.code || '') + ' ' + (c.name || '')).toLowerCase().includes(q)) return;
         const m = (bySem[c.semester_code] = bySem[c.semester_code] || {});
         const k = matBaseKey(c.code);
