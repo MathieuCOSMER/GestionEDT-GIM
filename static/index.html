@@ -3580,7 +3580,8 @@ function renderCourses() {
     const sems = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].filter(s => _matSemesters.has(s));
     const blocks = sems.map(sem => {
         const semCourses = bySem[sem] || {};
-        const comps = (prog[sem] || {}).components || [];
+        // On n'affiche pas les matières sans coefficient (Bonus, Pénalité, Aide à la réussite)
+        const comps = ((prog[sem] || {}).components || []).filter(c => !_coeffSansCoefficient(c));
         const semHasProg = comps.length > 0;   // orphelins en rouge seulement si programme connu
         const used = new Set();
         let body = '';
