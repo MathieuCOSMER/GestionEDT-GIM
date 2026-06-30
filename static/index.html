@@ -502,6 +502,10 @@
             <div class="filters">
                 <label>Promotion :</label>
                 <select id="notes-promo-select" onchange="loadNotesGrid()"><option value="">—</option></select>
+                <label style="margin-left:12px">Sous-cohorte :</label>
+                <select id="notes-sub-select" onchange="loadNotesGrid()">
+                    <option value="FTP">FTP</option><option value="ALT">ALT</option>
+                </select>
                 <label style="margin-left:12px">Semestre :</label>
                 <select id="notes-sem-select" onchange="loadNotesGrid()">
                     <option value="">—</option>
@@ -521,8 +525,6 @@
                 <label>Promotion :</label>
                 <select id="promo-select" onchange="onPromoChange()"><option value="">—</option></select>
                 <button class="btn btn-primary btn-sm" style="margin-left:12px" onclick="openNewPromotion()">+ Nouvelle promotion</button>
-                <button class="btn btn-secondary btn-sm" id="promo-import-btn" onclick="openPromoImport()" disabled>Importer un effectif</button>
-                <button class="btn btn-secondary btn-sm" id="promo-addstudent-btn" onclick="openAddStudent()" disabled>+ Étudiant</button>
                 <button class="btn btn-secondary btn-sm" id="promo-delete-btn" onclick="deletePromotion()" disabled>Supprimer la promotion</button>
             </div>
         </div>
@@ -838,14 +840,7 @@
         <div class="form-group">
             <label>Année de début (rentrée) *</label>
             <input type="number" id="promo-start-year" min="2000" max="2100" placeholder="ex : 2025">
-            <small style="color:#6b7280">La promotion dure 3 ans. Le nom est généré automatiquement.</small>
-        </div>
-        <div class="form-group">
-            <label>Formation *</label>
-            <select id="promo-formation">
-                <option value="FTP">FTP (formation initiale)</option>
-                <option value="ALT">ALT (alternance)</option>
-            </select>
+            <small style="color:#6b7280">La promotion (cohorte) dure 3 ans et contient les deux sous-cohortes <strong>FTP</strong> et <strong>ALT</strong>. Le nom est généré automatiquement.</small>
         </div>
         <div class="form-group">
             <label>Nom généré</label>
@@ -2653,7 +2648,7 @@ async function loadPromotions() {
 }
 
 function _togglePromoButtons(on) {
-    ['promo-import-btn', 'promo-addstudent-btn', 'promo-delete-btn'].forEach(id =>
+    ['promo-delete-btn'].forEach(id =>
         document.getElementById(id).disabled = !on);
 }
 
@@ -2704,37 +2699,49 @@ function _statutColor(s) {
 function renderPromoEffectif() {
     const d = _promoData;
     const el = document.getElementById('promo-content');
-    const badges = d.statuses.map(st =>
-        `<span style="display:inline-block;padding:3px 10px;border-radius:12px;margin-right:8px;font-size:.8rem;background:${_statutColor(st)}">${st} : <strong>${d.counts[st] || 0}</strong></span>`).join('') +
-        `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:.8rem;background:#e0e7ff">Total : <strong>${d.total}</strong></span>`;
-    if (!d.students.length) {
-        el.innerHTML = `${_promoProgrammeSelector()}<div style="margin-bottom:12px">${badges}</div><div class="empty">Aucun étudiant. Importez un effectif ou ajoutez un étudiant.</div>`;
-        return;
-    }
     const optList = st => d.statuses.map(s => `<option ${s === st ? 'selected' : ''}>${s}</option>`).join('');
     const semSelect = s => s.statut !== 'Abandon' ? '' :
         `<select onchange="changeAbandonSemestre(${s.id}, this.value)"
             style="margin-left:6px;padding:3px;border:1px solid #d1d5db;border-radius:4px">
             <option value="">— sem. —</option>${d.semesters.map(se => `<option ${se === s.abandon_semestre ? 'selected' : ''}>${se}</option>`).join('')}</select>`;
-    const rows = d.students.map((s, i) => `<tr>
-        <td style="color:#9ca3af">${i + 1}</td>
-        <td><strong>${esc(s.nom || '')}</strong></td>
-        <td>${esc(s.prenom || '')}</td>
-        <td>${esc(s.numero || '')}</td>
-        <td>${esc(s.naissance || '')}</td>
-        <td style="white-space:nowrap"><select onchange="changeStudentStatus(${s.id}, this.value)"
-            style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${_statutColor(s.statut)}">${optList(s.statut)}</select>${semSelect(s)}</td>
-        <td><button class="btn btn-secondary btn-sm" title="Supprimer définitivement" onclick="deleteStudent(${s.id})">🗑</button></td>
-    </tr>`).join('');
-    el.innerHTML = `
-        ${_promoProgrammeSelector()}
-        <div style="margin-bottom:12px">${badges}</div>
-        <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px">
-            <table class="pn-table" style="table-layout:auto;width:100%">
-                <thead><tr><th style="width:40px">#</th><th>Nom</th><th>Prénom</th><th>N° Apogée</th><th>Naissance</th><th style="width:210px">Statut</th><th style="width:60px"></th></tr></thead>
-                <tbody>${rows}</tbody>
-            </table>
+
+    // Une section par sous-cohorte (FTP / ALT)
+    function section(formation) {
+        const label = formation === 'FTP' ? 'FTP — formation initiale' : 'ALT — alternance';
+        const sc = (d.sub_counts && d.sub_counts[formation]) || {};
+        const studs = d.students.filter(s => (s.formation || 'FTP') === formation);
+        const badges = d.statuses.map(st =>
+            `<span style="display:inline-block;padding:3px 10px;border-radius:12px;margin-right:8px;font-size:.8rem;background:${_statutColor(st)}">${st} : <strong>${sc[st] || 0}</strong></span>`).join('') +
+            `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:.8rem;background:#e0e7ff">Total : <strong>${sc.total || studs.length}</strong></span>`;
+        const header = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:16px 0 8px">
+            <h3 style="margin:0;color:#374151">${label}</h3>
+            <button class="btn btn-secondary btn-sm" onclick="openPromoImport('${formation}')">Importer un effectif</button>
+            <button class="btn btn-secondary btn-sm" onclick="openAddStudent('${formation}')">+ Étudiant</button>
         </div>`;
+        if (!studs.length) {
+            return header + `<div style="margin-bottom:8px">${badges}</div>
+                <div class="empty" style="margin-bottom:6px">Aucun étudiant dans cette sous-cohorte. Importez un effectif ou ajoutez un étudiant.</div>`;
+        }
+        const rows = studs.map((s, i) => `<tr>
+            <td style="color:#9ca3af">${i + 1}</td>
+            <td><strong>${esc(s.nom || '')}</strong></td>
+            <td>${esc(s.prenom || '')}</td>
+            <td>${esc(s.numero || '')}</td>
+            <td>${esc(s.naissance || '')}</td>
+            <td style="white-space:nowrap"><select onchange="changeStudentStatus(${s.id}, this.value)"
+                style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${_statutColor(s.statut)}">${optList(s.statut)}</select>${semSelect(s)}</td>
+            <td><button class="btn btn-secondary btn-sm" title="Supprimer définitivement" onclick="deleteStudent(${s.id})">🗑</button></td>
+        </tr>`).join('');
+        return header + `<div style="margin-bottom:8px">${badges}</div>
+            <div style="overflow:auto;max-height:45vh;border:1px solid #e5e7eb;border-radius:8px">
+                <table class="pn-table" style="table-layout:auto;width:100%">
+                    <thead><tr><th style="width:40px">#</th><th>Nom</th><th>Prénom</th><th>N° Apogée</th><th>Naissance</th><th style="width:210px">Statut</th><th style="width:60px"></th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>`;
+    }
+
+    el.innerHTML = _promoProgrammeSelector() + (d.subcohorts || ['FTP', 'ALT']).map(section).join('');
 }
 
 async function changeStudentStatus(sid, statut) {
@@ -2760,34 +2767,30 @@ async function deleteStudent(sid) {
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
-function _promoNamePreview(y, f) {
+function _promoNamePreview(y) {
     if (!y || y < 2000) return '';
     const a = ('' + (y % 100)).padStart(2, '0');
     const b = ('' + ((y + 3) % 100)).padStart(2, '0');
-    return `${a}-${b}_${f}`;
+    return `${a}-${b}`;
 }
 
 function updatePromoNamePreview() {
     const y = parseInt(document.getElementById('promo-start-year').value || '0');
-    const f = document.getElementById('promo-formation').value;
-    document.getElementById('promo-name-preview').value = _promoNamePreview(y, f) || '—';
+    document.getElementById('promo-name-preview').value = _promoNamePreview(y) || '—';
 }
 
 function openNewPromotion() {
     document.getElementById('promo-start-year').value = '';
-    document.getElementById('promo-formation').value = 'FTP';
     document.getElementById('promo-name-preview').value = '—';
     document.getElementById('promo-start-year').oninput = updatePromoNamePreview;
-    document.getElementById('promo-formation').onchange = updatePromoNamePreview;
     openModal('modal-new-promotion');
 }
 
 async function submitNewPromotion() {
     const y = parseInt(document.getElementById('promo-start-year').value || '0');
-    const f = document.getElementById('promo-formation').value;
     if (!y || y < 2000) { toast('Année de début invalide', 'error'); return; }
     try {
-        const payload = await api('/promotions', { method: 'POST', body: JSON.stringify({ start_year: y, formation: f }) });
+        const payload = await api('/promotions', { method: 'POST', body: JSON.stringify({ start_year: y }) });
         closeModal('modal-new-promotion');
         _promoId = payload.promotion.id;
         await loadPromotions();
@@ -2800,7 +2803,13 @@ function toggleAddStudentSem() {
         document.getElementById('student-statut').value === 'Abandon' ? '' : 'none';
 }
 
-function openAddStudent() {
+let _studentFormation = 'FTP';   // sous-cohorte cible pour l'ajout / l'import
+let _importFormation = 'FTP';
+
+function openAddStudent(formation) {
+    _studentFormation = (formation === 'ALT') ? 'ALT' : 'FTP';
+    const h = document.querySelector('#modal-add-student h2');
+    if (h) h.textContent = 'Ajouter un étudiant — ' + _studentFormation;
     ['student-nom', 'student-prenom', 'student-numero', 'student-naissance'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('student-statut').value = 'Actif';
     document.getElementById('student-sem').value = '';
@@ -2816,6 +2825,7 @@ async function submitAddStudent() {
         naissance: document.getElementById('student-naissance').value,
         statut: document.getElementById('student-statut').value,
         abandon_semestre: document.getElementById('student-sem').value,
+        formation: _studentFormation,
     };
     if (!body.nom && !body.prenom && !body.numero) { toast('Renseignez au moins un nom ou un numéro', 'error'); return; }
     try {
@@ -2826,7 +2836,10 @@ async function submitAddStudent() {
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
-function openPromoImport() {
+function openPromoImport(formation) {
+    _importFormation = (formation === 'ALT') ? 'ALT' : 'FTP';
+    const h = document.querySelector('#modal-promo-import h2');
+    if (h) h.textContent = 'Importer un effectif — ' + _importFormation;
     document.getElementById('promo-import-file').value = '';
     openModal('modal-promo-import');
 }
@@ -2837,7 +2850,7 @@ async function submitPromoImport() {
     const btn = document.getElementById('promo-import-submit');
     btn.disabled = true; btn.textContent = 'Import en cours…';
     try {
-        const fd = new FormData(); fd.append('file', f);
+        const fd = new FormData(); fd.append('file', f); fd.append('formation', _importFormation);
         const r = await fetch(`/api/promotions/${_promoId}/students/import`, { method: 'POST', body: fd });
         if (!r.ok) throw new Error(await r.text());
         _promoData = await r.json();
@@ -2879,17 +2892,18 @@ async function loadNotes() {
 async function loadNotesGrid() {
     const pid = document.getElementById('notes-promo-select').value;
     const sem = document.getElementById('notes-sem-select').value;
+    const sub = (document.getElementById('notes-sub-select') || {}).value || 'FTP';
     const saveBtn = document.getElementById('notes-save-btn');
     const impBtn = document.getElementById('notes-import-btn');
     const expBtn = document.getElementById('notes-export-btn');
     const el = document.getElementById('notes-content');
     if (!pid || !sem) {
         _notesData = null; saveBtn.disabled = true; impBtn.disabled = true; expBtn.disabled = true;
-        el.innerHTML = '<div style="color:#6b7280;padding:20px">Choisissez une promotion et un semestre.</div>';
+        el.innerHTML = '<div style="color:#6b7280;padding:20px">Choisissez une promotion, une sous-cohorte et un semestre.</div>';
         return;
     }
     el.innerHTML = '<div class="spinner">Chargement…</div>';
-    try { _notesData = await api(`/promotions/${pid}/notes/${sem}`); }
+    try { _notesData = await api(`/promotions/${pid}/notes/${sem}?formation=${encodeURIComponent(sub)}`); }
     catch (e) { toast('Erreur : ' + e.message, 'error'); saveBtn.disabled = true; impBtn.disabled = true; expBtn.disabled = true; return; }
     saveBtn.disabled = false; impBtn.disabled = false; expBtn.disabled = false;
     renderNotesGrid();

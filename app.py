@@ -431,6 +431,51 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE
         )
     ''')
+    # Sous-cohorte de chaque étudiant : 'FTP' (initiale) ou 'ALT' (alternance).
+    # Une promotion = une cohorte sur 3 ans contenant les 2 sous-cohortes.
+    try:
+        db.execute("ALTER TABLE promotion_students ADD COLUMN formation TEXT")
+    except sqlite3.OperationalError:
+        pass
+    db.commit()
+    _merge_formation_promotions(db)
+
+def _merge_formation_promotions(db):
+    """Migration : fusionne les anciennes promotions « <cohorte>_FTP » et « <cohorte>_ALT »
+    en UNE cohorte « <cohorte> » dont les étudiants portent leur sous-cohorte (formation).
+    Les notes (student_marks) suivent. Idempotent : ne fait rien si plus aucun nom suffixé."""
+    rows = db.execute("SELECT id, name, formation, start_year, programme_id FROM promotions").fetchall()
+    suffixed = [r for r in rows if str(r['name']).rsplit('_', 1)[-1] in ('FTP', 'ALT')]
+    if not suffixed:
+        return
+    groups = {}
+    for r in suffixed:
+        base = str(r['name']).rsplit('_', 1)[0]
+        groups.setdefault(base, []).append(r)
+    for base, members in groups.items():
+        # Survivant : une cohorte « base » déjà présente, sinon le 1er membre (renommé).
+        survivor = next((r for r in rows if str(r['name']) == base), None)
+        if survivor is None:
+            survivor = members[0]
+            db.execute("UPDATE promotions SET name=?, formation='MUT' WHERE id=?", (base, survivor['id']))
+        else:
+            db.execute("UPDATE promotions SET formation='MUT' WHERE id=?", (survivor['id'],))
+        prog = survivor['programme_id']
+        for m in members:
+            if m['id'] == survivor['id']:
+                # Étudiants déjà rattachés au survivant : taguer avec sa propre formation
+                db.execute("UPDATE promotion_students SET formation=? WHERE promotion_id=? AND formation IS NULL",
+                           (m['formation'], m['id']))
+                continue
+            db.execute("UPDATE promotion_students SET promotion_id=?, formation=? WHERE promotion_id=?",
+                       (survivor['id'], m['formation'], m['id']))
+            db.execute("UPDATE student_marks SET promotion_id=? WHERE promotion_id=?",
+                       (survivor['id'], m['id']))
+            if not prog and m['programme_id']:
+                prog = m['programme_id']
+            db.execute("DELETE FROM promotions WHERE id=?", (m['id'],))
+        if prog:
+            db.execute("UPDATE promotions SET programme_id=? WHERE id=?", (prog, survivor['id']))
     db.commit()
 
 def _init_promotions_db():
@@ -1834,8 +1879,11 @@ def export_grade_promo(promo_id):
 # Une promotion = cohorte d'étudiants sur 3 ans (ex 25-28_ALT), stockée dans une
 # base séparée (databases/promotions.db) pour un suivi pluriannuel des résultats.
 
-def _promotion_name(start_year, formation):
-    return f"{start_year % 100:02d}-{(start_year + 3) % 100:02d}_{formation}"
+def _promotion_name(start_year):
+    """Nom d'une cohorte sur 3 ans (sans suffixe formation) : ex 2025 -> '25-28'."""
+    return f"{start_year % 100:02d}-{(start_year + 3) % 100:02d}"
+
+_SUBCOHORTS = ('FTP', 'ALT')   # sous-cohortes d'une promotion (cohorte)
 
 def _parse_student_list(path):
     """Lit une liste d'étudiants : auto-détection format Apogée (.xlsm/.xlsx,
@@ -1910,12 +1958,20 @@ def _promotion_payload(db, pid):
     if not promo:
         return None
     students = [dict(r) for r in db.execute(
-        '''SELECT id, numero, nom, prenom, naissance, statut, abandon_semestre FROM promotion_students
-           WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,))]
+        '''SELECT id, numero, nom, prenom, naissance, statut, abandon_semestre, formation
+           FROM promotion_students WHERE promotion_id=?
+           ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,))]
     counts = {st: 0 for st in _STUDENT_STATUSES}
+    # Compteurs par sous-cohorte : {'FTP': {statut:n,...,total}, 'ALT': {...}}
+    sub_counts = {f: {st: 0 for st in _STUDENT_STATUSES} for f in _SUBCOHORTS}
     for s in students:
         counts[s['statut']] = counts.get(s['statut'], 0) + 1
+        f = s.get('formation') if s.get('formation') in _SUBCOHORTS else 'FTP'
+        sub_counts[f][s['statut']] = sub_counts[f].get(s['statut'], 0) + 1
+    for f in _SUBCOHORTS:
+        sub_counts[f]['total'] = sum(sub_counts[f][st] for st in _STUDENT_STATUSES)
     return {'promotion': dict(promo), 'students': students, 'counts': counts,
+            'sub_counts': sub_counts, 'subcohorts': list(_SUBCOHORTS),
             'total': len(students), 'statuses': _STUDENT_STATUSES, 'semesters': _PROMO_SEMESTERS}
 
 @app.route('/api/promotions', methods=['GET'])
@@ -1927,7 +1983,7 @@ def list_promotions():
         SELECT p.*,
                (SELECT COUNT(*) FROM promotion_students s WHERE s.promotion_id=p.id) AS total,
                (SELECT COUNT(*) FROM promotion_students s WHERE s.promotion_id=p.id AND s.statut='Actif') AS actifs
-        FROM promotions p ORDER BY p.start_year DESC, p.formation''').fetchall()
+        FROM promotions p ORDER BY p.start_year DESC, p.name''').fetchall()
     # Nom du programme affecté (base programmes séparée → résolution en mémoire)
     prog_names = {}
     try:
@@ -1948,7 +2004,7 @@ def list_promotions_lite():
     accessible à tout utilisateur connecté (sélecteur de l'onglet Matières)."""
     pdb = get_promotions_db()
     rows = pdb.execute('''SELECT id, name, formation, start_year, end_year, programme_id
-                          FROM promotions ORDER BY start_year DESC, formation''').fetchall()
+                          FROM promotions ORDER BY start_year DESC, name''').fetchall()
     prog_names = {}
     try:
         for r in get_programmes_db().execute('SELECT id, name FROM programmes').fetchall():
@@ -2030,17 +2086,15 @@ def create_promotion():
         start = int(data.get('start_year'))
     except (TypeError, ValueError):
         return error_response('Année de début invalide', 400)
-    formation = (data.get('formation') or '').strip().upper()
-    if formation not in ('ALT', 'FTP'):
-        return error_response('Formation invalide (ALT ou FTP)', 400)
     if start < 2000 or start > 2100:
         return error_response('Année de début hors limites', 400)
-    name = _promotion_name(start, formation)
+    name = _promotion_name(start)
     db = get_promotions_db()
     if db.execute('SELECT 1 FROM promotions WHERE name=?', (name,)).fetchone():
         return error_response(f'La promotion « {name} » existe déjà', 409)
+    # Une cohorte contient les 2 sous-cohortes (FTP+ALT) ; formation='MUT' au niveau promo.
     cur = db.execute('''INSERT INTO promotions(name, formation, start_year, end_year, updated_at)
-                        VALUES(?,?,?,?,CURRENT_TIMESTAMP)''', (name, formation, start, start + 3))
+                        VALUES(?,'MUT',?,?,CURRENT_TIMESTAMP)''', (name, start, start + 3))
     db.commit()
     _audit('PROMO_CREATE', ip=_client_ip(), user=session.get('user'), promo=name)
     return jsonify(_promotion_payload(db, cur.lastrowid))
@@ -2087,9 +2141,12 @@ def add_promotion_student(pid):
     sem = (data.get('abandon_semestre') or '').strip()
     if statut != 'Abandon' or sem not in _PROMO_SEMESTERS:
         sem = None
-    db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance, statut, abandon_semestre)
-                  VALUES(?,?,?,?,?,?,?)''',
-               (pid, numero, nom, prenom, (data.get('naissance') or '').strip(), statut, sem))
+    formation = (data.get('formation') or '').strip().upper()
+    if formation not in _SUBCOHORTS:
+        formation = 'FTP'
+    db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance, statut, abandon_semestre, formation)
+                  VALUES(?,?,?,?,?,?,?,?)''',
+               (pid, numero, nom, prenom, (data.get('naissance') or '').strip(), statut, sem, formation))
     db.commit()
     return jsonify(_promotion_payload(db, pid))
 
@@ -2163,6 +2220,10 @@ def import_promotion_students(pid):
         except OSError: pass
     if not students:
         return error_response('Aucun étudiant détecté dans le fichier', 400)
+    # Sous-cohorte cible (FTP/ALT) de cet import
+    formation = (request.form.get('formation') or '').strip().upper()
+    if formation not in _SUBCOHORTS:
+        formation = 'FTP'
     # Dédoublonnage : on n'importe pas un étudiant déjà présent dans la promotion
     existing = {_dedup_key(dict(r)) for r in db.execute(
         'SELECT numero, nom, prenom, naissance FROM promotion_students WHERE promotion_id=?', (pid,))}
@@ -2173,9 +2234,9 @@ def import_promotion_students(pid):
             skipped += 1
             continue
         existing.add(key)
-        db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance, statut)
-                      VALUES(?,?,?,?,?,'Actif')''',
-                   (pid, s['numero'], s['nom'], s['prenom'], s['naissance']))
+        db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance, statut, formation)
+                      VALUES(?,?,?,?,?,'Actif',?)''',
+                   (pid, s['numero'], s['nom'], s['prenom'], s['naissance'], formation))
         imported += 1
     db.commit()
     _audit('PROMO_IMPORT', ip=_client_ip(), user=session.get('user'),
@@ -2736,17 +2797,24 @@ def _year_validation(pdb, pid, ref_all, target_year):
         out[sid] = {'validated': validated, 'total': total, 'status': status}
     return out
 
-def _promo_notes_payload(pdb, pid, semester):
+def _promo_notes_payload(pdb, pid, semester, formation=None):
     """Construit le tableau de notes : étudiants (effectif) × matières (référence),
     notes saisies, moyennes de compétences, rappels (semestre antérieur / année précédente)
-    et moyenne annuelle courante."""
+    et moyenne annuelle courante. Si `formation` (FTP/ALT) est fourni, la grille ne montre
+    que cette sous-cohorte."""
     ref_all = _promo_coeffs(pdb, pid) or {}
     ref = ref_all.get(semester) or {'components': [], 'competences': []}
     components = ref.get('components', [])
     competences = ref.get('competences', [])
-    students = [dict(r) for r in pdb.execute(
-        '''SELECT id, numero, nom, prenom, statut FROM promotion_students
-           WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,))]
+    if formation in _SUBCOHORTS:
+        students = [dict(r) for r in pdb.execute(
+            '''SELECT id, numero, nom, prenom, statut, formation FROM promotion_students
+               WHERE promotion_id=? AND formation=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''',
+            (pid, formation))]
+    else:
+        students = [dict(r) for r in pdb.execute(
+            '''SELECT id, numero, nom, prenom, statut, formation FROM promotion_students
+               WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,))]
     marks = {}
     for r in pdb.execute('''SELECT student_id, matiere_code, note, mention FROM student_marks
                             WHERE promotion_id=? AND semester=? AND note IS NOT NULL''', (pid, semester)):
@@ -2792,7 +2860,8 @@ def get_promotion_notes(pid, semester):
     promo = pdb.execute('SELECT id FROM promotions WHERE id=?', (pid,)).fetchone()
     if not promo:
         return error_response('Promotion introuvable', 404)
-    return jsonify(_promo_notes_payload(pdb, pid, semester))
+    formation = (request.args.get('formation') or '').strip().upper() or None
+    return jsonify(_promo_notes_payload(pdb, pid, semester, formation))
 
 @app.route('/api/promotions/<int:pid>/notes/<semester>', methods=['PUT'])
 def save_promotion_notes(pid, semester):
