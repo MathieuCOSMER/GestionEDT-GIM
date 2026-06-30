@@ -3580,8 +3580,11 @@ function renderCourses() {
     const sems = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].filter(s => _matSemesters.has(s));
     const blocks = sems.map(sem => {
         const semCourses = bySem[sem] || {};
-        // On n'affiche pas les matières sans coefficient (Bonus, Pénalité, Aide à la réussite)
-        const comps = ((prog[sem] || {}).components || []).filter(c => !_coeffSansCoefficient(c));
+        // On n'affiche pas les matières sans coefficient (Bonus, Pénalité, Aide à la réussite),
+        // ni les sous-matières (courses) qui leur correspondent.
+        const allComps = (prog[sem] || {}).components || [];
+        const excludedKeys = new Set(allComps.filter(c => _coeffSansCoefficient(c)).map(c => matBaseKey(c.code)));
+        const comps = allComps.filter(c => !_coeffSansCoefficient(c));
         const semHasProg = comps.length > 0;   // orphelins en rouge seulement si programme connu
         const used = new Set();
         let body = '';
@@ -3590,7 +3593,7 @@ function renderCourses() {
             used.add(key);
             body += renderGroup(comp, null, semCourses[key] || [], sem, semHasProg);
         });
-        Object.keys(semCourses).filter(k => !used.has(k)).sort().forEach(k => {
+        Object.keys(semCourses).filter(k => !used.has(k) && !excludedKeys.has(k)).sort().forEach(k => {
             body += renderGroup(null, k, semCourses[k], sem, semHasProg);
         });
         if (!body) body = `<tr><td colspan="${ncol}" style="color:#9ca3af;padding:10px">Aucune matière pour ce semestre.</td></tr>`;
