@@ -3410,7 +3410,7 @@ function renderCourses() {
     const showFtpCol = formFilter !== 'alt';
     const showAltCol = formFilter !== 'ftp';
     const noCellFilter = formFilter === '' && !teacherFilter && !roomFilter;
-    const ncol = 8 + (showFtpCol ? 1 : 0) + (showAltCol ? 1 : 0);
+    const ncol = 9 + (showFtpCol ? 1 : 0) + (showAltCol ? 1 : 0);
     const q = ((document.getElementById('filter-search-matieres') || {}).value || '').trim().toLowerCase();
 
     // Conversion en HETD via le réglage partagé _HETD_COEFS (onglet Paramètres)
@@ -3507,9 +3507,12 @@ function renderCourses() {
         </td>`;
     }
 
-    // Ligne « HETD » récapitulative d'une matière : totaux HETD des sous-matières, sous les
-    // sous-colonnes FTP/ALT du groupe « Heures ». Pas de cellule Matière (rowspan au-dessus).
-    function hetdSummaryRow(subs) {
+    // Colonne « Heures / HETD » récapitulative d'une matière (fusionnée sur tout le groupe) :
+    // volumes du programme (CM/TD/TP/PT) + HETD du programme + HETD réels des sous-matières FTP/ALT.
+    function recapTd(comp, subs, rowspan) {
+        const v = (comp && comp.volumes) || {};
+        const hv = k => (v[k] == null || v[k] === '') ? '—' : v[k] + ' h';
+        const hetdPN = comp ? fmtH(hetd(v.cm, v.td, v.tp, v.pt)) : null;
         const f = { cm: 0, td: 0, tp: 0, pt: 0 }, a = { cm: 0, td: 0, tp: 0, pt: 0 };
         (subs || []).forEach(c => {
             f.cm += Number(c.cm_hours) || 0; f.td += Number(c.td_hours) || 0;
@@ -3518,30 +3521,28 @@ function renderCourses() {
             a.tp += Number(c.alt_tp_hours) || 0; a.pt += Number(c.alt_pt_hours) || 0;
         });
         const hF = hetd(f.cm, f.td, f.tp, f.pt), hA = hetd(a.cm, a.td, a.tp, a.pt);
-        return `<tr style="background:#f8fafc;font-weight:700">
-            <td colspan="4"></td>
-            <td style="text-align:center;font-size:.7rem;color:#374151">HETD</td>
-            ${showFtpCol ? `<td style="text-align:center;color:#0369a1">${fmtH(hF)}</td>` : ''}
-            ${showAltCol ? `<td style="text-align:center;color:#9a3412">${fmtH(hA)}</td>` : ''}
-            <td></td><td></td>
-        </tr>`;
+        const line = (lbl, val, extra) => `<div style="${extra || ''}">${lbl} : ${val}</div>`;
+        return `<td rowspan="${rowspan}" style="background:#f0f9ff;vertical-align:top;font-size:.72rem;white-space:nowrap;padding:4px 6px;border-right:2px solid #e0f2fe;color:#0c4a6e">
+            ${line('CM', hv('cm'))}${line('TD', hv('td'))}${line('TP', hv('tp'))}${line('PT', hv('pt'))}
+            ${line('HETD&nbsp;PN', hetdPN == null ? '—' : hetdPN, 'margin-top:3px;border-top:1px solid #cbd5e1;padding-top:2px;font-weight:600')}
+            ${line('HETD&nbsp;FTP', fmtH(hF), 'color:#0369a1')}
+            ${line('HETD&nbsp;ALT', fmtH(hA), 'color:#9a3412')}
+        </td>`;
     }
 
-    // Un groupe = une matière générale (programme ou hors-programme) + ses sous-matières
-    // + une ligne HETD récapitulative.
+    // Un groupe = une matière générale (programme/hors-programme) + colonne récap + sous-matières.
     function renderGroup(comp, fallbackCode, subs, sem, orphanRed) {
         let all = [];
         (subs || []).forEach(c => { all = all.concat(courseRows(c)); });
         if (!all.length) {
             if (comp) {  // matière du programme sans sous-matière : invite à en créer
-                return `<tr>${parentLeftTd(comp, null, sem, 1, orphanRed)}<td colspan="${ncol - 1}" style="color:#9ca3af;font-size:.85rem;padding:8px">Aucune sous-matière pour l'instant.</td></tr>`;
+                return `<tr>${parentLeftTd(comp, null, sem, 1, orphanRed)}${recapTd(comp, [], 1)}<td colspan="${ncol - 2}" style="color:#9ca3af;font-size:.85rem;padding:8px">Aucune sous-matière pour l'instant.</td></tr>`;
             }
             return '';
         }
-        const summary = hetdSummaryRow(subs);
-        // La cellule Matière fusionne sur toutes les lignes de sous-matières + la ligne HETD.
-        all[0] = all[0].replace(/^(\s*<tr[^>]*>)/, (m) => m + parentLeftTd(comp, fallbackCode, sem, all.length + 1, orphanRed));
-        return all.join('') + summary;
+        // Cellules fusionnées (Matière + Récap) injectées sur la 1re ligne du groupe.
+        all[0] = all[0].replace(/^(\s*<tr[^>]*>)/, (m) => m + parentLeftTd(comp, fallbackCode, sem, all.length, orphanRed) + recapTd(comp, subs, all.length));
+        return all.join('');
     }
 
     // Index des courses de l'année par (semestre, clé de base)
@@ -3561,6 +3562,7 @@ function renderCourses() {
     const headRows = `
         <tr>
             <th rowspan="2" style="width:195px">Matière (programme)</th>
+            <th rowspan="2" style="width:112px;text-align:center">Heures / HETD</th>
             <th rowspan="2" style="width:72px">Sous-matière</th>
             <th rowspan="2" style="width:160px">Intitulé</th>
             <th rowspan="2" style="width:56px">Semaines</th>
