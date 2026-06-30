@@ -340,6 +340,9 @@ def close_db(exception):
     pdb = g.pop('_pdb', None)
     if pdb is not None:
         pdb.close()
+    grdb = g.pop('_grdb', None)
+    if grdb is not None:
+        grdb.close()
 
 # ===== Base des PROMOTIONS (cohorte sur 3 ans, indépendante de l'année) =====
 # Stockée à part car une promotion suit ses étudiants/résultats d'année en année.
@@ -393,6 +396,12 @@ def _apply_promotions_migrations(db):
         db.execute("ALTER TABLE promotion_students ADD COLUMN abandon_semestre TEXT")
     except sqlite3.OperationalError:
         pass
+    # Programme (Programme National) affecté à la promotion. Référence vers
+    # programmes.db (fichier séparé) → pas de FK SQL, validation applicative.
+    try:
+        db.execute("ALTER TABLE promotions ADD COLUMN programme_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
     # Notes par étudiant : (promotion, semestre, étudiant, matière) -> note.
     # Les matières (codes) viennent de la référence des coefficients ; suivi pluriannuel.
     db.execute('''
@@ -429,6 +438,66 @@ def _init_promotions_db():
     db = _open_promotions_db()
     try:
         _apply_promotions_migrations(db)
+    finally:
+        db.close()
+
+# ===== Base des PROGRAMMES (Programme National réutilisable, ex 'PN_2026') =====
+# Contient plusieurs programmes nommés ; une promotion en référence un (programme_id).
+# Un programme regroupe matières + compétences (UE) + coefficients + heures, par
+# semestre, dans la même structure JSON que les coefficients (+ champ 'hours' par
+# composant). Base séparée car un programme est réutilisable d'année en année.
+_PROGRAMMES_DB = os.environ.get('EDT_PROGRAMMES_DB') or os.path.join(_DB_DIR, 'programmes.db')
+
+def _open_programmes_db():
+    db = sqlite3.connect(_PROGRAMMES_DB, timeout=10)
+    db.row_factory = sqlite3.Row
+    db.execute('PRAGMA foreign_keys = ON')
+    return db
+
+def get_programmes_db():
+    """Connexion à la base des programmes (partagée entre années et promotions)."""
+    try:
+        if '_grdb' not in g:
+            g._grdb = _open_programmes_db()
+        return g._grdb
+    except RuntimeError:
+        return _open_programmes_db()
+
+def _apply_programmes_migrations(db):
+    db.execute('PRAGMA journal_mode=WAL')
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS programmes (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT NOT NULL UNIQUE,   -- 'PN_2026'
+            label      TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT
+        )
+    ''')
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS programme_data (
+            programme_id INTEGER PRIMARY KEY,
+            data         TEXT NOT NULL,        -- JSON {S1..S6: {components, competences}}
+            updated_at   TEXT,
+            FOREIGN KEY (programme_id) REFERENCES programmes(id) ON DELETE CASCADE
+        )
+    ''')
+    db.commit()
+
+def _init_programmes_db():
+    os.makedirs(os.path.dirname(_PROGRAMMES_DB), exist_ok=True)
+    db = _open_programmes_db()
+    try:
+        _apply_programmes_migrations(db)
+        # Seed : si aucun programme, créer 'PN_2026' depuis la référence des coefficients.
+        if not db.execute('SELECT 1 FROM programmes LIMIT 1').fetchone():
+            data = _ensure_volumes(_ref_coeffs_defaults() or {})
+            cur = db.execute('''INSERT INTO programmes(name, label, updated_at)
+                                VALUES('PN_2026', 'Programme National 2026', CURRENT_TIMESTAMP)''')
+            db.execute('''INSERT INTO programme_data(programme_id, data, updated_at)
+                          VALUES(?,?,CURRENT_TIMESTAMP)''',
+                       (cur.lastrowid, json.dumps(data, ensure_ascii=False)))
+            db.commit()
     finally:
         db.close()
 
@@ -1859,7 +1928,55 @@ def list_promotions():
                (SELECT COUNT(*) FROM promotion_students s WHERE s.promotion_id=p.id) AS total,
                (SELECT COUNT(*) FROM promotion_students s WHERE s.promotion_id=p.id AND s.statut='Actif') AS actifs
         FROM promotions p ORDER BY p.start_year DESC, p.formation''').fetchall()
-    return jsonify([dict(r) for r in rows])
+    # Nom du programme affecté (base programmes séparée → résolution en mémoire)
+    prog_names = {}
+    try:
+        for r in get_programmes_db().execute('SELECT id, name FROM programmes').fetchall():
+            prog_names[r['id']] = r['name']
+    except sqlite3.Error:
+        pass
+    out = []
+    for r in rows:
+        d = dict(r)
+        d['programme_name'] = prog_names.get(d.get('programme_id'))
+        out.append(d)
+    return jsonify(out)
+
+@app.route('/api/promotions-lite', methods=['GET'])
+def list_promotions_lite():
+    """Liste légère des promotions (id, nom, formation, programme) — lecture seule,
+    accessible à tout utilisateur connecté (sélecteur de l'onglet Matières)."""
+    pdb = get_promotions_db()
+    rows = pdb.execute('''SELECT id, name, formation, start_year, end_year, programme_id
+                          FROM promotions ORDER BY start_year DESC, formation''').fetchall()
+    prog_names = {}
+    try:
+        for r in get_programmes_db().execute('SELECT id, name FROM programmes').fetchall():
+            prog_names[r['id']] = r['name']
+    except sqlite3.Error:
+        pass
+    out = []
+    for r in rows:
+        d = dict(r)
+        d['programme_name'] = prog_names.get(d.get('programme_id'))
+        out.append(d)
+    return jsonify(out)
+
+@app.route('/api/promotions/<int:pid>/matieres', methods=['GET'])
+def promotion_matieres(pid):
+    """Matières (composants) du programme affecté à la promotion, par semestre.
+    Lecture seule (tous utilisateurs connectés) — alimente l'onglet Matières."""
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    has_prog = _promo_programme_id(pdb, pid) is not None
+    data = _promo_coeffs(pdb, pid) if has_prog else {}
+    out = {}
+    for sem, d in (data or {}).items():
+        comps = [{k: c.get(k) for k in ('code', 'label', 'short_label', 'apogee_code', 'kind', 'volumes')}
+                 for c in d.get('components', [])]
+        out[sem] = {'components': comps}
+    return jsonify({'has_programme': has_prog, 'semesters': out})
 
 @app.route('/api/promotions', methods=['POST'])
 def create_promotion():
@@ -2159,11 +2276,85 @@ def _normalize_kinds(coeffs):
                 changed = True
     return changed
 
+_VOLUME_KEYS = ('cm', 'td', 'tp', 'pt')   # CM/TD/TP (ressources) + TD/TP/PT (SAE)
+
+def _ensure_volumes(coeffs):
+    """Garantit un objet 'volumes' {cm, td, tp, pt} (heures, défaut None) sur chaque
+    composant (matière). Migre l'ancien champ scalaire 'hours' (→ td) si présent.
+    Mute et retourne le dict passé."""
+    for d in (coeffs or {}).values():
+        for c in d.get('components', []):
+            vol = c.get('volumes')
+            if not isinstance(vol, dict):
+                vol = {}
+            # Migration éventuelle de l'ancien champ 'hours' scalaire
+            if c.get('hours') not in (None, '') and not any(vol.get(k) for k in _VOLUME_KEYS):
+                try:
+                    vol['td'] = float(c['hours'])
+                except (TypeError, ValueError):
+                    pass
+            for k in _VOLUME_KEYS:
+                vol.setdefault(k, None)
+            c['volumes'] = {k: vol.get(k) for k in _VOLUME_KEYS}
+            c.pop('hours', None)
+    return coeffs
+
+# ---- Programmes (Programme National réutilisable) ----
+
+def _store_programme_data(grdb, prog_id, data):
+    grdb.execute('''INSERT INTO programme_data(programme_id, data, updated_at)
+                    VALUES(?,?,CURRENT_TIMESTAMP)
+                    ON CONFLICT(programme_id) DO UPDATE
+                      SET data=excluded.data, updated_at=CURRENT_TIMESTAMP''',
+                 (prog_id, json.dumps(data, ensure_ascii=False)))
+
+def _programme_data(grdb, prog_id, seed=True):
+    """Contenu d'un programme (matières/compétences/coeffs/heures par semestre).
+    Stocké si présent, sinon initialisé depuis la référence puis persisté.
+    Complète BONUS/PEN, normalise les types et garantit le champ heures."""
+    row = grdb.execute('SELECT data FROM programme_data WHERE programme_id=?',
+                       (prog_id,)).fetchone()
+    if row and row['data']:
+        try:
+            data = json.loads(row['data'])
+            changed = _ensure_bonus_pen(data)
+            changed = _normalize_kinds(data) or changed
+            _ensure_volumes(data)
+            if changed:
+                _store_programme_data(grdb, prog_id, data)
+                grdb.commit()
+            return data
+        except ValueError:
+            pass
+    ref = _ensure_volumes(_ref_coeffs_defaults() or {})
+    _ensure_bonus_pen(ref)
+    _normalize_kinds(ref)
+    if seed:
+        _store_programme_data(grdb, prog_id, ref)
+        grdb.commit()
+    return ref
+
+def _promo_programme_id(pdb, pid):
+    """programme_id affecté à une promotion (None si aucun / colonne absente)."""
+    try:
+        row = pdb.execute('SELECT programme_id FROM promotions WHERE id=?', (pid,)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return row['programme_id'] if row else None
+
 def _promo_coeffs(pdb, pid, seed=True):
-    """Coefficients d'une promotion : copie stockée si présente, sinon (par défaut)
-    initialisée depuis la référence globale puis persistée pour devenir indépendante.
-    Les lignes BONUS/PEN manquantes sont complétées et les types Stage/Portfolio
-    normalisés en SAÉ, de façon non destructive."""
+    """Coefficients d'une promotion. Si la promo est liée à un PROGRAMME, c'est lui qui
+    fait foi (source unique). Sinon (legacy) : copie stockée dans promotion_coefficients,
+    sinon initialisée depuis la référence globale. BONUS/PEN complétés, types Stage/
+    Portfolio normalisés en SAÉ, de façon non destructive."""
+    prog_id = _promo_programme_id(pdb, pid)
+    if prog_id:
+        try:
+            grdb = get_programmes_db()
+            if grdb.execute('SELECT 1 FROM programmes WHERE id=?', (prog_id,)).fetchone():
+                return _programme_data(grdb, prog_id)
+        except sqlite3.Error:
+            pass
     row = pdb.execute('SELECT data FROM promotion_coefficients WHERE promotion_id=?',
                       (pid,)).fetchone()
     if row and row['data']:
@@ -2206,6 +2397,15 @@ def save_promotion_coefficients(pid):
     data = request.get_json()
     if not isinstance(data, dict):
         return error_response('Format invalide', 400)
+    # Si la promo est liée à un programme, l'édition porte sur le programme (source unique).
+    prog_id = _promo_programme_id(pdb, pid)
+    if prog_id:
+        grdb = get_programmes_db()
+        if grdb.execute('SELECT 1 FROM programmes WHERE id=?', (prog_id,)).fetchone():
+            _ensure_volumes(data)
+            _store_programme_data(grdb, prog_id, data)
+            grdb.commit()
+            return jsonify(_promo_coeffs(pdb, pid))
     _store_promo_coeffs(pdb, pid, data)
     pdb.commit()
     return jsonify(_promo_coeffs(pdb, pid))
@@ -2292,6 +2492,162 @@ def save_promo_coeffs_as_default(pid):
     db.commit()
     _audit('COEFF_DEFAULT_OVERWRITE', ip=_client_ip(), user=session.get('user'), promo=pid)
     return jsonify({'ok': True, 'backup': os.path.basename(backup) if backup else None})
+
+# ======================= PROGRAMMES (Programme National) =======================
+
+def _programme_row(grdb, prog_id):
+    return grdb.execute('SELECT * FROM programmes WHERE id=?', (prog_id,)).fetchone()
+
+def _programme_promo_count(prog_id):
+    """Nombre de promotions liées à ce programme (base promotions séparée)."""
+    try:
+        r = get_promotions_db().execute(
+            'SELECT COUNT(*) AS n FROM promotions WHERE programme_id=?', (prog_id,)).fetchone()
+        return r['n'] if r else 0
+    except sqlite3.Error:
+        return 0
+
+@app.route('/api/programmes', methods=['GET'])
+def list_programmes():
+    err = _require_admin()
+    if err:
+        return err
+    grdb = get_programmes_db()
+    rows = grdb.execute('SELECT * FROM programmes ORDER BY name').fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d['promotions'] = _programme_promo_count(r['id'])
+        out.append(d)
+    return jsonify(out)
+
+@app.route('/api/programmes', methods=['POST'])
+def create_programme():
+    err = _require_admin()
+    if err:
+        return err
+    data = request.get_json() or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return error_response('Nom du programme requis', 400)
+    grdb = get_programmes_db()
+    if grdb.execute('SELECT 1 FROM programmes WHERE name=?', (name,)).fetchone():
+        return error_response(f'Le programme « {name} » existe déjà', 409)
+    label = (data.get('label') or '').strip() or None
+    cur = grdb.execute('INSERT INTO programmes(name, label, updated_at) VALUES(?,?,CURRENT_TIMESTAMP)',
+                       (name, label))
+    new_id = cur.lastrowid
+    # Contenu initial : duplication d'un programme existant (from_id) sinon référence.
+    base = None
+    from_id = data.get('from_id')
+    if from_id:
+        try:
+            src = _programme_data(grdb, int(from_id), seed=False)
+            base = json.loads(json.dumps(src, ensure_ascii=False))
+        except (TypeError, ValueError):
+            base = None
+    if base is None:
+        base = _ensure_volumes(_ref_coeffs_defaults() or {})
+    _store_programme_data(grdb, new_id, base)
+    grdb.commit()
+    return jsonify(dict(_programme_row(grdb, new_id)))
+
+@app.route('/api/programmes/<int:prog_id>', methods=['PUT'])
+def update_programme(prog_id):
+    err = _require_admin()
+    if err:
+        return err
+    grdb = get_programmes_db()
+    if not _programme_row(grdb, prog_id):
+        return error_response('Programme introuvable', 404)
+    data = request.get_json() or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return error_response('Nom du programme requis', 400)
+    if grdb.execute('SELECT 1 FROM programmes WHERE name=? AND id<>?', (name, prog_id)).fetchone():
+        return error_response(f'Le programme « {name} » existe déjà', 409)
+    label = (data.get('label') or '').strip() or None
+    grdb.execute('UPDATE programmes SET name=?, label=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                 (name, label, prog_id))
+    grdb.commit()
+    return jsonify(dict(_programme_row(grdb, prog_id)))
+
+@app.route('/api/programmes/<int:prog_id>', methods=['DELETE'])
+def delete_programme(prog_id):
+    err = _require_admin()
+    if err:
+        return err
+    grdb = get_programmes_db()
+    if not _programme_row(grdb, prog_id):
+        return error_response('Programme introuvable', 404)
+    n = _programme_promo_count(prog_id)
+    if n:
+        return error_response(f'Programme utilisé par {n} promotion(s) — détachez-les d\'abord', 409)
+    grdb.execute('DELETE FROM programmes WHERE id=?', (prog_id,))
+    grdb.commit()
+    return jsonify({'deleted': True})
+
+@app.route('/api/programmes/<int:prog_id>/data', methods=['GET'])
+def get_programme_data_route(prog_id):
+    err = _require_admin()
+    if err:
+        return err
+    grdb = get_programmes_db()
+    if not _programme_row(grdb, prog_id):
+        return error_response('Programme introuvable', 404)
+    return jsonify(_programme_data(grdb, prog_id))
+
+@app.route('/api/programmes/<int:prog_id>/data', methods=['PUT'])
+def save_programme_data_route(prog_id):
+    err = _require_admin()
+    if err:
+        return err
+    grdb = get_programmes_db()
+    if not _programme_row(grdb, prog_id):
+        return error_response('Programme introuvable', 404)
+    data = request.get_json()
+    if not isinstance(data, dict):
+        return error_response('Format invalide', 400)
+    _ensure_volumes(data)
+    _store_programme_data(grdb, prog_id, data)
+    grdb.commit()
+    return jsonify(_programme_data(grdb, prog_id))
+
+@app.route('/api/programmes/<int:prog_id>/data/reset', methods=['POST'])
+def reset_programme_data_route(prog_id):
+    err = _require_admin()
+    if err:
+        return err
+    grdb = get_programmes_db()
+    if not _programme_row(grdb, prog_id):
+        return error_response('Programme introuvable', 404)
+    ref = _ensure_volumes(_ref_coeffs_defaults() or {})
+    _store_programme_data(grdb, prog_id, ref)
+    grdb.commit()
+    return jsonify(_programme_data(grdb, prog_id))
+
+@app.route('/api/promotions/<int:pid>/programme', methods=['PUT'])
+def assign_promotion_programme(pid):
+    err = _require_admin()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    data = request.get_json() or {}
+    raw = data.get('programme_id')
+    prog_id = None
+    if raw not in (None, '', 0, '0'):
+        try:
+            prog_id = int(raw)
+        except (TypeError, ValueError):
+            return error_response('programme_id invalide', 400)
+        if not get_programmes_db().execute('SELECT 1 FROM programmes WHERE id=?', (prog_id,)).fetchone():
+            return error_response('Programme introuvable', 404)
+    pdb.execute('UPDATE promotions SET programme_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                (prog_id, pid))
+    pdb.commit()
+    return jsonify({'ok': True, 'programme_id': prog_id})
 
 _VALID_MIN_COMP = 3   # une année est validée si ≥ 3 compétences validées (règlement IUT Toulon)
 
@@ -6534,6 +6890,7 @@ def optimize_repartition():
 os.makedirs('static', exist_ok=True)
 init_db()
 _init_promotions_db()
+_init_programmes_db()
 
 if __name__ == '__main__':
     # Run Flask app

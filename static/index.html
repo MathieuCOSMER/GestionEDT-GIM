@@ -331,6 +331,7 @@
     <button onclick="showPage('journal')" id="nav-journal" class="admin-only">Journal</button>
     <button onclick="showPage('contenu')" id="nav-contenu">Contenu des matières</button>
     <button onclick="showPage('contraintes')" id="nav-contraintes">Contraintes</button>
+    <button onclick="showPage('programme')" id="nav-programme" class="admin-only">Programme</button>
     <button onclick="showPage('promotions')" id="nav-promotions" class="admin-only">Promotions</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
         <span style="font-size:.8rem;color:#6b7280;white-space:nowrap">Année :</span>
@@ -389,7 +390,9 @@
     <div class="toolbar">
         <h1>Matières</h1>
         <div class="filters">
-            <label>Semestres :</label>
+            <label>Promotion :</label>
+            <select id="filter-promo-matieres" onchange="onMatPromoChange()"><option value="">— Promotion —</option></select>
+            <label style="margin-left:12px">Semestres :</label>
             <div id="mat-sem-toggle" class="sem-toggle">
                 <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleMatSemester('S1',this)">S1</button>
                 <button type="button" class="sem-btn active" data-sem="S2" onclick="toggleMatSemester('S2',this)">S2</button>
@@ -414,7 +417,6 @@
             </select>
             <input type="text" id="filter-search-matieres" placeholder="Rechercher une matière…"
                    oninput="renderCourses()" style="margin-left:12px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
-            <button class="btn btn-primary" style="margin-left:12px" onclick="openCourseModal()">+ Ajouter</button>
         </div>
     </div>
     <div id="courses-table"><div class="spinner">Chargement…</div></div>
@@ -494,7 +496,6 @@
         <h1 style="margin-right:18px">Promotions</h1>
         <div class="subtabs" style="display:flex;gap:6px;border-bottom:none">
             <button type="button" id="promo-subtab-effectif" class="subtab active" onclick="showPromoTab('effectif')">Effectif</button>
-            <button type="button" id="promo-subtab-coeff" class="subtab" onclick="showPromoTab('coeff')">Coefficients</button>
             <button type="button" id="promo-subtab-notes" class="subtab" onclick="showPromoTab('notes')">Notes</button>
         </div>
     </div>
@@ -516,29 +517,6 @@
         </div>
         <div id="notes-content"><div style="color:#6b7280;padding:20px">Choisissez une promotion (de l'effectif) et un semestre pour saisir les notes.</div></div>
     </div>
-    <div id="promo-tab-coeff" style="display:none">
-        <div class="toolbar">
-            <div class="filters">
-                <label>Promotion :</label>
-                <select id="coeff-promo-select" onchange="onCoeffPromoChange()"><option value="">—</option></select>
-                <label style="margin-left:12px">Semestres :</label>
-                <div id="promo-coeff-sem-toggle" class="sem-toggle">
-                    <button type="button" class="sem-btn active" data-sem="S1" onclick="togglePromoCoeffSem('S1',this)">S1</button>
-                    <button type="button" class="sem-btn active" data-sem="S2" onclick="togglePromoCoeffSem('S2',this)">S2</button>
-                    <button type="button" class="sem-btn active" data-sem="S3" onclick="togglePromoCoeffSem('S3',this)">S3</button>
-                    <button type="button" class="sem-btn active" data-sem="S4" onclick="togglePromoCoeffSem('S4',this)">S4</button>
-                    <button type="button" class="sem-btn active" data-sem="S5" onclick="togglePromoCoeffSem('S5',this)">S5</button>
-                    <button type="button" class="sem-btn active" data-sem="S6" onclick="togglePromoCoeffSem('S6',this)">S6</button>
-                </div>
-                <button class="btn btn-secondary btn-sm" id="coeff-new-mat-btn" style="margin-left:14px" onclick="openNewCoeffMatiere()" disabled>+ Créer matière</button>
-                <button class="btn btn-secondary btn-sm" id="coeff-copy-btn" onclick="openCoeffCopy()" disabled>Copier vers…</button>
-                <button class="btn btn-primary btn-sm" id="coeff-save-btn" onclick="savePromoCoeff()" disabled>💾 Enregistrer</button>
-                <button class="btn btn-secondary btn-sm" id="coeff-reset-btn" onclick="resetPromoCoeff()" disabled>↺ Réinitialiser (fichier d'origine)</button>
-                <button class="btn btn-secondary btn-sm" id="coeff-default-btn" onclick="saveAsDefaultCoeff()" disabled title="Définir les coefficients de cette promotion comme modèle par défaut">⤓ Écraser le fichier d'origine</button>
-            </div>
-        </div>
-        <div id="promo-coeff-content"><div style="color:#6b7280;padding:20px">Choisissez une promotion pour afficher ses coefficients.</div></div>
-    </div>
     <div id="promo-tab-effectif">
         <div class="toolbar">
             <div class="filters">
@@ -554,6 +532,34 @@
     </div>
 </div>
 
+
+<!-- ===== PROGRAMME (admin) : matières + compétences (UE) + coefficients + heures ===== -->
+<div class="page" id="page-programme">
+    <div class="toolbar" style="align-items:center;flex-wrap:wrap;gap:6px">
+        <h1 style="margin-right:18px">Programme</h1>
+        <div class="filters" style="flex-wrap:wrap">
+            <label>Programme :</label>
+            <select id="prog-select" onchange="onProgChange()"><option value="">—</option></select>
+            <button class="btn btn-primary btn-sm" onclick="openNewProgramme()">+ Nouveau</button>
+            <button class="btn btn-secondary btn-sm" id="prog-rename-btn" onclick="renameProgramme()" disabled>Renommer</button>
+            <button class="btn btn-secondary btn-sm" id="prog-dup-btn" onclick="duplicateProgramme()" disabled>Dupliquer</button>
+            <button class="btn btn-secondary btn-sm" id="prog-del-btn" onclick="deleteProgramme()" disabled>Supprimer</button>
+            <label style="margin-left:12px">Semestres :</label>
+            <div id="prog-sem-toggle" class="sem-toggle">
+                <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleProgSem('S1',this)">S1</button>
+                <button type="button" class="sem-btn active" data-sem="S2" onclick="toggleProgSem('S2',this)">S2</button>
+                <button type="button" class="sem-btn active" data-sem="S3" onclick="toggleProgSem('S3',this)">S3</button>
+                <button type="button" class="sem-btn active" data-sem="S4" onclick="toggleProgSem('S4',this)">S4</button>
+                <button type="button" class="sem-btn active" data-sem="S5" onclick="toggleProgSem('S5',this)">S5</button>
+                <button type="button" class="sem-btn active" data-sem="S6" onclick="toggleProgSem('S6',this)">S6</button>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="prog-new-mat-btn" style="margin-left:14px" onclick="openNewProgMatiere()" disabled>+ Créer matière</button>
+            <button class="btn btn-primary btn-sm" id="prog-save-btn" onclick="saveProg()" disabled>💾 Enregistrer</button>
+            <button class="btn btn-secondary btn-sm" id="prog-reset-btn" onclick="resetProg()" disabled>↺ Réinitialiser (fichier d'origine)</button>
+        </div>
+    </div>
+    <div id="prog-content"><div style="color:#6b7280;padding:20px">Choisissez ou créez un programme pour définir ses matières, compétences (UE), coefficients et heures.</div></div>
+</div>
 
 <!-- ===== JOURNAL D'AUDIT (admin) ===== -->
 <div class="page" id="page-journal">
@@ -981,6 +987,51 @@
     </div>
 </div>
 
+<!-- ===== MODAL CRÉER UNE MATIÈRE DU PROGRAMME ===== -->
+<div class="modal-backdrop" id="modal-prog-matiere">
+    <div class="modal">
+        <h2>Créer une matière</h2>
+        <p style="color:#6b7280;font-size:.9rem;margin-top:0">
+            La matière est ajoutée au programme sélectionné. Pensez à
+            <strong>Enregistrer</strong> après création.
+        </p>
+        <div class="form-group"><label>Semestre *</label>
+            <select id="prog-mat-sem">
+                <option>S1</option><option>S2</option><option>S3</option>
+                <option>S4</option><option>S5</option><option>S6</option>
+            </select>
+        </div>
+        <div class="form-group"><label>Type</label>
+            <select id="prog-mat-kind" onchange="progMatKindChange()">
+                <option value="SAE">SAE</option>
+                <option value="RES">Ressource</option>
+                <option value="PEN">Pénalité</option>
+                <option value="BONUS">Bonus</option>
+            </select>
+        </div>
+        <div class="form-group"><label>Code * <span style="color:#6b7280;font-weight:400">(ex. R3.01, SAE3.02)</span></label>
+            <input id="prog-mat-code" placeholder="R3.01"></div>
+        <div class="form-group"><label>Libellé court</label>
+            <input id="prog-mat-short" placeholder="Maths 3"></div>
+        <div class="form-group"><label>Libellé</label>
+            <input id="prog-mat-label" placeholder="Mathématiques 3"></div>
+        <div class="form-group"><label>Volumes horaires <span style="color:#6b7280;font-weight:400">(heures, optionnel — CM/TD/TP pour une ressource, TD/TP/PT pour une SAE)</span></label>
+            <div style="display:flex;gap:8px">
+                <label id="prog-mat-cm-wrap" style="flex:1;font-size:.8rem;color:#374151">CM<input id="prog-mat-cm" type="number" min="0" step="0.5" style="width:100%"></label>
+                <label id="prog-mat-td-wrap" style="flex:1;font-size:.8rem;color:#374151">TD<input id="prog-mat-td" type="number" min="0" step="0.5" style="width:100%"></label>
+                <label id="prog-mat-tp-wrap" style="flex:1;font-size:.8rem;color:#374151">TP<input id="prog-mat-tp" type="number" min="0" step="0.5" style="width:100%"></label>
+                <label id="prog-mat-pt-wrap" style="flex:1;font-size:.8rem;color:#374151">PT<input id="prog-mat-pt" type="number" min="0" step="0.5" style="width:100%"></label>
+            </div>
+        </div>
+        <div class="form-group"><label>Code Apogée <span style="color:#6b7280;font-weight:400">(optionnel, pour l'import)</span></label>
+            <input id="prog-mat-apogee" placeholder="T3IR301"></div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-prog-matiere')">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="submitNewProgMatiere()">Ajouter</button>
+        </div>
+    </div>
+</div>
+
 <!-- ===== MODAL ENSEIGNANT ===== -->
 <div class="modal-backdrop" id="modal-teacher">
     <div class="modal">
@@ -1355,6 +1406,7 @@ async function loadPage(name, forceReload) {
         }
         else if (name === 'matieres') {
             if (forceReload || !state.courses.length) [state.courses, state.semesters] = await Promise.all([api('/courses'), api('/semesters')]);
+            await loadMatPromos();
             renderCourses();
         }
         else if (name === 'contenu') {
@@ -1368,6 +1420,7 @@ async function loadPage(name, forceReload) {
         }
         else if (name === 'journal') { await loadJournal(); }
         else if (name === 'contraintes') { await loadConstraints(); }
+        else if (name === 'programme') { await loadProgramme(); }
         else if (name === 'promotions') { await loadPromotions(); }
         else if (name === 'repartition-enseignant') {
             const [sessions, teachers, pg] = await Promise.all([
@@ -1538,6 +1591,40 @@ async function deleteTeacher(id) {
 // ===== MATIERES =====
 // Filtres repris de l'onglet Répartition (semestres, formation, enseignant, salle)
 let _matSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
+let _matPromos = [];        // promotions (liste légère) pour le sélecteur Matières
+let _matPromoId = null;     // promotion sélectionnée → fournit le programme
+let _matProg = null;        // { has_programme, semesters: {S1:{components:[...]}} }
+
+// Clé de regroupement matière : enlève une lettre finale (R1.03a→R1.03) et normalise
+// le dernier groupe numérique sur 2 chiffres (SAE1.1→SAE1.01) pour matcher le programme.
+function matBaseKey(code) {
+    let c = (code || '').replace(/[a-z]$/, '');
+    c = c.replace(/\.(\d+)$/, (m, g) => '.' + String(parseInt(g, 10)).padStart(2, '0'));
+    return c;
+}
+
+async function loadMatPromos() {
+    try { _matPromos = await api('/promotions-lite'); } catch (e) { _matPromos = []; }
+    const sel = document.getElementById('filter-promo-matieres');
+    if (!sel) return;
+    const cur = _matPromoId || '';
+    sel.innerHTML = '<option value="">— Promotion —</option>' +
+        _matPromos.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+    if (cur && _matPromos.some(p => String(p.id) === String(cur))) sel.value = cur;
+    else _matPromoId = null;
+    await loadMatProg();
+}
+
+async function loadMatProg() {
+    _matPromoId = (document.getElementById('filter-promo-matieres') || {}).value || null;
+    _matProg = null;
+    if (_matPromoId) {
+        try { _matProg = await api(`/promotions/${_matPromoId}/matieres`); }
+        catch (e) { _matProg = null; }
+    }
+}
+
+function onMatPromoChange() { loadMatProg().then(renderCourses); }
 
 function toggleMatSemester(code, btn) {
     if (_matSemesters.has(code)) _matSemesters.delete(code);
@@ -1876,7 +1963,7 @@ let _promoCoeffSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
 let _coeffPromoId = null;   // promotion dont on édite les coefficients
 
 function showPromoTab(tab) {
-    ['effectif', 'coeff', 'notes'].forEach(t => {
+    ['effectif', 'notes'].forEach(t => {
         document.getElementById('promo-subtab-' + t).classList.toggle('active', tab === t);
         document.getElementById('promo-tab-' + t).style.display = tab === t ? '' : 'none';
     });
@@ -2205,6 +2292,368 @@ async function submitCoeffCopy() {
     }
 }
 
+// ===== PROGRAMME (Programme National réutilisable) =====
+// Éditeur isolé (état _prog*, conteneur #prog-content, classes .prg-*) réutilisant
+// uniquement les helpers purs _coeffKindColor/_coeffKindOptions/_coeffSansCoefficient.
+let _progList = [];
+let _progId = null;            // programme en cours d'édition
+let _progData = null;          // {S1..S6: {components, competences}}
+let _progSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
+
+function _setProgButtons(on) {
+    ['prog-rename-btn', 'prog-dup-btn', 'prog-del-btn', 'prog-new-mat-btn', 'prog-save-btn', 'prog-reset-btn']
+        .forEach(id => { const b = document.getElementById(id); if (b) b.disabled = !on; });
+}
+
+function _progPlaceholder(msg) {
+    document.getElementById('prog-content').innerHTML =
+        '<div style="color:#6b7280;padding:20px">' + msg + '</div>';
+}
+
+async function loadProgramme() {
+    try { _progList = await api('/programmes'); } catch (e) { _progList = []; }
+    const sel = document.getElementById('prog-select');
+    const cur = _progId || '';
+    sel.innerHTML = '<option value="">—</option>' + _progList.map(p =>
+        `<option value="${p.id}">${esc(p.name)}${p.promotions ? ` (${p.promotions} promo.)` : ''}</option>`).join('');
+    if (cur && _progList.some(p => String(p.id) === String(cur))) {
+        sel.value = cur;
+        await onProgChange();
+    } else {
+        _progId = null; _progData = null;
+        _setProgButtons(false);
+        _progPlaceholder(_progList.length
+            ? 'Choisissez un programme pour le modifier.'
+            : 'Aucun programme. Cliquez sur « + Nouveau » pour en créer un.');
+    }
+}
+
+async function onProgChange() {
+    _progId = document.getElementById('prog-select').value || null;
+    if (!_progId) {
+        _progData = null; _setProgButtons(false);
+        _progPlaceholder('Choisissez un programme pour le modifier.');
+        return;
+    }
+    _progPlaceholder('Chargement…');
+    try {
+        _progData = await api(`/programmes/${_progId}/data`);
+    } catch (e) {
+        _setProgButtons(false);
+        document.getElementById('prog-content').innerHTML =
+            '<div class="empty">Erreur de chargement : ' + esc(e.message) + '</div>';
+        return;
+    }
+    _setProgButtons(true);
+    renderProgTables();
+}
+
+function toggleProgSem(code, btn) {
+    if (_progSemesters.has(code)) _progSemesters.delete(code);
+    else _progSemesters.add(code);
+    btn.classList.toggle('active');
+    if (!_progData) return;
+    _collectProg();
+    renderProgTables();
+}
+
+function renderProgTables() {
+    const el = document.getElementById('prog-content');
+    if (!_progData) { el.innerHTML = '<div class="empty">Aucune donnée.</div>'; return; }
+    const sems = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].filter(s => _progData[s] && _progSemesters.has(s));
+    const legend = [['SAE', 'SAE'], ['RES', 'Ressource']]
+        .map(([k, lbl]) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:12px">
+            <span style="width:12px;height:12px;border-radius:3px;background:${_coeffKindColor(k)};display:inline-block"></span>${lbl}</span>`).join('');
+    const inS = 'padding:2px 4px;border:1px solid #d1d5db;border-radius:4px';
+    const blocks = sems.map(sem => {
+        const d = _progData[sem];
+        const comps = d.competences || [];
+        const totals = comps.map(c => Object.values(c.coeffs || {}).reduce((a, b) => a + Number(b), 0));
+        const head = `<tr>
+            <th style="width:58px;padding:4px 2px">Ordre</th>
+            <th style="padding:4px 6px;text-align:left">Type</th>
+            <th style="padding:4px 6px;text-align:left">Code Apogée</th>
+            <th style="padding:4px 6px;text-align:left">Code</th>
+            <th style="padding:4px 6px;text-align:left">Libellé court</th>
+            <th style="padding:4px 6px;text-align:left">Libellé</th>
+            <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Cours magistral">CM</th>
+            <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Travaux dirigés">TD</th>
+            <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Travaux pratiques">TP</th>
+            <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Projet tutoré">PT</th>` +
+            comps.map(c => `<th style="background:#ede9fe;width:64px;padding:6px 2px;vertical-align:middle;text-align:center"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600">${esc(c.name)}</div></th>`).join('') + `</tr>`;
+        const mlist = d.components || [];
+        const rows = mlist.map((co, mi) => {
+            const special = _coeffSansCoefficient(co);
+            const isFirst = mi === 0, isLast = mi === mlist.length - 1;
+            const cells = comps.map((c, ci) => {
+                if (special) return `<td style="padding:1px;text-align:center;color:#9ca3af" title="Calculé automatiquement (barème), sans coefficient">—</td>`;
+                const v = (c.coeffs || {})[co.code];
+                return `<td style="padding:1px;text-align:center"><input type="number" min="0" step="0.5"
+                    class="prg-coeff" data-sem="${sem}" data-ci="${ci}" data-mi="${mi}"
+                    value="${v === undefined || v === null ? '' : v}" oninput="updateProgTotal('${sem}',${ci})"
+                    style="width:60px;padding:2px 1px;text-align:center;border:1px solid #d1d5db;border-radius:4px"></td>`;
+            }).join('');
+            const mvBtn = (sym, t, dis, dir) => `<button type="button" title="${t}" ${dis ? 'disabled' : ''} onclick="moveProgMatiere('${sem}',${mi},${dir})" style="border:none;background:none;font-size:.72rem;line-height:1;padding:0;cursor:${dis ? 'default' : 'pointer'};color:${dis ? '#d1d5db' : '#6b7280'}">${sym}</button>`;
+            const vol = co.volumes || {};
+            const isRes = co.kind === 'RES', isSae = co.kind === 'SAE';
+            const volCell = (key, allowed) => {
+                if (special || !allowed) return `<td style="padding:1px;text-align:center;color:#d1d5db">—</td>`;
+                const vv = (vol[key] === undefined || vol[key] === null) ? '' : vol[key];
+                return `<td style="padding:1px;text-align:center"><input type="number" min="0" step="0.5" class="prg-vol" data-vk="${key}" data-mi="${mi}" value="${vv}" oninput="updateProgVol('${sem}','${key}')" style="width:50px;${inS};text-align:center"></td>`;
+            };
+            const volCells = volCell('cm', isRes) + volCell('td', isRes || isSae) + volCell('tp', isRes || isSae) + volCell('pt', isSae);
+            const def = `
+                <td style="padding:1px 2px;text-align:center;white-space:nowrap">${mvBtn('▲', 'Monter', isFirst, -1)}${mvBtn('▼', 'Descendre', isLast, 1)} <button type="button" title="Supprimer la matière" onclick="removeProgMatiere('${sem}',${mi})" style="border:none;background:none;cursor:pointer;color:#b91c1c;font-size:.95rem;padding:0">🗑</button></td>
+                <td style="padding:1px"><select class="prg-kind" onchange="this.style.background=_coeffKindColor(this.value);progKindChanged()" style="background:${_coeffKindColor(co.kind)};${inS};font-size:.8rem">${_coeffKindOptions(co.kind)}</select></td>
+                <td style="padding:1px"><input class="prg-apogee" value="${esc(co.apogee_code || '')}" placeholder="—" style="width:92px;${inS}"></td>
+                <td style="padding:1px"><input class="prg-code" value="${esc(co.code || '')}" style="width:84px;${inS};font-weight:600"></td>
+                <td style="padding:1px"><input class="prg-short" value="${esc(co.short_label || '')}" placeholder="—" style="width:130px;${inS}"></td>
+                <td style="padding:1px"><input class="prg-label" value="${esc(co.label || '')}" placeholder="—" style="width:230px;${inS}"></td>
+                ${volCells}`;
+            return `<tr data-mi="${mi}">${def}${cells}</tr>`;
+        }).join('');
+        const volTot = k => mlist.reduce((a, co) => a + (Number((co.volumes || {})[k]) || 0), 0);
+        const volTotCell = k => `<td class="prg-vtotal" data-sem="${sem}" data-vk="${k}" style="text-align:center;padding:2px 1px">${Math.round(volTot(k) * 100) / 100}</td>`;
+        const totalRow = `<tr style="background:#f9fafb;font-weight:600">
+            <td colspan="6" style="background:#f9fafb;padding:4px 8px;text-align:right">Total</td>
+            ${volTotCell('cm')}${volTotCell('td')}${volTotCell('tp')}${volTotCell('pt')}
+            ${comps.map((c, ci) => `<td class="prg-total" data-sem="${sem}" data-ci="${ci}" style="text-align:center;padding:2px 1px">${Math.round(totals[ci] * 100) / 100}</td>`).join('')}</tr>`;
+        return `<h3 style="margin:18px 0 8px;color:#374151">${sem}</h3>
+            <div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;width:fit-content;max-width:95vw">
+                <table class="nz-table" data-sem="${sem}" style="table-layout:auto"><thead>${head}</thead><tbody>${rows}${totalRow}</tbody></table>
+            </div>`;
+    }).join('');
+    const prog = _progList.find(p => String(p.id) === String(_progId));
+    el.innerHTML = `
+        <div style="margin-bottom:6px;font-size:.8rem;color:#374151">${legend}</div>
+        <p style="font-size:.8rem;color:#6b7280;margin:0 0 4px">
+            Programme <strong>${esc(prog ? prog.name : '')}</strong> — définition des matières (Type / Code /
+            Libellés / Heures) et coefficient de chaque matière dans chaque compétence (UE), par semestre
+            (case vide = non prise en compte). Le total des coefficients par compétence vaut normalement 60.
+            Les lignes <strong>Bonus</strong>, <strong>Pénalité</strong> et <strong>Aide à la réussite</strong>
+            n'ont pas de coefficient.</p>
+        ${blocks || '<div class="empty">Aucun semestre sélectionné.</div>'}`;
+}
+
+function updateProgTotal(sem, ci) {
+    let total = 0;
+    document.querySelectorAll(`#prog-content input.prg-coeff[data-sem="${sem}"][data-ci="${ci}"]`).forEach(inp => {
+        const v = parseFloat(inp.value.replace(',', '.'));
+        if (!isNaN(v)) total += v;
+    });
+    const td = document.querySelector(`#prog-content td.prg-total[data-sem="${sem}"][data-ci="${ci}"]`);
+    if (td) td.textContent = Math.round(total * 100) / 100;
+}
+
+function updateProgVol(sem, vk) {
+    let total = 0;
+    document.querySelectorAll(`#prog-content table[data-sem="${sem}"] input.prg-vol[data-vk="${vk}"]`).forEach(inp => {
+        const v = parseFloat(inp.value.replace(',', '.'));
+        if (!isNaN(v)) total += v;
+    });
+    const td = document.querySelector(`#prog-content td.prg-vtotal[data-sem="${sem}"][data-vk="${vk}"]`);
+    if (td) td.textContent = Math.round(total * 100) / 100;
+}
+
+// Changement de type d'une matière dans la grille : re-rendu pour adapter les colonnes
+// de volumes (RES = CM/TD/TP, SAE = TD/TP/PT) sans perdre la saisie en cours.
+function progKindChanged() {
+    if (!_progData) return;
+    _collectProg();
+    renderProgTables();
+}
+
+// Reconstruit _progData à partir des tableaux affichés (semestres visibles uniquement).
+function _collectProg() {
+    if (!_progData) return;
+    document.querySelectorAll('#prog-content table[data-sem]').forEach(tbl => {
+        const sem = tbl.dataset.sem;
+        const d = _progData[sem];
+        if (!d) return;
+        const comps = (d.competences || []).map(c => ({ name: c.name, coeffs: {} }));
+        const components = [];
+        const codeByMi = {};
+        tbl.querySelectorAll('tr[data-mi]').forEach(tr => {
+            const mi = +tr.dataset.mi;
+            const orig = (d.components && d.components[mi]) || {};
+            const q = sel => { const e = tr.querySelector(sel); return e ? e.value.trim() : ''; };
+            const code = q('.prg-code');
+            codeByMi[mi] = code;
+            const volumes = {};
+            tr.querySelectorAll('input.prg-vol').forEach(inp => {
+                const raw = inp.value.trim().replace(',', '.');
+                volumes[inp.dataset.vk] = (raw !== '' && !isNaN(parseFloat(raw))) ? parseFloat(raw) : null;
+            });
+            ['cm', 'td', 'tp', 'pt'].forEach(k => { if (!(k in volumes)) volumes[k] = (orig.volumes || {})[k] ?? null; });
+            components.push({
+                apogee_code: q('.prg-apogee'),
+                apogee_name: orig.apogee_name || '',
+                code,
+                short_label: q('.prg-short'),
+                label: q('.prg-label'),
+                kind: q('.prg-kind') || orig.kind || 'RES',
+                volumes
+            });
+        });
+        tbl.querySelectorAll('input.prg-coeff').forEach(inp => {
+            const ci = +inp.dataset.ci, code = codeByMi[+inp.dataset.mi];
+            const v = inp.value.trim().replace(',', '.');
+            if (code && comps[ci] && v !== '' && !isNaN(parseFloat(v)) && parseFloat(v) !== 0)
+                comps[ci].coeffs[code] = parseFloat(v);
+        });
+        d.components = components;
+        d.competences = comps;
+    });
+}
+
+function moveProgMatiere(sem, mi, dir) {
+    if (!_progData || !_progData[sem]) return;
+    _collectProg();
+    const comps = _progData[sem].components || [];
+    const j = mi + dir;
+    if (j < 0 || j >= comps.length) return;
+    const tmp = comps[mi]; comps[mi] = comps[j]; comps[j] = tmp;
+    renderProgTables();
+}
+
+function removeProgMatiere(sem, mi) {
+    if (!_progData || !_progData[sem]) return;
+    _collectProg();
+    const comp = (_progData[sem].components || [])[mi];
+    if (!comp) return;
+    if (!confirm(`Supprimer la matière « ${comp.code || comp.label || ''} » du semestre ${sem} ?`)) return;
+    _progData[sem].components.splice(mi, 1);
+    if (comp.code) (_progData[sem].competences || []).forEach(c => { if (c.coeffs) delete c.coeffs[comp.code]; });
+    renderProgTables();
+}
+
+function openNewProgMatiere() {
+    if (!_progId || !_progData) { toast('Choisissez un programme', 'error'); return; }
+    const firstSem = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].find(s => _progSemesters.has(s)) || 'S1';
+    document.getElementById('prog-mat-sem').value = firstSem;
+    document.getElementById('prog-mat-kind').value = 'RES';
+    ['prog-mat-code', 'prog-mat-short', 'prog-mat-label', 'prog-mat-apogee',
+     'prog-mat-cm', 'prog-mat-td', 'prog-mat-tp', 'prog-mat-pt']
+        .forEach(id => document.getElementById(id).value = '');
+    progMatKindChange();
+    openModal('modal-prog-matiere');
+}
+
+// Affiche les volumes pertinents selon le type : RES = CM/TD/TP, SAE = TD/TP/PT, sinon aucun.
+function progMatKindChange() {
+    const kind = document.getElementById('prog-mat-kind').value;
+    const show = { cm: kind === 'RES', td: kind === 'RES' || kind === 'SAE', tp: kind === 'RES' || kind === 'SAE', pt: kind === 'SAE' };
+    ['cm', 'td', 'tp', 'pt'].forEach(k => {
+        const wrap = document.getElementById('prog-mat-' + k + '-wrap');
+        if (wrap) wrap.style.display = show[k] ? '' : 'none';
+        if (!show[k]) { const i = document.getElementById('prog-mat-' + k); if (i) i.value = ''; }
+    });
+}
+
+function submitNewProgMatiere() {
+    if (!_progData) return;
+    const sem = document.getElementById('prog-mat-sem').value;
+    const code = document.getElementById('prog-mat-code').value.trim();
+    if (!code) { toast('Le code est obligatoire', 'error'); return; }
+    _collectProg();
+    if (!_progData[sem]) _progData[sem] = { components: [], competences: [] };
+    _progData[sem].components = _progData[sem].components || [];
+    if (_progData[sem].components.some(c => (c.code || '').toLowerCase() === code.toLowerCase())) {
+        toast('Ce code existe déjà pour ' + sem, 'error'); return;
+    }
+    const label = document.getElementById('prog-mat-label').value.trim();
+    const vol = {};
+    ['cm', 'td', 'tp', 'pt'].forEach(k => {
+        const raw = document.getElementById('prog-mat-' + k).value.trim().replace(',', '.');
+        vol[k] = (raw !== '' && !isNaN(parseFloat(raw))) ? parseFloat(raw) : null;
+    });
+    _progData[sem].components.push({
+        apogee_code: document.getElementById('prog-mat-apogee').value.trim(),
+        apogee_name: label,
+        code,
+        short_label: document.getElementById('prog-mat-short').value.trim(),
+        label,
+        kind: document.getElementById('prog-mat-kind').value,
+        volumes: vol
+    });
+    if (!_progSemesters.has(sem)) {
+        _progSemesters.add(sem);
+        const btn = document.querySelector(`#prog-sem-toggle .sem-btn[data-sem="${sem}"]`);
+        if (btn) btn.classList.add('active');
+    }
+    closeModal('modal-prog-matiere');
+    renderProgTables();
+    toast('Matière ajoutée — pensez à enregistrer');
+}
+
+async function saveProg() {
+    if (!_progId || !_progData) { toast('Choisissez un programme', 'error'); return; }
+    _collectProg();
+    try {
+        _progData = await api(`/programmes/${_progId}/data`, { method: 'PUT', body: JSON.stringify(_progData) });
+        renderProgTables();
+        toast('Programme enregistré');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function resetProg() {
+    if (!_progId) return;
+    if (!confirm('Réinitialiser ce programme aux valeurs d\'origine du fichier de calcul ?')) return;
+    try {
+        _progData = await api(`/programmes/${_progId}/data/reset`, { method: 'POST' });
+        renderProgTables();
+        toast('Programme réinitialisé');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function openNewProgramme() {
+    const name = (prompt('Nom du nouveau programme (ex. PN_2027) :') || '').trim();
+    if (!name) return;
+    try {
+        const p = await api('/programmes', { method: 'POST', body: JSON.stringify({ name }) });
+        _progId = p.id;
+        await loadProgramme();
+        toast('Programme créé');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function duplicateProgramme() {
+    if (!_progId) return;
+    const src = _progList.find(p => String(p.id) === String(_progId));
+    const name = (prompt('Nom du programme dupliqué :', (src ? src.name : 'PN') + '_copie') || '').trim();
+    if (!name) return;
+    try {
+        const p = await api('/programmes', { method: 'POST', body: JSON.stringify({ name, from_id: _progId }) });
+        _progId = p.id;
+        await loadProgramme();
+        toast('Programme dupliqué');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function renameProgramme() {
+    if (!_progId) return;
+    const src = _progList.find(p => String(p.id) === String(_progId));
+    const name = (prompt('Nouveau nom du programme :', src ? src.name : '') || '').trim();
+    if (!name || (src && name === src.name)) return;
+    try {
+        await api(`/programmes/${_progId}`, { method: 'PUT', body: JSON.stringify({ name }) });
+        await loadProgramme();
+        toast('Programme renommé');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function deleteProgramme() {
+    if (!_progId) return;
+    const src = _progList.find(p => String(p.id) === String(_progId));
+    if (!confirm(`Supprimer le programme « ${src ? src.name : ''} » ? (impossible s'il est affecté à des promotions)`)) return;
+    try {
+        await api(`/programmes/${_progId}`, { method: 'DELETE' });
+        _progId = null; _progData = null;
+        await loadProgramme();
+        toast('Programme supprimé');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
 async function loadPromotions() {
     try { _promotions = await api('/promotions'); }
     catch (e) { _promotions = []; }
@@ -2239,8 +2688,32 @@ async function onPromoChange() {
     document.getElementById('promo-content').innerHTML = '<div class="spinner">Chargement…</div>';
     try { _promoData = await api('/promotions/' + id); }
     catch (e) { toast('Erreur : ' + e.message, 'error'); return; }
+    if (!_progList || !_progList.length) { try { _progList = await api('/programmes'); } catch (e) { _progList = []; } }
     _togglePromoButtons(true);
     renderPromoEffectif();
+}
+
+async function assignPromoProgramme(val) {
+    if (!_promoId) return;
+    try {
+        await api(`/promotions/${_promoId}/programme`, {
+            method: 'PUT', body: JSON.stringify({ programme_id: val || null })
+        });
+        _promoData = await api('/promotions/' + _promoId);
+        toast(val ? 'Programme affecté' : 'Programme détaché');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+function _promoProgrammeSelector() {
+    const cur = (_promoData && _promoData.promotion && _promoData.promotion.programme_id) || '';
+    return `<div style="margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <label style="font-weight:600">Programme :</label>
+        <select onchange="assignPromoProgramme(this.value)" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:6px">
+            <option value="">— aucun —</option>
+            ${(_progList || []).map(p => `<option value="${p.id}" ${String(p.id) === String(cur) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+        </select>
+        <span style="font-size:.8rem;color:#6b7280">définit les matières &amp; coefficients (édités dans l'onglet Programme)</span>
+    </div>`;
 }
 
 function _statutColor(s) {
@@ -2255,7 +2728,7 @@ function renderPromoEffectif() {
         `<span style="display:inline-block;padding:3px 10px;border-radius:12px;margin-right:8px;font-size:.8rem;background:${_statutColor(st)}">${st} : <strong>${d.counts[st] || 0}</strong></span>`).join('') +
         `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:.8rem;background:#e0e7ff">Total : <strong>${d.total}</strong></span>`;
     if (!d.students.length) {
-        el.innerHTML = `<div style="margin-bottom:12px">${badges}</div><div class="empty">Aucun étudiant. Importez un effectif ou ajoutez un étudiant.</div>`;
+        el.innerHTML = `${_promoProgrammeSelector()}<div style="margin-bottom:12px">${badges}</div><div class="empty">Aucun étudiant. Importez un effectif ou ajoutez un étudiant.</div>`;
         return;
     }
     const optList = st => d.statuses.map(s => `<option ${s === st ? 'selected' : ''}>${s}</option>`).join('');
@@ -2274,6 +2747,7 @@ function renderPromoEffectif() {
         <td><button class="btn btn-secondary btn-sm" title="Supprimer définitivement" onclick="deleteStudent(${s.id})">🗑</button></td>
     </tr>`).join('');
     el.innerHTML = `
+        ${_promoProgrammeSelector()}
         <div style="margin-bottom:12px">${badges}</div>
         <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px">
             <table class="pn-table" style="table-layout:auto;width:100%">
@@ -2909,6 +3383,10 @@ function renderCourses() {
     const roomFilter    = (document.getElementById('filter-room-matieres') || {}).value || '';
     const el = document.getElementById('courses-table');
 
+    if (!_matPromoId) {
+        el.innerHTML = '<div style="color:#6b7280;padding:20px">Choisissez une <strong>promotion</strong> : les matières affichées proviennent de son programme (onglet Programme).</div>';
+        return;
+    }
     if (!_matSemesters.size) {
         el.innerHTML = '<div class="empty">Sélectionnez au moins un semestre.</div>';
         return;
@@ -2917,6 +3395,8 @@ function renderCourses() {
     const showFtpCol = formFilter !== 'alt';
     const showAltCol = formFilter !== 'ftp';
     const noCellFilter = formFilter === '' && !teacherFilter && !roomFilter;
+    const ncol = 8 + (showFtpCol ? 1 : 0) + (showAltCol ? 1 : 0);
+    const q = ((document.getElementById('filter-search-matieres') || {}).value || '').trim().toLowerCase();
 
     // Ne garde une face (FTP/ALT) d'un type que si elle passe les filtres formation/enseignant/salle
     const filterTypes = c => [
@@ -2932,24 +3412,18 @@ function renderCourses() {
                  alt: keepAlt ? t.alt : 0, altT: keepAlt ? t.altT : null, altR: keepAlt ? t.altR : null };
     }).filter(t => t.ftp || t.alt);
 
-    const q = ((document.getElementById('filter-search-matieres') || {}).value || '').trim().toLowerCase();
-    let list = state.courses.filter(c => _matSemesters.has(c.semester_code));
-    if (q) list = list.filter(c => ((c.code || '') + ' ' + (c.name || '')).toLowerCase().includes(q));
-    if (!list.length) { el.innerHTML = '<div class="empty">Aucune matière pour cette sélection.</div>'; return; }
-
     function hCell(h, teacher) {
         if (!h) return '<td class="empty" style="text-align:center;color:#bbb">—</td>';
         return `<td style="text-align:center">${h}h${teacher ? `<br><small style="color:#6b7280">${esc(teacher)}</small>` : ''}</td>`;
     }
-    // Salle(s) d'un type : pièces distinctes des faces FTP/ALT retenues
     function salleCell(t) {
         const rs = [];
         if (t.ftp && t.ftpR && !rs.includes(t.ftpR)) rs.push(t.ftpR);
         if (t.alt && t.altR && !rs.includes(t.altR)) rs.push(t.altR);
         return `<td style="text-align:center;font-size:.8rem">${rs.length ? esc(rs.join(' / ')) : '<span style="color:#bbb">—</span>'}</td>`;
     }
-
-    const rows = list.map(c => {
+    // Rend les lignes (par type) d'UNE sous-matière (course). Réutilise la mise en forme EDT.
+    function courseRowsHtml(c) {
         const types = filterTypes(c);
         const nRows = types.length || 1;
         const actions = `<td${types.length ? ` rowspan="${nRows}"` : ''} style="white-space:nowrap">
@@ -2960,9 +3434,8 @@ function renderCourses() {
         const weeksCell = c.start_week && c.end_week ? c.start_week + ' → ' + c.end_week : '<span style="color:#9ca3af">—</span>';
         const badge = `<span class="badge badge-${(c.course_type||'ressource').toLowerCase().slice(0,3)}">${esc(c.course_type||'')}</span>`;
         if (!types.length) {
-            // Sans aucune face retenue : afficher seulement si aucun filtre cellule actif
             if (!noCellFilter) return '';
-            return `<tr class="course-sep">
+            return `<tr>
                 <td><strong>${esc(c.code||'')}</strong></td>
                 <td>${esc(c.name||'')}</td>
                 <td>${esc(c.semester_code||'')}</td>
@@ -2988,21 +3461,78 @@ function renderCourses() {
                 ${showAltCol ? hCell(t.alt, t.altT) : ''}
                 ${i === 0 ? actions : ''}
             </tr>`).join('');
+    }
+
+    // Bandeau « matière parente » (issu du programme) + bouton de création de sous-matière
+    function parentBanner(comp, sem) {
+        const v = comp.volumes || {};
+        const vparts = [['CM', v.cm], ['TD', v.td], ['TP', v.tp], ['PT', v.pt]]
+            .filter(x => x[1] != null && x[1] !== '').map(x => `${x[0]} ${x[1]}h`).join(' · ');
+        const kb = (String(comp.kind || '').toUpperCase() === 'SAE') ? 'sae' : 'res';
+        return `<tr class="course-sep" style="background:#f5f3ff;border-top:2px solid #ddd6fe">
+            <td colspan="${ncol}" style="padding:6px 10px">
+                <strong style="color:#5b21b6">${esc(comp.code || '')}</strong>
+                <span style="margin-left:6px">${esc(comp.label || '')}</span>
+                <span class="badge badge-${kb}" style="margin-left:6px">${esc(comp.kind || '')}</span>
+                ${vparts ? `<span style="margin-left:10px;font-size:.8rem;color:#6b7280">PN : ${vparts}</span>` : ''}
+                <button class="btn btn-secondary btn-sm" style="float:right"
+                    onclick="openSubMatiere('${esc(comp.code || '')}','${sem}','${esc(comp.kind || '')}')">+ sous-matière</button>
+            </td></tr>`;
+    }
+
+    // Index des courses de l'année par (semestre, clé de base)
+    const bySem = {};
+    state.courses.forEach(c => {
+        if (!_matSemesters.has(c.semester_code)) return;
+        if (q && !((c.code || '') + ' ' + (c.name || '')).toLowerCase().includes(q)) return;
+        const m = (bySem[c.semester_code] = bySem[c.semester_code] || {});
+        const k = matBaseKey(c.code);
+        (m[k] = m[k] || []).push(c);
+    });
+
+    const prog = (_matProg && _matProg.semesters) || {};
+    const hasProg = !!(_matProg && _matProg.has_programme);
+    const progName = (_matPromos.find(p => String(p.id) === String(_matPromoId)) || {}).programme_name || '';
+
+    const head = `<thead><tr>
+        <th>Code</th><th>Intitulé</th><th>Sem.</th><th>Semaines</th><th>Type</th>
+        <th style="text-align:center"></th>
+        <th style="text-align:center">Salle</th>
+        ${showFtpCol ? '<th style="text-align:center;color:#0369a1">FTP</th>' : ''}
+        ${showAltCol ? '<th style="text-align:center;color:#9a3412">ALT</th>' : ''}
+        <th>Actions</th>
+    </tr></thead>`;
+
+    const sems = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].filter(s => _matSemesters.has(s));
+    const blocks = sems.map(sem => {
+        const semCourses = bySem[sem] || {};
+        const comps = hasProg ? ((prog[sem] || {}).components || []) : [];
+        const used = new Set();
+        let body = '';
+        comps.forEach(comp => {
+            const key = matBaseKey(comp.code);
+            used.add(key);
+            body += parentBanner(comp, sem);
+            (semCourses[key] || []).forEach(c => { body += courseRowsHtml(c); });
+        });
+        const orphanKeys = Object.keys(semCourses).filter(k => !used.has(k)).sort();
+        if (orphanKeys.length) {
+            body += hasProg
+                ? `<tr class="course-sep"><td colspan="${ncol}" style="background:#fef2f2;color:#991b1b;font-weight:600;padding:6px 10px">⚠ Hors programme${progName ? ' ' + esc(progName) : ''} — matières EDT non listées dans le programme</td></tr>`
+                : '';
+            orphanKeys.forEach(k => semCourses[k].forEach(c => { body += courseRowsHtml(c); }));
+        }
+        if (!body) body = `<tr><td colspan="${ncol}" style="color:#9ca3af;padding:10px">Aucune matière pour ce semestre.</td></tr>`;
+        return `<h3 style="margin:18px 0 6px;color:#374151">${sem}</h3>
+            <div class="overflow-x"><table>${head}<tbody>${body}</tbody></table></div>`;
     }).join('');
 
-    if (!rows) { el.innerHTML = '<div class="empty">Aucune matière pour cette sélection.</div>'; return; }
+    const warn = hasProg ? '' :
+        `<div style="background:#fffbeb;border:1px solid #fcd34d;color:#92400e;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:.85rem">
+            Cette promotion n'a pas de <strong>programme</strong> affecté — les matières sont affichées sans regroupement.
+            Affecte un programme dans l'onglet <strong>Promotions → Effectif</strong>.</div>`;
 
-    el.innerHTML = `<div class="overflow-x"><table>
-        <thead><tr>
-            <th>Code</th><th>Intitulé</th><th>Sem.</th><th>Semaines</th><th>Type</th>
-            <th style="text-align:center"></th>
-            <th style="text-align:center">Salle</th>
-            ${showFtpCol ? '<th style="text-align:center;color:#0369a1">FTP</th>' : ''}
-            ${showAltCol ? '<th style="text-align:center;color:#9a3412">ALT</th>' : ''}
-            <th>Actions</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-    </table></div>`;
+    el.innerHTML = warn + blocks;
 }
 
 // ===== MATIERES — helpers =====
@@ -3136,6 +3666,19 @@ function syncHoursStep(durInput) {
 }
 function initAllHoursSteps() {
     document.querySelectorAll('#modal-course input[id$="-dur"]').forEach(syncHoursStep);
+}
+
+// Création d'une SOUS-MATIÈRE d'une matière du programme (ex. R1.03 → R1.03a).
+// Réutilise le modal de matière, pré-rempli avec le code/type/semestre du parent.
+async function openSubMatiere(code, sem, kind) {
+    await openCourseModal();
+    const codeInput = document.getElementById('course-code');
+    codeInput.value = code || '';
+    document.getElementById('course-type').value =
+        (String(kind || '').toUpperCase() === 'SAE') ? 'SAE' : 'Ressource';
+    const s = state.semesters.find(x => x.code === sem);
+    if (s) document.getElementById('course-semester').value = s.id;
+    codeInput.focus();
 }
 
 async function openCourseModal(id = null) {
