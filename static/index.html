@@ -340,10 +340,6 @@
                 style="padding:4px 10px;border-radius:6px;border:1px solid #c7d2fe;background:#eef2ff;color:#4f46e5;font-weight:700;font-size:.88rem;cursor:pointer">
             <option>…</option>
         </select>
-        <button class="admin-only" onclick="openNewYearModal()"
-                style="padding:5px 11px;border:1px solid #c7d2fe;border-radius:6px;background:#eef2ff;color:#4f46e5;font-weight:600;cursor:pointer;font-size:.82rem;white-space:nowrap">
-            + Nouvelle année
-        </button>
         <span id="role-badge" class="role-badge" style="display:none"></span>
         <button onclick="logout()" title="Se déconnecter"
                 style="padding:5px 11px;border:1px solid #e5e7eb;border-radius:6px;background:#fff;color:#6b7280;font-weight:600;cursor:pointer;font-size:.82rem;white-space:nowrap">
@@ -491,26 +487,37 @@
 
 <!-- ===== PROMOTIONS (admin) ===== -->
 <div class="page" id="page-promotions">
-    <div class="toolbar" style="margin-bottom:8px;align-items:center">
-        <h1 style="margin-right:18px">Promotions</h1>
-        <div class="subtabs" style="display:flex;gap:6px;border-bottom:none">
-            <button type="button" id="promo-subtab-effectif" class="subtab active" onclick="showPromoTab('effectif')">Effectif</button>
-            <button type="button" id="promo-subtab-notes" class="subtab" onclick="showPromoTab('notes')">Notes</button>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <label for="promo-select" style="font-size:1.05rem;font-weight:600;white-space:nowrap">Sélection de la promo :</label>
+        <select id="promo-select" onchange="onPromoChange()"
+            style="font-size:1.05rem;font-weight:600;padding:7px 12px;border:1px solid #9ca3af;border-radius:8px;min-width:230px;background:#fff">
+            <option value="">—</option></select>
+    </div>
+    <div class="subtabs" id="promo-subtabs" style="display:flex;gap:6px;margin-bottom:10px">
+        <button type="button" id="promo-subtab-effectif" class="subtab active" onclick="showPromoTab('effectif')">Effectifs</button>
+        <button type="button" id="promo-subtab-notes" class="subtab" onclick="showPromoTab('notes')">Notes</button>
+        <button type="button" id="promo-subtab-actions" class="subtab" onclick="showPromoTab('actions')">Actions</button>
+    </div>
+    <div id="promo-tab-effectif">
+        <div id="promo-content"><div style="color:#6b7280;padding:20px">Créez une promotion ou sélectionnez-en une pour gérer son effectif.</div></div>
+    </div>
+    <div id="promo-tab-actions" style="display:none">
+        <div style="padding:20px;display:flex;gap:12px;flex-wrap:wrap">
+            <button class="btn btn-primary" onclick="openNewPromotion()">+ Nouvelle promotion</button>
+            <button class="btn btn-secondary" id="promo-delete-btn" onclick="deletePromotion()" disabled>🗑 Supprimer la promotion sélectionnée</button>
         </div>
     </div>
     <div id="promo-tab-notes" style="display:none">
         <div class="toolbar">
             <div class="filters">
-                <label>Promotion :</label>
-                <select id="notes-promo-select" onchange="loadNotesGrid()"><option value="">—</option></select>
-                <label style="margin-left:12px">Sous-cohorte :</label>
+                <label>Sous-cohorte :</label>
                 <select id="notes-sub-select" onchange="loadNotesGrid()">
                     <option value="FTP">FTP</option><option value="ALT">ALT</option>
                 </select>
                 <label style="margin-left:12px">Semestre :</label>
                 <select id="notes-sem-select" onchange="loadNotesGrid()">
                     <option value="">—</option>
-                    <option>S1</option><option>S2</option><option>S3</option>
+                    <option selected>S1</option><option>S2</option><option>S3</option>
                     <option>S4</option><option>S5</option><option>S6</option>
                 </select>
                 <button class="btn btn-primary btn-sm" style="margin-left:14px" id="notes-save-btn" onclick="saveNotesMarks()" disabled>💾 Enregistrer les notes</button>
@@ -518,18 +525,7 @@
                 <button class="btn btn-secondary btn-sm" id="notes-export-btn" onclick="exportNotes()" disabled>⬇ Exporter (.xlsx)</button>
             </div>
         </div>
-        <div id="notes-content"><div style="color:#6b7280;padding:20px">Choisissez une promotion (de l'effectif) et un semestre pour saisir les notes.</div></div>
-    </div>
-    <div id="promo-tab-effectif">
-        <div class="toolbar">
-            <div class="filters">
-                <label>Promotion :</label>
-                <select id="promo-select" onchange="onPromoChange()"><option value="">—</option></select>
-                <button class="btn btn-primary btn-sm" style="margin-left:12px" onclick="openNewPromotion()">+ Nouvelle promotion</button>
-                <button class="btn btn-secondary btn-sm" id="promo-delete-btn" onclick="deletePromotion()" disabled>Supprimer la promotion</button>
-            </div>
-        </div>
-        <div id="promo-content"><div style="color:#6b7280;padding:20px">Créez une promotion ou sélectionnez-en une pour gérer son effectif.</div></div>
+        <div id="notes-content"><div style="color:#6b7280;padding:20px">Choisissez une sous-cohorte et un semestre pour saisir les notes.</div></div>
     </div>
 </div>
 
@@ -699,11 +695,17 @@
     </div>
 </div>
 
-<!-- ===== CALENDRIER SPECIAL ===== -->
+<!-- ===== CALENDRIER SPÉCIAL (par année universitaire) ===== -->
 <div class="page" id="page-calendrier">
-    <div class="toolbar">
-        <h1>Calendrier spécial</h1>
-        <button class="btn btn-primary btn-sm" onclick="saveCalendrier()">Enregistrer</button>
+    <div class="toolbar" style="align-items:center;gap:10px;flex-wrap:wrap">
+        <h1 style="margin-right:8px">Calendrier spécial</h1>
+        <label style="font-weight:600">Année de progression :</label>
+        <select id="cal-year-select" onchange="onCalFilterChange()"></select>
+        <label style="font-weight:600;margin-left:8px">Cohorte :</label>
+        <select id="cal-cohort-select" onchange="onCalFilterChange()">
+            <option value="FTP">FTP</option><option value="ALT">ALT</option>
+        </select>
+        <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="saveCalendrier()">Enregistrer</button>
     </div>
     <div class="card" style="padding:16px;margin-bottom:16px">
         <h3 style="margin:0 0 4px">Dates des semestres</h3>
@@ -731,12 +733,17 @@
             </div>
         </div>
         <div style="margin-top:16px;border-top:1px solid #e5e7eb;padding-top:12px">
-            <strong style="display:block;margin-bottom:6px">Plage de l'année <span style="color:#9ca3af;font-size:.8rem">(première et dernière semaine de cours)</span></strong>
+            <strong style="display:block;margin-bottom:6px">Plage de l'<span id="cal-range-year-label">année</span> <span style="color:#9ca3af;font-size:.8rem">(première et dernière semaine de cours — définit le nombre de semaines)</span></strong>
             <label style="font-size:.85rem">Début&nbsp;
-                <select id="config-start-week" style="margin-right:12px"></select>
+                <select id="config-start-week" style="margin-right:12px" onchange="onCalRangeChange()"></select>
             </label>
             <label style="font-size:.85rem">Fin&nbsp;
-                <select id="config-end-week"></select>
+                <select id="config-end-week" onchange="onCalRangeChange()"></select>
+            </label>
+            <label style="font-size:.85rem;margin-left:12px">Nombre de semaines&nbsp;
+                <select id="cal-max-week" onchange="onCalRangeChange()">
+                    <option value="52">52</option><option value="53">53</option>
+                </select>
             </label>
         </div>
     </div>
@@ -747,7 +754,7 @@
         <div id="promo-groups-editor" style="margin-top:12px"><div class="spinner">Chargement…</div></div>
     </details>
     <p style="color:#6b7280;font-size:.85rem;margin-bottom:16px">
-        Cliquez sur les semaines pour les inclure dans chaque catégorie.
+        Cliquez sur les semaines pour les inclure dans chaque catégorie (FTP : vacances &amp; stages ; ALT : semaines entreprise).
         Ces semaines sont automatiquement exclues lors de l'optimisation.
     </p>
     <div class="card cal-card-full" style="padding:16px">
@@ -831,30 +838,6 @@
 </div>
 
 <!-- ===== MODAL NOUVELLE ANNÉE ===== -->
-<div class="modal-backdrop" id="modal-new-year">
-    <div class="modal">
-        <h2>Nouvelle année universitaire</h2>
-        <form id="form-new-year" onsubmit="submitNewYear(event)">
-            <div class="form-group">
-                <label>Année *</label>
-                <input id="new-year-value" placeholder="ex : 2026-2027" required>
-                <small style="color:#6b7280">Format AAAA-AAAA</small>
-            </div>
-            <div class="form-group">
-                <label>Copier depuis</label>
-                <select id="new-year-copy-from">
-                    <option value="">— Base vierge (enseignants, salles, matières) —</option>
-                </select>
-                <small style="color:#6b7280">Crée une copie complète de l'année choisie</small>
-            </div>
-            <div class="form-actions">
-                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-new-year')">Annuler</button>
-                <button type="submit" class="btn btn-primary">Créer et activer</button>
-            </div>
-        </form>
-    </div>
-</div>
-
 <!-- ===== MODAL NOUVELLE PROMOTION ===== -->
 <div class="modal-backdrop" id="modal-new-promotion">
     <div class="modal">
@@ -1319,14 +1302,13 @@ function applyRole(role, user, teacher, status) {
     document.querySelectorAll('nav button[id^="nav-"]').forEach(b => {
         b.style.display = (role === 'teacher' && !teacherTabs.includes(b.id)) ? 'none' : '';
     });
-    // Chaque utilisateur (admin ou enseignant) peut choisir son année de consultation.
-    // Pour l'admin c'est le défaut global ; pour l'enseignant, une vue personnelle de session.
+    // Chaque utilisateur (admin ou enseignant) choisit son année de consultation.
     const ys = document.getElementById('year-select');
     if (ys) ys.disabled = false;
 }
 
 function goHome() {
-    // Liste des années chargée pour tous : admin (défaut global) et enseignant (vue de session)
+    // Liste des années universitaires (contexte de travail global)
     loadYears();
     // Premier onglet selon le rôle : admin → Répartition Calendaire ; enseignant → Globale
     showPage(state.role === 'teacher' ? 'repartition-enseignant' : 'repartition');
@@ -1477,7 +1459,7 @@ async function loadDashboard() {
     }
 }
 
-// ===== ANNÉES UNIVERSITAIRES =====
+// ===== ANNÉES UNIVERSITAIRES (contexte de travail global) =====
 async function loadYears() {
     try {
         const data = await api('/years');
@@ -1493,49 +1475,17 @@ async function switchYear() {
     if (!year) return;
     try {
         // Admin : change le défaut global de l'établissement.
-        // Enseignant : choix personnel limité à sa session (n'affecte personne d'autre).
+        // Enseignant : choix personnel limité à sa session.
         const endpoint = state.role === 'admin' ? '/years/current' : '/years/session';
         await api(endpoint, { method: 'PUT', body: JSON.stringify({ year }) });
-        // Réinitialiser les données (sans toucher à l'authentification) pour forcer un rechargement
+        // Réinitialiser les caches (contexte année) pour forcer un rechargement
         ['teachers', 'courses', 'rooms', 'sessions', 'semesters', 'promotionGroups'].forEach(k => { state[k] = []; });
         state.config = null;
         _repartitionData = null;
-        _coeffRef = null;
         _notesData = null;
         await loadYears();
         showPage(state.role === 'teacher' ? 'repartition-enseignant' : 'repartition');
         toast(`Année ${year} activée`);
-    } catch(e) { toast('Erreur : ' + e.message, 'error'); }
-}
-
-function openNewYearModal() {
-    const years = [...document.getElementById('year-select').options].map(o => o.value).filter(Boolean);
-    const current = document.getElementById('year-select').value;
-    document.getElementById('new-year-copy-from').innerHTML =
-        '<option value="">— Base vierge —</option>' +
-        years.map(y => `<option value="${y}" ${y === current ? 'selected' : ''}>${y}</option>`).join('');
-    // Suggérer l'année suivante
-    if (current && current.length === 9) {
-        const end = parseInt(current.split('-')[1]);
-        document.getElementById('new-year-value').value = `${end}-${end + 1}`;
-    } else {
-        document.getElementById('new-year-value').value = '';
-    }
-    openModal('modal-new-year');
-}
-
-async function submitNewYear(e) {
-    e.preventDefault();
-    const year    = document.getElementById('new-year-value').value.trim();
-    const copyFrom = document.getElementById('new-year-copy-from').value;
-    try {
-        await api('/years', { method: 'POST', body: JSON.stringify({ year, copy_from: copyFrom }) });
-        await api('/years/current', { method: 'PUT', body: JSON.stringify({ year }) });
-        Object.keys(state).forEach(k => { state[k] = []; });
-        _repartitionData = null;
-        closeModal('modal-new-year');
-        await loadDashboard();
-        toast(`Année ${year} créée et activée`);
     } catch(e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
@@ -1962,13 +1912,14 @@ let _promoId = null;
 let _promoCoeffSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
 let _coeffPromoId = null;   // promotion dont on édite les coefficients
 
+let _promoTab = 'effectif';
 function showPromoTab(tab) {
-    ['effectif', 'notes'].forEach(t => {
+    _promoTab = tab;
+    ['effectif', 'notes', 'actions'].forEach(t => {
         document.getElementById('promo-subtab-' + t).classList.toggle('active', tab === t);
         document.getElementById('promo-tab-' + t).style.display = tab === t ? '' : 'none';
     });
-    if (tab === 'coeff') loadPromoCoeff();
-    else if (tab === 'notes') loadNotes();
+    if (tab === 'notes') loadNotes();
 }
 
 async function _ensurePromotionsList() {
@@ -2660,15 +2611,18 @@ async function loadPromotions() {
     const sel = document.getElementById('promo-select');
     sel.innerHTML = '<option value="">—</option>' + _promotions.map(p =>
         `<option value="${p.id}">${esc(p.name)} (${p.actifs}/${p.total})</option>`).join('');
+    // Présélection : promo courante si toujours présente, sinon la première de la liste
+    if (!(_promoId && _promotions.some(p => p.id === _promoId)) && _promotions.length) {
+        _promoId = _promotions[0].id;
+    }
     if (_promoId && _promotions.some(p => p.id === _promoId)) {
         sel.value = _promoId;
         await onPromoChange();
     } else {
         _promoId = null; _promoData = null;
         _togglePromoButtons(false);
-        document.getElementById('promo-content').innerHTML = _promotions.length
-            ? '<div style="color:#6b7280;padding:20px">Sélectionnez une promotion.</div>'
-            : '<div style="color:#6b7280;padding:20px">Aucune promotion. Cliquez sur « + Nouvelle promotion ».</div>';
+        document.getElementById('promo-content').innerHTML =
+            '<div style="color:#6b7280;padding:20px">Aucune promotion. Cliquez sur « + Nouvelle promotion ».</div>';
     }
 }
 
@@ -2682,6 +2636,7 @@ async function onPromoChange() {
     if (!id) {
         _promoId = null; _promoData = null; _togglePromoButtons(false);
         document.getElementById('promo-content').innerHTML = '<div style="color:#6b7280;padding:20px">Sélectionnez une promotion.</div>';
+        loadNotesGrid();
         return;
     }
     _promoId = id;
@@ -2691,6 +2646,7 @@ async function onPromoChange() {
     if (!_progList || !_progList.length) { try { _progList = await api('/programmes'); } catch (e) { _progList = []; } }
     _togglePromoButtons(true);
     renderPromoEffectif();
+    if (_promoTab === 'notes') loadNotesGrid();
 }
 
 async function assignPromoProgramme(val) {
@@ -2902,20 +2858,12 @@ async function deletePromotion() {
 let _notesData = null;
 
 async function loadNotes() {
-    // Sélecteur de promotions = celles de l'effectif
-    if (!_promotions.length) {
-        try { _promotions = await api('/promotions'); } catch (e) { _promotions = []; }
-    }
-    const sel = document.getElementById('notes-promo-select');
-    const cur = sel.value;
-    sel.innerHTML = '<option value="">—</option>' + _promotions.map(p =>
-        `<option value="${p.id}">${esc(p.name)}</option>`).join('');
-    if (cur && _promotions.some(p => p.id == cur)) sel.value = cur;
+    // La promotion est pilotée par le sélecteur partagé en haut de l'onglet.
     loadNotesGrid();
 }
 
 async function loadNotesGrid() {
-    const pid = document.getElementById('notes-promo-select').value;
+    const pid = document.getElementById('promo-select').value;
     const sem = document.getElementById('notes-sem-select').value;
     const sub = (document.getElementById('notes-sub-select') || {}).value || 'FTP';
     const saveBtn = document.getElementById('notes-save-btn');
@@ -2936,14 +2884,14 @@ async function loadNotesGrid() {
 
 // Télécharge les notes de la promo/semestre au format Apogée (.xlsx)
 function exportNotes() {
-    const pid = document.getElementById('notes-promo-select').value;
+    const pid = document.getElementById('promo-select').value;
     const sem = document.getElementById('notes-sem-select').value;
     if (!pid || !sem) { toast('Choisissez une promotion et un semestre', 'error'); return; }
     window.location = `/api/promotions/${pid}/notes/${sem}/export`;
 }
 
 function openNotesImport() {
-    const pid = document.getElementById('notes-promo-select').value;
+    const pid = document.getElementById('promo-select').value;
     const sem = document.getElementById('notes-sem-select').value;
     if (!pid || !sem) { toast('Choisissez une promotion et un semestre', 'error'); return; }
     document.getElementById('notes-import-file').value = '';
@@ -2953,7 +2901,7 @@ function openNotesImport() {
 async function submitNotesImport() {
     const f = document.getElementById('notes-import-file').files[0];
     if (!f) { toast('Choisissez un fichier', 'error'); return; }
-    const pid = document.getElementById('notes-promo-select').value;
+    const pid = document.getElementById('promo-select').value;
     const sem = document.getElementById('notes-sem-select').value;
     const btn = document.getElementById('notes-import-submit');
     btn.disabled = true; btn.textContent = 'Import en cours…';
@@ -3184,7 +3132,7 @@ const _YS_STYLE = {
 
 async function saveNotesMarks() {
     if (!_notesData) return;
-    const pid = document.getElementById('notes-promo-select').value;
+    const pid = document.getElementById('promo-select').value;
     const sem = document.getElementById('notes-sem-select').value;
     const marks = []; let invalid = false;
     document.querySelectorAll('#notes-content input.nz-mark').forEach(inp => {
@@ -4037,8 +3985,8 @@ async function openWeeklyModal(courseId) {
         const cal = await api('/special-calendar');
         const yg  = sem ? sem.year_group : null;
         _weeklySpecial = {
-            vacation_ftp: cal.vacation_ftp || [],
-            stage_ftp:    (yg === 2 ? cal.stage_ftp_y2 : yg === 3 ? cal.stage_ftp_y3 : []) || [],
+            vacation_ftp: (yg ? cal['vacation_ftp_y' + yg] : []) || [],
+            stage_ftp:    (yg ? cal['stage_ftp_y' + yg] : []) || [],
             company_alt:  (yg ? cal['company_alt_y' + yg] : []) || [],
         };
     } catch(e) {}
@@ -4731,13 +4679,72 @@ let _categoryCodes = {};  // { week_type: code }
 let _specialCalRaw = {};  // { week_type: [semaines] } (calendrier brut, pour les codes en répartition)
 
 const _CAL_CATS = [
-    { key: 'vacation_ftp',    label: 'Vacances FTP',              sub: '(toutes années)',   cls: 'on-vacation' },
-    { key: 'stage_ftp_y2',   label: 'Stages FTP — 2ème année',   sub: '(S3 / S4)',          cls: 'on-stage'    },
-    { key: 'stage_ftp_y3',   label: 'Stages FTP — 3ème année',   sub: '(S5 / S6)',          cls: 'on-stage'    },
-    { key: 'company_alt_y1', label: 'Entreprise ALT — 1ère année', sub: '(S1 / S2)',         cls: 'on-company'  },
-    { key: 'company_alt_y2', label: 'Entreprise ALT — 2ème année', sub: '(S3 / S4)',         cls: 'on-company'  },
-    { key: 'company_alt_y3', label: 'Entreprise ALT — 3ème année', sub: '(S5 / S6)',         cls: 'on-company'  },
+    { key: 'vacation_ftp_y1', label: 'Année 1 · FTP Vacances',   sub: '(S1 / S2)', cls: 'on-vacation', yg: 1 },
+    { key: 'stage_ftp_y1',    label: 'Année 1 · FTP Stage',      sub: '(S1 / S2)', cls: 'on-stage',    yg: 1 },
+    { key: 'company_alt_y1',  label: 'Année 1 · ALT Entreprise', sub: '(S1 / S2)', cls: 'on-company',  yg: 1 },
+    { key: 'vacation_ftp_y2', label: 'Année 2 · FTP Vacances',   sub: '(S3 / S4)', cls: 'on-vacation', yg: 2 },
+    { key: 'stage_ftp_y2',    label: 'Année 2 · FTP Stage',      sub: '(S3 / S4)', cls: 'on-stage',    yg: 2 },
+    { key: 'company_alt_y2',  label: 'Année 2 · ALT Entreprise', sub: '(S3 / S4)', cls: 'on-company',  yg: 2 },
+    { key: 'vacation_ftp_y3', label: 'Année 3 · FTP Vacances',   sub: '(S5 / S6)', cls: 'on-vacation', yg: 3 },
+    { key: 'stage_ftp_y3',    label: 'Année 3 · FTP Stage',      sub: '(S5 / S6)', cls: 'on-stage',    yg: 3 },
+    { key: 'company_alt_y3',  label: 'Année 3 · ALT Entreprise', sub: '(S5 / S6)', cls: 'on-company',  yg: 3 },
 ];
+
+// Filtres du calendrier promo : année de progression (1/2/3) + cohorte (FTP/ALT)
+let _calYG = 1;
+let _calCohort = 'FTP';
+
+// Remplit le sélecteur « Année de progression » (1/2/3) au sein de l'année
+// universitaire active. Chaque année de progression = une cohorte de l'année.
+function buildCalYearSelect() {
+    const sel = document.getElementById('cal-year-select');
+    if (!sel) return;
+    const labels = { 1: 'Année 1 (S1 / S2)', 2: 'Année 2 (S3 / S4)', 3: 'Année 3 (S5 / S6)' };
+    sel.innerHTML = [1, 2, 3].map(yg => `<option value="${yg}">${labels[yg]}</option>`).join('');
+    if (![1, 2, 3].includes(_calYG)) _calYG = 1;
+    sel.value = _calYG;
+}
+
+// Plage (début/fin de semaine) de l'année de progression sélectionnée,
+// avec repli sur la plage globale. Les clés JSON sont des chaînes ('1'…).
+function calYearRange() {
+    const rr = (state.config && state.config.academic_ranges) || {};
+    const r = rr[_calYG] || rr[String(_calYG)];
+    const gmax = (state.config && state.config.academic_max_week) || 52;
+    if (r) return { start: r.start, end: r.end, max: r.max || gmax };
+    return { start: (state.config && state.config.academic_start_week) || 36,
+             end:   (state.config && state.config.academic_end_week)   || 26,
+             max:   gmax };
+}
+
+function onCalFilterChange() {
+    _calYG = parseInt(document.getElementById('cal-year-select').value) || 1;
+    _calCohort = document.getElementById('cal-cohort-select').value || 'FTP';
+    document.getElementById('cal-range-year-label').textContent = 'année ' + _calYG;
+    const rg = calYearRange();
+    document.getElementById('config-start-week').value = String(rg.start);
+    document.getElementById('config-end-week').value   = String(rg.end);
+    document.getElementById('cal-max-week').value      = String(rg.max);
+    renderCalendrierPage(rg.start, rg.end, rg.max);
+}
+
+// Écrit la plage courante (début/fin/max) de l'année dans le cache local.
+function _writeCalRange() {
+    const start = parseInt(document.getElementById('config-start-week').value);
+    const end   = parseInt(document.getElementById('config-end-week').value);
+    const max   = parseInt(document.getElementById('cal-max-week').value) || 52;
+    if (state.config) {
+        state.config.academic_ranges = state.config.academic_ranges || {};
+        state.config.academic_ranges[String(_calYG)] = { start, end, max };
+    }
+    return { start, end, max };
+}
+
+// Modification live de la plage / du nombre de semaines (adapte le tableau).
+function onCalRangeChange() {
+    const rg = _writeCalRange();
+    renderCalendrierPage(rg.start, rg.end, rg.max);
+}
 
 async function loadCalendrier() {
     const body = document.getElementById('calendrier-body');
@@ -4752,13 +4759,18 @@ async function loadCalendrier() {
         _categoryCodes = codes || {};
         state.config = cfg;
         renderPromotionGroups(pg);
+        buildCalYearSelect();
+        document.getElementById('cal-cohort-select').value = _calCohort;
+        document.getElementById('cal-range-year-label').textContent = 'année ' + _calYG;
         buildAllWeekSelect('sem-odd-start',  cfg.semester_odd_start_week);
         buildAllWeekSelect('sem-odd-end',    cfg.semester_odd_end_week);
         buildAllWeekSelect('sem-even-start', cfg.semester_even_start_week);
         buildAllWeekSelect('sem-even-end',   cfg.semester_even_end_week);
-        buildAllWeekSelect('config-start-week', cfg.academic_start_week);
-        buildAllWeekSelect('config-end-week',   cfg.academic_end_week);
-        renderCalendrierPage(cfg.academic_start_week || 36, cfg.academic_end_week || 26);
+        const rg = calYearRange();
+        buildAllWeekSelect('config-start-week', rg.start);
+        buildAllWeekSelect('config-end-week',   rg.end);
+        document.getElementById('cal-max-week').value = String(rg.max);
+        renderCalendrierPage(rg.start, rg.end, rg.max);
     } catch(e) {
         body.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
     }
@@ -4780,18 +4792,20 @@ function syncSemesterDates(source) {
     const evenStart = parseInt(document.getElementById('sem-even-start').value);
     if (evenStart) {
         state.config = { ...(state.config || {}), semester_even_start_week: evenStart };
-        renderCalendrierPage(state.config.academic_start_week || 36, state.config.academic_end_week || 26);
+        const rg = calYearRange();
+        renderCalendrierPage(rg.start, rg.end, rg.max);
     }
 }
 
-function renderCalendrierPage(startWeek, endWeek) {
-    // Liste des semaines dans l'ordre scolaire
+function renderCalendrierPage(startWeek, endWeek, maxW) {
+    // Liste des semaines dans l'ordre scolaire (maxW = 52 ou 53 pour l'année)
+    const mw = parseInt(maxW) || maxWeek();
     const weeks = [];
     const sw = parseInt(startWeek), ew = parseInt(endWeek);
     if (sw <= ew) {
         for (let w = sw; w <= ew; w++) weeks.push(w);
     } else {
-        for (let w = sw; w <= maxWeek(); w++) weeks.push(w);
+        for (let w = sw; w <= mw; w++) weeks.push(w);
         for (let w = 1;  w <= ew; w++) weeks.push(w);
     }
 
@@ -4804,7 +4818,12 @@ function renderCalendrierPage(startWeek, endWeek) {
 
     let html = '<div class="cal-grid"><table><thead><tr><th class="cal-cat">Catégorie</th><th class="cal-code">Code</th>' + hdr + '</tr></thead><tbody>';
 
-    _CAL_CATS.forEach(cat => {
+    // Filtre : seulement l'année de progression choisie + la cohorte
+    // (FTP → vacances + stages ; ALT → entreprise).
+    const visibleCats = _CAL_CATS.filter(cat => cat.yg === _calYG &&
+        (_calCohort === 'ALT' ? cat.cls === 'on-company' : cat.cls !== 'on-company'));
+
+    visibleCats.forEach(cat => {
         const sel = new Set(_calData[cat.key] || []);
         const cells = weeks.map((w, i) => {
             const on = sel.has(w);
@@ -4914,8 +4933,11 @@ async function saveCalendrier() {
     };
     const aSw = parseInt(document.getElementById('config-start-week').value);
     const aEw = parseInt(document.getElementById('config-end-week').value);
-    if (aSw) dates.academic_start_week = aSw;
-    if (aEw) dates.academic_end_week = aEw;
+    const aMx = parseInt(document.getElementById('cal-max-week').value);
+    // Plage propre à l'année de progression sélectionnée (_calYG)
+    if (aSw) dates['academic_start_week_y' + _calYG] = aSw;
+    if (aEw) dates['academic_end_week_y' + _calYG]   = aEw;
+    if (aMx) dates['academic_max_week_y' + _calYG]   = aMx;
     if (Object.values(dates).some(v => !v)) {
         toast('Renseigner les semaines de début et de fin des semestres', 'error');
         return;
@@ -4925,8 +4947,11 @@ async function saveCalendrier() {
         await api('/config', { method: 'PUT', body: JSON.stringify(dates) });
         await api('/week-comments', { method: 'PUT', body: JSON.stringify(_weekComments) });
         await api('/category-codes', { method: 'PUT', body: JSON.stringify(_categoryCodes) });
-        state.config = { ...(state.config || {}), ...dates };
-        renderCalendrierPage(state.config.academic_start_week || 36, state.config.academic_end_week || 26);
+        state.config = { ...(state.config || {}) };
+        state.config.academic_ranges = { ...(state.config.academic_ranges || {}) };
+        if (aSw && aEw) state.config.academic_ranges[String(_calYG)] = { start: aSw, end: aEw, max: aMx || 52 };
+        const rg = calYearRange();
+        renderCalendrierPage(rg.start, rg.end, rg.max);
         toast('Calendrier enregistré');
     } catch(e) {
         toast('Erreur : ' + e.message, 'error');
@@ -4963,7 +4988,13 @@ async function loadRepartition() {
         _specialCalRaw = calRaw || {};
         _categoryCodes = catCodes || {};
 
-        const weeks = datas[sems[0]].weeks;  // plage complète, identique pour tous les semestres
+        // Colonnes = union des plages de tous les calendriers affichés :
+        // du début le plus tôt à la fin la plus tardive, en ordre scolaire.
+        const anchor = (state.config && state.config.academic_start_week) || 36;
+        const mw = maxWeek();
+        const skey = w => (w >= anchor ? w - anchor : w - anchor + mw);
+        const weeks = [...new Set(sems.flatMap(s => datas[s].weeks || []))]
+            .sort((a, b) => skey(a) - skey(b));
         const rows = [];
         sems.forEach(s => rows.push(...datas[s].rows));   // corps : semestres sélectionnés uniquement
 
@@ -5305,12 +5336,15 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
     // On ne garde que les catégories cohérentes avec la formation et les années
     // (year_group) des semestres sélectionnés.
     const catMeta = {
-        vacation_ftp:   { form: 'ftp', yg: null },  // FTP, toutes années
-        stage_ftp_y2:   { form: 'ftp', yg: 2 },
-        stage_ftp_y3:   { form: 'ftp', yg: 3 },
-        company_alt_y1: { form: 'alt', yg: 1 },
-        company_alt_y2: { form: 'alt', yg: 2 },
-        company_alt_y3: { form: 'alt', yg: 3 },
+        vacation_ftp_y1: { form: 'ftp', yg: 1 },
+        vacation_ftp_y2: { form: 'ftp', yg: 2 },
+        vacation_ftp_y3: { form: 'ftp', yg: 3 },
+        stage_ftp_y1:    { form: 'ftp', yg: 1 },
+        stage_ftp_y2:    { form: 'ftp', yg: 2 },
+        stage_ftp_y3:    { form: 'ftp', yg: 3 },
+        company_alt_y1:  { form: 'alt', yg: 1 },
+        company_alt_y2:  { form: 'alt', yg: 2 },
+        company_alt_y3:  { form: 'alt', yg: 3 },
     };
     const selYG = new Set(selected.map(s => Math.ceil((parseInt(String(s).replace(/\D/g, '')) || 0) / 2)));
     const catVisible = key => {

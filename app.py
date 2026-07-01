@@ -166,6 +166,69 @@ def list_years():
                 years.append(name)
     return sorted(years)
 
+# ===== CRÉATION DES ANNÉES UNIVERSITAIRES D'UNE PROMOTION =====
+# Le contexte de travail est l'année universitaire (base edt_<année>.db, toutes
+# cohortes S1→S6). Créer une promotion crée/complète ses 3 années universitaires
+# en copiant l'année existante la plus récente qui la précède.
+def _copy_db_with_migrations(src, dest):
+    """Copie une base SQLite puis met à jour son schéma."""
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    shutil.copy2(src, dest)
+    db = sqlite3.connect(dest)
+    db.row_factory = sqlite3.Row
+    _apply_migrations(db)
+    db.close()
+
+def _ensure_academic_year_db(year):
+    """Crée la base d'une année universitaire si absente. Source de copie :
+    l'année existante la plus proche AVANT (sinon la plus proche APRÈS), sinon
+    base vierge. Retourne le chemin."""
+    path = db_path_for_year(year)
+    if os.path.exists(path):
+        return path
+    try:
+        start = int(str(year).split('-')[0])
+    except (ValueError, IndexError):
+        start = None
+    src = None
+    if start is not None:
+        years = sorted(list_years(), key=lambda y: int(y.split('-')[0]))
+        prior = [y for y in years if int(y.split('-')[0]) < start]
+        later = [y for y in years if int(y.split('-')[0]) > start]
+        if prior:
+            src = db_path_for_year(prior[-1])   # année précédente la plus proche
+        elif later:
+            src = db_path_for_year(later[0])    # sinon année suivante la plus proche
+    if src and os.path.exists(src):
+        _copy_db_with_migrations(src, path)
+    else:
+        _init_fresh_db(path)
+    return path
+
+def _ensure_years_for_promo(start_year):
+    """Crée/complète les 3 années universitaires couvertes par une promotion
+    (start→+1, +1→+2, +2→+3), chacune copiée de la précédente. Retourne la liste créée."""
+    created = []
+    for i in range(3):
+        year = f"{start_year + i}-{start_year + i + 1}"
+        if not os.path.exists(db_path_for_year(year)):
+            _ensure_academic_year_db(year)
+            created.append(year)
+    return created
+
+def ensure_years_for_all_promotions():
+    """Crée les années universitaires manquantes de TOUTES les promotions
+    existantes (backfill idempotent). Traite les promos de la plus ancienne à la
+    plus récente pour que les copies se propagent correctement."""
+    try:
+        rows = get_promotions_db().execute('SELECT start_year FROM promotions').fetchall()
+    except sqlite3.Error:
+        return []
+    created = []
+    for start in sorted(r['start_year'] for r in rows):
+        created += _ensure_years_for_promo(start)
+    return created
+
 def _migrate_db_layout():
     """Déplace les bases edt_<année>.db de la racine vers databases/<année>/.
     Migration unique et idempotente, exécutée au démarrage."""
@@ -310,7 +373,8 @@ def get_academic_max_week(year=None):
 
 # Helper function to get database connection
 def _open_connection(path=None):
-    """Ouvre une connexion SQLite brute (helper interne)"""
+    """Ouvre une connexion SQLite brute (helper interne).
+    Contexte = année universitaire courante (base legacy en dernier recours)."""
     year = get_current_year()
     p = path or (db_path_for_year(year) if year else DATABASE)
     db = sqlite3.connect(p, timeout=10)
@@ -667,6 +731,14 @@ def _apply_migrations(db):
         JOIN semesters s ON ssw.semester_id = s.id
         WHERE ssw.week_type = 'company_alt' AND s.year_group IN (1, 2, 3)
     ''')
+    # Vacances FTP désormais spécifiques à l'année de progression (1/2/3).
+    # Réplique l'ancien 'vacation_ftp' (partagé) vers y1/y2/y3, puis le supprime.
+    if db.execute("SELECT 1 FROM special_calendar WHERE week_type='vacation_ftp' LIMIT 1").fetchone():
+        for _yg in (1, 2, 3):
+            db.execute('''INSERT OR IGNORE INTO special_calendar (week_number, week_type)
+                          SELECT week_number, ? FROM special_calendar WHERE week_type='vacation_ftp' ''',
+                       (f'vacation_ftp_y{_yg}',))
+        db.execute("DELETE FROM special_calendar WHERE week_type='vacation_ftp'")
     cursor = db.execute('SELECT COUNT(*) as cnt FROM semesters')
     if cursor.fetchone()['cnt'] == 0:
         for code, yg, name in [
@@ -845,23 +917,45 @@ def _apply_migrations(db):
     db.commit()
 
 def get_year_config():
-    """Lit la configuration de l'année courante (semaines début/fin)"""
+    """Lit la configuration de l'année courante (semaines début/fin).
+    Inclut une plage optionnelle PAR année de progression (1/2/3) ; si non
+    définie pour une année, on retombe sur la plage globale."""
     db = get_db()
     cursor = db.cursor()
-    cursor.execute("""SELECT key, value FROM app_settings WHERE key IN (
-        'academic_start_week','academic_end_week',
-        'semester_odd_start_week','semester_odd_end_week',
-        'semester_even_start_week','semester_even_end_week')""")
-    cfg = {r['key']: int(r['value']) for r in cursor.fetchall()}
+    cursor.execute("SELECT key, value FROM app_settings")
+    cfg = {}
+    for r in cursor.fetchall():
+        try:
+            cfg[r['key']] = int(r['value'])
+        except (TypeError, ValueError):
+            pass  # valeurs non entières (ex. hetd_coeffs) ignorées ici
+    gstart = cfg.get('academic_start_week', 36)
+    gend   = cfg.get('academic_end_week',   26)
+    gmax   = get_academic_max_week()
+    ranges = {}
+    for yg in (1, 2, 3):
+        ranges[yg] = {
+            'start': cfg.get(f'academic_start_week_y{yg}', gstart),
+            'end':   cfg.get(f'academic_end_week_y{yg}',   gend),
+            'max':   cfg.get(f'academic_max_week_y{yg}',   gmax),
+        }
     return {
-        'academic_start_week': cfg.get('academic_start_week', 36),
-        'academic_end_week':   cfg.get('academic_end_week',   26),
+        'academic_start_week': gstart,
+        'academic_end_week':   gend,
+        'academic_ranges':     ranges,
         'semester_odd_start_week':  cfg.get('semester_odd_start_week',  36),
         'semester_odd_end_week':    cfg.get('semester_odd_end_week',    4),
         'semester_even_start_week': cfg.get('semester_even_start_week', 5),
         'semester_even_end_week':   cfg.get('semester_even_end_week',   26),
-        'academic_max_week':   get_academic_max_week(),
+        'academic_max_week':   gmax,
     }
+
+def year_range_for_yg(cfg, yg):
+    """(start, end, max) de la plage de l'année de progression yg (repli global)."""
+    r = (cfg.get('academic_ranges') or {}).get(yg) or (cfg.get('academic_ranges') or {}).get(str(yg))
+    if r:
+        return r['start'], r['end'], r.get('max', cfg['academic_max_week'])
+    return cfg['academic_start_week'], cfg['academic_end_week'], cfg['academic_max_week']
 
 def get_valid_school_weeks(start_week=36, end_week=26, max_week=52):
     """Ensemble des semaines valides pour une plage scolaire (peut chevaucher S52/S53→S01).
@@ -929,6 +1023,14 @@ def init_db():
             db.close()
     except RuntimeError:
         db.close()  # Hors contexte Flask → fermer manuellement
+
+    # Backfill : crée les années universitaires manquantes des promotions existantes.
+    try:
+        created = ensure_years_for_all_promotions()
+        if created:
+            print(f"  Années universitaires créées (backfill promos) : {', '.join(created)}")
+    except Exception as e:
+        print(f"  [warn] backfill des années des promotions échoué : {e}")
 
 # Helper function to convert sqlite3.Row to dict
 def row_to_dict(row):
@@ -1983,7 +2085,7 @@ def list_promotions():
         SELECT p.*,
                (SELECT COUNT(*) FROM promotion_students s WHERE s.promotion_id=p.id) AS total,
                (SELECT COUNT(*) FROM promotion_students s WHERE s.promotion_id=p.id AND s.statut='Actif') AS actifs
-        FROM promotions p ORDER BY p.start_year DESC, p.name''').fetchall()
+        FROM promotions p ORDER BY p.start_year ASC, p.name''').fetchall()
     # Nom du programme affecté (base programmes séparée → résolution en mémoire)
     prog_names = {}
     try:
@@ -2096,8 +2198,20 @@ def create_promotion():
     cur = db.execute('''INSERT INTO promotions(name, formation, start_year, end_year, updated_at)
                         VALUES(?,'MUT',?,?,CURRENT_TIMESTAMP)''', (name, start, start + 3))
     db.commit()
-    _audit('PROMO_CREATE', ip=_client_ip(), user=session.get('user'), promo=name)
-    return jsonify(_promotion_payload(db, cur.lastrowid))
+    new_id = cur.lastrowid
+    # Crée/complète les 3 années universitaires de la promo (start→+1→+2→+3),
+    # chacune copiée de l'année précédente existante (matières, sessions,
+    # répartition, calendrier). Sans effet si les années existent déjà.
+    created_years = []
+    try:
+        created_years = _ensure_years_for_promo(start)
+    except Exception as e:
+        app.logger.warning('Création des années de la promo %s échouée : %s', new_id, e)
+    _audit('PROMO_CREATE', ip=_client_ip(), user=session.get('user'), promo=name,
+           years=','.join(created_years))
+    payload = _promotion_payload(db, new_id)
+    payload['created_years'] = created_years
+    return jsonify(payload)
 
 @app.route('/api/promotions/<int:pid>', methods=['GET'])
 def get_promotion(pid):
@@ -2119,6 +2233,7 @@ def delete_promotion(pid):
         return error_response('Promotion introuvable', 404)
     db.execute('DELETE FROM promotions WHERE id=?', (pid,))
     db.commit()
+    # Les années universitaires ne sont PAS supprimées (partagées entre cohortes).
     return jsonify({'deleted': True})
 
 @app.route('/api/promotions/<int:pid>/students', methods=['POST'])
@@ -3683,7 +3798,8 @@ def set_special_weeks(sem_id):
 
 # ======================= SPECIAL CALENDAR =======================
 
-_SPECIAL_TYPES = ['vacation_ftp', 'stage_ftp_y2', 'stage_ftp_y3',
+_SPECIAL_TYPES = ['vacation_ftp_y1', 'vacation_ftp_y2', 'vacation_ftp_y3',
+                  'stage_ftp_y1', 'stage_ftp_y2', 'stage_ftp_y3',
                   'company_alt_y1', 'company_alt_y2', 'company_alt_y3']
 
 @app.route('/api/special-calendar', methods=['GET'])
@@ -5100,16 +5216,31 @@ def get_config():
 def update_config():
     data = request.get_json() or {}
     db = get_db()
-    for key in ['academic_start_week', 'academic_end_week',
-                'semester_odd_start_week', 'semester_odd_end_week',
-                'semester_even_start_week', 'semester_even_end_week']:
+    keys = ['academic_start_week', 'academic_end_week',
+            'semester_odd_start_week', 'semester_odd_end_week',
+            'semester_even_start_week', 'semester_even_end_week']
+    # Plages par année de progression (1/2/3), optionnelles
+    for yg in (1, 2, 3):
+        keys += [f'academic_start_week_y{yg}', f'academic_end_week_y{yg}']
+    for key in keys:
         if key in data:
             try:
                 val = int(data[key])
             except (TypeError, ValueError):
                 return error_response(f'{key} doit être un entier', 400)
-            if val < 1 or val > 52:
-                return error_response(f'{key} hors plage (1–52)', 400)
+            if val < 1 or val > 53:
+                return error_response(f'{key} hors plage (1–53)', 400)
+            db.execute('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', (key, str(val)))
+    # Nombre de semaines de l'année (52 ou 53) par année de progression
+    for yg in (1, 2, 3):
+        key = f'academic_max_week_y{yg}'
+        if key in data:
+            try:
+                val = int(data[key])
+            except (TypeError, ValueError):
+                return error_response(f'{key} doit être un entier', 400)
+            if val not in (52, 53):
+                return error_response(f'{key} doit valoir 52 ou 53', 400)
             db.execute('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', (key, str(val)))
     db.commit()
     return jsonify({'message': 'Configuration mise à jour'})
@@ -5182,6 +5313,13 @@ def get_repartition():
             except Exception:
                 pass
 
+        # Plage des colonnes = plage propre à l'année de progression du semestre
+        # (début/fin + nb de semaines 52/53), repli global si non définie.
+        if year_group:
+            start_week, end_week_cfg, max_week = year_range_for_yg(cfg, year_group)
+            _key = lambda w: school_week_key(w, start_week, max_week)
+            weeks = sorted(get_valid_school_weeks(start_week, end_week_cfg, max_week), key=_key)
+
         # Charger le calendrier spécial global
         cursor.execute('SELECT week_number, week_type FROM special_calendar ORDER BY week_type, week_number')
         sc = {t: [] for t in _SPECIAL_TYPES}
@@ -5190,8 +5328,8 @@ def get_repartition():
                 sc[r['week_type']].append(r['week_number'])
 
         special_weeks = {
-            'vacation_ftp': sc['vacation_ftp'],
-            'stage_ftp':    sc.get(f'stage_ftp_y{year_group}', []) if year_group and year_group >= 2 else [],
+            'vacation_ftp': sc.get(f'vacation_ftp_y{year_group}', []) if year_group else [],
+            'stage_ftp':    sc.get(f'stage_ftp_y{year_group}', []) if year_group else [],
             'company_alt':  sc.get(f'company_alt_y{year_group}', []) if year_group else [],
         }
 
@@ -5474,8 +5612,8 @@ def export_repartition_excel():
             ws = wb.create_sheet(title=sheet_name)
 
             # Semaines spéciales pour cette année
-            sp_vacation = sc['vacation_ftp']
-            sp_stage = sc.get(f'stage_ftp_y{yg}', set()) if yg >= 2 else set()
+            sp_vacation = sc.get(f'vacation_ftp_y{yg}', set())
+            sp_stage = sc.get(f'stage_ftp_y{yg}', set())
             sp_company = sc.get(f'company_alt_y{yg}', set())
 
             # Grouper par matière
@@ -5540,7 +5678,7 @@ def export_repartition_excel():
                 labels = []
                 # Code de la catégorie si défini, sinon libellé complet
                 if w in sp_vacation:
-                    labels.append(category_codes.get('vacation_ftp') or 'Vacances')
+                    labels.append(category_codes.get(f'vacation_ftp_y{yg}') or 'Vacances')
                 if w in sp_stage:
                     labels.append(category_codes.get(f'stage_ftp_y{yg}') or 'Stage FTP')
                 if w in sp_company:
@@ -5832,7 +5970,9 @@ def export_repartition_excel():
             ws = wb.create_sheet(title=_safe_sheet_name(tname, used_titles))
 
             teacher_ygs = sorted({s['year_group'] for s in tsessions if s['year_group']})
-            sp_vac = sc['vacation_ftp']
+            sp_vac = set()
+            for g in teacher_ygs:
+                sp_vac |= sc.get(f'vacation_ftp_y{g}', set())
             total_prev = sum(s['total_hours'] or 0 for s in tsessions)
             total_placed = sum(sum(s['by_week'].get(w, 0) for w in weeks) for s in tsessions)
 
@@ -5847,9 +5987,9 @@ def export_repartition_excel():
             for i, w in enumerate(weeks):
                 labels = []
                 if w in sp_vac:
-                    labels.append(category_codes.get('vacation_ftp') or 'Vacances')
+                    labels.append('Vacances')
                 for g in teacher_ygs:
-                    if g >= 2 and w in sc.get(f'stage_ftp_y{g}', set()):
+                    if w in sc.get(f'stage_ftp_y{g}', set()):
                         labels.append(category_codes.get(f'stage_ftp_y{g}') or 'Stage FTP')
                     if w in sc.get(f'company_alt_y{g}', set()):
                         labels.append(category_codes.get(f'company_alt_y{g}') or 'Entreprise ALT')
@@ -5918,8 +6058,8 @@ def export_repartition_excel():
                     form_fill = fill_mut if form == 'MUT' else fill_ftp if form == 'FTP' else fill_alt
                     for s in grp:
                         yg_s = s['year_group']
-                        sp_v = sc['vacation_ftp']
-                        sp_st = sc.get(f'stage_ftp_y{yg_s}', set()) if yg_s and yg_s >= 2 else set()
+                        sp_v = sc.get(f'vacation_ftp_y{yg_s}', set()) if yg_s else set()
+                        sp_st = sc.get(f'stage_ftp_y{yg_s}', set()) if yg_s else set()
                         sp_co = sc.get(f'company_alt_y{yg_s}', set())
                         ws.cell(row=row, column=TF_FORM).fill = form_fill
                         ws.cell(row=row, column=TF_FORMKEY, value=form).font = font_data
@@ -6320,6 +6460,14 @@ def optimize_repartition():
         start_week   = cfg['academic_start_week']
         end_week_cfg = cfg['academic_end_week']
         max_week     = cfg['academic_max_week']
+        # Plage (début/fin + nb semaines 52/53) propre à l'année de progression
+        # optimisée — un appel = un semestre = une seule année (repli global).
+        if sem_codes:
+            try:
+                yg0 = (int(sem_codes[0].lstrip('S')) + 1) // 2
+                start_week, end_week_cfg, max_week = year_range_for_yg(cfg, yg0)
+            except (ValueError, IndexError):
+                pass
         _key = lambda w: school_week_key(w, start_week, max_week)
         all_valid_weeks = get_valid_school_weeks(start_week, end_week_cfg, max_week)
 
@@ -6446,21 +6594,19 @@ def optimize_repartition():
             yg = s['year_group']
             excluded_types = []
             if ft == 0:   # FTP : vacances + stages selon année
-                valid -= sc['vacation_ftp']
+                valid -= sc.get(f'vacation_ftp_y{yg}', set())
                 excluded_types.append('vacances FTP')
-                if yg == 2:
-                    valid -= sc['stage_ftp_y2']
-                    excluded_types.append('stages FTP 2A')
-                elif yg == 3:
-                    valid -= sc['stage_ftp_y3']
-                    excluded_types.append('stages FTP 3A')
+                stg = sc.get(f'stage_ftp_y{yg}', set())
+                if stg:
+                    valid -= stg
+                    excluded_types.append(f'stages FTP {yg}A')
             elif ft == 1:   # ALT : semaines entreprise selon année
                 excl = sc.get(f'company_alt_y{yg}', set())
                 valid -= excl
                 if excl:
                     excluded_types.append(f'entreprise ALT {yg}A')
             elif ft == 2:   # MUT : compte pour FTP → exclure vacances FTP
-                valid -= sc['vacation_ftp']
+                valid -= sc.get(f'vacation_ftp_y{yg}', set())
                 excluded_types.append('vacances FTP')
 
             sw_list = sorted(valid, key=_key)
