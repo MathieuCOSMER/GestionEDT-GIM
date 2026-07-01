@@ -147,9 +147,15 @@ def db_path_for_year(year):
 
 def get_current_year():
     """Année universitaire active pour la requête courante.
-    Priorité à l'année choisie par l'utilisateur dans SA session (vue
-    personnelle, sans impact sur les autres), sinon le défaut global.
+    Priorité : override de requête (?year=, ex. calendrier cohorte pluriannuel)
+    > année choisie dans la session (vue perso) > défaut global.
     Hors contexte requête (init, backups, scripts) : défaut global."""
+    try:
+        ov = getattr(g, '_year_override', None)
+        if ov:
+            return ov
+    except RuntimeError:
+        pass
     try:
         y = session.get('year')
         if y and os.path.isfile(db_path_for_year(y)):
@@ -994,6 +1000,18 @@ def _init_fresh_db(path):
     _apply_migrations(db)
     db.close()
 
+def _migrate_all_years():
+    """Applique les migrations de schéma à TOUTES les bases année (pas seulement
+    l'année courante) : on peut cibler n'importe quelle année via ?year=."""
+    for year in list_years():
+        try:
+            db = sqlite3.connect(db_path_for_year(year))
+            db.row_factory = sqlite3.Row
+            _apply_migrations(db)
+            db.close()
+        except sqlite3.Error as e:
+            print(f"  [warn] migration de l'année {year} échouée : {e}")
+
 # Helper function to initialize database
 def init_db():
     """Initialise la DB pour l'année courante, migre depuis edt.db si besoin"""
@@ -1031,6 +1049,11 @@ def init_db():
             print(f"  Années universitaires créées (backfill promos) : {', '.join(created)}")
     except Exception as e:
         print(f"  [warn] backfill des années des promotions échoué : {e}")
+
+    # Migration du schéma sur TOUTES les bases année (pas seulement l'année
+    # courante) : on peut cibler n'importe quelle année via ?year= (calendrier
+    # cohorte). Sans cela, une vieille base peut manquer une table récente.
+    _migrate_all_years()
 
 # Helper function to convert sqlite3.Row to dict
 def row_to_dict(row):
@@ -1094,6 +1117,21 @@ def _daily_backup_hook():
         _maybe_daily_backup()
     except Exception:
         pass
+
+# Endpoints du calendrier : peuvent cibler une année universitaire précise via
+# ?year=AAAA-AAAA (édition du calendrier d'une cohorte sur ses 3 années, chacune
+# stockée dans une base année différente).
+_YEAR_OVERRIDE_PATHS = {
+    '/api/special-calendar', '/api/config', '/api/week-comments',
+    '/api/category-codes', '/api/promotion-groups',
+}
+
+@app.before_request
+def _apply_year_override():
+    if request.path in _YEAR_OVERRIDE_PATHS:
+        y = request.args.get('year')
+        if y and _is_year(y) and os.path.exists(db_path_for_year(y)):
+            g._year_override = y
 
 @app.before_request
 def _require_auth():
@@ -2085,7 +2123,7 @@ def list_promotions():
         SELECT p.*,
                (SELECT COUNT(*) FROM promotion_students s WHERE s.promotion_id=p.id) AS total,
                (SELECT COUNT(*) FROM promotion_students s WHERE s.promotion_id=p.id AND s.statut='Actif') AS actifs
-        FROM promotions p ORDER BY p.start_year ASC, p.name''').fetchall()
+        FROM promotions p ORDER BY p.start_year DESC, p.name''').fetchall()
     # Nom du programme affecté (base programmes séparée → résolution en mémoire)
     prog_names = {}
     try:

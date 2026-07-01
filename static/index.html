@@ -324,7 +324,6 @@
     <strong>EDT Manager</strong>
     <button onclick="showPage('repartition')" class="active" id="nav-repartition">Répartition Calendaire</button>
     <button onclick="showPage('repartition-enseignant')" id="nav-repartition-enseignant">Bilan Global</button>
-    <button onclick="showPage('calendrier')" id="nav-calendrier">Calendrier</button>
     <button onclick="showPage('matieres')" id="nav-matieres">Matières</button>
     <button onclick="showPage('salles')" id="nav-salles">Salles</button>
     <button onclick="showPage('enseignants')" id="nav-enseignants">Liste des enseignants</button>
@@ -495,11 +494,85 @@
     </div>
     <div class="subtabs" id="promo-subtabs" style="display:flex;gap:6px;margin-bottom:10px">
         <button type="button" id="promo-subtab-effectif" class="subtab active" onclick="showPromoTab('effectif')">Effectifs</button>
+        <button type="button" id="promo-subtab-groupes" class="subtab" onclick="showPromoTab('groupes')">Groupes</button>
+        <button type="button" id="promo-subtab-calendrier" class="subtab" onclick="showPromoTab('calendrier')">Calendrier</button>
         <button type="button" id="promo-subtab-notes" class="subtab" onclick="showPromoTab('notes')">Notes</button>
         <button type="button" id="promo-subtab-actions" class="subtab" onclick="showPromoTab('actions')">Actions</button>
     </div>
     <div id="promo-tab-effectif">
         <div id="promo-content"><div style="color:#6b7280;padding:20px">Créez une promotion ou sélectionnez-en une pour gérer son effectif.</div></div>
+    </div>
+    <div id="promo-tab-groupes" style="display:none">
+        <div class="toolbar" style="align-items:center;justify-content:center;gap:10px;flex-wrap:wrap">
+            <label style="font-weight:600">Année de la cohorte :</label>
+            <select id="grp-year-select" onchange="onGrpYearChange()"></select>
+            <span style="color:#6b7280;font-size:.85rem">Groupes des cours mutualisés (FTP + ALT) de l'année sélectionnée.</span>
+        </div>
+        <div id="promo-groups-editor" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;text-align:center"><div class="spinner">Chargement…</div></div>
+    </div>
+    <div id="promo-tab-calendrier" style="display:none">
+        <div class="toolbar" style="align-items:center;gap:10px;flex-wrap:wrap">
+            <label style="font-weight:600">Année de la cohorte :</label>
+            <select id="cal-year-select" onchange="onCalYearChange()"></select>
+            <label style="font-weight:600;margin-left:8px">Cohorte :</label>
+            <select id="cal-cohort-select" onchange="onCalFilterChange()">
+                <option value="FTP">FTP</option><option value="ALT">ALT</option>
+            </select>
+            <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="saveCalendrier()">Enregistrer</button>
+        </div>
+        <div class="card" style="padding:16px;margin-bottom:16px">
+            <h3 style="margin:0 0 4px">Dates des semestres</h3>
+            <p style="color:#6b7280;font-size:.85rem;margin:0 0 12px">
+                Les semestres impairs (S1 / S3 / S5) et pairs (S2 / S4 / S6) partagent respectivement les mêmes dates.
+            </p>
+            <div style="display:flex;gap:32px;flex-wrap:wrap">
+                <div>
+                    <strong style="display:block;margin-bottom:6px">Semestres impairs <span style="color:#9ca3af;font-size:.8rem">(S1 / S3 / S5)</span></strong>
+                    <label style="font-size:.85rem">Début&nbsp;
+                        <select id="sem-odd-start" style="margin-right:12px"></select>
+                    </label>
+                    <label style="font-size:.85rem">Fin&nbsp;
+                        <select id="sem-odd-end" onchange="syncSemesterDates('odd-end')"></select>
+                    </label>
+                </div>
+                <div>
+                    <strong style="display:block;margin-bottom:6px">Semestres pairs <span style="color:#9ca3af;font-size:.8rem">(S2 / S4 / S6)</span></strong>
+                    <label style="font-size:.85rem">Début&nbsp;
+                        <select id="sem-even-start" style="margin-right:12px" onchange="syncSemesterDates('even-start')"></select>
+                    </label>
+                    <label style="font-size:.85rem">Fin&nbsp;
+                        <select id="sem-even-end"></select>
+                    </label>
+                </div>
+            </div>
+            <div style="margin-top:16px;border-top:1px solid #e5e7eb;padding-top:12px">
+                <strong style="display:block;margin-bottom:6px">Plage de l'<span id="cal-range-year-label">année</span> <span style="color:#9ca3af;font-size:.8rem">(première et dernière semaine de cours — définit le nombre de semaines)</span></strong>
+                <label style="font-size:.85rem">Début&nbsp;
+                    <select id="config-start-week" style="margin-right:12px" onchange="onCalRangeChange()"></select>
+                </label>
+                <label style="font-size:.85rem">Fin&nbsp;
+                    <select id="config-end-week" onchange="onCalRangeChange()"></select>
+                </label>
+                <label style="font-size:.85rem;margin-left:12px">Nombre de semaines&nbsp;
+                    <select id="cal-max-week" onchange="onCalRangeChange()">
+                        <option value="52">52</option><option value="53">53</option>
+                    </select>
+                </label>
+            </div>
+        </div>
+        <p style="color:#6b7280;font-size:.85rem;margin-bottom:16px">
+            Cliquez sur les semaines pour les inclure dans chaque catégorie (FTP : vacances &amp; stages ; ALT : semaines entreprise).
+            Ces semaines sont automatiquement exclues lors de l'optimisation.
+        </p>
+        <div class="card cal-card-full" style="padding:16px">
+            <div id="calendrier-body"><div class="spinner">Chargement…</div></div>
+        </div>
+        <div style="margin-top:12px;font-size:.8rem;color:#6b7280;display:flex;gap:12px;flex-wrap:wrap">
+            <strong>Légende :</strong>
+            <span style="background:#dbeafe;color:#1e40af;padding:2px 10px;border-radius:4px">Vacances FTP</span>
+            <span style="background:#fef08a;color:#854d0e;padding:2px 10px;border-radius:4px">Stages FTP</span>
+            <span style="background:#fed7aa;color:#9a3412;padding:2px 10px;border-radius:4px">Entreprise ALT</span>
+        </div>
     </div>
     <div id="promo-tab-actions" style="display:none">
         <div style="padding:20px;display:flex;gap:12px;flex-wrap:wrap">
@@ -541,19 +614,20 @@
             <button class="btn btn-secondary btn-sm" id="prog-rename-btn" onclick="renameProgramme()" disabled>Renommer</button>
             <button class="btn btn-secondary btn-sm" id="prog-dup-btn" onclick="duplicateProgramme()" disabled>Dupliquer</button>
             <button class="btn btn-secondary btn-sm" id="prog-del-btn" onclick="deleteProgramme()" disabled>Supprimer</button>
-            <label style="margin-left:12px">Semestres :</label>
-            <div id="prog-sem-toggle" class="sem-toggle">
-                <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleProgSem('S1',this)">S1</button>
-                <button type="button" class="sem-btn active" data-sem="S2" onclick="toggleProgSem('S2',this)">S2</button>
-                <button type="button" class="sem-btn active" data-sem="S3" onclick="toggleProgSem('S3',this)">S3</button>
-                <button type="button" class="sem-btn active" data-sem="S4" onclick="toggleProgSem('S4',this)">S4</button>
-                <button type="button" class="sem-btn active" data-sem="S5" onclick="toggleProgSem('S5',this)">S5</button>
-                <button type="button" class="sem-btn active" data-sem="S6" onclick="toggleProgSem('S6',this)">S6</button>
+            <label style="margin-left:12px">Année :</label>
+            <div id="prog-year-toggle" class="sem-toggle">
+                <button type="button" class="sem-btn active" data-yg="1" onclick="toggleProgYear(1,this)">Année 1</button>
+                <button type="button" class="sem-btn active" data-yg="2" onclick="toggleProgYear(2,this)">Année 2</button>
+                <button type="button" class="sem-btn active" data-yg="3" onclick="toggleProgYear(3,this)">Année 3</button>
             </div>
             <button class="btn btn-secondary btn-sm" id="prog-new-mat-btn" style="margin-left:14px" onclick="openNewProgMatiere()" disabled>+ Créer matière</button>
             <button class="btn btn-primary btn-sm" id="prog-save-btn" onclick="saveProg()" disabled>💾 Enregistrer</button>
             <button class="btn btn-secondary btn-sm" id="prog-reset-btn" onclick="resetProg()" disabled>↺ Réinitialiser (fichier d'origine)</button>
         </div>
+    </div>
+    <div class="subtabs" id="prog-subtabs" style="display:flex;gap:6px;margin-bottom:10px">
+        <button type="button" id="prog-subtab-coeff" class="subtab active" onclick="showProgTab('coeff')">Coefficients</button>
+        <button type="button" id="prog-subtab-matieres" class="subtab" onclick="showProgTab('matieres')">Matières</button>
     </div>
     <div id="prog-content"><div style="color:#6b7280;padding:20px">Choisissez ou créez un programme pour définir ses matières, compétences (UE), coefficients et heures.</div></div>
 </div>
@@ -692,79 +766,6 @@
     <div class="repartition-layout">
         <div id="repartition-table"><div class="spinner">Chargement…</div></div>
         <div id="checks-panel"></div>
-    </div>
-</div>
-
-<!-- ===== CALENDRIER SPÉCIAL (par année universitaire) ===== -->
-<div class="page" id="page-calendrier">
-    <div class="toolbar" style="align-items:center;gap:10px;flex-wrap:wrap">
-        <h1 style="margin-right:8px">Calendrier spécial</h1>
-        <label style="font-weight:600">Année de progression :</label>
-        <select id="cal-year-select" onchange="onCalFilterChange()"></select>
-        <label style="font-weight:600;margin-left:8px">Cohorte :</label>
-        <select id="cal-cohort-select" onchange="onCalFilterChange()">
-            <option value="FTP">FTP</option><option value="ALT">ALT</option>
-        </select>
-        <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="saveCalendrier()">Enregistrer</button>
-    </div>
-    <div class="card" style="padding:16px;margin-bottom:16px">
-        <h3 style="margin:0 0 4px">Dates des semestres</h3>
-        <p style="color:#6b7280;font-size:.85rem;margin:0 0 12px">
-            Les semestres impairs (S1 / S3 / S5) et pairs (S2 / S4 / S6) partagent respectivement les mêmes dates.
-        </p>
-        <div style="display:flex;gap:32px;flex-wrap:wrap">
-            <div>
-                <strong style="display:block;margin-bottom:6px">Semestres impairs <span style="color:#9ca3af;font-size:.8rem">(S1 / S3 / S5)</span></strong>
-                <label style="font-size:.85rem">Début&nbsp;
-                    <select id="sem-odd-start" style="margin-right:12px"></select>
-                </label>
-                <label style="font-size:.85rem">Fin&nbsp;
-                    <select id="sem-odd-end" onchange="syncSemesterDates('odd-end')"></select>
-                </label>
-            </div>
-            <div>
-                <strong style="display:block;margin-bottom:6px">Semestres pairs <span style="color:#9ca3af;font-size:.8rem">(S2 / S4 / S6)</span></strong>
-                <label style="font-size:.85rem">Début&nbsp;
-                    <select id="sem-even-start" style="margin-right:12px" onchange="syncSemesterDates('even-start')"></select>
-                </label>
-                <label style="font-size:.85rem">Fin&nbsp;
-                    <select id="sem-even-end"></select>
-                </label>
-            </div>
-        </div>
-        <div style="margin-top:16px;border-top:1px solid #e5e7eb;padding-top:12px">
-            <strong style="display:block;margin-bottom:6px">Plage de l'<span id="cal-range-year-label">année</span> <span style="color:#9ca3af;font-size:.8rem">(première et dernière semaine de cours — définit le nombre de semaines)</span></strong>
-            <label style="font-size:.85rem">Début&nbsp;
-                <select id="config-start-week" style="margin-right:12px" onchange="onCalRangeChange()"></select>
-            </label>
-            <label style="font-size:.85rem">Fin&nbsp;
-                <select id="config-end-week" onchange="onCalRangeChange()"></select>
-            </label>
-            <label style="font-size:.85rem;margin-left:12px">Nombre de semaines&nbsp;
-                <select id="cal-max-week" onchange="onCalRangeChange()">
-                    <option value="52">52</option><option value="53">53</option>
-                </select>
-            </label>
-        </div>
-    </div>
-    <details id="promo-groups-block" style="margin-bottom:16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px">
-        <summary style="cursor:pointer;font-weight:600;color:#374151">
-            Nombre de groupes par promotion (utilisé pour le calcul des services)
-        </summary>
-        <div id="promo-groups-editor" style="margin-top:12px"><div class="spinner">Chargement…</div></div>
-    </details>
-    <p style="color:#6b7280;font-size:.85rem;margin-bottom:16px">
-        Cliquez sur les semaines pour les inclure dans chaque catégorie (FTP : vacances &amp; stages ; ALT : semaines entreprise).
-        Ces semaines sont automatiquement exclues lors de l'optimisation.
-    </p>
-    <div class="card cal-card-full" style="padding:16px">
-        <div id="calendrier-body"><div class="spinner">Chargement…</div></div>
-    </div>
-    <div style="margin-top:12px;font-size:.8rem;color:#6b7280;display:flex;gap:12px;flex-wrap:wrap">
-        <strong>Légende :</strong>
-        <span style="background:#dbeafe;color:#1e40af;padding:2px 10px;border-radius:4px">Vacances FTP</span>
-        <span style="background:#fef08a;color:#854d0e;padding:2px 10px;border-radius:4px">Stages FTP</span>
-        <span style="background:#fed7aa;color:#9a3412;padding:2px 10px;border-radius:4px">Entreprise ALT</span>
     </div>
 </div>
 
@@ -1433,7 +1434,6 @@ async function loadPage(name, forceReload) {
             renderTeacherRepartition();
         }
         else if (name === 'repartition') { await loadRepartition(); }
-        else if (name === 'calendrier') { await loadCalendrier(); }
     } catch (e) {
         toast('Erreur de chargement : ' + e.message, 'error');
     }
@@ -1915,11 +1915,13 @@ let _coeffPromoId = null;   // promotion dont on édite les coefficients
 let _promoTab = 'effectif';
 function showPromoTab(tab) {
     _promoTab = tab;
-    ['effectif', 'notes', 'actions'].forEach(t => {
+    ['effectif', 'groupes', 'calendrier', 'notes', 'actions'].forEach(t => {
         document.getElementById('promo-subtab-' + t).classList.toggle('active', tab === t);
         document.getElementById('promo-tab-' + t).style.display = tab === t ? '' : 'none';
     });
     if (tab === 'notes') loadNotes();
+    else if (tab === 'calendrier') loadCalendrier();
+    else if (tab === 'groupes') loadPromoGroups();
 }
 
 async function _ensurePromotionsList() {
@@ -2264,18 +2266,21 @@ function _progPlaceholder(msg) {
 async function loadProgramme() {
     try { _progList = await api('/programmes'); } catch (e) { _progList = []; }
     const sel = document.getElementById('prog-select');
-    const cur = _progId || '';
+    let cur = _progId || '';
     sel.innerHTML = '<option value="">—</option>' + _progList.map(p =>
         `<option value="${p.id}">${esc(p.name)}${p.promotions ? ` (${p.promotions} promo.)` : ''}</option>`).join('');
+    // Présélection : programme courant si toujours présent, sinon le plus récent
+    // (id le plus élevé = dernier créé).
+    if (!(cur && _progList.some(p => String(p.id) === String(cur))) && _progList.length) {
+        cur = _progList.reduce((a, b) => (b.id > a.id ? b : a)).id;
+    }
     if (cur && _progList.some(p => String(p.id) === String(cur))) {
         sel.value = cur;
         await onProgChange();
     } else {
         _progId = null; _progData = null;
         _setProgButtons(false);
-        _progPlaceholder(_progList.length
-            ? 'Choisissez un programme pour le modifier.'
-            : 'Aucun programme. Cliquez sur « + Nouveau » pour en créer un.');
+        _progPlaceholder('Aucun programme. Cliquez sur « + Nouveau » pour en créer un.');
     }
 }
 
@@ -2299,27 +2304,110 @@ async function onProgChange() {
     renderProgTables();
 }
 
-function toggleProgSem(code, btn) {
-    if (_progSemesters.has(code)) _progSemesters.delete(code);
-    else _progSemesters.add(code);
-    btn.classList.toggle('active');
+function toggleProgYear(yg, btn) {
+    const sems = ['S' + (yg * 2 - 1), 'S' + (yg * 2)];   // Année 1 → S1,S2 ; 2 → S3,S4 ; 3 → S5,S6
+    const on = !btn.classList.contains('active');
+    sems.forEach(s => { if (on) _progSemesters.add(s); else _progSemesters.delete(s); });
+    btn.classList.toggle('active', on);
     if (!_progData) return;
     _collectProg();
-    renderProgTables();
+    renderProgCurrent();
 }
 
-function renderProgTables() {
+let _progTab = 'coeff';
+
+function showProgTab(tab) {
+    if (_progData) _collectProg();   // conserve les saisies de l'onglet courant
+    _progTab = tab;
+    ['coeff', 'matieres'].forEach(t =>
+        document.getElementById('prog-subtab-' + t).classList.toggle('active', t === tab));
+    renderProgCurrent();
+}
+
+function renderProgCurrent() {
+    if (_progTab === 'matieres') renderProgMatieres();
+    else renderProgCoeffs();
+}
+// Compat : anciens appels
+function renderProgTables() { renderProgCurrent(); }
+
+function _progVisibleSems() {
+    return ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].filter(s => _progData[s] && _progSemesters.has(s));
+}
+
+// Regroupe les blocs par année (S1+S2, S3+S4, S5+S6) et affiche les 2 semestres
+// d'une même année côte à côte. `renderOne(sem)` rend le bloc d'un semestre.
+function _progYearBlocks(sems, renderOne) {
+    const byYear = { 1: [], 2: [], 3: [] };
+    sems.forEach(s => { byYear[Math.ceil(parseInt(s.slice(1)) / 2)].push(s); });
+    return [1, 2, 3].map(yg => {
+        const ss = byYear[yg];
+        if (!ss.length) return '';
+        return `<h3 style="margin:18px 0 8px;color:#374151">Année ${yg}</h3>
+            <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">${ss.map(renderOne).join('')}</div>`;
+    }).join('');
+}
+
+// ----- Onglet Coefficients : matière (code/libellé) × compétences (UE) -----
+function renderProgCoeffs() {
     const el = document.getElementById('prog-content');
     if (!_progData) { el.innerHTML = '<div class="empty">Aucune donnée.</div>'; return; }
-    const sems = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].filter(s => _progData[s] && _progSemesters.has(s));
+    const sems = _progVisibleSems();
+    const renderOne = sem => {
+        const d = _progData[sem];
+        const comps = d.competences || [];
+        const totals = comps.map(c => Object.values(c.coeffs || {}).reduce((a, b) => a + Number(b), 0));
+        const head = `<tr>
+            <th style="padding:4px 6px;text-align:left">Code</th>
+            <th style="padding:4px 6px;text-align:left">Libellé</th>` +
+            comps.map(c => `<th style="background:#ede9fe;width:64px;padding:6px 2px;vertical-align:middle;text-align:center"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600">${esc(c.name)}</div></th>`).join('') + `</tr>`;
+        const mlist = d.components || [];
+        const rows = mlist.map((co, mi) => {
+            const special = _coeffSansCoefficient(co);
+            const cells = comps.map((c, ci) => {
+                if (special) return `<td style="padding:1px;text-align:center;color:#9ca3af" title="Sans coefficient (Bonus / Pénalité / AaR)">—</td>`;
+                const v = (c.coeffs || {})[co.code];
+                return `<td style="padding:1px;text-align:center"><input type="number" min="0" step="0.5"
+                    class="prg-coeff" data-sem="${sem}" data-ci="${ci}" data-mi="${mi}"
+                    value="${v === undefined || v === null ? '' : v}" oninput="updateProgTotal('${sem}',${ci})"
+                    style="width:60px;padding:2px 1px;text-align:center;border:1px solid #d1d5db;border-radius:4px"></td>`;
+            }).join('');
+            return `<tr data-mi="${mi}">
+                <td style="padding:2px 6px;font-weight:600;white-space:nowrap">${esc(co.code || '')}</td>
+                <td style="padding:2px 6px;white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis">${esc(co.short_label || co.label || '')}</td>
+                ${cells}</tr>`;
+        }).join('');
+        const totalRow = `<tr style="background:#f9fafb;font-weight:600">
+            <td colspan="2" style="background:#f9fafb;padding:4px 8px;text-align:right">Total</td>
+            ${comps.map((c, ci) => `<td class="prg-total" data-sem="${sem}" data-ci="${ci}" style="text-align:center;padding:2px 1px">${Math.round(totals[ci] * 100) / 100}</td>`).join('')}</tr>`;
+        return `<div>
+            <div style="font-weight:600;color:#4f46e5;margin-bottom:4px">${sem}</div>
+            <div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;width:fit-content;max-width:48vw">
+                <table class="nz-table" data-sem="${sem}" style="table-layout:auto"><thead>${head}</thead><tbody>${rows}${totalRow}</tbody></table>
+            </div></div>`;
+    };
+    const blocks = _progYearBlocks(sems, renderOne);
+    const prog = _progList.find(p => String(p.id) === String(_progId));
+    el.innerHTML = `
+        <p style="font-size:.8rem;color:#6b7280;margin:0 0 4px">
+            Programme <strong>${esc(prog ? prog.name : '')}</strong> — coefficient de chaque matière dans chaque
+            compétence (UE), par semestre (case vide = non prise en compte). Le total par compétence vaut normalement 60.
+            Les lignes Bonus / Pénalité / Aide à la réussite n'ont pas de coefficient.</p>
+        ${blocks || '<div class="empty">Aucun semestre sélectionné.</div>'}`;
+}
+
+// ----- Onglet Matières : définition (type / codes / libellés) et heures CM/TD/TP/PT -----
+function renderProgMatieres() {
+    const el = document.getElementById('prog-content');
+    if (!_progData) { el.innerHTML = '<div class="empty">Aucune donnée.</div>'; return; }
+    const sems = _progVisibleSems();
     const legend = [['SAE', 'SAE'], ['RES', 'Ressource']]
         .map(([k, lbl]) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:12px">
             <span style="width:12px;height:12px;border-radius:3px;background:${_coeffKindColor(k)};display:inline-block"></span>${lbl}</span>`).join('');
     const inS = 'padding:2px 4px;border:1px solid #d1d5db;border-radius:4px';
-    const blocks = sems.map(sem => {
+    const renderOne = sem => {
         const d = _progData[sem];
-        const comps = d.competences || [];
-        const totals = comps.map(c => Object.values(c.coeffs || {}).reduce((a, b) => a + Number(b), 0));
+        const mlist = d.components || [];
         const head = `<tr>
             <th style="width:58px;padding:4px 2px">Ordre</th>
             <th style="padding:4px 6px;text-align:left">Type</th>
@@ -2330,20 +2418,10 @@ function renderProgTables() {
             <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Cours magistral">CM</th>
             <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Travaux dirigés">TD</th>
             <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Travaux pratiques">TP</th>
-            <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Projet tutoré">PT</th>` +
-            comps.map(c => `<th style="background:#ede9fe;width:64px;padding:6px 2px;vertical-align:middle;text-align:center"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600">${esc(c.name)}</div></th>`).join('') + `</tr>`;
-        const mlist = d.components || [];
+            <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Projet tutoré">PT</th></tr>`;
         const rows = mlist.map((co, mi) => {
             const special = _coeffSansCoefficient(co);
             const isFirst = mi === 0, isLast = mi === mlist.length - 1;
-            const cells = comps.map((c, ci) => {
-                if (special) return `<td style="padding:1px;text-align:center;color:#9ca3af" title="Calculé automatiquement (barème), sans coefficient">—</td>`;
-                const v = (c.coeffs || {})[co.code];
-                return `<td style="padding:1px;text-align:center"><input type="number" min="0" step="0.5"
-                    class="prg-coeff" data-sem="${sem}" data-ci="${ci}" data-mi="${mi}"
-                    value="${v === undefined || v === null ? '' : v}" oninput="updateProgTotal('${sem}',${ci})"
-                    style="width:60px;padding:2px 1px;text-align:center;border:1px solid #d1d5db;border-radius:4px"></td>`;
-            }).join('');
             const mvBtn = (sym, t, dis, dir) => `<button type="button" title="${t}" ${dis ? 'disabled' : ''} onclick="moveProgMatiere('${sem}',${mi},${dir})" style="border:none;background:none;font-size:.72rem;line-height:1;padding:0;cursor:${dis ? 'default' : 'pointer'};color:${dis ? '#d1d5db' : '#6b7280'}">${sym}</button>`;
             const vol = co.volumes || {};
             const isRes = co.kind === 'RES', isSae = co.kind === 'SAE';
@@ -2361,29 +2439,26 @@ function renderProgTables() {
                 <td style="padding:1px"><input class="prg-short" value="${esc(co.short_label || '')}" placeholder="—" style="width:130px;${inS}"></td>
                 <td style="padding:1px"><input class="prg-label" value="${esc(co.label || '')}" placeholder="—" style="width:230px;${inS}"></td>
                 ${volCells}`;
-            return `<tr data-mi="${mi}">${def}${cells}</tr>`;
+            return `<tr data-mi="${mi}">${def}</tr>`;
         }).join('');
         const volTot = k => mlist.reduce((a, co) => a + (Number((co.volumes || {})[k]) || 0), 0);
         const volTotCell = k => `<td class="prg-vtotal" data-sem="${sem}" data-vk="${k}" style="text-align:center;padding:2px 1px">${Math.round(volTot(k) * 100) / 100}</td>`;
         const totalRow = `<tr style="background:#f9fafb;font-weight:600">
-            <td colspan="6" style="background:#f9fafb;padding:4px 8px;text-align:right">Total</td>
-            ${volTotCell('cm')}${volTotCell('td')}${volTotCell('tp')}${volTotCell('pt')}
-            ${comps.map((c, ci) => `<td class="prg-total" data-sem="${sem}" data-ci="${ci}" style="text-align:center;padding:2px 1px">${Math.round(totals[ci] * 100) / 100}</td>`).join('')}</tr>`;
-        return `<h3 style="margin:18px 0 8px;color:#374151">${sem}</h3>
+            <td colspan="6" style="background:#f9fafb;padding:4px 8px;text-align:right">Total heures</td>
+            ${volTotCell('cm')}${volTotCell('td')}${volTotCell('tp')}${volTotCell('pt')}</tr>`;
+        return `<div>
+            <div style="font-weight:600;color:#4f46e5;margin-bottom:4px">${sem}</div>
             <div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;width:fit-content;max-width:95vw">
                 <table class="nz-table" data-sem="${sem}" style="table-layout:auto"><thead>${head}</thead><tbody>${rows}${totalRow}</tbody></table>
-            </div>`;
-    }).join('');
-    const prog = _progList.find(p => String(p.id) === String(_progId));
+            </div></div>`;
+    };
+    const blocks = _progYearBlocks(sems, renderOne);
     el.innerHTML = `
         <div style="margin-bottom:6px;font-size:.8rem;color:#374151">${legend}</div>
         <p style="font-size:.8rem;color:#6b7280;margin:0 0 4px">
-            Programme <strong>${esc(prog ? prog.name : '')}</strong> — définition des matières (Type / Code /
-            Libellés / Heures) et coefficient de chaque matière dans chaque compétence (UE), par semestre
-            (case vide = non prise en compte). Le total des coefficients par compétence vaut normalement 60.
-            Les lignes <strong>Bonus</strong>, <strong>Pénalité</strong> et <strong>Aide à la réussite</strong>
-            n'ont pas de coefficient.</p>
-        ${blocks || '<div class="empty">Aucun semestre sélectionné.</div>'}`;
+            Définition des matières (Type / Code Apogée / Code / Libellés) et heures attribuées (CM / TD / TP / PT).
+            Utilisez « + Créer matière » pour en ajouter, les flèches pour réordonner.</p>
+        ${blocks || '<div class="empty">Aucune année sélectionnée.</div>'}`;
 }
 
 function updateProgTotal(sem, ci) {
@@ -2414,46 +2489,48 @@ function progKindChanged() {
     renderProgTables();
 }
 
-// Reconstruit _progData à partir des tableaux affichés (semestres visibles uniquement).
+// Fusionne dans _progData les saisies de l'onglet courant (Coefficients OU
+// Matières). Ne met à jour que les champs dont l'input est présent dans le DOM ;
+// les autres (et l'onglet non affiché) sont préservés.
 function _collectProg() {
     if (!_progData) return;
     document.querySelectorAll('#prog-content table[data-sem]').forEach(tbl => {
         const sem = tbl.dataset.sem;
         const d = _progData[sem];
         if (!d) return;
-        const comps = (d.competences || []).map(c => ({ name: c.name, coeffs: {} }));
-        const components = [];
+        // Copie des composants d'origine (préserve tout ce qui n'est pas édité)
+        const components = (d.components || []).map(c => ({ ...c, volumes: { ...(c.volumes || {}) } }));
         const codeByMi = {};
         tbl.querySelectorAll('tr[data-mi]').forEach(tr => {
             const mi = +tr.dataset.mi;
-            const orig = (d.components && d.components[mi]) || {};
-            const q = sel => { const e = tr.querySelector(sel); return e ? e.value.trim() : ''; };
-            const code = q('.prg-code');
-            codeByMi[mi] = code;
-            const volumes = {};
+            const comp = components[mi];
+            if (!comp) return;
+            const q = (sel, cur) => { const e = tr.querySelector(sel); return e ? e.value.trim() : cur; };
+            comp.apogee_code = q('.prg-apogee', comp.apogee_code);
+            comp.code = q('.prg-code', comp.code);
+            comp.short_label = q('.prg-short', comp.short_label);
+            comp.label = q('.prg-label', comp.label);
+            const kindSel = tr.querySelector('.prg-kind');
+            if (kindSel) comp.kind = kindSel.value;
             tr.querySelectorAll('input.prg-vol').forEach(inp => {
                 const raw = inp.value.trim().replace(',', '.');
-                volumes[inp.dataset.vk] = (raw !== '' && !isNaN(parseFloat(raw))) ? parseFloat(raw) : null;
+                comp.volumes[inp.dataset.vk] = (raw !== '' && !isNaN(parseFloat(raw))) ? parseFloat(raw) : null;
             });
-            ['cm', 'td', 'tp', 'pt'].forEach(k => { if (!(k in volumes)) volumes[k] = (orig.volumes || {})[k] ?? null; });
-            components.push({
-                apogee_code: q('.prg-apogee'),
-                apogee_name: orig.apogee_name || '',
-                code,
-                short_label: q('.prg-short'),
-                label: q('.prg-label'),
-                kind: q('.prg-kind') || orig.kind || 'RES',
-                volumes
-            });
-        });
-        tbl.querySelectorAll('input.prg-coeff').forEach(inp => {
-            const ci = +inp.dataset.ci, code = codeByMi[+inp.dataset.mi];
-            const v = inp.value.trim().replace(',', '.');
-            if (code && comps[ci] && v !== '' && !isNaN(parseFloat(v)) && parseFloat(v) !== 0)
-                comps[ci].coeffs[code] = parseFloat(v);
+            codeByMi[mi] = comp.code;
         });
         d.components = components;
-        d.competences = comps;
+        // Coefficients : seulement si l'onglet Coefficients est affiché
+        const coeffInputs = tbl.querySelectorAll('input.prg-coeff');
+        if (coeffInputs.length) {
+            const comps = (d.competences || []).map(c => ({ name: c.name, coeffs: {} }));
+            coeffInputs.forEach(inp => {
+                const ci = +inp.dataset.ci, code = codeByMi[+inp.dataset.mi];
+                const v = inp.value.trim().replace(',', '.');
+                if (code && comps[ci] && v !== '' && !isNaN(parseFloat(v)) && parseFloat(v) !== 0)
+                    comps[ci].coeffs[code] = parseFloat(v);
+            });
+            d.competences = comps;
+        }
     });
 }
 
@@ -2527,13 +2604,13 @@ function submitNewProgMatiere() {
         kind: document.getElementById('prog-mat-kind').value,
         volumes: vol
     });
-    if (!_progSemesters.has(sem)) {
-        _progSemesters.add(sem);
-        const btn = document.querySelector(`#prog-sem-toggle .sem-btn[data-sem="${sem}"]`);
-        if (btn) btn.classList.add('active');
-    }
+    // Rend l'année du semestre visible (le toggle est par année = 2 semestres)
+    const yg = Math.ceil(parseInt(sem.slice(1)) / 2);
+    ['S' + (yg * 2 - 1), 'S' + (yg * 2)].forEach(s => _progSemesters.add(s));
+    const btn = document.querySelector(`#prog-year-toggle .sem-btn[data-yg="${yg}"]`);
+    if (btn) btn.classList.add('active');
     closeModal('modal-prog-matiere');
-    renderProgTables();
+    renderProgCurrent();
     toast('Matière ajoutée — pensez à enregistrer');
 }
 
@@ -2644,9 +2721,15 @@ async function onPromoChange() {
     try { _promoData = await api('/promotions/' + id); }
     catch (e) { toast('Erreur : ' + e.message, 'error'); return; }
     if (!_progList || !_progList.length) { try { _progList = await api('/programmes'); } catch (e) { _progList = []; } }
+    // Présélection de l'année de progression = celle correspondant à l'année
+    // universitaire choisie en haut à droite (répartition calendaire courante).
+    const yg = _ygForTopYear(_promoData.promotion.start_year);
+    _calYG = yg; _grpYG = yg;
     _togglePromoButtons(true);
     renderPromoEffectif();
     if (_promoTab === 'notes') loadNotesGrid();
+    else if (_promoTab === 'calendrier') loadCalendrier();
+    else if (_promoTab === 'groupes') loadPromoGroups();
 }
 
 async function assignPromoProgramme(val) {
@@ -4459,48 +4542,44 @@ function hetd(s) {
 const _FORMATION_LABELS = { 0: 'FTP', 1: 'ALT', 2: 'MUT' };
 const _YEAR_LABELS = { 1: '1A (S1+S2)', 2: '2A (S3+S4)', 3: '3A (S5+S6)' };
 
+let _promoGroupsRows = [];   // dernières données /promotion-groups (pour re-render au changement de cohorte)
+
 function renderPromotionGroups(rows) {
+    _promoGroupsRows = rows || _promoGroupsRows || [];
     const el = document.getElementById('promo-groups-editor');
-    // Garantir une ligne par (année, formation) — combler les manquantes côté UI
-    const map = {};
-    rows.forEach(r => { map[`${r.year_group}-${r.formation_type}`] = r; });
-    const ordered = [];
-    for (const yg of [1,2,3]) for (const ft of [0,1,2]) {
-        const k = `${yg}-${ft}`;
-        ordered.push(map[k] || { year_group: yg, formation_type: ft, cm_groups: 1, td_groups: 1, tp_groups: 1, pt_groups: 1 });
+    const yg = _grpYG;
+    const get = (ft) => (_promoGroupsRows).find(r => r.year_group === yg && r.formation_type === ft)
+        || { cm_groups: 1, td_groups: 1, tp_groups: 1, pt_groups: 1 };
+    const dash = '<span style="color:#d1d5db">—</span>';
+    const inp = (ft, field) => {
+        const v = get(ft)[field]; const val = (v != null ? v : 1);
+        return `<input type="number" min="1" step="1" value="${val}" data-yg="${yg}" data-ft="${ft}" data-field="${field}" style="width:56px;padding:3px 6px;text-align:center">`;
+    };
+    const ay = grpAcademicYear() ? ' (' + grpAcademicYear() + ')' : '';
+    // Grille TD/TP × FTP/ALT/MUT. CM = 1 groupe (non éditable).
+    let tdFTP, tdALT, tdMUT, tpFTP, tpALT, intro;
+    if (yg === 3) {
+        tdFTP = dash; tdALT = dash; tdMUT = inp(2, 'td_groups');
+        tpFTP = inp(0, 'tp_groups'); tpALT = inp(1, 'tp_groups');
+        intro = `Année 3${ay} : TD mutualisé (MUT), TP séparés FTP / ALT. CM = 1 groupe.`;
+    } else {
+        tdFTP = inp(0, 'td_groups'); tdALT = inp(1, 'td_groups'); tdMUT = inp(2, 'td_groups');
+        tpFTP = inp(0, 'tp_groups'); tpALT = inp(1, 'tp_groups');
+        intro = `Année ${yg}${ay} : TD FTP / ALT / MUT et TP FTP / ALT. CM = 1 groupe.`;
     }
-    const numInput = (val, name) =>
-        `<input type="number" min="1" step="1" value="${val}" data-field="${name}" style="width:60px;padding:3px 6px;text-align:center">`;
+    const td = (h) => `<td style="text-align:center;padding:5px 12px">${h}</td>`;
     el.innerHTML = `
-        <p style="margin:0 0 8px;font-size:.85rem;color:#6b7280">
-            Multiplicateur appliqué aux heures de chaque type d'enseignement selon la promotion.
-            Ex : si TD = 2 groupes, 10h de TD comptent comme 20h enseignées.
-        </p>
-        <table style="width:auto;border-collapse:collapse;background:#fff;border-radius:6px;overflow:hidden">
+        <p style="margin:0 0 8px;font-size:.85rem;color:#6b7280">${intro}</p>
+        <table style="border-collapse:collapse;background:#fff;border-radius:6px;overflow:hidden;text-align:center;margin:0 auto">
             <thead style="background:#f3f4f6">
-                <tr>
-                    <th style="padding:6px 12px;text-align:left">Année</th>
-                    <th style="padding:6px 12px;text-align:left">Formation</th>
-                    <th style="padding:6px 8px">CM</th>
-                    <th style="padding:6px 8px">TD</th>
-                    <th style="padding:6px 8px">TP</th>
-                    <th style="padding:6px 8px">PT</th>
-                </tr>
+                <tr><th style="padding:6px 12px;text-align:center"></th><th style="padding:6px 12px;text-align:center">FTP</th><th style="padding:6px 12px;text-align:center">ALT</th><th style="padding:6px 12px;text-align:center">MUT</th></tr>
             </thead>
-            <tbody id="promo-groups-tbody">
-                ${ordered.map(r => `
-                    <tr data-yg="${r.year_group}" data-ft="${r.formation_type}" style="border-top:1px solid #f3f4f6">
-                        <td style="padding:5px 12px">${_YEAR_LABELS[r.year_group]||r.year_group}</td>
-                        <td style="padding:5px 12px"><strong>${_FORMATION_LABELS[r.formation_type]||r.formation_type}</strong></td>
-                        <td style="padding:5px 8px;text-align:center">${numInput(r.cm_groups, 'cm_groups')}</td>
-                        <td style="padding:5px 8px;text-align:center">${numInput(r.td_groups, 'td_groups')}</td>
-                        <td style="padding:5px 8px;text-align:center">${numInput(r.tp_groups, 'tp_groups')}</td>
-                        <td style="padding:5px 8px;text-align:center">${numInput(r.pt_groups, 'pt_groups')}</td>
-                    </tr>
-                `).join('')}
+            <tbody>
+                <tr style="border-top:1px solid #f3f4f6"><td style="padding:5px 12px;text-align:center"><strong>TD</strong></td>${td(tdFTP)}${td(tdALT)}${td(tdMUT)}</tr>
+                <tr style="border-top:1px solid #f3f4f6"><td style="padding:5px 12px;text-align:center"><strong>TP</strong></td>${td(tpFTP)}${td(tpALT)}${td(dash)}</tr>
             </tbody>
         </table>
-        <div style="margin-top:10px;display:flex;gap:8px">
+        <div style="margin-top:10px;display:flex;gap:8px;justify-content:center">
             <button class="btn btn-primary btn-sm" onclick="savePromotionGroups()">Enregistrer</button>
             <span id="promo-groups-status" style="font-size:.85rem;color:#10b981;align-self:center"></span>
         </div>
@@ -4508,19 +4587,18 @@ function renderPromotionGroups(rows) {
 }
 
 async function savePromotionGroups() {
-    const rows = [];
-    document.querySelectorAll('#promo-groups-tbody tr').forEach(tr => {
-        const entry = {
-            year_group: parseInt(tr.dataset.yg),
-            formation_type: parseInt(tr.dataset.ft),
-        };
-        tr.querySelectorAll('input[data-field]').forEach(inp => {
-            entry[inp.dataset.field] = Math.max(1, parseInt(inp.value) || 1);
-        });
-        rows.push(entry);
+    // Regroupe les saisies par (année, formation). CM = 1 (fixe) ; PT = défaut.
+    const map = {};
+    document.querySelectorAll('#promo-groups-editor input[data-field]').forEach(inp => {
+        const yg = parseInt(inp.dataset.yg), ft = parseInt(inp.dataset.ft);
+        const k = yg + '-' + ft;
+        if (!map[k]) map[k] = { year_group: yg, formation_type: ft, cm_groups: 1 };
+        map[k][inp.dataset.field] = Math.max(1, parseInt(inp.value) || 1);
     });
+    const rows = Object.values(map);
+    if (!rows.length) return;
     try {
-        await api('/promotion-groups', { method: 'PUT', body: JSON.stringify(rows) });
+        await api('/promotion-groups' + _grpQ(), { method: 'PUT', body: JSON.stringify(rows) });
         document.getElementById('promo-groups-status').textContent = '✓ Enregistré';
         setTimeout(() => { document.getElementById('promo-groups-status').textContent = ''; }, 2000);
     } catch(e) {
@@ -4694,15 +4772,93 @@ const _CAL_CATS = [
 let _calYG = 1;
 let _calCohort = 'FTP';
 
-// Remplit le sélecteur « Année de progression » (1/2/3) au sein de l'année
-// universitaire active. Chaque année de progression = une cohorte de l'année.
+// Remplit le sélecteur « Année de la cohorte » : les 3 années de la promo
+// sélectionnée, libellées par l'année universitaire réelle. L'année N de la
+// cohorte = base année (start+N-1)-(start+N), year_group N.
 function buildCalYearSelect() {
     const sel = document.getElementById('cal-year-select');
     if (!sel) return;
-    const labels = { 1: 'Année 1 (S1 / S2)', 2: 'Année 2 (S3 / S4)', 3: 'Année 3 (S5 / S6)' };
-    sel.innerHTML = [1, 2, 3].map(yg => `<option value="${yg}">${labels[yg]}</option>`).join('');
+    const start = _promoData && _promoData.promotion ? parseInt(_promoData.promotion.start_year) : null;
+    const sems = { 1: 'S1/S2', 2: 'S3/S4', 3: 'S5/S6' };
+    const label = yg => start
+        ? `Année ${yg} — ${start + yg - 1}-${start + yg} (${sems[yg]})`
+        : `Année ${yg} (${sems[yg]})`;
+    sel.innerHTML = [1, 2, 3].map(yg => `<option value="${yg}">${label(yg)}</option>`).join('');
     if (![1, 2, 3].includes(_calYG)) _calYG = 1;
     sel.value = _calYG;
+}
+
+// Année universitaire (base) correspondant à l'année de progression _calYG de
+// la cohorte sélectionnée. Retourne 'AAAA-AAAA' ou null.
+function calAcademicYear() {
+    const start = _promoData && _promoData.promotion ? parseInt(_promoData.promotion.start_year) : null;
+    if (!start) return null;
+    const y = start + _calYG - 1;
+    return `${y}-${y + 1}`;
+}
+// Suffixe de requête ?year=... ciblant la base de l'année de la cohorte.
+function _calQ() {
+    const y = calAcademicYear();
+    return y ? ('?year=' + encodeURIComponent(y)) : '';
+}
+
+// Année de progression (1/2/3) d'une cohorte correspondant à l'année
+// universitaire sélectionnée en haut à droite (répartition calendaire courante).
+function _ygForTopYear(startYear) {
+    const yv = (document.getElementById('year-select') || {}).value || '';
+    const topStart = parseInt((yv.split('-')[0]) || '');
+    if (!topStart || !startYear) return 1;
+    const yg = topStart - startYear + 1;
+    return (yg >= 1 && yg <= 3) ? yg : 1;
+}
+
+// ===== ONGLET GROUPES (par année de la cohorte, cours mutualisés FTP+ALT) =====
+let _grpYG = 1;
+
+function buildGrpYearSelect() {
+    const sel = document.getElementById('grp-year-select');
+    if (!sel) return;
+    const start = _promoData && _promoData.promotion ? parseInt(_promoData.promotion.start_year) : null;
+    const sems = { 1: 'S1/S2', 2: 'S3/S4', 3: 'S5/S6' };
+    const label = yg => start
+        ? `Année ${yg} — ${start + yg - 1}-${start + yg} (${sems[yg]})`
+        : `Année ${yg} (${sems[yg]})`;
+    sel.innerHTML = [1, 2, 3].map(yg => `<option value="${yg}">${label(yg)}</option>`).join('');
+    if (![1, 2, 3].includes(_grpYG)) _grpYG = 1;
+    sel.value = _grpYG;
+}
+
+function grpAcademicYear() {
+    const start = _promoData && _promoData.promotion ? parseInt(_promoData.promotion.start_year) : null;
+    if (!start) return null;
+    const y = start + _grpYG - 1;
+    return `${y}-${y + 1}`;
+}
+function _grpQ() {
+    const y = grpAcademicYear();
+    return y ? ('?year=' + encodeURIComponent(y)) : '';
+}
+
+function onGrpYearChange() {
+    _grpYG = parseInt(document.getElementById('grp-year-select').value) || 1;
+    loadPromoGroups();   // année = autre base → recharger
+}
+
+async function loadPromoGroups() {
+    const el = document.getElementById('promo-groups-editor');
+    if (!_promoData || !_promoData.promotion) {
+        buildGrpYearSelect();
+        el.innerHTML = '<div style="color:#6b7280;padding:8px">Sélectionnez une promotion (onglet Effectifs) pour définir ses groupes.</div>';
+        return;
+    }
+    el.innerHTML = '<div class="spinner">Chargement…</div>';
+    buildGrpYearSelect();
+    try {
+        const rows = await api('/promotion-groups' + _grpQ());
+        renderPromotionGroups(rows);
+    } catch (e) {
+        el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
+    }
 }
 
 // Plage (début/fin de semaine) de l'année de progression sélectionnée,
@@ -4717,14 +4873,16 @@ function calYearRange() {
              max:   gmax };
 }
 
-function onCalFilterChange() {
+// Changer d'année de la cohorte = changer de base année → recharger.
+function onCalYearChange() {
     _calYG = parseInt(document.getElementById('cal-year-select').value) || 1;
+    loadCalendrier();
+}
+
+// Changer de cohorte (FTP/ALT) reste dans la même base → re-render seulement.
+function onCalFilterChange() {
     _calCohort = document.getElementById('cal-cohort-select').value || 'FTP';
-    document.getElementById('cal-range-year-label').textContent = 'année ' + _calYG;
     const rg = calYearRange();
-    document.getElementById('config-start-week').value = String(rg.start);
-    document.getElementById('config-end-week').value   = String(rg.end);
-    document.getElementById('cal-max-week').value      = String(rg.max);
     renderCalendrierPage(rg.start, rg.end, rg.max);
 }
 
@@ -4748,20 +4906,26 @@ function onCalRangeChange() {
 
 async function loadCalendrier() {
     const body = document.getElementById('calendrier-body');
+    // Calendrier cohorte-centré : une promotion doit être sélectionnée
+    if (!_promoData || !_promoData.promotion) {
+        buildCalYearSelect();
+        body.innerHTML = '<div style="color:#6b7280;padding:20px">Sélectionnez une promotion (onglet Effectifs) pour définir son calendrier sur ses 3 années.</div>';
+        return;
+    }
     body.innerHTML = '<div class="spinner">Chargement…</div>';
+    const q = _calQ();   // cible la base de l'année (start+_calYG-1) de la cohorte
     try {
-        const [cal, cfg, comments, codes, pg] = await Promise.all([
-            api('/special-calendar'), api('/config'), api('/week-comments'),
-            api('/category-codes'), api('/promotion-groups')
+        const [cal, cfg, comments, codes] = await Promise.all([
+            api('/special-calendar' + q), api('/config' + q), api('/week-comments' + q),
+            api('/category-codes' + q)
         ]);
         _calData = cal;
         _weekComments = comments || {};
         _categoryCodes = codes || {};
         state.config = cfg;
-        renderPromotionGroups(pg);
         buildCalYearSelect();
         document.getElementById('cal-cohort-select').value = _calCohort;
-        document.getElementById('cal-range-year-label').textContent = 'année ' + _calYG;
+        document.getElementById('cal-range-year-label').textContent = calAcademicYear() || ('année ' + _calYG);
         buildAllWeekSelect('sem-odd-start',  cfg.semester_odd_start_week);
         buildAllWeekSelect('sem-odd-end',    cfg.semester_odd_end_week);
         buildAllWeekSelect('sem-even-start', cfg.semester_even_start_week);
@@ -4943,10 +5107,11 @@ async function saveCalendrier() {
         return;
     }
     try {
-        await api('/special-calendar', { method: 'PUT', body: JSON.stringify(_calData) });
-        await api('/config', { method: 'PUT', body: JSON.stringify(dates) });
-        await api('/week-comments', { method: 'PUT', body: JSON.stringify(_weekComments) });
-        await api('/category-codes', { method: 'PUT', body: JSON.stringify(_categoryCodes) });
+        const q = _calQ();   // écrit dans la base de l'année de la cohorte
+        await api('/special-calendar' + q, { method: 'PUT', body: JSON.stringify(_calData) });
+        await api('/config' + q, { method: 'PUT', body: JSON.stringify(dates) });
+        await api('/week-comments' + q, { method: 'PUT', body: JSON.stringify(_weekComments) });
+        await api('/category-codes' + q, { method: 'PUT', body: JSON.stringify(_categoryCodes) });
         state.config = { ...(state.config || {}) };
         state.config.academic_ranges = { ...(state.config.academic_ranges || {}) };
         if (aSw && aEw) state.config.academic_ranges[String(_calYG)] = { start: aSw, end: aEw, max: aMx || 52 };
