@@ -33,3 +33,6 @@ logs/
 
 # Fichiers de contraintes déposés par les enseignants
 uploads/
+
+# Coefficients HETD édités en direct via l'appli (gérés hors git côté serveur)
+data/coefficients.json
