@@ -2828,6 +2828,61 @@ def update_programme(prog_id):
     grdb.commit()
     return jsonify(dict(_programme_row(grdb, prog_id)))
 
+@app.route('/api/programmes/export', methods=['GET'])
+def export_programmes():
+    """Exporte tous les programmes (nom + données complètes, incl. heures) en JSON
+    téléchargeable. Sert à transférer entre installations (local → serveur)."""
+    err = _require_admin()
+    if err:
+        return err
+    grdb = get_programmes_db()
+    out = []
+    for r in grdb.execute('SELECT id, name, label FROM programmes ORDER BY name').fetchall():
+        out.append({
+            'name': r['name'],
+            'label': r['label'],
+            'data': _programme_data(grdb, r['id'], seed=False),
+        })
+    payload = json.dumps({'programmes': out}, ensure_ascii=False, indent=2)
+    resp = app.response_class(payload, mimetype='application/json')
+    resp.headers['Content-Disposition'] = 'attachment; filename=programmes_export.json'
+    return resp
+
+@app.route('/api/programmes/import', methods=['POST'])
+def import_programmes():
+    """Importe des programmes exportés (upsert par NOM) : crée le programme s'il
+    n'existe pas, puis remplace ses données (matières, coefficients, heures).
+    Ne touche pas aux promotions (liens conservés via l'id existant)."""
+    err = _require_admin()
+    if err:
+        return err
+    payload = request.get_json(silent=True) or {}
+    progs = payload.get('programmes')
+    if not isinstance(progs, list) or not progs:
+        return error_response('JSON invalide : clé « programmes » (liste) attendue', 400)
+    grdb = get_programmes_db()
+    report = {'created': 0, 'updated': 0}
+    for p in progs:
+        name = (p.get('name') or '').strip()
+        data = p.get('data')
+        if not name or not isinstance(data, dict):
+            continue
+        row = grdb.execute('SELECT id FROM programmes WHERE name=?', (name,)).fetchone()
+        if row:
+            pid = row['id']
+            report['updated'] += 1
+        else:
+            label = (p.get('label') or '').strip() or None
+            cur = grdb.execute('INSERT INTO programmes(name, label, updated_at) VALUES(?,?,CURRENT_TIMESTAMP)',
+                               (name, label))
+            pid = cur.lastrowid
+            report['created'] += 1
+        _store_programme_data(grdb, pid, _ensure_volumes(data))
+        grdb.execute('UPDATE programmes SET updated_at=CURRENT_TIMESTAMP WHERE id=?', (pid,))
+    grdb.commit()
+    _audit('PROGRAMMES_IMPORT', ip=_client_ip(), user=session.get('user'), **report)
+    return jsonify({'ok': True, 'report': report})
+
 @app.route('/api/programmes/<int:prog_id>', methods=['DELETE'])
 def delete_programme(prog_id):
     err = _require_admin()

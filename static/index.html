@@ -623,6 +623,9 @@
             <button class="btn btn-secondary btn-sm" id="prog-new-mat-btn" style="margin-left:14px" onclick="openNewProgMatiere()" disabled>+ Créer matière</button>
             <button class="btn btn-primary btn-sm" id="prog-save-btn" onclick="saveProg()" disabled>💾 Enregistrer</button>
             <button class="btn btn-secondary btn-sm" id="prog-reset-btn" onclick="resetProg()" disabled>↺ Réinitialiser (fichier d'origine)</button>
+            <button class="btn btn-secondary btn-sm" title="Télécharger tous les programmes (JSON) — pour transfert local → serveur" onclick="exportProgrammes()">⤓ Exporter</button>
+            <button class="btn btn-secondary btn-sm" title="Importer des programmes depuis un fichier JSON exporté" onclick="document.getElementById('prog-import-file').click()">⤒ Importer</button>
+            <input type="file" id="prog-import-file" accept="application/json,.json" style="display:none" onchange="importProgrammes(this)">
         </div>
     </div>
     <div class="subtabs" id="prog-subtabs" style="display:flex;gap:6px;margin-bottom:10px">
@@ -2632,6 +2635,27 @@ async function resetProg() {
         renderProgTables();
         toast('Programme réinitialisé');
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// Transfert entre installations (local → serveur) : télécharge tous les programmes.
+function exportProgrammes() {
+    window.location = '/api/programmes/export';
+}
+
+async function importProgrammes(input) {
+    const f = input.files && input.files[0];
+    input.value = '';
+    if (!f) return;
+    if (!confirm('Importer ces programmes ?\nLes programmes de MÊME NOM verront leurs matières, coefficients et heures REMPLACÉS par le contenu du fichier.')) return;
+    try {
+        const payload = JSON.parse(await f.text());
+        const r = await api('/programmes/import', { method: 'POST', body: JSON.stringify(payload) });
+        const rep = (r && r.report) || {};
+        toast(`Import : ${rep.created || 0} créé(s), ${rep.updated || 0} mis à jour`);
+        await loadProgramme();
+    } catch (e) {
+        toast('Erreur import : ' + e.message, 'error');
+    }
 }
 
 async function openNewProgramme() {
