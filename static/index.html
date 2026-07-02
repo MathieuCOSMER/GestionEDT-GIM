@@ -3675,11 +3675,13 @@ function renderCourses() {
     state.courses.forEach(c => {
         if (!_matSemesters.has(c.semester_code)) return;
         if (isSansCoeffCourse(c)) return;
-        if (q && !((c.code || '') + ' ' + (c.name || '')).toLowerCase().includes(q)) return;
         const m = (bySem[c.semester_code] = bySem[c.semester_code] || {});
         const k = matBaseKey(c.code);
         (m[k] = m[k] || []).push(c);
     });
+    // Recherche : correspondance sur la matière du programme (code/libellés) ou sur les sous-matières
+    const compMatchQ = comp => !q || ((comp.code || '') + ' ' + (comp.short_label || '') + ' ' + (comp.label || '')).toLowerCase().includes(q);
+    const courseMatchQ = c => ((c.code || '') + ' ' + (c.name || '')).toLowerCase().includes(q);
 
     const prog = (_matProg && _matProg.semesters) || {};
     const hasAny = !!(_matProg && _matProg.has_any);
@@ -3718,10 +3720,22 @@ function renderCourses() {
         comps.forEach(comp => {
             const key = matBaseKey(comp.code);
             used.add(key);
-            body += renderGroup(comp, null, semCourses[key] || [], sem, semHasProg);
+            let subs = semCourses[key] || [];
+            if (q && !compMatchQ(comp)) {
+                // La matière programme ne correspond pas : on ne garde que les sous-matières
+                // correspondantes ; s'il n'y en a aucune, le groupe entier est masqué.
+                subs = subs.filter(courseMatchQ);
+                if (!subs.length) return;
+            }
+            body += renderGroup(comp, null, subs, sem, semHasProg);
         });
         Object.keys(semCourses).filter(k => !used.has(k) && !excludedKeys.has(k)).sort().forEach(k => {
-            body += renderGroup(null, k, semCourses[k], sem, semHasProg);
+            let subs = semCourses[k];
+            if (q) {
+                subs = subs.filter(courseMatchQ);
+                if (!subs.length) return;
+            }
+            body += renderGroup(null, k, subs, sem, semHasProg);
         });
         if (!body) body = `<tr><td colspan="${ncol}" style="color:#9ca3af;padding:10px">Aucune matière pour ce semestre.</td></tr>`;
         // Première ligne (avant les en-têtes de colonnes) : nom du semestre, centré
