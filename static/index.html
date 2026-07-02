@@ -2421,7 +2421,9 @@ function renderProgMatieres() {
             <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Cours magistral">CM</th>
             <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Travaux dirigés">TD</th>
             <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Travaux pratiques">TP</th>
-            <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Projet tutoré">PT</th></tr>`;
+            <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Projet tutoré">PT</th>
+            <th style="padding:4px 6px;text-align:center;background:#eef2ff" title="Total des heures (CM+TD+TP+PT)">Total&nbsp;h</th>
+            <th style="padding:4px 6px;text-align:center;background:#eef2ff" title="Heures équivalent TD">HETD</th></tr>`;
         const rows = mlist.map((co, mi) => {
             const special = _coeffSansCoefficient(co);
             const isFirst = mi === 0, isLast = mi === mlist.length - 1;
@@ -2434,6 +2436,13 @@ function renderProgMatieres() {
                 return `<td style="padding:1px;text-align:center"><input type="number" min="0" step="0.5" class="prg-vol" data-vk="${key}" data-mi="${mi}" value="${vv}" oninput="updateProgVol('${sem}','${key}')" style="width:50px;${inS};text-align:center"></td>`;
             };
             const volCells = volCell('cm', isRes) + volCell('td', isRes || isSae) + volCell('tp', isRes || isSae) + volCell('pt', isSae);
+            const H = _HETD_COEFS;
+            const rTot = special ? null : (Number(vol.cm) || 0) + (Number(vol.td) || 0) + (Number(vol.tp) || 0) + (Number(vol.pt) || 0);
+            const rHetd = special ? null : (Number(vol.cm) || 0) * H.CM + (Number(vol.td) || 0) * H.TD + (Number(vol.tp) || 0) * H.TP + (Number(vol.pt) || 0) * H.PT;
+            const fmtC = v => v == null ? '—' : Math.round(v * 100) / 100;
+            const totCells = `
+                <td class="prg-rtot" data-sem="${sem}" data-mi="${mi}" style="text-align:center;padding:1px 6px;font-weight:600;background:#f5f7ff">${fmtC(rTot)}</td>
+                <td class="prg-rhetd" data-sem="${sem}" data-mi="${mi}" style="text-align:center;padding:1px 6px;color:#4f46e5;background:#f5f7ff">${fmtC(rHetd)}</td>`;
             const def = `
                 <td style="padding:1px 2px;text-align:center;white-space:nowrap">${mvBtn('▲', 'Monter', isFirst, -1)}${mvBtn('▼', 'Descendre', isLast, 1)} <button type="button" title="Supprimer la matière" onclick="removeProgMatiere('${sem}',${mi})" style="border:none;background:none;cursor:pointer;color:#b91c1c;font-size:.95rem;padding:0">🗑</button></td>
                 <td style="padding:1px"><select class="prg-kind" onchange="this.style.background=_coeffKindColor(this.value);progKindChanged()" style="background:${_coeffKindColor(co.kind)};${inS};font-size:.8rem">${_coeffKindOptions(co.kind)}</select></td>
@@ -2441,14 +2450,19 @@ function renderProgMatieres() {
                 <td style="padding:1px"><input class="prg-code" value="${esc(co.code || '')}" style="width:84px;${inS};font-weight:600"></td>
                 <td style="padding:1px"><input class="prg-short" value="${esc(co.short_label || '')}" placeholder="—" style="width:130px;${inS}"></td>
                 <td style="padding:1px"><input class="prg-label" value="${esc(co.label || '')}" placeholder="—" style="width:230px;${inS}"></td>
-                ${volCells}`;
+                ${volCells}${totCells}`;
             return `<tr data-mi="${mi}">${def}</tr>`;
         }).join('');
         const volTot = k => mlist.reduce((a, co) => a + (Number((co.volumes || {})[k]) || 0), 0);
         const volTotCell = k => `<td class="prg-vtotal" data-sem="${sem}" data-vk="${k}" style="text-align:center;padding:2px 1px">${Math.round(volTot(k) * 100) / 100}</td>`;
+        const H = _HETD_COEFS;
+        const gTot = volTot('cm') + volTot('td') + volTot('tp') + volTot('pt');
+        const gHetd = volTot('cm') * H.CM + volTot('td') * H.TD + volTot('tp') * H.TP + volTot('pt') * H.PT;
         const totalRow = `<tr style="background:#f9fafb;font-weight:600">
-            <td colspan="6" style="background:#f9fafb;padding:4px 8px;text-align:right">Total heures</td>
-            ${volTotCell('cm')}${volTotCell('td')}${volTotCell('tp')}${volTotCell('pt')}</tr>`;
+            <td colspan="6" style="background:#f9fafb;padding:4px 8px;text-align:right">Total semestre</td>
+            ${volTotCell('cm')}${volTotCell('td')}${volTotCell('tp')}${volTotCell('pt')}
+            <td class="prg-gtot" data-sem="${sem}" style="text-align:center;padding:2px 6px;background:#eef2ff">${Math.round(gTot * 100) / 100}</td>
+            <td class="prg-ghetd" data-sem="${sem}" style="text-align:center;padding:2px 6px;color:#4f46e5;background:#eef2ff">${Math.round(gHetd * 100) / 100}</td></tr>`;
         return `<div>
             <div style="font-weight:600;color:#4f46e5;margin-bottom:4px">${sem}</div>
             <div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;width:fit-content;max-width:95vw">
@@ -2482,6 +2496,35 @@ function updateProgVol(sem, vk) {
     });
     const td = document.querySelector(`#prog-content td.prg-vtotal[data-sem="${sem}"][data-vk="${vk}"]`);
     if (td) td.textContent = Math.round(total * 100) / 100;
+    updateProgHetdTotals(sem);
+}
+
+// Met à jour les colonnes « Total h » et « HETD » (par matière + total semestre)
+// à partir des volumes saisis. Ignore les lignes sans coefficient (affichées « — »).
+function updateProgHetdTotals(sem) {
+    const H = _HETD_COEFS;
+    const tbl = document.querySelector(`#prog-content table[data-sem="${sem}"]`);
+    if (!tbl) return;
+    let gTot = 0, gHetd = 0;
+    tbl.querySelectorAll('tbody tr[data-mi]').forEach(tr => {
+        let v = { cm: 0, td: 0, tp: 0, pt: 0 };
+        tr.querySelectorAll('input.prg-vol').forEach(inp => {
+            const n = parseFloat((inp.value || '').replace(',', '.'));
+            if (!isNaN(n)) v[inp.dataset.vk] = n;
+        });
+        const tot = v.cm + v.td + v.tp + v.pt;
+        const h = v.cm * H.CM + v.td * H.TD + v.tp * H.TP + v.pt * H.PT;
+        gTot += tot; gHetd += h;
+        const rt = tr.querySelector('td.prg-rtot');
+        const rh = tr.querySelector('td.prg-rhetd');
+        // Ne pas écraser le « — » des lignes sans coefficient.
+        if (rt && rt.textContent !== '—') rt.textContent = Math.round(tot * 100) / 100;
+        if (rh && rh.textContent !== '—') rh.textContent = Math.round(h * 100) / 100;
+    });
+    const gt = tbl.querySelector('td.prg-gtot');
+    const gh = tbl.querySelector('td.prg-ghetd');
+    if (gt) gt.textContent = Math.round(gTot * 100) / 100;
+    if (gh) gh.textContent = Math.round(gHetd * 100) / 100;
 }
 
 // Changement de type d'une matière dans la grille : re-rendu pour adapter les colonnes
@@ -3465,7 +3508,7 @@ function renderCourses() {
     const showFtpCol = formFilter !== 'alt';
     const showAltCol = formFilter !== 'ftp';
     const noCellFilter = formFilter === '' && !teacherFilter && !roomFilter;
-    const ncol = 9 + (showFtpCol ? 1 : 0) + (showAltCol ? 1 : 0);
+    const ncol = 10 + (showFtpCol ? 1 : 0) + (showAltCol ? 1 : 0);
     const q = ((document.getElementById('filter-search-matieres') || {}).value || '').trim().toLowerCase();
 
     // Conversion en HETD via le réglage partagé _HETD_COEFS (onglet Paramètres)
@@ -3499,7 +3542,17 @@ function renderCourses() {
     }
     // Lignes (par type) d'UNE sous-matière (course), SANS la colonne « Matière générale »
     // (ajoutée par renderGroup sur la 1re ligne du groupe). Renvoie un tableau de <tr>.
-    function courseRows(c) {
+    // `comp` = matière du programme (pour la sous-colonne PN) ; `shownTypes` = types dont
+    // les heures PN ont déjà été affichées dans le groupe (évite le double comptage visuel).
+    function courseRows(c, comp, shownTypes) {
+        const pnCell = t => {
+            const vv = comp ? ((comp.volumes || {})[t.label.toLowerCase()]) : null;
+            if (vv == null || vv === '') return '<td style="text-align:center;color:#bbb">—</td>';
+            if (shownTypes && shownTypes.has(t.label))
+                return '<td style="text-align:center;color:#c4b5fd" title="Heures PN de la matière (déjà affichées plus haut)">〃</td>';
+            if (shownTypes) shownTypes.add(t.label);
+            return `<td style="text-align:center;color:#5b21b6;font-weight:600">${vv}h</td>`;
+        };
         const types = filterTypes(c);
         const nRows = types.length || 1;
         const actions = `<td${types.length ? ` rowspan="${nRows}"` : ''} style="white-space:nowrap;text-align:center">
@@ -3518,13 +3571,14 @@ function renderCourses() {
                 <td style="text-align:center;white-space:nowrap">${weeksCell}</td>
                 <td>${badge}</td>
                 <td style="text-align:center;color:#bbb">—</td>
+                <td style="text-align:center;color:#bbb">—</td>
                 ${showFtpCol ? '<td style="text-align:center;color:#bbb">—</td>' : ''}
                 ${showAltCol ? '<td style="text-align:center;color:#bbb">—</td>' : ''}
                 <td style="text-align:center;color:#bbb">—</td>
                 ${actions}
             </tr>`];
         }
-        // Sous-colonnes du groupe « Heures » : [type | FTP | ALT], puis Salle, puis Actions
+        // Sous-colonnes du groupe « Heures » : [type | PN | FTP | ALT], puis Salle, puis Actions
         return types.map((t, i) => `<tr${i === 0 ? ' class="course-sep"' : ''}>
                 ${i === 0 ? `
                 <td rowspan="${nRows}">${codeCell}</td>
@@ -3532,6 +3586,7 @@ function renderCourses() {
                 <td rowspan="${nRows}" style="text-align:center;white-space:nowrap">${weeksCell}</td>
                 <td rowspan="${nRows}">${badge}</td>` : ''}
                 <td style="font-size:.75rem;font-weight:600;text-align:center">${t.label}</td>
+                ${pnCell(t)}
                 ${showFtpCol ? hCell(t.ftp, t.ftpT) : ''}
                 ${showAltCol ? hCell(t.alt, t.altT) : ''}
                 ${salleCell(t)}
@@ -3563,11 +3618,10 @@ function renderCourses() {
     }
 
     // Colonne « Heures / HETD » récapitulative d'une matière (fusionnée sur tout le groupe) :
-    // volumes du programme (CM/TD/TP/PT) + HETD du programme + HETD réels des sous-matières FTP/ALT.
+    // Total (somme des heures) et HETD (somme pondérée) pour le PN (volumes du programme)
+    // et pour les sous-matières FTP / ALT.
     function recapTd(comp, subs, rowspan) {
         const v = (comp && comp.volumes) || {};
-        const hv = k => (v[k] == null || v[k] === '') ? '—' : v[k] + ' h';
-        const hetdPN = comp ? fmtH(hetd(v.cm, v.td, v.tp, v.pt)) : null;
         const f = { cm: 0, td: 0, tp: 0, pt: 0 }, a = { cm: 0, td: 0, tp: 0, pt: 0 };
         (subs || []).forEach(c => {
             f.cm += Number(c.cm_hours) || 0; f.td += Number(c.td_hours) || 0;
@@ -3575,20 +3629,29 @@ function renderCourses() {
             a.cm += Number(c.alt_cm_hours) || 0; a.td += Number(c.alt_td_hours) || 0;
             a.tp += Number(c.alt_tp_hours) || 0; a.pt += Number(c.alt_pt_hours) || 0;
         });
-        const hF = hetd(f.cm, f.td, f.tp, f.pt), hA = hetd(a.cm, a.td, a.tp, a.pt);
-        const line = (lbl, val, extra) => `<div style="${extra || ''}">${lbl} : ${val}</div>`;
-        return `<td rowspan="${rowspan}" style="background:#f0f9ff;vertical-align:top;font-size:.72rem;white-space:nowrap;padding:4px 6px;border-right:2px solid #e0f2fe;color:#0c4a6e">
-            ${line('CM', hv('cm'))}${line('TD', hv('td'))}${line('TP', hv('tp'))}${line('PT', hv('pt'))}
-            ${line('HETD&nbsp;PN', hetdPN == null ? '—' : hetdPN, 'margin-top:3px;border-top:1px solid #cbd5e1;padding-top:2px;font-weight:600')}
-            ${line('HETD&nbsp;FTP', fmtH(hF), 'color:#0369a1')}
-            ${line('HETD&nbsp;ALT', fmtH(hA), 'color:#9a3412')}
+        const tot = o => (Number(o.cm) || 0) + (Number(o.td) || 0) + (Number(o.tp) || 0) + (Number(o.pt) || 0);
+        const tPN = comp ? tot(v) : null, hPN = comp ? hetd(v.cm, v.td, v.tp, v.pt) : null;
+        const tF = tot(f), hF = hetd(f.cm, f.td, f.tp, f.pt);
+        const tA = tot(a), hA = hetd(a.cm, a.td, a.tp, a.pt);
+        const row = (lbl, t, h, color) => `<tr style="color:${color}">
+            <td style="font-weight:600;padding:0 5px 0 0">${lbl}</td>
+            <td style="text-align:right;padding:0 6px 0 0">${t == null ? '—' : fmtH(t) + '&nbsp;h'}</td>
+            <td style="text-align:right;font-weight:600">${h == null ? '—' : fmtH(h)}</td></tr>`;
+        return `<td rowspan="${rowspan}" style="background:#f0f9ff;vertical-align:middle;font-size:.72rem;white-space:nowrap;padding:4px 6px;border-right:2px solid #e0f2fe;color:#0c4a6e">
+            <table style="border-collapse:collapse;font-size:.72rem;margin:0;width:100%">
+                <tr style="color:#64748b"><td></td><td style="text-align:right;padding-right:6px">Total</td><td style="text-align:right">HETD</td></tr>
+                ${row('PN', tPN, hPN, '#5b21b6')}
+                ${row('FTP', tF, hF, '#0369a1')}
+                ${row('ALT', tA, hA, '#9a3412')}
+            </table>
         </td>`;
     }
 
     // Un groupe = une matière générale (programme/hors-programme) + colonne récap + sous-matières.
     function renderGroup(comp, fallbackCode, subs, sem, orphanRed) {
         let all = [];
-        (subs || []).forEach(c => { all = all.concat(courseRows(c)); });
+        const shownTypes = new Set();  // heures PN affichées une seule fois par type dans le groupe
+        (subs || []).forEach(c => { all = all.concat(courseRows(c, comp, shownTypes)); });
         if (!all.length) {
             if (comp) {  // matière du programme sans sous-matière : invite à en créer
                 return `<tr>${parentLeftTd(comp, null, sem, 1, orphanRed)}${recapTd(comp, [], 1)}<td colspan="${ncol - 2}" style="color:#9ca3af;font-size:.85rem;padding:8px">Aucune sous-matière pour l'instant.</td></tr>`;
@@ -3621,7 +3684,7 @@ function renderCourses() {
     const prog = (_matProg && _matProg.semesters) || {};
     const hasAny = !!(_matProg && _matProg.has_any);
 
-    const heuresCols = 1 + (showFtpCol ? 1 : 0) + (showAltCol ? 1 : 0);  // (type) + FTP? + ALT?
+    const heuresCols = 2 + (showFtpCol ? 1 : 0) + (showAltCol ? 1 : 0);  // (type) + PN + FTP? + ALT?
     const headRows = `
         <tr>
             <th rowspan="2" style="width:195px">Matière (programme)</th>
@@ -3636,6 +3699,7 @@ function renderCourses() {
         </tr>
         <tr>
             <th style="width:38px;text-align:center"></th>
+            <th style="width:48px;text-align:center;color:#5b21b6" title="Heures du Programme National (onglet Programme)">PN</th>
             ${showFtpCol ? '<th style="width:48px;text-align:center;color:#0369a1">FTP</th>' : ''}
             ${showAltCol ? '<th style="width:48px;text-align:center;color:#9a3412">ALT</th>' : ''}
         </tr>`;
