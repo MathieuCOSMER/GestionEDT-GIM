@@ -14,6 +14,8 @@
         nav button.active, nav button:hover { background: #4f46e5; color: #fff; }
 
         main { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+        /* Page Programme : deux tableaux de semestre côte à côte → pleine largeur */
+        main:has(#page-programme.active) { max-width: none; }
 
         .page { display: none; }
         .page.active { display: block; }
@@ -279,11 +281,11 @@
            (l'accès en écriture est filtré par rôle/onglet, pas par cette règle) */
         body.role-teacher .admin-only,
         body.role-teacher .rep-tool-restricted { display: none !important; }
-        /* Ordre des onglets pour l'enseignant : Globale, Calendaire, Liste, Contenu */
+        /* Ordre des onglets pour l'enseignant : Globale, Calendaire, Liste, Programme */
         body.role-teacher #nav-repartition-enseignant { order: 1; }
         body.role-teacher #nav-repartition { order: 2; }
         body.role-teacher #nav-enseignants { order: 3; }
-        body.role-teacher #nav-contenu { order: 4; }
+        body.role-teacher #nav-programme { order: 4; }
         body.role-teacher #nav-contraintes { order: 5; }
         body.role-teacher #nav-right { order: 99; }
         /* Case « Taux horaires » + Export : réservés à l'admin et aux titulaires */
@@ -328,9 +330,8 @@
     <button onclick="showPage('salles')" id="nav-salles">Salles</button>
     <button onclick="showPage('enseignants')" id="nav-enseignants">Liste des enseignants</button>
     <button onclick="showPage('journal')" id="nav-journal" class="admin-only">Journal</button>
-    <button onclick="showPage('contenu')" id="nav-contenu">Contenu des matières</button>
     <button onclick="showPage('contraintes')" id="nav-contraintes">Contraintes</button>
-    <button onclick="showPage('programme')" id="nav-programme" class="admin-only">Programme</button>
+    <button onclick="showPage('programme')" id="nav-programme">Programme</button>
     <button onclick="showPage('promotions')" id="nav-promotions" class="admin-only">Promotions</button>
     <button onclick="showPage('parametres')" id="nav-parametres" class="admin-only">Paramètres</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
@@ -414,57 +415,6 @@
         </div>
     </div>
     <div id="courses-table"><div class="spinner">Chargement…</div></div>
-</div>
-
-<!-- ===== CONTENU DES MATIERES ===== -->
-<div class="page" id="page-contenu">
-    <div class="toolbar">
-        <h1>Contenu des matières</h1>
-        <a id="pn-pdf-btn" class="btn btn-secondary" href="/api/pn-pdf" download="PN_GIM_ISP.pdf"
-           style="display:none;margin-left:auto;text-decoration:none">📄 Télécharger le PDF du PN</a>
-    </div>
-    <div class="subtabs" style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid #e5e7eb">
-        <button type="button" id="cont-subtab-view" class="subtab active"
-                onclick="showContentTab('view')">Consultation</button>
-        <button type="button" id="cont-subtab-edit" class="subtab"
-                onclick="showContentTab('edit')">Mes matières</button>
-    </div>
-
-    <!-- Sous-onglet : Consultation (lecture seule, toutes les matières) -->
-    <div id="cont-pane-view">
-        <div class="filters" style="margin-bottom:12px">
-            <label>Semestres :</label>
-            <div id="cont-sem-toggle" class="sem-toggle">
-                <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleContSemester('S1',this)">S1</button>
-                <button type="button" class="sem-btn active" data-sem="S2" onclick="toggleContSemester('S2',this)">S2</button>
-                <button type="button" class="sem-btn active" data-sem="S3" onclick="toggleContSemester('S3',this)">S3</button>
-                <button type="button" class="sem-btn active" data-sem="S4" onclick="toggleContSemester('S4',this)">S4</button>
-                <button type="button" class="sem-btn active" data-sem="S5" onclick="toggleContSemester('S5',this)">S5</button>
-                <button type="button" class="sem-btn active" data-sem="S6" onclick="toggleContSemester('S6',this)">S6</button>
-            </div>
-            <input type="text" id="cont-search" placeholder="Rechercher une matière…"
-                   oninput="renderContent()" style="margin-left:12px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
-        </div>
-        <div id="content-list"><div class="spinner">Chargement…</div></div>
-    </div>
-
-    <!-- Sous-onglet : Mes matières (modifiables par la personne connectée) -->
-    <div id="cont-pane-edit" style="display:none">
-        <div class="filters" style="margin-bottom:12px">
-            <label>Semestres :</label>
-            <div id="cont-edit-sem-toggle" class="sem-toggle">
-                <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleContEditSemester('S1',this)">S1</button>
-                <button type="button" class="sem-btn active" data-sem="S2" onclick="toggleContEditSemester('S2',this)">S2</button>
-                <button type="button" class="sem-btn active" data-sem="S3" onclick="toggleContEditSemester('S3',this)">S3</button>
-                <button type="button" class="sem-btn active" data-sem="S4" onclick="toggleContEditSemester('S4',this)">S4</button>
-                <button type="button" class="sem-btn active" data-sem="S5" onclick="toggleContEditSemester('S5',this)">S5</button>
-                <button type="button" class="sem-btn active" data-sem="S6" onclick="toggleContEditSemester('S6',this)">S6</button>
-            </div>
-            <input type="text" id="cont-edit-search" placeholder="Rechercher une matière…"
-                   oninput="renderContentEdit()" style="margin-left:12px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
-        </div>
-        <div id="content-edit-list"><div class="spinner">Chargement…</div></div>
-    </div>
 </div>
 
 <!-- ===== SALLES ===== -->
@@ -610,29 +560,78 @@
         <div class="filters" style="flex-wrap:wrap">
             <label>Programme :</label>
             <select id="prog-select" onchange="onProgChange()"><option value="">—</option></select>
-            <button class="btn btn-primary btn-sm" onclick="openNewProgramme()">+ Nouveau</button>
-            <button class="btn btn-secondary btn-sm" id="prog-rename-btn" onclick="renameProgramme()" disabled>Renommer</button>
-            <button class="btn btn-secondary btn-sm" id="prog-dup-btn" onclick="duplicateProgramme()" disabled>Dupliquer</button>
-            <button class="btn btn-secondary btn-sm" id="prog-del-btn" onclick="deleteProgramme()" disabled>Supprimer</button>
+            <button class="btn btn-primary btn-sm admin-only" onclick="openNewProgramme()">+ Nouveau</button>
+            <button class="btn btn-secondary btn-sm admin-only" id="prog-rename-btn" onclick="renameProgramme()" disabled>Renommer</button>
+            <button class="btn btn-secondary btn-sm admin-only" id="prog-dup-btn" onclick="duplicateProgramme()" disabled>Dupliquer</button>
+            <button class="btn btn-secondary btn-sm admin-only" id="prog-del-btn" onclick="deleteProgramme()" disabled>Supprimer</button>
             <label style="margin-left:12px">Année :</label>
             <div id="prog-year-toggle" class="sem-toggle">
                 <button type="button" class="sem-btn active" data-yg="1" onclick="toggleProgYear(1,this)">Année 1</button>
                 <button type="button" class="sem-btn active" data-yg="2" onclick="toggleProgYear(2,this)">Année 2</button>
                 <button type="button" class="sem-btn active" data-yg="3" onclick="toggleProgYear(3,this)">Année 3</button>
             </div>
-            <button class="btn btn-secondary btn-sm" id="prog-new-mat-btn" style="margin-left:14px" onclick="openNewProgMatiere()" disabled>+ Créer matière</button>
-            <button class="btn btn-primary btn-sm" id="prog-save-btn" onclick="saveProg()" disabled>💾 Enregistrer</button>
-            <button class="btn btn-secondary btn-sm" id="prog-reset-btn" onclick="resetProg()" disabled>↺ Réinitialiser (fichier d'origine)</button>
-            <button class="btn btn-secondary btn-sm" title="Télécharger tous les programmes (JSON) — pour transfert local → serveur" onclick="exportProgrammes()">⤓ Exporter</button>
-            <button class="btn btn-secondary btn-sm" title="Importer des programmes depuis un fichier JSON exporté" onclick="document.getElementById('prog-import-file').click()">⤒ Importer</button>
+            <button class="btn btn-secondary btn-sm admin-only" id="prog-new-mat-btn" style="margin-left:14px" onclick="openNewProgMatiere()" disabled>+ Créer matière</button>
+            <button class="btn btn-primary btn-sm admin-only" id="prog-save-btn" onclick="saveProg()" disabled>💾 Enregistrer</button>
+            <button class="btn btn-secondary btn-sm admin-only" id="prog-reset-btn" onclick="resetProg()" disabled>↺ Réinitialiser (fichier d'origine)</button>
+            <button class="btn btn-secondary btn-sm admin-only" title="Télécharger tous les programmes (JSON) — pour transfert local → serveur" onclick="exportProgrammes()">⤓ Exporter</button>
+            <button class="btn btn-secondary btn-sm admin-only" title="Importer des programmes depuis un fichier JSON exporté" onclick="document.getElementById('prog-import-file').click()">⤒ Importer</button>
             <input type="file" id="prog-import-file" accept="application/json,.json" style="display:none" onchange="importProgrammes(this)">
         </div>
     </div>
     <div class="subtabs" id="prog-subtabs" style="display:flex;gap:6px;margin-bottom:10px">
         <button type="button" id="prog-subtab-coeff" class="subtab active" onclick="showProgTab('coeff')">Coefficients</button>
         <button type="button" id="prog-subtab-matieres" class="subtab" onclick="showProgTab('matieres')">Matières</button>
+        <button type="button" id="prog-subtab-contenu" class="subtab" onclick="showProgTab('contenu')">Contenu</button>
     </div>
     <div id="prog-content"><div style="color:#6b7280;padding:20px">Choisissez ou créez un programme pour définir ses matières, compétences (UE), coefficients et heures.</div></div>
+
+    <!-- Sous-onglet Contenu : contenu des matières (Consultation / Mes matières) -->
+    <div id="prog-tab-contenu" style="display:none">
+        <div class="subtabs" style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid #e5e7eb;align-items:center">
+            <button type="button" id="cont-subtab-view" class="subtab active"
+                    onclick="showContentTab('view')">Consultation</button>
+            <button type="button" id="cont-subtab-edit" class="subtab"
+                    onclick="showContentTab('edit')">Mes matières</button>
+            <a id="pn-pdf-btn" class="btn btn-secondary" href="/api/pn-pdf" download="PN_GIM_ISP.pdf"
+               style="display:none;margin-left:auto;text-decoration:none">📄 Télécharger le PDF du PN</a>
+        </div>
+
+        <!-- Sous-onglet : Consultation (lecture seule, toutes les matières) -->
+        <div id="cont-pane-view">
+            <div class="filters" style="margin-bottom:12px">
+                <label>Semestres :</label>
+                <div id="cont-sem-toggle" class="sem-toggle">
+                    <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleContSemester('S1',this)">S1</button>
+                    <button type="button" class="sem-btn active" data-sem="S2" onclick="toggleContSemester('S2',this)">S2</button>
+                    <button type="button" class="sem-btn active" data-sem="S3" onclick="toggleContSemester('S3',this)">S3</button>
+                    <button type="button" class="sem-btn active" data-sem="S4" onclick="toggleContSemester('S4',this)">S4</button>
+                    <button type="button" class="sem-btn active" data-sem="S5" onclick="toggleContSemester('S5',this)">S5</button>
+                    <button type="button" class="sem-btn active" data-sem="S6" onclick="toggleContSemester('S6',this)">S6</button>
+                </div>
+                <input type="text" id="cont-search" placeholder="Rechercher une matière…"
+                       oninput="renderContent()" style="margin-left:12px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+            </div>
+            <div id="content-list"><div class="spinner">Chargement…</div></div>
+        </div>
+
+        <!-- Sous-onglet : Mes matières (modifiables par la personne connectée) -->
+        <div id="cont-pane-edit" style="display:none">
+            <div class="filters" style="margin-bottom:12px">
+                <label>Semestres :</label>
+                <div id="cont-edit-sem-toggle" class="sem-toggle">
+                    <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleContEditSemester('S1',this)">S1</button>
+                    <button type="button" class="sem-btn active" data-sem="S2" onclick="toggleContEditSemester('S2',this)">S2</button>
+                    <button type="button" class="sem-btn active" data-sem="S3" onclick="toggleContEditSemester('S3',this)">S3</button>
+                    <button type="button" class="sem-btn active" data-sem="S4" onclick="toggleContEditSemester('S4',this)">S4</button>
+                    <button type="button" class="sem-btn active" data-sem="S5" onclick="toggleContEditSemester('S5',this)">S5</button>
+                    <button type="button" class="sem-btn active" data-sem="S6" onclick="toggleContEditSemester('S6',this)">S6</button>
+                </div>
+                <input type="text" id="cont-edit-search" placeholder="Rechercher une matière…"
+                       oninput="renderContentEdit()" style="margin-left:12px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+            </div>
+            <div id="content-edit-list"><div class="spinner">Chargement…</div></div>
+        </div>
+    </div>
 </div>
 
 <!-- ===== PARAMÈTRES (admin) ===== -->
@@ -1299,9 +1298,10 @@ function applyRole(role, user, teacher, status) {
             ? (user + ' · ' + (status === 'Vacataire' ? 'vacataire' : 'titulaire'))
             : 'Admin';
     }
-    // Enseignant : onglets de répartition + contenu + ses contraintes ;
+    // Enseignant : onglets de répartition + programme (consultation, avec le
+    // sous-onglet Contenu) + ses contraintes ;
     // seul le titulaire voit la liste des enseignants (consultation seule)
-    const teacherTabs = ['nav-repartition', 'nav-repartition-enseignant', 'nav-contenu', 'nav-contraintes'];
+    const teacherTabs = ['nav-repartition', 'nav-repartition-enseignant', 'nav-programme', 'nav-contraintes'];
     if (state.teacherTitulaire) teacherTabs.push('nav-enseignants');
     document.querySelectorAll('nav button[id^="nav-"]').forEach(b => {
         b.style.display = (role === 'teacher' && !teacherTabs.includes(b.id)) ? 'none' : '';
@@ -1411,18 +1411,16 @@ async function loadPage(name, forceReload) {
             await Promise.all([loadMatProg(), loadHetdCoefs()]);
             renderCourses();
         }
-        else if (name === 'contenu') {
-            state.courses = await api('/courses');
-            showContentTab(_contTab);
-            checkPnPdf();
-        }
         else if (name === 'salles') {
             if (forceReload || !state.rooms.length) state.rooms = await api('/rooms');
             renderRooms();
         }
         else if (name === 'journal') { await loadJournal(); }
         else if (name === 'contraintes') { await loadConstraints(); }
-        else if (name === 'programme') { await loadProgramme(); }
+        else if (name === 'programme') {
+            await loadProgramme();
+            if (_progTab === 'contenu') await showProgTab('contenu');
+        }
         else if (name === 'promotions') { await loadPromotions(); }
         else if (name === 'parametres') { await loadParametres(); }
         else if (name === 'repartition-enseignant') {
@@ -2319,17 +2317,34 @@ function toggleProgYear(yg, btn) {
 
 let _progTab = 'coeff';
 
-function showProgTab(tab) {
-    if (_progData) _collectProg();   // conserve les saisies de l'onglet courant
+async function showProgTab(tab) {
+    if (_progData && _progTab !== 'contenu') _collectProg();   // conserve les saisies de l'onglet courant
     _progTab = tab;
-    ['coeff', 'matieres'].forEach(t =>
+    ['coeff', 'matieres', 'contenu'].forEach(t =>
         document.getElementById('prog-subtab-' + t).classList.toggle('active', t === tab));
-    renderProgCurrent();
+    const isCont = tab === 'contenu';
+    document.getElementById('prog-content').style.display = isCont ? 'none' : '';
+    document.getElementById('prog-tab-contenu').style.display = isCont ? '' : 'none';
+    if (isCont) {
+        // Contenu des matières : basé sur les cours de l'année active (pas sur _progData)
+        try { state.courses = await api('/courses'); } catch (e) { /* garde l'existant */ }
+        showContentTab(_contTab);
+        checkPnPdf();
+    } else {
+        renderProgCurrent();
+    }
 }
 
 function renderProgCurrent() {
+    if (_progTab === 'contenu') return;   // pane séparé géré par showProgTab
     if (_progTab === 'matieres') renderProgMatieres();
     else renderProgCoeffs();
+    // Enseignant : consultation seule — désactive toute édition dans les grilles
+    if (state.role === 'teacher') {
+        const el = document.getElementById('prog-content');
+        el.querySelectorAll('input, select, textarea').forEach(i => i.disabled = true);
+        el.querySelectorAll('button').forEach(b => b.style.display = 'none');
+    }
 }
 // Compat : anciens appels
 function renderProgTables() { renderProgCurrent(); }
@@ -2448,8 +2463,8 @@ function renderProgMatieres() {
                 <td style="padding:1px"><select class="prg-kind" onchange="this.style.background=_coeffKindColor(this.value);progKindChanged()" style="background:${_coeffKindColor(co.kind)};${inS};font-size:.8rem">${_coeffKindOptions(co.kind)}</select></td>
                 <td style="padding:1px"><input class="prg-apogee" value="${esc(co.apogee_code || '')}" placeholder="—" style="width:92px;${inS}"></td>
                 <td style="padding:1px"><input class="prg-code" value="${esc(co.code || '')}" style="width:84px;${inS};font-weight:600"></td>
-                <td style="padding:1px"><input class="prg-short" value="${esc(co.short_label || '')}" placeholder="—" style="width:130px;${inS}"></td>
-                <td style="padding:1px"><input class="prg-label" value="${esc(co.label || '')}" placeholder="—" style="width:230px;${inS}"></td>
+                <td style="padding:1px"><input class="prg-short" value="${esc(co.short_label || '')}" placeholder="—" style="width:110px;${inS}"></td>
+                <td style="padding:1px"><input class="prg-label" value="${esc(co.label || '')}" placeholder="—" style="width:170px;${inS}"></td>
                 ${volCells}${totCells}`;
             return `<tr data-mi="${mi}">${def}</tr>`;
         }).join('');
@@ -2463,9 +2478,9 @@ function renderProgMatieres() {
             ${volTotCell('cm')}${volTotCell('td')}${volTotCell('tp')}${volTotCell('pt')}
             <td class="prg-gtot" data-sem="${sem}" style="text-align:center;padding:2px 6px;background:#eef2ff">${Math.round(gTot * 100) / 100}</td>
             <td class="prg-ghetd" data-sem="${sem}" style="text-align:center;padding:2px 6px;color:#4f46e5;background:#eef2ff">${Math.round(gHetd * 100) / 100}</td></tr>`;
-        return `<div>
+        return `<div style="flex:1 1 0;min-width:0">
             <div style="font-weight:600;color:#4f46e5;margin-bottom:4px">${sem}</div>
-            <div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;width:fit-content;max-width:95vw">
+            <div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;width:fit-content;max-width:100%">
                 <table class="nz-table" data-sem="${sem}" style="table-layout:auto"><thead>${head}</thead><tbody>${rows}${totalRow}</tbody></table>
             </div></div>`;
     };

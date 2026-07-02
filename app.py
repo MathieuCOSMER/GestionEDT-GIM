@@ -2765,9 +2765,8 @@ def _programme_promo_count(prog_id):
 
 @app.route('/api/programmes', methods=['GET'])
 def list_programmes():
-    err = _require_admin()
-    if err:
-        return err
+    # Lecture ouverte aux enseignants (consultation du programme) ; l'écriture
+    # reste réservée à l'admin (before_request + _require_admin sur PUT/POST).
     grdb = get_programmes_db()
     rows = grdb.execute('SELECT * FROM programmes ORDER BY name').fetchall()
     out = []
@@ -2900,9 +2899,7 @@ def delete_programme(prog_id):
 
 @app.route('/api/programmes/<int:prog_id>/data', methods=['GET'])
 def get_programme_data_route(prog_id):
-    err = _require_admin()
-    if err:
-        return err
+    # Lecture ouverte aux enseignants (consultation) ; écriture admin uniquement.
     grdb = get_programmes_db()
     if not _programme_row(grdb, prog_id):
         return error_response('Programme introuvable', 404)
