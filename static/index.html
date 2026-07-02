@@ -719,7 +719,23 @@
 <div class="page" id="page-repartition">
     <div class="toolbar">
         <h1>Répartition Calendaire</h1>
-        <div class="filters">
+        <!-- Filtres du sous-onglet Répartition journalière (admin) -->
+        <div class="filters" id="rep-filters-jour" style="display:none">
+            <label>Année :</label>
+            <select id="repj-annee" onchange="loadRepJour()">
+                <option value="1">1ère année (S1/S2)</option>
+                <option value="2">2ème année (S3/S4)</option>
+                <option value="3">3ème année (S5/S6)</option>
+            </select>
+            <label style="margin-left:12px">Cohorte :</label>
+            <select id="repj-cohorte" onchange="renderRepJour()">
+                <option value="FTP">FTP</option>
+                <option value="ALT">ALT</option>
+            </select>
+            <label style="margin-left:12px">Semaine :</label>
+            <select id="repj-week" onchange="renderRepJour()"></select>
+        </div>
+        <div class="filters" id="rep-filters-annuelle">
             <label>Semestres :</label>
             <div id="sem-toggle" class="sem-toggle">
                 <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleSemester('S1',this)">S1</button>
@@ -765,9 +781,18 @@
             <input type="file" id="import-excel-input" accept=".xlsx" style="display:none" onchange="importRepartitionExcel(this)">
         </div>
     </div>
-    <div class="repartition-layout">
-        <div id="repartition-table"><div class="spinner">Chargement…</div></div>
-        <div id="checks-panel"></div>
+    <div class="subtabs" id="rep-subtabs" style="display:flex;gap:6px;margin-bottom:10px">
+        <button type="button" id="rep-subtab-annuelle" class="subtab active" onclick="showRepTab('annuelle')">Répartition annuelle</button>
+        <button type="button" id="rep-subtab-jour" class="subtab admin-only" onclick="showRepTab('jour')">Répartition journalière</button>
+    </div>
+    <div id="rep-pane-annuelle">
+        <div class="repartition-layout">
+            <div id="repartition-table"><div class="spinner">Chargement…</div></div>
+            <div id="checks-panel"></div>
+        </div>
+    </div>
+    <div id="rep-pane-jour" style="display:none">
+        <div id="repj-content"><div class="empty">Choisissez une promo et une semaine.</div></div>
     </div>
 </div>
 
@@ -1434,7 +1459,10 @@ async function loadPage(name, forceReload) {
             populateTeacherRepFilter();
             renderTeacherRepartition();
         }
-        else if (name === 'repartition') { await loadRepartition(); }
+        else if (name === 'repartition') {
+            await loadRepartition();
+            if (_repTab === 'jour') await loadRepJour();
+        }
     } catch (e) {
         toast('Erreur de chargement : ' + e.message, 'error');
     }
@@ -5323,6 +5351,123 @@ async function loadRepartition() {
 
 function filterRepartition() {
     if (_repartitionData) renderRepartition(_repartitionData);
+}
+
+// ===== Sous-onglets Répartition : annuelle (tous) / journalière (admin) =====
+let _repTab = 'annuelle';
+let _repJourData = null;   // { weeks, rows } de la promo choisie
+
+function showRepTab(tab) {
+    _repTab = tab;
+    document.getElementById('rep-subtab-annuelle').classList.toggle('active', tab === 'annuelle');
+    document.getElementById('rep-subtab-jour').classList.toggle('active', tab === 'jour');
+    const isJour = tab === 'jour';
+    document.getElementById('rep-filters-annuelle').style.display = isJour ? 'none' : '';
+    document.getElementById('rep-filters-jour').style.display = isJour ? '' : 'none';
+    document.getElementById('rep-pane-annuelle').style.display = isJour ? 'none' : '';
+    document.getElementById('rep-pane-jour').style.display = isJour ? '' : 'none';
+    if (isJour) loadRepJour();
+}
+
+// Numéro de semaine ISO de la date courante (présélection de la semaine)
+function _isoWeekNow() {
+    const d = new Date();
+    const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
+    const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+    return Math.ceil(((t - y0) / 86400000 + 1) / 7);
+}
+
+// Charge les répartitions des deux semestres de l'année choisie
+async function loadRepJour() {
+    const el = document.getElementById('repj-content');
+    el.innerHTML = '<div class="spinner">Chargement…</div>';
+    const yg = parseInt(document.getElementById('repj-annee').value) || 1;
+    const sems = ['S' + (yg * 2 - 1), 'S' + (yg * 2)];
+    try {
+        if (!state.config) state.config = await api('/config');
+        const datas = await Promise.all(sems.map(s => api('/repartition?semester=' + encodeURIComponent(s))));
+        const anchor = (state.config && state.config.academic_start_week) || 36;
+        const mw = maxWeek();
+        const skey = w => (w >= anchor ? w - anchor : w - anchor + mw);
+        const weeks = [...new Set(datas.flatMap(d => d.weeks || []))].sort((a, b) => skey(a) - skey(b));
+        const rows = datas.flatMap(d => d.rows || []);
+        _repJourData = { weeks, rows };
+        // Liste des semaines : conserve la sélection, sinon semaine courante si présente
+        const sel = document.getElementById('repj-week');
+        const cur = parseInt(sel.value);
+        sel.innerHTML = weeks.map(w => `<option value="${w}">Semaine ${w}</option>`).join('');
+        if (weeks.includes(cur)) sel.value = cur;
+        else if (weeks.includes(_isoWeekNow())) sel.value = _isoWeekNow();
+        renderRepJour();
+    } catch (e) {
+        el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
+        _repJourData = null;
+    }
+}
+
+// Tableau des cours à placer pour la semaine, l'année et la cohorte choisies
+function renderRepJour() {
+    const el = document.getElementById('repj-content');
+    if (!_repJourData) { el.innerHTML = '<div class="empty">Aucune donnée.</div>'; return; }
+    const w = parseInt(document.getElementById('repj-week').value);
+    const cohorte = document.getElementById('repj-cohorte').value;   // 'FTP' ou 'ALT'
+    // Les cours mutualisés (MUT) concernent les deux cohortes
+    const list = _repJourData.rows.filter(r => (r.by_week && r.by_week[w]) > 0
+        && (r.formation === cohorte || r.formation === 'MUT'));
+    if (!list.length) {
+        el.innerHTML = '<div class="empty">Aucun cours à placer en semaine ' + w + ' pour la cohorte ' + esc(cohorte) + '.</div>';
+        return;
+    }
+    list.sort((a, b) => (a.semester || '').localeCompare(b.semester || '')
+        || (a.course_code || '').localeCompare(b.course_code || '')
+        || (a.formation || '').localeCompare(b.formation || ''));
+    const typeColors = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' };
+    const formColor = { FTP: '#0369a1', ALT: '#9a3412', MUT: '#7c3aed' };
+    // Total d'heures de la cohorte (les cours mutualisés en font partie)
+    const tot = { FTP: 0, ALT: 0, MUT: 0 };
+    list.forEach(r => { tot[r.formation] = (tot[r.formation] || 0) + r.by_week[w]; });
+    const fmt = x => Math.round(x * 100) / 100;
+    const rowsHtml = list.map(r => {
+        const h = r.by_week[w];
+        const slot = r.slot_duration || 1.5;
+        const n = Math.round((h / slot) * 100) / 100;
+        const seances = `${n} × ${slot}h`;
+        const badge = `<span class="badge ${typeColors[(r.type || '').toUpperCase()] || 'badge-cm'}">${esc(r.type || '')}</span>`;
+        return `<tr>
+            <td style="text-align:center">${esc(r.semester || '')}</td>
+            <td><strong>${esc(r.course_code || '')}</strong></td>
+            <td>${esc(r.course_name || '')}</td>
+            <td style="text-align:center">${badge}</td>
+            <td style="text-align:center;font-weight:700;color:${formColor[r.formation] || '#374151'}">${esc(r.formation || '')}</td>
+            <td>${esc(r.teacher || '') || '<span style="color:#bbb">—</span>'}</td>
+            <td style="text-align:center">${esc(r.room || '') || '<span style="color:#bbb">—</span>'}</td>
+            <td style="text-align:center;font-weight:700">${fmt(h)}h</td>
+            <td style="text-align:center;color:#6b7280">${seances}</td>
+        </tr>`;
+    }).join('');
+    el.innerHTML = `
+        <div style="display:flex;gap:18px;margin-bottom:10px;font-size:.9rem">
+            <span><strong style="color:${formColor[cohorte]}">${esc(cohorte)}</strong> :
+                ${fmt((tot[cohorte] || 0) + tot.MUT)}h${tot.MUT ? ` (dont ${fmt(tot.MUT)}h MUT)` : ''}</span>
+            <span style="color:#6b7280">${list.length} créneau(x) à placer</span>
+        </div>
+        <div class="overflow-x">
+        <table style="width:auto;min-width:820px">
+            <thead><tr>
+                <th style="width:52px;text-align:center">Sem.</th>
+                <th style="width:80px">Code</th>
+                <th>Matière</th>
+                <th style="width:56px;text-align:center">Type</th>
+                <th style="width:56px;text-align:center">Formation</th>
+                <th style="width:150px">Enseignant</th>
+                <th style="width:70px;text-align:center">Salle</th>
+                <th style="width:64px;text-align:center">Heures</th>
+                <th style="width:90px;text-align:center">Séances</th>
+            </tr></thead>
+            <tbody>${rowsHtml}</tbody>
+        </table>
+        </div>`;
 }
 
 // Remplit une liste déroulante à partir des valeurs distinctes des lignes affichées,
