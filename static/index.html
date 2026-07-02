@@ -3579,7 +3579,20 @@ function renderCourses() {
             </tr>`];
         }
         // Sous-colonnes du groupe « Heures » : [type | PN | FTP | ALT], puis Salle, puis Actions
-        return types.map((t, i) => `<tr${i === 0 ? ' class="course-sep"' : ''}>
+        // Cours mutualisé : CM et TD sont donnés en commun FTP+ALT → une seule cellule
+        // fusionnée (colspan 2) au lieu de deux cellules FTP / ALT.
+        return types.map((t, i) => {
+            const mutSpan = c.mutualized && showFtpCol && showAltCol && (t.label === 'CM' || t.label === 'TD');
+            let hoursCells;
+            if (mutSpan) {
+                const h = t.ftp || t.alt, teacher = t.ftpT || t.altT;
+                hoursCells = h
+                    ? `<td colspan="2" style="text-align:center" title="Mutualisé FTP + ALT">${h}h${teacher ? `<br><small style="color:#6b7280">${esc(teacher)}</small>` : ''}</td>`
+                    : '<td colspan="2" class="empty" style="text-align:center;color:#bbb">—</td>';
+            } else {
+                hoursCells = (showFtpCol ? hCell(t.ftp, t.ftpT) : '') + (showAltCol ? hCell(t.alt, t.altT) : '');
+            }
+            return `<tr${i === 0 ? ' class="course-sep"' : ''}>
                 ${i === 0 ? `
                 <td rowspan="${nRows}">${codeCell}</td>
                 <td rowspan="${nRows}">${esc(c.name||'')}</td>
@@ -3587,11 +3600,11 @@ function renderCourses() {
                 <td rowspan="${nRows}">${badge}</td>` : ''}
                 <td style="font-size:.75rem;font-weight:600;text-align:center">${t.label}</td>
                 ${pnCell(t)}
-                ${showFtpCol ? hCell(t.ftp, t.ftpT) : ''}
-                ${showAltCol ? hCell(t.alt, t.altT) : ''}
+                ${hoursCells}
                 ${salleCell(t)}
                 ${i === 0 ? actions : ''}
-            </tr>`);
+            </tr>`;
+        });
     }
 
     // Cellule « Matière générale » (colonne de gauche), fusionnée (rowspan) sur tout le groupe.
