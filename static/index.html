@@ -3681,7 +3681,9 @@ function renderCourses() {
         const shownTypes = new Set();  // heures PN affichées une seule fois par type dans le groupe
         (subs || []).forEach(c => { all = all.concat(courseRows(c, comp, shownTypes)); });
         if (!all.length) {
-            if (comp) {  // matière du programme sans sous-matière : invite à en créer
+            // Avec un filtre Formation/Enseignant/Salle actif, un groupe sans aucune
+            // ligne correspondante est entièrement masqué (pas de ligne d'invite).
+            if (comp && noCellFilter) {  // matière du programme sans sous-matière : invite à en créer
                 return `<tr>${parentLeftTd(comp, null, sem, 1, orphanRed)}${recapTd(comp, [], 1)}<td colspan="${ncol - 2}" style="color:#9ca3af;font-size:.85rem;padding:8px">Aucune sous-matière pour l'instant.</td></tr>`;
             }
             return '';
