@@ -20,6 +20,8 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from pathlib import Path
 import io
+import zipfile
+import tempfile
 
 
 def _load_local_env():
@@ -356,6 +358,214 @@ def _maybe_daily_backup():
             backup_all_if_modified()
         except Exception as e:
             _audit('BACKUP_ERROR', error=str(e))
+
+# ===== SAUVEGARDE COMPLÈTE DU SITE (export/import ZIP, onglet Paramètres) =====
+# Contenu de l'archive : bases de toutes les années + promotions + programmes,
+# fichiers de notes et de contraintes, réglages globaux. Sert de plan de
+# reprise (site compromis, changement de serveur…).
+_FULLBACKUP_VERSION = 1
+
+def _sqlite_snapshot_bytes(src_path):
+    """Copie cohérente d'une base SQLite (API backup), renvoyée en bytes."""
+    fd, tmp = tempfile.mkstemp(suffix='.db')
+    os.close(fd)
+    try:
+        src = sqlite3.connect(src_path)
+        dst = sqlite3.connect(tmp)
+        try:
+            with dst:
+                src.backup(dst)
+        finally:
+            src.close()
+            dst.close()
+        with open(tmp, 'rb') as fh:
+            return fh.read()
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+def _iter_dir_files(root, prefix):
+    """(chemin absolu, nom dans l'archive) pour chaque fichier sous root."""
+    if not os.path.isdir(root):
+        return
+    for dirpath, _dirs, files in os.walk(root):
+        for f in files:
+            p = os.path.join(dirpath, f)
+            rel = os.path.relpath(p, root).replace(os.sep, '/')
+            yield p, prefix + '/' + rel
+
+def _fullbackup_safe_arcname(name):
+    """Vrai si l'entrée du zip est attendue et sans traversée de chemin."""
+    if name.endswith('/'):
+        return False    # entrées répertoire ignorées
+    if '\\' in name or name.startswith('/') or '..' in name.split('/'):
+        return False
+    if name in ('manifest.json', 'edt_settings.json', 'data/coefficients.json'):
+        return True
+    if name.startswith('databases/'):
+        parts = name.split('/')
+        if len(parts) == 2 and parts[1] in ('promotions.db', 'programmes.db'):
+            return True
+        return len(parts) == 3 and _is_year(parts[1]) and parts[2] == f'edt_{parts[1]}.db'
+    return name.startswith('uploads/notes/') or name.startswith('uploads/contraintes/')
+
+def _remove_wal_shm(db_path):
+    """Supprime les fichiers WAL/SHM d'une base avant son remplacement
+    (un WAL périmé corromprait la base restaurée)."""
+    for suffix in ('-wal', '-shm'):
+        try:
+            if os.path.exists(db_path + suffix):
+                os.remove(db_path + suffix)
+        except OSError:
+            pass
+
+def _stash_dir(d):
+    """Met de côté un dossier (renommé en .avant-import) avant restauration."""
+    if not os.path.isdir(d):
+        return
+    stash = d + '.avant-import'
+    shutil.rmtree(stash, ignore_errors=True)
+    try:
+        os.rename(d, stash)
+    except OSError:
+        shutil.rmtree(d, ignore_errors=True)
+
+@app.route('/api/backup/full', methods=['GET'])
+def full_backup_export():
+    err = _require_admin()
+    if err:
+        return err
+    years = list_years()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        for y in years:
+            z.writestr(f'databases/{y}/edt_{y}.db',
+                       _sqlite_snapshot_bytes(db_path_for_year(y)))
+        for name, path in (('promotions.db', _PROMOTIONS_DB),
+                           ('programmes.db', _PROGRAMMES_DB)):
+            if os.path.isfile(path):
+                z.writestr(f'databases/{name}', _sqlite_snapshot_bytes(path))
+        for p, arc in _iter_dir_files(_NOTES_DIR, 'uploads/notes'):
+            z.write(p, arc)
+        for p, arc in _iter_dir_files(_CONSTRAINTS_DIR, 'uploads/contraintes'):
+            z.write(p, arc)
+        if os.path.isfile(SETTINGS_PATH):
+            z.write(SETTINGS_PATH, 'edt_settings.json')
+        if os.path.isfile(_REF_COEFF_FILE):
+            z.write(_REF_COEFF_FILE, 'data/coefficients.json')
+        z.writestr('manifest.json', json.dumps({
+            'app': 'GestionEDT',
+            'version': _FULLBACKUP_VERSION,
+            'created_at': datetime.now().isoformat(timespec='seconds'),
+            'years': years,
+        }, indent=2))
+    buf.seek(0)
+    _audit('FULL_BACKUP_EXPORT', years=','.join(years))
+    fname = 'EDT_sauvegarde_' + datetime.now().strftime('%Y-%m-%d_%H%M%S') + '.zip'
+    return send_file(buf, mimetype='application/zip',
+                     as_attachment=True, download_name=fname)
+
+@app.route('/api/backup/full', methods=['POST'])
+def full_backup_import():
+    err = _require_admin()
+    if err:
+        return err
+    f = request.files.get('file')
+    if not f:
+        return error_response('Fichier .zip requis (champ « file »)', 400)
+    try:
+        z = zipfile.ZipFile(io.BytesIO(f.read()))
+    except zipfile.BadZipFile:
+        return error_response('Fichier invalide : archive .zip attendue', 400)
+    names = [n for n in z.namelist() if not n.endswith('/')]
+    if 'manifest.json' not in names:
+        return error_response('Archive non reconnue : manifest.json manquant', 400)
+    try:
+        manifest = json.loads(z.read('manifest.json').decode('utf-8'))
+    except (ValueError, UnicodeDecodeError):
+        return error_response('manifest.json illisible', 400)
+    if manifest.get('app') != 'GestionEDT':
+        return error_response('Archive non reconnue (application différente)', 400)
+    bad = [n for n in names if not _fullbackup_safe_arcname(n)]
+    if bad:
+        return error_response('Entrées non autorisées dans l\'archive : '
+                              + ', '.join(bad[:5]), 400)
+
+    # Sauvegarde de sécurité de l'existant avant écrasement
+    for y in list_years():
+        try:
+            _create_backup(y, tag='avant-import')
+        except Exception:
+            pass
+    for path in (_PROMOTIONS_DB, _PROGRAMMES_DB):
+        if os.path.isfile(path):
+            try:
+                shutil.copy2(path, path + '.avant-import')
+            except OSError:
+                pass
+    # Notes / contraintes : l'archive fait foi → l'existant est mis de côté
+    _stash_dir(_NOTES_DIR)
+    _stash_dir(_CONSTRAINTS_DIR)
+
+    imported_years = []
+    for n in names:
+        if n == 'manifest.json':
+            continue
+        if n == 'edt_settings.json':
+            target = SETTINGS_PATH
+        elif n == 'data/coefficients.json':
+            target = _REF_COEFF_FILE
+        elif n == 'databases/promotions.db':
+            target = _PROMOTIONS_DB
+        elif n == 'databases/programmes.db':
+            target = _PROGRAMMES_DB
+        elif n.startswith('databases/'):
+            year = n.split('/')[1]
+            target = db_path_for_year(year)
+            imported_years.append(year)
+        elif n.startswith('uploads/notes/'):
+            target = os.path.join(_NOTES_DIR, *n.split('/')[2:])
+        else:   # uploads/contraintes/
+            target = os.path.join(_CONSTRAINTS_DIR, *n.split('/')[2:])
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        if target.endswith('.db'):
+            _remove_wal_shm(target)
+        with open(target, 'wb') as out:
+            out.write(z.read(n))
+
+    # Caches et migrations de schéma sur les bases restaurées
+    global _settings_cache
+    _settings_cache = None
+    for y in imported_years:
+        try:
+            db = sqlite3.connect(db_path_for_year(y))
+            db.row_factory = sqlite3.Row
+            _apply_migrations(db)
+            db.commit()
+            db.close()
+        except Exception as e:
+            _audit('FULL_BACKUP_IMPORT_MIGRATE_ERROR', year=y, error=str(e))
+    try:
+        _init_promotions_db()
+    except Exception:
+        pass
+    try:
+        _init_programmes_db()
+    except Exception:
+        pass
+
+    untouched = [y for y in list_years() if y not in imported_years]
+    _audit('FULL_BACKUP_IMPORT', user=session.get('user'),
+           years=','.join(imported_years), untouched=','.join(untouched))
+    return jsonify({
+        'ok': True,
+        'years_imported': imported_years,
+        'years_untouched': untouched,
+        'files': len(names) - 1,
+        'backup_created_at': manifest.get('created_at'),
+    })
 
 def school_week_key(w, start_week=36, max_week=52):
     """Clé de tri pour l'ordre scolaire : start_week est la semaine 0.

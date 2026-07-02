@@ -574,30 +574,49 @@
         <div class="filters" style="flex-wrap:wrap">
             <label>Programme :</label>
             <select id="prog-select" onchange="onProgChange()"><option value="">—</option></select>
-            <button class="btn btn-primary btn-sm admin-only" onclick="openNewProgramme()">+ Nouveau</button>
-            <button class="btn btn-secondary btn-sm admin-only" id="prog-rename-btn" onclick="renameProgramme()" disabled>Renommer</button>
-            <button class="btn btn-secondary btn-sm admin-only" id="prog-dup-btn" onclick="duplicateProgramme()" disabled>Dupliquer</button>
-            <button class="btn btn-secondary btn-sm admin-only" id="prog-del-btn" onclick="deleteProgramme()" disabled>Supprimer</button>
             <label style="margin-left:12px">Année :</label>
             <div id="prog-year-toggle" class="sem-toggle">
                 <button type="button" class="sem-btn active" data-yg="1" onclick="toggleProgYear(1,this)">Année 1</button>
                 <button type="button" class="sem-btn active" data-yg="2" onclick="toggleProgYear(2,this)">Année 2</button>
                 <button type="button" class="sem-btn active" data-yg="3" onclick="toggleProgYear(3,this)">Année 3</button>
             </div>
-            <button class="btn btn-secondary btn-sm admin-only" id="prog-new-mat-btn" style="margin-left:14px" onclick="openNewProgMatiere()" disabled>+ Créer matière</button>
-            <button class="btn btn-primary btn-sm admin-only" id="prog-save-btn" onclick="saveProg()" disabled>💾 Enregistrer</button>
-            <button class="btn btn-secondary btn-sm admin-only" id="prog-reset-btn" onclick="resetProg()" disabled>↺ Réinitialiser (fichier d'origine)</button>
-            <button class="btn btn-secondary btn-sm admin-only" title="Télécharger tous les programmes (JSON) — pour transfert local → serveur" onclick="exportProgrammes()">⤓ Exporter</button>
-            <button class="btn btn-secondary btn-sm admin-only" title="Importer des programmes depuis un fichier JSON exporté" onclick="document.getElementById('prog-import-file').click()">⤒ Importer</button>
-            <input type="file" id="prog-import-file" accept="application/json,.json" style="display:none" onchange="importProgrammes(this)">
+            <button class="btn btn-primary btn-sm admin-only" id="prog-save-btn" style="margin-left:14px" onclick="saveProg()" disabled>💾 Enregistrer</button>
         </div>
     </div>
     <div class="subtabs" id="prog-subtabs">
         <button type="button" id="prog-subtab-coeff" class="subtab active" onclick="showProgTab('coeff')">Coefficients</button>
         <button type="button" id="prog-subtab-matieres" class="subtab" onclick="showProgTab('matieres')">Matières</button>
         <button type="button" id="prog-subtab-contenu" class="subtab" onclick="showProgTab('contenu')">Contenu</button>
+        <button type="button" id="prog-subtab-actions" class="subtab admin-only" onclick="showProgTab('actions')">Actions</button>
     </div>
     <div id="prog-content"><div class="empty">Choisissez ou créez un programme pour définir ses matières, compétences (UE), coefficients et heures.</div></div>
+
+    <!-- Sous-onglet Actions (admin) : gestion des programmes -->
+    <div id="prog-tab-actions" style="display:none">
+        <div class="card" style="max-width:680px;padding:18px">
+            <div class="section-title" style="margin-top:0">Programmes</div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+                <button class="btn btn-primary" onclick="openNewProgramme()">+ Nouveau programme</button>
+                <button class="btn btn-secondary" id="prog-rename-btn" onclick="renameProgramme()" disabled>Renommer</button>
+                <button class="btn btn-secondary" id="prog-dup-btn" onclick="duplicateProgramme()" disabled>Dupliquer</button>
+                <button class="btn btn-danger" id="prog-del-btn" onclick="deleteProgramme()" disabled>🗑 Supprimer</button>
+            </div>
+            <div class="section-title">Matières du programme</div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+                <button class="btn btn-primary" id="prog-new-mat-btn" onclick="openNewProgMatiere()" disabled>+ Créer matière</button>
+                <button class="btn btn-secondary" id="prog-reset-btn" onclick="resetProg()" disabled>↺ Réinitialiser (fichier d'origine)</button>
+            </div>
+            <div class="section-title">Transfert entre installations</div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+                <button class="btn btn-secondary" title="Télécharger tous les programmes (JSON) — pour transfert local → serveur" onclick="exportProgrammes()">⤓ Exporter (JSON)</button>
+                <button class="btn btn-secondary" title="Importer des programmes depuis un fichier JSON exporté" onclick="document.getElementById('prog-import-file').click()">⤒ Importer</button>
+                <input type="file" id="prog-import-file" accept="application/json,.json" style="display:none" onchange="importProgrammes(this)">
+            </div>
+            <p style="color:#6b7280;font-size:.82rem;margin:0">
+                Renommer, Dupliquer, Supprimer, Créer matière et Réinitialiser s'appliquent au
+                programme sélectionné dans la barre du haut.</p>
+        </div>
+    </div>
 
     <!-- Sous-onglet Contenu : contenu des matières (Consultation / Mes matières) -->
     <div id="prog-tab-contenu" style="display:none">
@@ -666,6 +685,24 @@
         </div>
         <div style="font-size:.8rem;color:#6b7280;margin-bottom:12px">Valeurs usuelles : CM 1,5 · TD 1 · TP 0,667 (2/3) · PT 1.</div>
         <button class="btn btn-primary" id="hetd-save-btn" onclick="saveHetdCoefs()">💾 Enregistrer</button>
+
+        <h3 style="color:#374151;margin:32px 0 8px">Sauvegarde complète du site</h3>
+        <p style="color:#6b7280;font-size:.9rem;margin-top:0">
+            Toutes les données du site dans un seul fichier .zip : bases de toutes les années
+            universitaires, promotions, programmes, notes, contraintes et réglages.
+            Conservez ces fichiers en lieu sûr (hors du serveur) pour pouvoir restaurer le site
+            en cas de piratage ou de perte de données.
+        </p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+            <a class="btn btn-primary" href="/api/backup/full" download style="text-decoration:none">⤓ Télécharger la sauvegarde</a>
+            <button class="btn btn-danger" onclick="document.getElementById('fullbackup-file').click()">⤒ Restaurer depuis un fichier…</button>
+            <input type="file" id="fullbackup-file" accept=".zip,application/zip" style="display:none" onchange="importFullBackup(this)">
+        </div>
+        <p style="color:#b91c1c;font-size:.8rem;margin:0">
+            ⚠ La restauration <strong>écrase les données actuelles</strong> par celles du fichier.
+            Une copie de sécurité de l'existant est mise de côté sur le serveur (« avant-import »)
+            juste avant l'écrasement.
+        </p>
     </div>
 </div>
 
@@ -2360,25 +2397,26 @@ function toggleProgYear(yg, btn) {
 let _progTab = 'coeff';
 
 async function showProgTab(tab) {
-    if (_progData && _progTab !== 'contenu') _collectProg();   // conserve les saisies de l'onglet courant
+    // conserve les saisies de l'onglet courant (grilles Coefficients / Matières)
+    if (_progData && _progTab !== 'contenu' && _progTab !== 'actions') _collectProg();
     _progTab = tab;
-    ['coeff', 'matieres', 'contenu'].forEach(t =>
+    ['coeff', 'matieres', 'contenu', 'actions'].forEach(t =>
         document.getElementById('prog-subtab-' + t).classList.toggle('active', t === tab));
-    const isCont = tab === 'contenu';
-    document.getElementById('prog-content').style.display = isCont ? 'none' : '';
-    document.getElementById('prog-tab-contenu').style.display = isCont ? '' : 'none';
-    if (isCont) {
+    document.getElementById('prog-content').style.display = (tab === 'coeff' || tab === 'matieres') ? '' : 'none';
+    document.getElementById('prog-tab-contenu').style.display = tab === 'contenu' ? '' : 'none';
+    document.getElementById('prog-tab-actions').style.display = tab === 'actions' ? '' : 'none';
+    if (tab === 'contenu') {
         // Contenu des matières : basé sur les cours de l'année active (pas sur _progData)
         try { state.courses = await api('/courses'); } catch (e) { /* garde l'existant */ }
         showContentTab(_contTab);
         checkPnPdf();
-    } else {
+    } else if (tab !== 'actions') {
         renderProgCurrent();
     }
 }
 
 function renderProgCurrent() {
-    if (_progTab === 'contenu') return;   // pane séparé géré par showProgTab
+    if (_progTab === 'contenu' || _progTab === 'actions') return;   // panes séparés gérés par showProgTab
     if (_progTab === 'matieres') renderProgMatieres();
     else renderProgCoeffs();
     // Enseignant : consultation seule — désactive toute édition dans les grilles
@@ -2713,7 +2751,9 @@ function submitNewProgMatiere() {
     const btn = document.querySelector(`#prog-year-toggle .sem-btn[data-yg="${yg}"]`);
     if (btn) btn.classList.add('active');
     closeModal('modal-prog-matiere');
-    renderProgCurrent();
+    // Depuis Actions/Contenu : bascule sur Matières pour voir la matière créée
+    if (_progTab === 'actions' || _progTab === 'contenu') showProgTab('matieres');
+    else renderProgCurrent();
     toast('Matière ajoutée — pensez à enregistrer');
 }
 
@@ -4524,6 +4564,31 @@ async function loadParametres() {
     document.getElementById('hetd-td').value = c.td;
     document.getElementById('hetd-tp').value = Math.round(c.tp * 1000) / 1000;
     document.getElementById('hetd-pt').value = c.pt;
+}
+
+// Restauration complète du site depuis un fichier de sauvegarde .zip (admin).
+// Écrase les données actuelles ; le serveur met l'existant de côté avant import.
+async function importFullBackup(input) {
+    const file = input.files && input.files[0];
+    input.value = '';
+    if (!file) return;
+    const word = prompt(
+        '⚠️ ATTENTION : la restauration va ÉCRASER toutes les données actuelles du site\n' +
+        '(années, promotions, programmes, notes, contraintes, réglages)\n' +
+        'par le contenu de « ' + file.name + ' ».\n\n' +
+        'Tapez ECRASER (en majuscules) pour confirmer :');
+    if (word !== 'ECRASER') { toast('Restauration annulée'); return; }
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+        const r = await fetch('/api/backup/full', { method: 'POST', body: fd });
+        const res = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(res.error || ('HTTP ' + r.status));
+        toast(`Restauration effectuée : ${(res.years_imported || []).length} année(s), ${res.files || 0} fichier(s) — rechargement…`);
+        setTimeout(() => location.reload(), 1500);
+    } catch (e) {
+        toast('Erreur de restauration : ' + e.message, 'error');
+    }
 }
 
 async function saveHetdCoefs() {
