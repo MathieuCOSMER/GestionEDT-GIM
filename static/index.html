@@ -6,7 +6,8 @@
     <title>Gestion EDT - IUT GIM Toulon</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: Arial, sans-serif; background: #f3f4f6; color: #111; }
+        body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; background: #f3f4f6; color: #111; }
+        button, input, select, textarea { font-family: inherit; }
 
         nav { background: #fff; border-bottom: 4px solid #4f46e5; padding: 12px 24px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         nav strong { font-size: 1.2rem; color: #4f46e5; margin-right: 16px; }
@@ -20,8 +21,9 @@
         .page { display: none; }
         .page.active { display: block; }
 
-        h1 { font-size: 1.8rem; margin-bottom: 16px; }
-        h2 { font-size: 1.3rem; margin-bottom: 12px; }
+        h1 { font-size: 1.5rem; margin-bottom: 16px; color: #111827; }
+        h2 { font-size: 1.2rem; margin-bottom: 12px; color: #111827; }
+        .toolbar h1 { margin-bottom: 0; }
 
         .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
         .card { background: #fff; border-left: 4px solid #4f46e5; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
@@ -37,7 +39,12 @@
         .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
         .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
         .filters label { font-size: .85rem; font-weight: 600; }
-        .filters select, .filters input { padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: .9rem; }
+        .filters select, .filters input,
+        .toolbar select, .toolbar input[type="text"], .toolbar input[type="number"] {
+            padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: .9rem; background: #fff; font-family: inherit; }
+        /* Focus uniforme sur tous les champs de saisie */
+        input:not([type="checkbox"]):not([type="radio"]):focus, select:focus, textarea:focus {
+            outline: none; border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,.15); }
 
         table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
         thead { background: #f9fafb; }
@@ -46,7 +53,8 @@
         tr:hover td { background: #f9fafb; }
         .empty { text-align: center; padding: 32px; color: #9ca3af; }
 
-        .btn { padding: 7px 14px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: .85rem; }
+        .btn { padding: 7px 14px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: .85rem; font-family: inherit; }
+        .btn, nav button, .sem-btn, .subtab, .tab-btn { transition: background .15s, color .15s, border-color .15s; }
         .btn-primary { background: #4f46e5; color: #fff; }
         .btn-primary:hover { background: #4338ca; }
         .btn-danger { background: #dc2626; color: #fff; }
@@ -219,8 +227,9 @@
         .sem-btn { padding: 5px 12px; border: 1px solid #c7d2fe; border-radius: 6px; background: #eef2ff; color: #4f46e5; font-weight: 700; font-size: .82rem; cursor: pointer; }
         .sem-btn:hover { background: #e0e7ff; }
         .sem-btn.active { background: #4f46e5; color: #fff; border-color: #4f46e5; }
-        /* Sous-onglets (contenu des matières) */
-        .subtab { padding: 8px 16px; border: none; background: none; color: #6b7280; font-weight: 600; font-size: .9rem; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -1px; }
+        /* Sous-onglets de page (barre unifiée : Programme, Promotions, Répartition, Contenu) */
+        .subtabs { display: flex; gap: 6px; align-items: center; margin-bottom: 12px; border-bottom: 1px solid #e5e7eb; }
+        .subtab { padding: 8px 16px; border: none; background: none; color: #6b7280; font-weight: 600; font-size: .9rem; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -1px; font-family: inherit; }
         .subtab:hover { color: #4f46e5; }
         .subtab.active { color: #4f46e5; border-bottom-color: #4f46e5; }
         /* Tableau Enseignant / PN dans l'onglet Contenu des matières */
@@ -341,8 +350,7 @@
             <option>…</option>
         </select>
         <span id="role-badge" class="role-badge" style="display:none"></span>
-        <button onclick="logout()" title="Se déconnecter"
-                style="padding:5px 11px;border:1px solid #e5e7eb;border-radius:6px;background:#fff;color:#6b7280;font-weight:600;cursor:pointer;font-size:.82rem;white-space:nowrap">
+        <button class="btn btn-secondary btn-sm" onclick="logout()" title="Se déconnecter" style="white-space:nowrap">
             Déconnexion
         </button>
     </div>
@@ -436,13 +444,15 @@
 
 <!-- ===== PROMOTIONS (admin) ===== -->
 <div class="page" id="page-promotions">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-        <label for="promo-select" style="font-size:1.05rem;font-weight:600;white-space:nowrap">Sélection de la promo :</label>
-        <select id="promo-select" onchange="onPromoChange()"
-            style="font-size:1.05rem;font-weight:600;padding:7px 12px;border:1px solid #9ca3af;border-radius:8px;min-width:230px;background:#fff">
-            <option value="">—</option></select>
+    <div class="toolbar">
+        <h1>Promotions</h1>
+        <div class="filters">
+            <label for="promo-select">Promotion :</label>
+            <select id="promo-select" onchange="onPromoChange()" style="min-width:230px;font-weight:600">
+                <option value="">—</option></select>
+        </div>
     </div>
-    <div class="subtabs" id="promo-subtabs" style="display:flex;gap:6px;margin-bottom:10px">
+    <div class="subtabs" id="promo-subtabs">
         <button type="button" id="promo-subtab-effectif" class="subtab active" onclick="showPromoTab('effectif')">Effectifs</button>
         <button type="button" id="promo-subtab-groupes" class="subtab" onclick="showPromoTab('groupes')">Groupes</button>
         <button type="button" id="promo-subtab-calendrier" class="subtab" onclick="showPromoTab('calendrier')">Calendrier</button>
@@ -450,25 +460,29 @@
         <button type="button" id="promo-subtab-actions" class="subtab" onclick="showPromoTab('actions')">Actions</button>
     </div>
     <div id="promo-tab-effectif">
-        <div id="promo-content"><div style="color:#6b7280;padding:20px">Créez une promotion ou sélectionnez-en une pour gérer son effectif.</div></div>
+        <div id="promo-content"><div class="empty">Créez une promotion ou sélectionnez-en une pour gérer son effectif.</div></div>
     </div>
     <div id="promo-tab-groupes" style="display:none">
-        <div class="toolbar" style="align-items:center;justify-content:center;gap:10px;flex-wrap:wrap">
-            <label style="font-weight:600">Année de la cohorte :</label>
-            <select id="grp-year-select" onchange="onGrpYearChange()"></select>
-            <span style="color:#6b7280;font-size:.85rem">Groupes des cours mutualisés (FTP + ALT) de l'année sélectionnée.</span>
+        <div class="toolbar">
+            <div class="filters">
+                <label>Année de la cohorte :</label>
+                <select id="grp-year-select" onchange="onGrpYearChange()"></select>
+                <span style="color:#6b7280;font-size:.85rem">Groupes des cours mutualisés (FTP + ALT) de l'année sélectionnée.</span>
+            </div>
         </div>
         <div id="promo-groups-editor" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;text-align:center"><div class="spinner">Chargement…</div></div>
     </div>
     <div id="promo-tab-calendrier" style="display:none">
-        <div class="toolbar" style="align-items:center;gap:10px;flex-wrap:wrap">
-            <label style="font-weight:600">Année de la cohorte :</label>
-            <select id="cal-year-select" onchange="onCalYearChange()"></select>
-            <label style="font-weight:600;margin-left:8px">Cohorte :</label>
-            <select id="cal-cohort-select" onchange="onCalFilterChange()">
-                <option value="FTP">FTP</option><option value="ALT">ALT</option>
-            </select>
-            <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="saveCalendrier()">Enregistrer</button>
+        <div class="toolbar">
+            <div class="filters">
+                <label>Année de la cohorte :</label>
+                <select id="cal-year-select" onchange="onCalYearChange()"></select>
+                <label style="margin-left:8px">Cohorte :</label>
+                <select id="cal-cohort-select" onchange="onCalFilterChange()">
+                    <option value="FTP">FTP</option><option value="ALT">ALT</option>
+                </select>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="saveCalendrier()">Enregistrer</button>
         </div>
         <div class="card" style="padding:16px;margin-bottom:16px">
             <h3 style="margin:0 0 4px">Dates des semestres</h3>
@@ -548,14 +562,14 @@
                 <button class="btn btn-secondary btn-sm" id="notes-export-btn" onclick="exportNotes()" disabled>⬇ Exporter (.xlsx)</button>
             </div>
         </div>
-        <div id="notes-content"><div style="color:#6b7280;padding:20px">Choisissez une sous-cohorte et un semestre pour saisir les notes.</div></div>
+        <div id="notes-content"><div class="empty">Choisissez une sous-cohorte et un semestre pour saisir les notes.</div></div>
     </div>
 </div>
 
 
 <!-- ===== PROGRAMME (admin) : matières + compétences (UE) + coefficients + heures ===== -->
 <div class="page" id="page-programme">
-    <div class="toolbar" style="align-items:center;flex-wrap:wrap;gap:6px">
+    <div class="toolbar">
         <h1 style="margin-right:18px">Programme</h1>
         <div class="filters" style="flex-wrap:wrap">
             <label>Programme :</label>
@@ -578,16 +592,16 @@
             <input type="file" id="prog-import-file" accept="application/json,.json" style="display:none" onchange="importProgrammes(this)">
         </div>
     </div>
-    <div class="subtabs" id="prog-subtabs" style="display:flex;gap:6px;margin-bottom:10px">
+    <div class="subtabs" id="prog-subtabs">
         <button type="button" id="prog-subtab-coeff" class="subtab active" onclick="showProgTab('coeff')">Coefficients</button>
         <button type="button" id="prog-subtab-matieres" class="subtab" onclick="showProgTab('matieres')">Matières</button>
         <button type="button" id="prog-subtab-contenu" class="subtab" onclick="showProgTab('contenu')">Contenu</button>
     </div>
-    <div id="prog-content"><div style="color:#6b7280;padding:20px">Choisissez ou créez un programme pour définir ses matières, compétences (UE), coefficients et heures.</div></div>
+    <div id="prog-content"><div class="empty">Choisissez ou créez un programme pour définir ses matières, compétences (UE), coefficients et heures.</div></div>
 
     <!-- Sous-onglet Contenu : contenu des matières (Consultation / Mes matières) -->
     <div id="prog-tab-contenu" style="display:none">
-        <div class="subtabs" style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid #e5e7eb;align-items:center">
+        <div class="subtabs">
             <button type="button" id="cont-subtab-view" class="subtab active"
                     onclick="showContentTab('view')">Consultation</button>
             <button type="button" id="cont-subtab-edit" class="subtab"
@@ -781,7 +795,7 @@
             <input type="file" id="import-excel-input" accept=".xlsx" style="display:none" onchange="importRepartitionExcel(this)">
         </div>
     </div>
-    <div class="subtabs" id="rep-subtabs" style="display:flex;gap:6px;margin-bottom:10px">
+    <div class="subtabs" id="rep-subtabs">
         <button type="button" id="rep-subtab-annuelle" class="subtab active" onclick="showRepTab('annuelle')">Répartition annuelle</button>
         <button type="button" id="rep-subtab-jour" class="subtab admin-only" onclick="showRepTab('jour')">Répartition journalière</button>
     </div>
@@ -1968,7 +1982,7 @@ function _setCoeffButtonsEnabled(on) {
 
 function _coeffPlaceholder(msg) {
     document.getElementById('promo-coeff-content').innerHTML =
-        '<div style="color:#6b7280;padding:20px">' + msg + '</div>';
+        '<div class="empty">' + msg + '</div>';
 }
 
 async function loadPromoCoeff() {
@@ -2289,7 +2303,7 @@ function _setProgButtons(on) {
 
 function _progPlaceholder(msg) {
     document.getElementById('prog-content').innerHTML =
-        '<div style="color:#6b7280;padding:20px">' + msg + '</div>';
+        '<div class="empty">' + msg + '</div>';
 }
 
 async function loadProgramme() {
@@ -2809,7 +2823,7 @@ async function loadPromotions() {
         _promoId = null; _promoData = null;
         _togglePromoButtons(false);
         document.getElementById('promo-content').innerHTML =
-            '<div style="color:#6b7280;padding:20px">Aucune promotion. Cliquez sur « + Nouvelle promotion ».</div>';
+            '<div class="empty">Aucune promotion. Cliquez sur « + Nouvelle promotion ».</div>';
     }
 }
 
@@ -2822,7 +2836,7 @@ async function onPromoChange() {
     const id = parseInt(document.getElementById('promo-select').value || '0');
     if (!id) {
         _promoId = null; _promoData = null; _togglePromoButtons(false);
-        document.getElementById('promo-content').innerHTML = '<div style="color:#6b7280;padding:20px">Sélectionnez une promotion.</div>';
+        document.getElementById('promo-content').innerHTML = '<div class="empty">Sélectionnez une promotion.</div>';
         loadNotesGrid();
         return;
     }
@@ -3065,7 +3079,7 @@ async function loadNotesGrid() {
     const el = document.getElementById('notes-content');
     if (!pid || !sem) {
         _notesData = null; saveBtn.disabled = true; impBtn.disabled = true; expBtn.disabled = true;
-        el.innerHTML = '<div style="color:#6b7280;padding:20px">Choisissez une promotion, une sous-cohorte et un semestre.</div>';
+        el.innerHTML = '<div class="empty">Choisissez une promotion, une sous-cohorte et un semestre.</div>';
         return;
     }
     el.innerHTML = '<div class="spinner">Chargement…</div>';
@@ -5069,7 +5083,7 @@ async function loadCalendrier() {
     // Calendrier cohorte-centré : une promotion doit être sélectionnée
     if (!_promoData || !_promoData.promotion) {
         buildCalYearSelect();
-        body.innerHTML = '<div style="color:#6b7280;padding:20px">Sélectionnez une promotion (onglet Effectifs) pour définir son calendrier sur ses 3 années.</div>';
+        body.innerHTML = '<div class="empty">Sélectionnez une promotion (onglet Effectifs) pour définir son calendrier sur ses 3 années.</div>';
         return;
     }
     body.innerHTML = '<div class="spinner">Chargement…</div>';
