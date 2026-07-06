@@ -484,6 +484,7 @@
             </div>
             <button class="btn btn-primary btn-sm" onclick="saveCalendrier()">Enregistrer</button>
         </div>
+        <div id="cal-year-warning" style="display:none;background:#fef3c7;border:1px solid #f59e0b;color:#92400e;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:.85rem"></div>
         <div class="card" style="padding:16px;margin-bottom:16px">
             <h3 style="margin:0 0 4px">Dates des semestres</h3>
             <p style="color:#6b7280;font-size:.85rem;margin:0 0 12px">
@@ -5112,6 +5113,22 @@ function calYearRange() {
              max:   gmax };
 }
 
+// Bandeau d'avertissement : ce calendrier écrit dans la base de l'année de la
+// cohorte, qui peut différer de l'année active de la session (celle affichée
+// par Répartition, Matières, etc.).
+function updateCalYearWarning() {
+    const el = document.getElementById('cal-year-warning');
+    if (!el) return;
+    const calYear = calAcademicYear();
+    const activeYear = (document.getElementById('year-select') || {}).value || '';
+    const show = !!(calYear && activeYear && calYear !== activeYear);
+    el.style.display = show ? '' : 'none';
+    if (show) el.innerHTML = `⚠️ Ce calendrier modifie l'année <strong>${esc(calYear)}</strong>, `
+        + `différente de l'année active <strong>${esc(activeYear)}</strong>. `
+        + `Les autres onglets (Répartition, Matières…) affichent l'année active : les modifications faites ici `
+        + `(semaines, commentaires…) n'y apparaîtront qu'en basculant le sélecteur d'année sur ${esc(calYear)}.`;
+}
+
 // Changer d'année de la cohorte = changer de base année → recharger.
 function onCalYearChange() {
     _calYG = parseInt(document.getElementById('cal-year-select').value) || 1;
@@ -5148,6 +5165,7 @@ async function loadCalendrier() {
     // Calendrier cohorte-centré : une promotion doit être sélectionnée
     if (!_promoData || !_promoData.promotion) {
         buildCalYearSelect();
+        updateCalYearWarning();
         body.innerHTML = '<div class="empty">Sélectionnez une promotion (onglet Effectifs) pour définir son calendrier sur ses 3 années.</div>';
         return;
     }
@@ -5165,6 +5183,7 @@ async function loadCalendrier() {
         buildCalYearSelect();
         document.getElementById('cal-cohort-select').value = _calCohort;
         document.getElementById('cal-range-year-label').textContent = calAcademicYear() || ('année ' + _calYG);
+        updateCalYearWarning();
         buildAllWeekSelect('sem-odd-start',  cfg.semester_odd_start_week);
         buildAllWeekSelect('sem-odd-end',    cfg.semester_odd_end_week);
         buildAllWeekSelect('sem-even-start', cfg.semester_even_start_week);
