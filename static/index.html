@@ -304,6 +304,9 @@
         .nz-table { border-collapse: separate; border-spacing: 0; font-size: .85rem; }
         .nz-table th, .nz-table td { border-bottom: 1px solid #eef0f2; border-right: 1px solid #f1f3f5; vertical-align: middle; }
         .nz-table thead th { position: sticky; top: 0; z-index: 3; background: #f8fafc; }
+        /* En-tête sur 2 lignes (groupes + colonnes) : la 2e ligne se colle sous la 1re */
+        .nz-table thead tr:first-child:not(:only-child) th { height: 28px; }
+        .nz-table thead tr:nth-child(2) th { top: 28px; }
         .nz-table .nz-sticky { position: sticky; left: 0; z-index: 2; background: #fff; box-shadow: 1px 0 0 #e5e7eb; }
         .nz-table thead th.nz-sticky { z-index: 4; }
         .nz-table input::-webkit-outer-spin-button,
@@ -3295,7 +3298,17 @@ function renderNotesGrid() {
     const vth = (txt, bg, extra, title, color) =>
         `<th title="${esc(title || '')}" style="background:${bg};padding:6px 2px;vertical-align:bottom;text-align:center${extra || ''}"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600;font-size:.85rem${color ? ';color:' + color : ''}">${esc(txt)}</div></th>`;
     // Ordre : Étudiant | statut & bilan année | rappels années précédentes | semestre précédent | UE du semestre | notes
-    const head = `<tr><th class="nz-sticky" style="min-width:155px;max-width:155px;vertical-align:bottom;font-size:.8rem">Étudiant</th>` +
+    // Ligne 1 : noms des groupes de colonnes ; ligne 2 : en-têtes de colonnes
+    const gth = (txt, bg, color, colspan, border) =>
+        `<th colspan="${colspan}" style="background:${bg};color:${color};text-align:center;font-size:.8rem;font-weight:700;padding:4px 6px;white-space:nowrap;border-left:4px solid ${border};border-bottom:2px solid ${border}">${esc(txt)}</th>`;
+    const groupRow = `<tr><th class="nz-sticky" rowspan="2" style="min-width:155px;max-width:155px;vertical-align:bottom;font-size:.8rem">Étudiant</th>` +
+        (cg.bilan ? gth(`Année ${_year}`, '#dcfce7', '#166534', 1 + (d.year_competences || []).length, '#22c55e') : '') +
+        (cg.prevYears ? prevYears.map(g => gth(`Année ${g.year || ''}`, '#eef2ff', '#3730a3', 1 + g.competences.length, '#6366f1')).join('') : '') +
+        (cg.prevSem ? prevSems.map(g => gth(`Semestre S${g.sem || ''}`, '#eef2ff', '#3730a3', g.competences.length, '#818cf8')).join('') : '') +
+        (cg.ue ? gth(`Semestre ${d.semester}`, '#ede9fe', '#4c1d95', comps.length, '#8b5cf6') : '') +
+        (cg.notes ? gth('SAÉ / Ressources', '#f3f4f6', '#374151', mats.length, '#6b7280') : '') +
+        `</tr>`;
+    const head = `<tr>` +
         (cg.bilan ? vth('Statut', '#dcfce7', ';border-left:4px solid #22c55e', 'Statut de l\'année en cours', '#166534') +
             (d.year_competences || []).map((name, ci) =>
                 vth(`UE${_ueNum(d, name, ci)}N${_year}`, '#dcfce7', '', `Moyenne annuelle ${name} (${(d.year_semesters || []).join('–')})`, '#166534')).join('') : '') +
@@ -3378,7 +3391,7 @@ function renderNotesGrid() {
             <span style="color:#6b7280">— L'<strong>année est validée</strong> si <strong>≥ 3 compétences</strong> sont validées (moyenne annuelle ≥ 10 ; valider un niveau supérieur valide l'inférieur).</span>
         </div>
         <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px;width:90vw;margin-left:calc(50% - 45vw)">
-            <table class="nz-table"><thead>${head}</thead><tbody>${body}</tbody></table>
+            <table class="nz-table"><thead>${groupRow}${head}</thead><tbody>${body}</tbody></table>
         </div>`;
 }
 
