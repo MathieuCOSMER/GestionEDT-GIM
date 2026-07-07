@@ -3414,7 +3414,8 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
         if ynames:
             previous.append({'short': f'{po}-{pe}', 'label': f'Année {py} ({po}–{pe})',
                              'kind': 'year', 'year': py,
-                             'competences': ynames, 'averages': yavg})
+                             'competences': ynames, 'averages': yavg,
+                             'validation': _year_validation(pdb, pid, ref_all, py)})
     if sem_num % 2 == 0:
         psem = f'S{sem_num - 1}'
         pdata = ref_all.get(psem) or {}

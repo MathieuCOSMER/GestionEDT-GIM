@@ -3299,8 +3299,10 @@ function renderNotesGrid() {
         (cg.bilan ? `<th style="background:#dcfce7;padding:6px 4px;vertical-align:bottom;text-align:center;font-weight:700;color:#166534;font-size:.78rem;min-width:46px;border-left:4px solid #22c55e">Statut<br>année</th>` +
             (d.year_competences || []).map((name, ci) =>
                 vth(`UE${_ueNum(d, name, ci)}N${_year}`, '#dcfce7', '', `Moyenne annuelle ${name} (${(d.year_semesters || []).join('–')})`, '#166534')).join('') : '') +
-        (cg.prevYears ? prevYears.map(g => g.competences.map((name, ci) =>
-            vth(`UE${_ueNum(d, name, ci)}N${g.year || ''}`, '#eef2ff', ci === 0 ? ';border-left:4px solid #6366f1' : '', g.label + ' — ' + name, '#3730a3')).join('')).join('') : '') +
+        (cg.prevYears ? prevYears.map(g =>
+            `<th style="background:#eef2ff;padding:6px 4px;vertical-align:bottom;text-align:center;font-weight:700;color:#3730a3;font-size:.78rem;min-width:46px;border-left:4px solid #6366f1" title="${esc('Statut ' + g.label)}">Statut<br>A${g.year || ''}</th>` +
+            g.competences.map((name, ci) =>
+                vth(`UE${_ueNum(d, name, ci)}N${g.year || ''}`, '#eef2ff', '', g.label + ' — ' + name, '#3730a3')).join('')).join('') : '') +
         (cg.prevSem ? prevSems.map(g => g.competences.map((name, ci) =>
             vth(`UE${g.sem || ''}${_ueNum(d, name, ci)}`, '#eef2ff', ci === 0 ? ';border-left:4px solid #818cf8' : '', g.label + ' — ' + name, '#3730a3')).join('')).join('') : '') +
         (cg.ue ? comps.map((c, ci) =>
@@ -3326,9 +3328,13 @@ function renderNotesGrid() {
         const prevCell = (g, first) => {
             const ga = g.averages[s.id] || {};
             return g.competences.map((name, ci) =>
-                `<td style="text-align:center;background:#f5f7ff;color:#3730a3;font-size:.83rem;padding:1px 2px${ci === 0 ? ';border-left:4px solid ' + first : ''}">${_fmtAvg(ga[ci])}</td>`).join('');
+                `<td style="text-align:center;background:#f5f7ff;color:#3730a3;font-size:.83rem;padding:1px 2px${(ci === 0 && first) ? ';border-left:4px solid ' + first : ''}">${_fmtAvg(ga[ci])}</td>`).join('');
         };
-        const prevYearCells = cg.prevYears ? prevYears.map(g => prevCell(g, '#6366f1')).join('') : '';
+        const prevYearCells = cg.prevYears ? prevYears.map(g => {
+            const ys = _yearStatusBadge((g.validation || {})[s.id]);
+            return `<td title="${ys.title}" style="text-align:center;white-space:nowrap;padding:2px 3px;border-left:4px solid #6366f1;background:#f5f7ff"><span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:.78rem;font-weight:700;${_YS_STYLE[ys.cls]}">${ys.label}</span></td>` +
+                prevCell(g, null);
+        }).join('') : '';
         const prevSemCells = cg.prevSem ? prevSems.map(g => prevCell(g, '#818cf8')).join('') : '';
         const avgCells = cg.ue ? comps.map((c, ci) => {
             const st = _ueStatus(avg[ci], ya[ci]);
