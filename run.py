@@ -3,7 +3,13 @@
 
 import os
 import sys
+import socket
 import subprocess
+
+# Werkzeug appelle socket.getfqdn(host) au demarrage : sur Windows la
+# resolution DNS inverse de 0.0.0.0 peut bloquer ~10s au premier lancement.
+# On court-circuite (le nom ne sert qu'a l'affichage des logs).
+socket.getfqdn = lambda name='': name or 'localhost'
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, 'edt.db')
