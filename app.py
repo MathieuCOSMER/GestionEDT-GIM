@@ -717,6 +717,20 @@ def _apply_promotions_migrations(db):
         db.execute("ALTER TABLE promotion_students ADD COLUMN formation TEXT")
     except sqlite3.OperationalError:
         pass
+    # Décisions de jury : ADMJ (admis par décision de jury) sur une UE ajournée.
+    # year = niveau (1..3), ue_num = numéro canonique de l'UE (1..5, cf _jury_ue_numbers).
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS jury_decisions (
+            promotion_id INTEGER NOT NULL,
+            year         INTEGER NOT NULL,
+            student_id   INTEGER NOT NULL,
+            ue_num       INTEGER NOT NULL,
+            decision     TEXT NOT NULL,
+            PRIMARY KEY (promotion_id, year, student_id, ue_num),
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
     db.commit()
     _merge_formation_promotions(db)
 
@@ -3212,6 +3226,160 @@ def _year_validation(pdb, pid, ref_all, target_year):
         out[sid] = {'validated': validated, 'total': total, 'status': status}
     return out
 
+# ---- Jury : codes UE (ADM/AJ/ADMJ/CMP) et décision de passage (ADM/AJAC/AJ) ----
+# Nomenclature BUT : UE{semestre}{compétence} (ex UE32 = UE2 au S3), UE{x}N{y} =
+# moyenne annuelle de l'UE x au niveau y, GIM{y} = moyenne générale de l'année y.
+
+def _jury_ue_numbers(ref_all):
+    """Numérotation canonique des UE : ordre d'apparition des compétences S1→S6
+    (Maintenir=1, Améliorer=2, Installer=3, Manager=4, Sécuriser=5).
+    Retourne {nom: numéro}."""
+    nums = {}
+    for s in _PROMO_SEMESTERS:
+        for c in (ref_all.get(s) or {}).get('competences', []):
+            nm = (c.get('name') or '').strip()
+            if nm and nm not in nums:
+                nums[nm] = len(nums) + 1
+    return nums
+
+def _jury_payload(pdb, pid, year, formation=None):
+    """Tableau de jury de l'année `year` (1..3) : par étudiant et par UE, les moyennes
+    semestrielles (UExy), la moyenne annuelle (UExNy), le code UE et la décision de
+    passage. Codes UE : ADM (moyenne annuelle ≥ 10), ADMJ (ajourné mais admis par
+    décision de jury — modifiable), CMP (UE validée à un niveau supérieur), AJ (< 10).
+    Décision : ADM (toutes les UE validées), AJAC (≥ 3 UE validées, années 1 et 2
+    seulement ; en 2e année les UE sans niveau 3 — UE1/UE5 — doivent être validées),
+    sinon AJ."""
+    ref_all = _promo_coeffs(pdb, pid) or {}
+    nums = _jury_ue_numbers(ref_all)
+    names_by_num = {v: k for k, v in nums.items()}
+    sem_avgs, year_avgs, ue_by_year = {}, {}, {}
+    for y in (1, 2, 3):
+        so, se = f'S{2 * y - 1}', f'S{2 * y}'
+        for s in (so, se):
+            d = ref_all.get(s) or {}
+            comps = d.get('competences', [])
+            cnums = [nums.get((c.get('name') or '').strip()) for c in comps]
+            raw = _semester_competence_averages(pdb, pid, s, comps, d.get('components', []))
+            sem_avgs[s] = {sid: {cnums[int(ci)]: v for ci, v in row.items() if cnums[int(ci)]}
+                           for sid, row in raw.items()}
+        yavg, ynames = _year_competence_averages(pdb, pid, so, se, ref_all)
+        ynums = [nums.get((n or '').strip()) for n in ynames]
+        ue_by_year[y] = [n for n in ynums if n]
+        year_avgs[y] = {sid: {ynums[int(ci)]: v for ci, v in row.items() if ynums[int(ci)]}
+                        for sid, row in yavg.items()}
+    overrides = {(r['year'], str(r['student_id']), r['ue_num']): r['decision']
+                 for r in pdb.execute('SELECT year, student_id, ue_num, decision FROM jury_decisions '
+                                      'WHERE promotion_id=?', (pid,))}
+
+    def validated_above(sid, ue):
+        # UE validée (ADM ou ADMJ) à un niveau strictement supérieur → CMP en dessous
+        for y2 in range(year + 1, 4):
+            a2 = (year_avgs[y2].get(sid) or {}).get(ue)
+            if (a2 is not None and a2 >= 10) or overrides.get((y2, sid, ue)) == 'ADMJ':
+                return True
+        return False
+
+    where = 'promotion_id=?'
+    params = [pid]
+    if formation in _SUBCOHORTS:
+        where += ' AND formation=?'
+        params.append(formation)
+    students = [dict(r) for r in pdb.execute(
+        f'''SELECT id, numero, nom, prenom, statut, formation FROM promotion_students
+            WHERE {where} ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', params)]
+    s_odd, s_even = f'S{2 * year - 1}', f'S{2 * year}'
+    ues = ue_by_year.get(year) or []
+    # UE « terminales » : absentes de l'année suivante (UE1/UE5 en 2e année). Elles ne
+    # pourront plus être rattrapées → doivent être validées pour autoriser un AJAC.
+    terminal = [u for u in ues if year < 3 and u not in (ue_by_year.get(year + 1) or [])]
+    rows = {}
+    for st in students:
+        sid = str(st['id'])
+        per_ue = {}
+        for ue in ues:
+            annual = (year_avgs[year].get(sid) or {}).get(ue)
+            admj = overrides.get((year, sid, ue)) == 'ADMJ'
+            code = None
+            if annual is not None:
+                if annual >= 10:
+                    code = 'ADM'
+                elif admj:
+                    code = 'ADMJ'
+                elif validated_above(sid, ue):
+                    code = 'CMP'
+                else:
+                    code = 'AJ'
+            per_ue[str(ue)] = {'odd': (sem_avgs.get(s_odd, {}).get(sid) or {}).get(ue),
+                               'even': (sem_avgs.get(s_even, {}).get(sid) or {}).get(ue),
+                               'annual': annual, 'code': code, 'admj': admj}
+        vals = [v['annual'] for v in per_ue.values() if v['annual'] is not None]
+        gim = round(sum(vals) / len(vals), 2) if vals else None
+        codes = {u: per_ue[str(u)]['code'] for u in ues}
+        if all(c is None for c in codes.values()):
+            decision = None
+        else:
+            valid = {u for u, c in codes.items() if c in ('ADM', 'ADMJ', 'CMP')}
+            if len(valid) == len(ues):
+                decision = 'ADM'
+            elif year < 3 and len(valid) >= _VALID_MIN_COMP and all(u in valid for u in terminal):
+                decision = 'AJAC'
+            else:
+                decision = 'AJ'
+        rows[sid] = {'ues': per_ue, 'gim': gim, 'decision': decision}
+    return {'year': year, 'semesters': [s_odd, s_even],
+            'ues': [{'num': u, 'name': names_by_num.get(u, ''), 'terminal': u in terminal}
+                    for u in ues],
+            'students': students, 'rows': rows}
+
+@app.route('/api/promotions/<int:pid>/jury/<int:year>', methods=['GET'])
+def get_promotion_jury(pid, year):
+    err = _require_admin()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    formation = (request.args.get('formation') or '').strip().upper() or None
+    return jsonify(_jury_payload(pdb, pid, year, formation))
+
+@app.route('/api/promotions/<int:pid>/jury/<int:year>', methods=['PUT'])
+def save_promotion_jury(pid, year):
+    """Enregistre les décisions de jury : body {decisions: [{student_id, ue, admj}]}.
+    admj=true pose un ADMJ sur l'UE (année `year`), admj=false le retire."""
+    err = _require_admin()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    valid_students = {r['id'] for r in pdb.execute(
+        'SELECT id FROM promotion_students WHERE promotion_id=?', (pid,))}
+    changed = 0
+    for d in (request.get_json() or {}).get('decisions') or []:
+        try:
+            sid, ue = int(d.get('student_id')), int(d.get('ue'))
+        except (TypeError, ValueError):
+            continue
+        if sid not in valid_students or not (1 <= ue <= 9):
+            continue
+        if d.get('admj'):
+            pdb.execute('''INSERT OR REPLACE INTO jury_decisions(promotion_id, year, student_id, ue_num, decision)
+                           VALUES(?,?,?,?,'ADMJ')''', (pid, year, sid, ue))
+        else:
+            pdb.execute('''DELETE FROM jury_decisions WHERE promotion_id=? AND year=?
+                           AND student_id=? AND ue_num=?''', (pid, year, sid, ue))
+        changed += 1
+    pdb.commit()
+    _audit('JURY_SAVE', ip=_client_ip(), user=session.get('user'),
+           promo=pid, year=year, decisions=changed)
+    formation = (request.args.get('formation') or '').strip().upper() or None
+    return jsonify(_jury_payload(pdb, pid, year, formation))
+
 def _promo_notes_payload(pdb, pid, semester, formation=None):
     """Construit le tableau de notes : étudiants (effectif) × matières (référence),
     notes saisies, moyennes de compétences, rappels (semestre antérieur / année précédente)
@@ -3237,13 +3405,15 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     averages = _semester_competence_averages(pdb, pid, semester, competences, components)
     sem_num = int(semester[1:])
     year = (sem_num + 1) // 2   # 1,1,2,2,3,3
-    # Rappels : toutes les années précédentes (moyennes annuelles) puis le semestre antérieur
+    # Rappels : toutes les années précédentes (moyennes annuelles) puis le semestre antérieur.
+    # kind ('year'/'semester') + year/sem servent au front pour grouper et coder les colonnes (UExy/UExNy).
     previous = []
     for py in range(1, year):
         po, pe = f'S{py * 2 - 1}', f'S{py * 2}'
         yavg, ynames = _year_competence_averages(pdb, pid, po, pe, ref_all)
         if ynames:
             previous.append({'short': f'{po}-{pe}', 'label': f'Année {py} ({po}–{pe})',
+                             'kind': 'year', 'year': py,
                              'competences': ynames, 'averages': yavg})
     if sem_num % 2 == 0:
         psem = f'S{sem_num - 1}'
@@ -3251,17 +3421,19 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
         pcomps = pdata.get('competences', [])
         if pcomps:
             previous.append({'short': psem, 'label': f'Semestre {psem}',
+                             'kind': 'semester', 'sem': sem_num - 1,
                              'competences': [c.get('name', '') for c in pcomps],
                              'averages': _semester_competence_averages(
                                  pdb, pid, psem, pcomps, pdata.get('components', []))})
     # Moyenne annuelle courante = moyenne des 2 semestres de l'année (S1+S2, S3+S4, S5+S6)
     s_odd, s_even = f'S{year * 2 - 1}', f'S{year * 2}'
     year_averages, year_competences = _year_competence_averages(pdb, pid, s_odd, s_even, ref_all)
-    return {'semester': semester, 'components': components,
+    return {'semester': semester, 'year': year, 'components': components,
             'competences': [{'name': c.get('name', ''), 'coeffs': c.get('coeffs', {})} for c in competences],
             'students': students, 'marks': marks, 'averages': averages, 'previous': previous,
             'year_semesters': [s_odd, s_even], 'year_competences': year_competences,
             'year_averages': year_averages,
+            'ue_numbers': _jury_ue_numbers(ref_all),
             'year_validation': _year_validation(pdb, pid, ref_all, year)}
 
 @app.route('/api/promotions/<int:pid>/notes/<semester>', methods=['GET'])

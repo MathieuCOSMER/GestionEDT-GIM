@@ -457,6 +457,7 @@
         <button type="button" id="promo-subtab-groupes" class="subtab" onclick="showPromoTab('groupes')">Groupes</button>
         <button type="button" id="promo-subtab-calendrier" class="subtab" onclick="showPromoTab('calendrier')">Calendrier</button>
         <button type="button" id="promo-subtab-notes" class="subtab" onclick="showPromoTab('notes')">Notes</button>
+        <button type="button" id="promo-subtab-jury" class="subtab" onclick="showPromoTab('jury')">Jury</button>
         <button type="button" id="promo-subtab-actions" class="subtab" onclick="showPromoTab('actions')">Actions</button>
     </div>
     <div id="promo-tab-effectif">
@@ -564,6 +565,24 @@
             </div>
         </div>
         <div id="notes-content"><div class="empty">Choisissez une sous-cohorte et un semestre pour saisir les notes.</div></div>
+    </div>
+    <div id="promo-tab-jury" style="display:none">
+        <div class="toolbar">
+            <div class="filters">
+                <label>Sous-cohorte :</label>
+                <select id="jury-sub-select" onchange="loadJuryGrid()">
+                    <option value="FTP">FTP</option><option value="ALT">ALT</option>
+                </select>
+                <label style="margin-left:12px">Année :</label>
+                <select id="jury-year-select" onchange="loadJuryGrid()">
+                    <option value="1" selected>Année 1 (S1–S2)</option>
+                    <option value="2">Année 2 (S3–S4)</option>
+                    <option value="3">Année 3 (S5–S6)</option>
+                </select>
+                <button class="btn btn-primary btn-sm" style="margin-left:14px" id="jury-save-btn" onclick="saveJuryDecisions()" disabled>💾 Enregistrer les décisions</button>
+            </div>
+        </div>
+        <div id="jury-content"><div class="empty">Choisissez une promotion, une sous-cohorte et une année.</div></div>
     </div>
 </div>
 
@@ -1996,11 +2015,12 @@ let _coeffPromoId = null;   // promotion dont on édite les coefficients
 let _promoTab = 'effectif';
 function showPromoTab(tab) {
     _promoTab = tab;
-    ['effectif', 'groupes', 'calendrier', 'notes', 'actions'].forEach(t => {
+    ['effectif', 'groupes', 'calendrier', 'notes', 'jury', 'actions'].forEach(t => {
         document.getElementById('promo-subtab-' + t).classList.toggle('active', tab === t);
         document.getElementById('promo-tab-' + t).style.display = tab === t ? '' : 'none';
     });
     if (tab === 'notes') loadNotes();
+    else if (tab === 'jury') loadJuryGrid();
     else if (tab === 'calendrier') loadCalendrier();
     else if (tab === 'groupes') loadPromoGroups();
 }
@@ -2879,6 +2899,7 @@ async function onPromoChange() {
         _promoId = null; _promoData = null; _togglePromoButtons(false);
         document.getElementById('promo-content').innerHTML = '<div class="empty">Sélectionnez une promotion.</div>';
         loadNotesGrid();
+        loadJuryGrid();
         return;
     }
     _promoId = id;
@@ -2893,6 +2914,7 @@ async function onPromoChange() {
     _togglePromoButtons(true);
     renderPromoEffectif();
     if (_promoTab === 'notes') loadNotesGrid();
+    else if (_promoTab === 'jury') loadJuryGrid();
     else if (_promoTab === 'calendrier') loadCalendrier();
     else if (_promoTab === 'groupes') loadPromoGroups();
 }
@@ -3231,6 +3253,25 @@ function matAcronym(label) {
     return initials || short.slice(0, 12);
 }
 
+// Groupes de colonnes affichables/masquables de la grille de notes (persistés)
+let _notesColGroups = null;
+function _notesGroups() {
+    if (!_notesColGroups) {
+        try { _notesColGroups = JSON.parse(localStorage.getItem('notesColGroups') || 'null'); } catch (e) { _notesColGroups = null; }
+        if (!_notesColGroups || typeof _notesColGroups !== 'object')
+            _notesColGroups = { bilan: true, prevYears: true, prevSem: true, ue: true, notes: true };
+    }
+    return _notesColGroups;
+}
+function toggleNotesColGroup(key, on) {
+    _notesGroups()[key] = on;
+    try { localStorage.setItem('notesColGroups', JSON.stringify(_notesColGroups)); } catch (e) { }
+    renderNotesGrid();
+}
+
+// Numéro canonique d'une UE (Maintenir=1 … Sécuriser=5) depuis son nom
+function _ueNum(d, name, ci) { return (d.ue_numbers || {})[name] || (ci + 1); }
+
 function renderNotesGrid() {
     const d = _notesData;
     const el = document.getElementById('notes-content');
@@ -3243,31 +3284,57 @@ function renderNotesGrid() {
         return;
     }
     const _semNum = parseInt((d.semester || 'S0').slice(1)) || 0;
+    const _year = d.year || ((_semNum + 1) >> 1);
     // Portfolio non noté aux semestres impairs → masqué
     const mats = (_semNum % 2 === 1) ? d.components.filter(m => m.kind !== 'PORT') : d.components;
     const comps = d.competences, prev = d.previous || [];
+    const prevYears = prev.filter(g => g.kind !== 'semester');
+    const prevSems = prev.filter(g => g.kind === 'semester');
+    const cg = _notesGroups();
     // En-tête vertical (réduit la largeur des colonnes)
     const vth = (txt, bg, extra, title, color) =>
         `<th title="${esc(title || '')}" style="background:${bg};padding:6px 2px;vertical-align:bottom;text-align:center${extra || ''}"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600;font-size:.85rem${color ? ';color:' + color : ''}">${esc(txt)}</div></th>`;
-    // Étudiant | [compétences des semestres précédents] | matières (courant) | compétences (courant)
+    // Ordre : Étudiant | statut & bilan année | rappels années précédentes | semestre précédent | UE du semestre | notes
     const head = `<tr><th class="nz-sticky" style="min-width:155px;max-width:155px;vertical-align:bottom;font-size:.8rem">Étudiant</th>` +
-        prev.map(g => g.competences.map((name, ci) =>
-            vth(g.short + ' ' + name, '#eef2ff', ci === 0 ? ';border-left:4px solid #6366f1' : '', g.label, '#3730a3')).join('')).join('') +
-        mats.map((m, mi) =>
-            vth(m.code + ' · ' + (m.short_label || matAcronym(m.label)), _coeffKindColor(m.kind), mi === 0 ? ';border-left:4px solid #6b7280' : '', (m.apogee_code ? m.apogee_code + ' — ' : '') + m.label, '')).join('') +
-        comps.map((c, ci) => vth(c.name, '#ede9fe', ci === 0 ? ';border-left:4px solid #6b7280' : '', '', '')).join('') +
-        (d.year_competences || []).map((name, ci) =>
-            vth('Année ' + name, '#dcfce7', ci === 0 ? ';border-left:4px solid #22c55e' : '', 'Moyenne annuelle ' + (d.year_semesters || []).join('–'), '#166534')).join('') +
-        `<th style="background:#dcfce7;padding:6px 4px;vertical-align:bottom;text-align:center;font-weight:700;color:#166534;font-size:.78rem;min-width:46px;border-left:4px solid #22c55e">Statut<br>année</th>` +
+        (cg.bilan ? `<th style="background:#dcfce7;padding:6px 4px;vertical-align:bottom;text-align:center;font-weight:700;color:#166534;font-size:.78rem;min-width:46px;border-left:4px solid #22c55e">Statut<br>année</th>` +
+            (d.year_competences || []).map((name, ci) =>
+                vth(`UE${_ueNum(d, name, ci)}N${_year}`, '#dcfce7', '', `Moyenne annuelle ${name} (${(d.year_semesters || []).join('–')})`, '#166534')).join('') : '') +
+        (cg.prevYears ? prevYears.map(g => g.competences.map((name, ci) =>
+            vth(`UE${_ueNum(d, name, ci)}N${g.year || ''}`, '#eef2ff', ci === 0 ? ';border-left:4px solid #6366f1' : '', g.label + ' — ' + name, '#3730a3')).join('')).join('') : '') +
+        (cg.prevSem ? prevSems.map(g => g.competences.map((name, ci) =>
+            vth(`UE${g.sem || ''}${_ueNum(d, name, ci)}`, '#eef2ff', ci === 0 ? ';border-left:4px solid #818cf8' : '', g.label + ' — ' + name, '#3730a3')).join('')).join('') : '') +
+        (cg.ue ? comps.map((c, ci) =>
+            vth(`UE${_semNum}${_ueNum(d, c.name, ci)}`, '#ede9fe', ci === 0 ? ';border-left:4px solid #8b5cf6' : '', `${c.name} — moyenne du semestre ${d.semester}`, '#4c1d95')).join('') : '') +
+        (cg.notes ? mats.map((m, mi) =>
+            vth(m.code + ' · ' + (m.short_label || matAcronym(m.label)), _coeffKindColor(m.kind), mi === 0 ? ';border-left:4px solid #6b7280' : '', (m.apogee_code ? m.apogee_code + ' — ' : '') + m.label, '')).join('') : '') +
         `</tr>`;
     const statutBadge = st => (st && st !== 'Actif') ? ` <span style="font-size:.68rem;color:#9ca3af">(${esc(st)})</span>` : '';
     const body = d.students.map(s => {
-        const prevCells = prev.map(g => {
+        const avg = d.averages[s.id] || {};
+        const ya = (d.year_averages || {})[s.id] || {};
+        let bilanCells = '';
+        if (cg.bilan) {
+            const ys = _yearStatusBadge((d.year_validation || {})[s.id]);
+            bilanCells = `<td title="${ys.title}" style="text-align:center;white-space:nowrap;padding:2px 3px;border-left:4px solid #22c55e"><span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:.78rem;font-weight:700;${_YS_STYLE[ys.cls]}">${ys.label}</span></td>` +
+                (d.year_competences || []).map((name, ci) => {
+                    const st = _yearUeStatus(ya[ci]);
+                    const stl = st === 'ok' ? 'background:#dcfce7;color:#166534'
+                        : (st === 'ko' ? 'background:#fee2e2;color:#b91c1c' : 'background:#f0fdf4;color:#166534');
+                    return `<td title="${st === 'ok' ? 'UE acquise (≥10)' : (st === 'ko' ? 'UE non acquise (<10)' : 'Non évaluée')}" style="text-align:center;font-weight:700;font-size:.9rem;${stl}">${_fmtAvg(ya[ci])}</td>`;
+                }).join('');
+        }
+        const prevCell = (g, first) => {
             const ga = g.averages[s.id] || {};
             return g.competences.map((name, ci) =>
-                `<td style="text-align:center;background:#f5f7ff;color:#3730a3;font-size:.83rem;padding:1px 2px${ci === 0 ? ';border-left:4px solid #6366f1' : ''}">${_fmtAvg(ga[ci])}</td>`).join('');
-        }).join('');
-        const cells = mats.map((m, mi) => {
+                `<td style="text-align:center;background:#f5f7ff;color:#3730a3;font-size:.83rem;padding:1px 2px${ci === 0 ? ';border-left:4px solid ' + first : ''}">${_fmtAvg(ga[ci])}</td>`).join('');
+        };
+        const prevYearCells = cg.prevYears ? prevYears.map(g => prevCell(g, '#6366f1')).join('') : '';
+        const prevSemCells = cg.prevSem ? prevSems.map(g => prevCell(g, '#818cf8')).join('') : '';
+        const avgCells = cg.ue ? comps.map((c, ci) => {
+            const st = _ueStatus(avg[ci], ya[ci]);
+            return `<td class="nz-avg" data-sid="${s.id}" data-ci="${ci}" title="${_UE_TITLE[st]}" style="text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}">${_fmtAvg(avg[ci])}</td>`;
+        }).join('') : '';
+        const cells = cg.notes ? mats.map((m, mi) => {
             const v = d.marks[s.id + '_' + m.code];
             const special = m.kind === 'PEN' || m.kind === 'BONUS';
             const calc = special
@@ -3277,28 +3344,25 @@ function renderNotesGrid() {
                 class="nz-mark" data-sid="${s.id}" data-code="${esc(m.code)}" data-kind="${esc(m.kind || '')}"
                 value="${v === undefined || v === null ? '' : v}"${special ? ' oninput="onNotesSpecialInput(this)"' : ''}
                 style="width:43px;padding:2px 1px;text-align:center;font-size:.9rem;border:1px solid #d1d5db;border-radius:4px">${calc}</td>`;
-        }).join('');
-        const avg = d.averages[s.id] || {};
-        const ya = (d.year_averages || {})[s.id] || {};
-        const avgCells = comps.map((c, ci) => {
-            const st = _ueStatus(avg[ci], ya[ci]);
-            return `<td class="nz-avg" data-sid="${s.id}" data-ci="${ci}" title="${_UE_TITLE[st]}" style="text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #6b7280' : ''}">${_fmtAvg(avg[ci])}</td>`;
-        }).join('');
-        const yearCells = (d.year_competences || []).map((name, ci) => {
-            const st = _yearUeStatus(ya[ci]);
-            const stl = st === 'ok' ? 'background:#dcfce7;color:#166534'
-                : (st === 'ko' ? 'background:#fee2e2;color:#b91c1c' : 'background:#f0fdf4;color:#166534');
-            return `<td title="${st === 'ok' ? 'UE acquise (≥10)' : (st === 'ko' ? 'UE non acquise (<10)' : 'Non évaluée')}" style="text-align:center;font-weight:700;font-size:.9rem;${stl}${ci === 0 ? ';border-left:4px solid #22c55e' : ''}">${_fmtAvg(ya[ci])}</td>`;
-        }).join('');
-        const ys = _yearStatusBadge((d.year_validation || {})[s.id]);
-        const yearStatusCell = `<td title="${ys.title}" style="text-align:center;white-space:nowrap;padding:2px 3px;border-left:4px solid #22c55e"><span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:.78rem;font-weight:700;${_YS_STYLE[ys.cls]}">${ys.label}</span></td>`;
-        return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || ''))}" style="max-width:155px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${prevCells}${cells}${avgCells}${yearCells}${yearStatusCell}</tr>`;
+        }).join('') : '';
+        return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || ''))}" style="max-width:155px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${bilanCells}${prevYearCells}${prevSemCells}${avgCells}${cells}</tr>`;
     }).join('');
+    const fbox = (key, lbl, show) => show ? `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">
+        <input type="checkbox" ${cg[key] ? 'checked' : ''} onchange="toggleNotesColGroup('${key}', this.checked)">${lbl}</label>` : '';
     el.innerHTML = `
+        <div style="font-size:.78rem;color:#374151;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:14px;align-items:center;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:6px 12px">
+            <strong>Colonnes :</strong>
+            ${fbox('bilan', 'Statut & bilan année', true)}
+            ${fbox('prevYears', 'Rappel années précédentes', prevYears.length > 0)}
+            ${fbox('prevSem', 'Semestre précédent', prevSems.length > 0)}
+            ${fbox('ue', 'UE du semestre', true)}
+            ${fbox('notes', 'Notes (matières)', true)}
+        </div>
         <div style="font-size:.8rem;color:#6b7280;margin-bottom:10px">Notes sur 20. Case vide = note absente (le coefficient correspondant est retiré du calcul).
             Colonne <strong>Pénalité</strong> = nombre d'<strong>heures</strong> d'absences injustifiées (le malus est calculé selon le barème IUT&nbsp;Toulon
             et retranché de chaque UE du semestre). Colonne <strong>Bonus</strong> = meilleure note sport/art <strong>/20</strong>
             (bonification calculée, max&nbsp;0,5&nbsp;pt, ajoutée à la moyenne d'UE de l'<strong>année</strong>).
+            Codes UE : <strong>UE${_semNum}y</strong> = moyenne du semestre, <strong>UEyN${_year}</strong> = moyenne annuelle (survolez pour le nom).
             Matières &amp; coefficients dans le sous-onglet <strong>Coefficients</strong>.</div>
         <div style="font-size:.78rem;color:#374151;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">
             <strong>UE :</strong>
@@ -3377,6 +3441,138 @@ const _YS_STYLE = {
     ok: 'background:#16a34a;color:#fff', ko: 'background:#dc2626;color:#fff',
     comp: 'background:#f59e0b;color:#fff', none: 'background:#e5e7eb;color:#6b7280',
 };
+
+// ===== Jury : codes UE (ADM/AJ/ADMJ/CMP) et décision de passage (ADM/AJAC/AJ) =====
+let _juryData = null;
+
+const _JURY_CODE_STYLE = {
+    ADM:  'background:#dcfce7;color:#166534',
+    ADMJ: 'background:#fef9c3;color:#854d0e',
+    CMP:  'background:#dbeafe;color:#1e40af',
+    AJ:   'background:#fee2e2;color:#b91c1c',
+};
+const _JURY_CODE_TITLE = {
+    ADM: 'Admis (moyenne annuelle ≥ 10)',
+    ADMJ: 'Admis par décision de jury',
+    CMP: 'UE validée à un niveau supérieur',
+    AJ: 'Ajourné (moyenne annuelle < 10)',
+};
+const _JURY_DEC_STYLE = {
+    ADM: 'background:#16a34a;color:#fff', AJAC: 'background:#f59e0b;color:#fff',
+    AJ: 'background:#dc2626;color:#fff',
+};
+const _JURY_DEC_TITLE = {
+    ADM: 'Admis — toutes les UE validées',
+    AJAC: 'Ajourné mais autorisé à continuer (≥ 3 UE validées)',
+    AJ: 'Ajourné',
+};
+
+async function loadJuryGrid() {
+    const pid = document.getElementById('promo-select').value;
+    const year = document.getElementById('jury-year-select').value;
+    const sub = document.getElementById('jury-sub-select').value || 'FTP';
+    const saveBtn = document.getElementById('jury-save-btn');
+    const el = document.getElementById('jury-content');
+    if (!pid) {
+        _juryData = null; saveBtn.disabled = true;
+        el.innerHTML = '<div class="empty">Choisissez une promotion, une sous-cohorte et une année.</div>';
+        return;
+    }
+    el.innerHTML = '<div class="spinner">Chargement…</div>';
+    try { _juryData = await api(`/promotions/${pid}/jury/${year}?formation=${encodeURIComponent(sub)}`); }
+    catch (e) { toast('Erreur : ' + e.message, 'error'); saveBtn.disabled = true; return; }
+    saveBtn.disabled = false;
+    renderJuryGrid();
+}
+
+function renderJuryGrid() {
+    const d = _juryData;
+    const el = document.getElementById('jury-content');
+    if (!d || !d.students.length) {
+        el.innerHTML = '<div class="empty">Cette promotion n\'a pas d\'étudiant — gérez l\'effectif dans le sous-onglet Effectif.</div>';
+        return;
+    }
+    if (!d.ues.length) {
+        el.innerHTML = '<div class="empty">Aucune UE définie pour cette année (voir l\'onglet Programme).</div>';
+        return;
+    }
+    const y = d.year, sOdd = parseInt(d.semesters[0].slice(1)), sEven = parseInt(d.semesters[1].slice(1));
+    // Ligne 1 : groupes d'UE (colspan 4) ; ligne 2 : UExy / UExy / UExNy / Code
+    const bl = ';border-left:3px solid #6b7280';
+    const head1 = `<tr><th class="nz-sticky" rowspan="2" style="min-width:170px;max-width:170px;vertical-align:bottom;font-size:.8rem">Étudiant</th>` +
+        d.ues.map(u => `<th colspan="4" title="${u.terminal ? 'UE sans niveau supérieur : doit être validée pour un passage AJAC' : ''}"
+            style="text-align:center;background:#ede9fe;color:#4c1d95;font-size:.82rem;padding:5px 4px${bl}">UE${u.num} · ${esc(u.name)}${u.terminal ? ' *' : ''}</th>`).join('') +
+        `<th rowspan="2" style="background:#dcfce7;color:#166534;text-align:center;vertical-align:bottom;font-size:.82rem;padding:5px 6px;border-left:3px solid #22c55e">GIM${y}<br><span style="font-weight:400;font-size:.72rem">moyenne</span></th>` +
+        `<th rowspan="2" style="background:#f3f4f6;text-align:center;vertical-align:bottom;font-size:.82rem;padding:5px 6px${bl}">Décision</th></tr>`;
+    const sub = (txt, title, extra) => `<th title="${esc(title || '')}" style="text-align:center;background:#faf5ff;font-size:.74rem;font-weight:600;color:#6b7280;padding:3px 4px${extra || ''}">${txt}</th>`;
+    const head2 = '<tr>' + d.ues.map(u =>
+        sub(`UE${sOdd}${u.num}`, `Moyenne S${sOdd}`, bl) + sub(`UE${sEven}${u.num}`, `Moyenne S${sEven}`) +
+        sub(`UE${u.num}N${y}`, 'Moyenne annuelle (niveau ' + y + ')') + sub('Code', 'ADM / AJ / ADMJ / CMP')).join('') + '</tr>';
+    const statutBadge = st => (st && st !== 'Actif') ? ` <span style="font-size:.68rem;color:#9ca3af">(${esc(st)})</span>` : '';
+    const body = d.students.map(s => {
+        const row = d.rows[s.id] || { ues: {} };
+        const ueCells = d.ues.map(u => {
+            const v = row.ues[u.num] || {};
+            const aStl = v.annual === null || v.annual === undefined ? ''
+                : (v.annual >= 10 ? 'background:#f0fdf4;color:#166534' : 'background:#fef2f2;color:#b91c1c');
+            let codeCell;
+            if (v.code === 'AJ' || v.code === 'ADMJ') {
+                // AJ ↔ ADMJ : décision de jury modifiable
+                codeCell = `<td style="padding:1px 2px;text-align:center"><select class="jr-code" data-sid="${s.id}" data-ue="${u.num}"
+                    onchange="onJuryCodeChange(this)" title="${_JURY_CODE_TITLE[v.code]}"
+                    style="font-size:.78rem;font-weight:700;border:1px solid #d1d5db;border-radius:4px;padding:1px 2px;${_JURY_CODE_STYLE[v.code]}">
+                    <option value="AJ"${v.code === 'AJ' ? ' selected' : ''}>AJ</option>
+                    <option value="ADMJ"${v.code === 'ADMJ' ? ' selected' : ''}>ADMJ</option></select></td>`;
+            } else {
+                codeCell = `<td title="${v.code ? _JURY_CODE_TITLE[v.code] : 'Non évaluée'}" style="text-align:center;font-weight:700;font-size:.78rem;${v.code ? _JURY_CODE_STYLE[v.code] : 'color:#9ca3af'}">${v.code || '—'}</td>`;
+            }
+            return `<td style="text-align:center;font-size:.85rem;color:#6b7280${bl}">${_fmtAvg(v.odd)}</td>` +
+                `<td style="text-align:center;font-size:.85rem;color:#6b7280">${_fmtAvg(v.even)}</td>` +
+                `<td style="text-align:center;font-weight:700;font-size:.88rem;${aStl}">${_fmtAvg(v.annual)}</td>` + codeCell;
+        }).join('');
+        const gimCell = `<td style="text-align:center;font-weight:700;font-size:.9rem;background:#f0fdf4;color:#166534;border-left:3px solid #22c55e">${_fmtAvg(row.gim)}</td>`;
+        const dec = row.decision;
+        const decCell = `<td class="jr-dec" data-sid="${s.id}" title="${dec ? _JURY_DEC_TITLE[dec] : 'Aucune note'}" style="text-align:center;padding:2px 4px${bl}">
+            <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:.78rem;font-weight:700;${dec ? _JURY_DEC_STYLE[dec] : 'background:#e5e7eb;color:#6b7280'}">${dec || '—'}</span></td>`;
+        return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || ''))}" style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${ueCells}${gimCell}${decCell}</tr>`;
+    }).join('');
+    const term = d.ues.filter(u => u.terminal).map(u => 'UE' + u.num).join(' et ');
+    el.innerHTML = `
+        <div style="font-size:.8rem;color:#6b7280;margin-bottom:10px">
+            <strong>Codes UE :</strong>
+            <span style="padding:1px 6px;border-radius:4px;${_JURY_CODE_STYLE.ADM}">ADM</span> moyenne annuelle ≥ 10 ·
+            <span style="padding:1px 6px;border-radius:4px;${_JURY_CODE_STYLE.AJ}">AJ</span> &lt; 10 ·
+            <span style="padding:1px 6px;border-radius:4px;${_JURY_CODE_STYLE.ADMJ}">ADMJ</span> admis par décision de jury (modifiable dans la colonne Code) ·
+            <span style="padding:1px 6px;border-radius:4px;${_JURY_CODE_STYLE.CMP}">CMP</span> validée à un niveau supérieur.<br>
+            <strong>Décision :</strong> <strong>ADM</strong> toutes les UE validées · <strong>AJAC</strong> ≥ 3 UE validées (années 1 et 2${term ? ' ; en 2ᵉ année ' + term + ' (*) doivent être validées' : ''}) · <strong>AJ</strong> sinon.
+            Les modifications de code sont prises en compte après <strong>Enregistrer les décisions</strong>.</div>
+        <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px">
+            <table class="nz-table"><thead>${head1}${head2}</thead><tbody>${body}</tbody></table>
+        </div>`;
+}
+
+function onJuryCodeChange(sel) {
+    sel.style.cssText = sel.style.cssText.replace(/background:[^;]*;?|color:[^;]*;?/g, '')
+        + ';' + _JURY_CODE_STYLE[sel.value];
+    sel.title = _JURY_CODE_TITLE[sel.value];
+}
+
+async function saveJuryDecisions() {
+    if (!_juryData) return;
+    const pid = document.getElementById('promo-select').value;
+    const year = document.getElementById('jury-year-select').value;
+    const sub = document.getElementById('jury-sub-select').value || 'FTP';
+    const decisions = [];
+    document.querySelectorAll('#jury-content select.jr-code').forEach(sel => {
+        decisions.push({ student_id: +sel.dataset.sid, ue: +sel.dataset.ue, admj: sel.value === 'ADMJ' });
+    });
+    try {
+        _juryData = await api(`/promotions/${pid}/jury/${year}?formation=${encodeURIComponent(sub)}`,
+            { method: 'PUT', body: JSON.stringify({ decisions }) });
+        renderJuryGrid();
+        toast('Décisions de jury enregistrées');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
 
 async function saveNotesMarks() {
     if (!_notesData) return;
