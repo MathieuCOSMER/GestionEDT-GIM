@@ -3296,11 +3296,11 @@ function renderNotesGrid() {
         `<th title="${esc(title || '')}" style="background:${bg};padding:6px 2px;vertical-align:bottom;text-align:center${extra || ''}"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600;font-size:.85rem${color ? ';color:' + color : ''}">${esc(txt)}</div></th>`;
     // Ordre : Étudiant | statut & bilan année | rappels années précédentes | semestre précédent | UE du semestre | notes
     const head = `<tr><th class="nz-sticky" style="min-width:155px;max-width:155px;vertical-align:bottom;font-size:.8rem">Étudiant</th>` +
-        (cg.bilan ? `<th style="background:#dcfce7;padding:6px 4px;vertical-align:bottom;text-align:center;font-weight:700;color:#166534;font-size:.78rem;min-width:46px;border-left:4px solid #22c55e">Statut<br>année</th>` +
+        (cg.bilan ? vth('Statut', '#dcfce7', ';border-left:4px solid #22c55e', 'Statut de l\'année en cours', '#166534') +
             (d.year_competences || []).map((name, ci) =>
                 vth(`UE${_ueNum(d, name, ci)}N${_year}`, '#dcfce7', '', `Moyenne annuelle ${name} (${(d.year_semesters || []).join('–')})`, '#166534')).join('') : '') +
         (cg.prevYears ? prevYears.map(g =>
-            `<th style="background:#eef2ff;padding:6px 4px;vertical-align:bottom;text-align:center;font-weight:700;color:#3730a3;font-size:.78rem;min-width:46px;border-left:4px solid #6366f1" title="${esc('Statut ' + g.label)}">Statut<br>A${g.year || ''}</th>` +
+            vth(`Statut A${g.year || ''}`, '#eef2ff', ';border-left:4px solid #6366f1', 'Statut ' + g.label, '#3730a3') +
             g.competences.map((name, ci) =>
                 vth(`UE${_ueNum(d, name, ci)}N${g.year || ''}`, '#eef2ff', '', g.label + ' — ' + name, '#3730a3')).join('')).join('') : '') +
         (cg.prevSem ? prevSems.map(g => g.competences.map((name, ci) =>
