@@ -3301,25 +3301,32 @@ function renderNotesGrid() {
     // Ligne 1 : noms des groupes de colonnes ; ligne 2 : en-têtes de colonnes
     const gth = (txt, bg, color, colspan, border) =>
         `<th colspan="${colspan}" style="background:${bg};color:${color};text-align:center;font-size:.8rem;font-weight:700;padding:4px 6px;white-space:nowrap;border-left:4px solid ${border};border-bottom:2px solid ${border}">${esc(txt)}</th>`;
+    // Largeur cible identique pour chaque groupe (hors SAÉ/Ressources), répartie sur ses colonnes
+    const GW = 250;
+    const wext = cw => `;width:${cw}px;min-width:${cw}px;max-width:${cw}px`;
+    const cwBilan = Math.floor(GW / Math.max(1, 1 + (d.year_competences || []).length));
+    const cwPrevY = g => Math.floor(GW / Math.max(1, 1 + g.competences.length));
+    const cwPrevS = g => Math.floor(GW / Math.max(1, g.competences.length));
+    const cwUe = Math.floor(GW / Math.max(1, comps.length));
     const groupRow = `<tr><th class="nz-sticky" rowspan="2" style="min-width:155px;max-width:155px;vertical-align:bottom;font-size:.8rem">Étudiant</th>` +
-        (cg.bilan ? gth(`Année ${_year}`, '#dcfce7', '#166534', 1 + (d.year_competences || []).length, '#22c55e') : '') +
         (cg.prevYears ? prevYears.map(g => gth(`Année ${g.year || ''}`, '#eef2ff', '#3730a3', 1 + g.competences.length, '#6366f1')).join('') : '') +
+        (cg.bilan ? gth(`Année ${_year}`, '#dcfce7', '#166534', 1 + (d.year_competences || []).length, '#22c55e') : '') +
         (cg.prevSem ? prevSems.map(g => gth(`Semestre S${g.sem || ''}`, '#eef2ff', '#3730a3', g.competences.length, '#818cf8')).join('') : '') +
         (cg.ue ? gth(`Semestre ${d.semester}`, '#ede9fe', '#4c1d95', comps.length, '#8b5cf6') : '') +
         (cg.notes ? gth('SAÉ / Ressources', '#f3f4f6', '#374151', mats.length, '#6b7280') : '') +
         `</tr>`;
     const head = `<tr>` +
-        (cg.bilan ? vth('Statut', '#dcfce7', ';border-left:4px solid #22c55e', 'Statut de l\'année en cours', '#166534') +
-            (d.year_competences || []).map((name, ci) =>
-                vth(`UE${_ueNum(d, name, ci)}N${_year}`, '#dcfce7', '', `Moyenne annuelle ${name} (${(d.year_semesters || []).join('–')})`, '#166534')).join('') : '') +
         (cg.prevYears ? prevYears.map(g =>
-            vth(`Statut A${g.year || ''}`, '#eef2ff', ';border-left:4px solid #6366f1', 'Statut ' + g.label, '#3730a3') +
+            vth(`Statut A${g.year || ''}`, '#eef2ff', ';border-left:4px solid #6366f1' + wext(cwPrevY(g)), 'Statut ' + g.label, '#3730a3') +
             g.competences.map((name, ci) =>
-                vth(`UE${_ueNum(d, name, ci)}N${g.year || ''}`, '#eef2ff', '', g.label + ' — ' + name, '#3730a3')).join('')).join('') : '') +
+                vth(`UE${_ueNum(d, name, ci)}N${g.year || ''}`, '#eef2ff', wext(cwPrevY(g)), g.label + ' — ' + name, '#3730a3')).join('')).join('') : '') +
+        (cg.bilan ? vth('Statut', '#dcfce7', ';border-left:4px solid #22c55e' + wext(cwBilan), 'Statut de l\'année en cours', '#166534') +
+            (d.year_competences || []).map((name, ci) =>
+                vth(`UE${_ueNum(d, name, ci)}N${_year}`, '#dcfce7', wext(cwBilan), `Moyenne annuelle ${name} (${(d.year_semesters || []).join('–')})`, '#166534')).join('') : '') +
         (cg.prevSem ? prevSems.map(g => g.competences.map((name, ci) =>
-            vth(`UE${g.sem || ''}${_ueNum(d, name, ci)}`, '#eef2ff', ci === 0 ? ';border-left:4px solid #818cf8' : '', g.label + ' — ' + name, '#3730a3')).join('')).join('') : '') +
+            vth(`UE${g.sem || ''}${_ueNum(d, name, ci)}`, '#eef2ff', (ci === 0 ? ';border-left:4px solid #818cf8' : '') + wext(cwPrevS(g)), g.label + ' — ' + name, '#3730a3')).join('')).join('') : '') +
         (cg.ue ? comps.map((c, ci) =>
-            vth(`UE${_semNum}${_ueNum(d, c.name, ci)}`, '#ede9fe', ci === 0 ? ';border-left:4px solid #8b5cf6' : '', `${c.name} — moyenne du semestre ${d.semester}`, '#4c1d95')).join('') : '') +
+            vth(`UE${_semNum}${_ueNum(d, c.name, ci)}`, '#ede9fe', (ci === 0 ? ';border-left:4px solid #8b5cf6' : '') + wext(cwUe), `${c.name} — moyenne du semestre ${d.semester}`, '#4c1d95')).join('') : '') +
         (cg.notes ? mats.map((m, mi) =>
             vth(m.code + ' · ' + (m.short_label || matAcronym(m.label)), _coeffKindColor(m.kind), mi === 0 ? ';border-left:4px solid #6b7280' : '', (m.apogee_code ? m.apogee_code + ' — ' : '') + m.label, '')).join('') : '') +
         `</tr>`;
@@ -3364,15 +3371,15 @@ function renderNotesGrid() {
                 value="${v === undefined || v === null ? '' : v}"${special ? ' oninput="onNotesSpecialInput(this)"' : ''}
                 style="width:43px;padding:2px 1px;text-align:center;font-size:.9rem;border:1px solid #d1d5db;border-radius:4px">${calc}</td>`;
         }).join('') : '';
-        return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || ''))}" style="max-width:155px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${bilanCells}${prevYearCells}${prevSemCells}${avgCells}${cells}</tr>`;
+        return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || ''))}" style="max-width:155px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${prevYearCells}${bilanCells}${prevSemCells}${avgCells}${cells}</tr>`;
     }).join('');
     const fbox = (key, lbl, show) => show ? `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">
         <input type="checkbox" ${cg[key] ? 'checked' : ''} onchange="toggleNotesColGroup('${key}', this.checked)">${lbl}</label>` : '';
     el.innerHTML = `
         <div style="font-size:.78rem;color:#374151;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:14px;align-items:center;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:6px 12px">
             <strong>Colonnes :</strong>
-            ${fbox('bilan', 'Statut & bilan année', true)}
             ${fbox('prevYears', 'Rappel années précédentes', prevYears.length > 0)}
+            ${fbox('bilan', 'Statut & bilan année', true)}
             ${fbox('prevSem', 'Semestre précédent', prevSems.length > 0)}
             ${fbox('ue', 'UE du semestre', true)}
             ${fbox('notes', 'Notes (matières)', true)}
