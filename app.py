@@ -731,6 +731,26 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
         )
     ''')
+    # Effectif par année : l'année d'ENTRÉE d'un étudiant dans la cohorte (1..3).
+    # 1 = intake initial ; 2/3 = redoublant entrant directement dans cette année.
+    # L'effectif d'une année est calculé (report auto depuis le jury), voir _year_rosters.
+    try:
+        db.execute("ALTER TABLE promotion_students ADD COLUMN entry_year INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
+    # Ajustements manuels de l'effectif d'une année (par-dessus le calcul auto) :
+    # action='remove' (retiré de l'année) ou 'add' (réintégré / ajouté à l'année).
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS promotion_year_override (
+            promotion_id INTEGER NOT NULL,
+            year         INTEGER NOT NULL,
+            student_id   INTEGER NOT NULL,
+            action       TEXT NOT NULL,
+            PRIMARY KEY (promotion_id, year, student_id),
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
     db.commit()
     _merge_formation_promotions(db)
 
@@ -2262,6 +2282,13 @@ def _parse_student_list(path):
     def txt(v):
         return ('' if v is None else str(v)).strip()
 
+    # PV de jury : n° étudiant en col B sous la ligne des codes ELP (T3IS../T3IR..),
+    # NOM/Prénom en cols C/D. Pas de date de naissance dans ce modèle.
+    if _find_pv_code_row(ws):
+        _, rows = _pv_marks_ws(ws)
+        return [{'numero': r['numero'], 'nom': r['nom'], 'prenom': r['prenom'],
+                 'naissance': ''} for r in rows]
+
     # Détection Apogée : marqueur 'apoL_a01_code' en A6 ou 'Numéro' en A17
     a6 = txt(ws.cell(6, 1).value).lower()
     h17 = txt(ws.cell(17, 1).value).lower()
@@ -2619,6 +2646,180 @@ def import_promotion_students(pid):
     _audit('PROMO_IMPORT', ip=_client_ip(), user=session.get('user'),
            imported=imported, skipped=skipped)
     payload = _promotion_payload(db, pid)
+    payload['import_report'] = {'imported': imported, 'skipped': skipped, 'total_fichier': len(students)}
+    return jsonify(payload)
+
+# ---- Effectif par année d'étude (1..3) : report auto du jury + ajustements manuels ----
+
+def _year_effectif_payload(pdb, pid, year):
+    """Effectif d'une promotion pour une année d'étude (1..3) avec compteurs par
+    sous-cohorte. Chaque étudiant est marqué « entrant » (entry_year==année) et, le cas
+    échéant, ajusté à la main ('add'/'remove')."""
+    promo = pdb.execute('SELECT * FROM promotions WHERE id=?', (pid,)).fetchone()
+    if not promo:
+        return None
+    roster = _year_rosters(pdb, pid).get(year, set())
+    overrides = {r['student_id']: r['action'] for r in pdb.execute(
+        'SELECT student_id, action FROM promotion_year_override WHERE promotion_id=? AND year=?',
+        (pid, year))}
+    students = []
+    for r in pdb.execute('''SELECT id, numero, nom, prenom, naissance, statut, abandon_semestre,
+                                   formation, entry_year FROM promotion_students
+                            WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''',
+                         (pid,)):
+        if r['id'] in roster:
+            d = dict(r)
+            d['entrant'] = (r['entry_year'] or 1) == year
+            d['manual'] = overrides.get(r['id'])
+            students.append(d)
+    sub_counts = {f: {st: 0 for st in _STUDENT_STATUSES} for f in _SUBCOHORTS}
+    for s in students:
+        f = s.get('formation') if s.get('formation') in _SUBCOHORTS else 'FTP'
+        sub_counts[f][s['statut']] = sub_counts[f].get(s['statut'], 0) + 1
+    for f in _SUBCOHORTS:
+        sub_counts[f]['total'] = sum(sub_counts[f][st] for st in _STUDENT_STATUSES)
+    return {'promotion': dict(promo), 'year': year, 'students': students,
+            'sub_counts': sub_counts, 'subcohorts': list(_SUBCOHORTS),
+            'total': len(students), 'statuses': _STUDENT_STATUSES,
+            'semesters': _PROMO_SEMESTERS, 'years': [1, 2, 3]}
+
+@app.route('/api/promotions/<int:pid>/effectif/<int:year>', methods=['GET'])
+def get_year_effectif(pid, year):
+    err = _require_admin()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    payload = _year_effectif_payload(get_promotions_db(), pid, year)
+    if not payload:
+        return error_response('Promotion introuvable', 404)
+    return jsonify(payload)
+
+@app.route('/api/promotions/<int:pid>/effectif/<int:year>/students', methods=['POST'])
+def add_year_student(pid, year):
+    """Ajoute un étudiant à l'effectif d'une année : nouvel étudiant (créé avec
+    entry_year=année) ou réintégration d'un étudiant existant (override 'add')."""
+    err = _require_admin()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    db = get_promotions_db()
+    if not db.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    data = request.get_json() or {}
+    sid = data.get('student_id')
+    if sid:                                  # réintégration d'un étudiant existant
+        if not db.execute('SELECT 1 FROM promotion_students WHERE id=? AND promotion_id=?', (sid, pid)).fetchone():
+            return error_response('Étudiant introuvable', 404)
+        db.execute('''INSERT OR REPLACE INTO promotion_year_override(promotion_id, year, student_id, action)
+                      VALUES(?,?,?,'add')''', (pid, year, sid))
+    else:                                    # nouvel étudiant
+        nom = (data.get('nom') or '').strip()
+        prenom = (data.get('prenom') or '').strip()
+        numero = (data.get('numero') or '').strip()
+        if not (nom or prenom or numero):
+            return error_response('Renseignez au moins un nom ou un numéro', 400)
+        statut = (data.get('statut') or 'Actif').strip()
+        if statut not in _STUDENT_STATUSES:
+            statut = 'Actif'
+        formation = (data.get('formation') or '').strip().upper()
+        if formation not in _SUBCOHORTS:
+            formation = 'FTP'
+        db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance,
+                                                     statut, formation, entry_year)
+                      VALUES(?,?,?,?,?,?,?,?)''',
+                   (pid, numero, nom, prenom, (data.get('naissance') or '').strip(), statut, formation, year))
+    db.commit()
+    return jsonify(_year_effectif_payload(db, pid, year))
+
+@app.route('/api/promotions/<int:pid>/effectif/<int:year>/students/<int:sid>', methods=['DELETE'])
+def remove_year_student(pid, year, sid):
+    """Retire un étudiant de l'effectif d'une année (ajustement 'remove'). N'efface ni
+    l'étudiant ni ses notes ; il reste présent dans les autres années."""
+    err = _require_admin()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    db = get_promotions_db()
+    if not db.execute('SELECT 1 FROM promotion_students WHERE id=? AND promotion_id=?', (sid, pid)).fetchone():
+        return error_response('Étudiant introuvable', 404)
+    db.execute('''INSERT OR REPLACE INTO promotion_year_override(promotion_id, year, student_id, action)
+                  VALUES(?,?,?,'remove')''', (pid, year, sid))
+    db.commit()
+    return jsonify(_year_effectif_payload(db, pid, year))
+
+@app.route('/api/promotions/<int:pid>/effectif/<int:year>/report', methods=['POST'])
+def report_year_effectif(pid, year):
+    """Réinitialise l'effectif de l'année sur le report automatique (jury) en supprimant
+    les ajustements manuels de cette année."""
+    err = _require_admin()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    db = get_promotions_db()
+    if not db.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    db.execute('DELETE FROM promotion_year_override WHERE promotion_id=? AND year=?', (pid, year))
+    db.commit()
+    return jsonify(_year_effectif_payload(db, pid, year))
+
+@app.route('/api/promotions/<int:pid>/effectif/<int:year>/import', methods=['POST'])
+def import_year_students(pid, year):
+    """Importe une liste d'étudiants dans l'effectif d'une année (entry_year=année).
+    Dédoublonnage sur toute la promotion. Importer en année 1 alimente automatiquement
+    les années 2 et 3 (report auto, aucune décision de jury encore)."""
+    err = _require_admin()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    db = get_promotions_db()
+    if not db.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return error_response('Aucun fichier reçu', 400)
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in _ALLOWED_GRADE_EXT:
+        return error_response('Type de fichier non autorisé (.xlsm/.xlsx)', 400)
+    if request.content_length and request.content_length > _MAX_GRADE_FILE:
+        return error_response('Fichier trop volumineux (max 15 Mo)', 400)
+    formation = (request.form.get('formation') or '').strip().upper()
+    if formation not in _SUBCOHORTS:
+        formation = 'FTP'
+    import tempfile
+    tmp = os.path.join(tempfile.gettempdir(), secure_filename(f.filename) or ('import' + ext))
+    f.save(tmp)
+    try:
+        students = _parse_student_list(tmp)
+    except Exception as e:
+        return error_response(f'Lecture impossible : {e}', 400)
+    finally:
+        try: os.remove(tmp)
+        except OSError: pass
+    if not students:
+        return error_response('Aucun étudiant détecté dans le fichier', 400)
+    existing = {_dedup_key(dict(r)) for r in db.execute(
+        'SELECT numero, nom, prenom, naissance FROM promotion_students WHERE promotion_id=?', (pid,))}
+    imported = skipped = 0
+    for s in students:
+        key = _dedup_key(s)
+        if key in existing:
+            skipped += 1
+            continue
+        existing.add(key)
+        db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance,
+                                                     statut, formation, entry_year)
+                      VALUES(?,?,?,?,?,'Actif',?,?)''',
+                   (pid, s['numero'], s['nom'], s['prenom'], s['naissance'], formation, year))
+        imported += 1
+    db.commit()
+    _audit('PROMO_IMPORT', ip=_client_ip(), user=session.get('user'),
+           imported=imported, skipped=skipped, year=year)
+    payload = _year_effectif_payload(db, pid, year)
     payload['import_report'] = {'imported': imported, 'skipped': skipped, 'total_fichier': len(students)}
     return jsonify(payload)
 
@@ -3242,17 +3443,18 @@ def _jury_ue_numbers(ref_all):
                 nums[nm] = len(nums) + 1
     return nums
 
-def _jury_payload(pdb, pid, year, formation=None):
-    """Tableau de jury de l'année `year` (1..3) : par étudiant et par UE, les moyennes
-    semestrielles (UExy), la moyenne annuelle (UExNy), le code UE et la décision de
-    passage. Codes UE : ADM (moyenne annuelle ≥ 10), ADMJ (ajourné mais admis par
-    décision de jury — modifiable), CMP (UE validée à un niveau supérieur), AJ (< 10).
-    Décision : ADM (toutes les UE validées), AJAC (≥ 3 UE validées, années 1 et 2
-    seulement ; en 2e année les UE sans niveau 3 — UE1/UE5 — doivent être validées),
-    sinon AJ."""
+def _jury_compute(pdb, pid):
+    """Cœur du calcul jury pour TOUTES les années (1..3) d'une promotion. Retourne les
+    structures réutilisables : moyennes semestrielles/annuelles par UE, codes UE
+    (ADM/ADMJ/CMP/AJ) et décision d'année par étudiant.
+    Décision d'année :
+      • ADM   — toutes les UE validées sur les moyennes ;
+      • ADMJ  — toutes les UE validées mais grâce à ≥ 1 ADMJ posé par le jury sur une UE ;
+      • AJAC  — ≥ 3 UE validées (années 1 et 2 ; les UE terminales doivent être validées) ;
+      • AJ    — sinon ;
+      • RED   — override manuel du jury sur un candidat AJ (redoublant), stocké en ue_num=0."""
     ref_all = _promo_coeffs(pdb, pid) or {}
     nums = _jury_ue_numbers(ref_all)
-    names_by_num = {v: k for k, v in nums.items()}
     sem_avgs, year_avgs, ue_by_year = {}, {}, {}
     for y in (1, 2, 3):
         so, se = f'S{2 * y - 1}', f'S{2 * y}'
@@ -3268,65 +3470,159 @@ def _jury_payload(pdb, pid, year, formation=None):
         ue_by_year[y] = [n for n in ynums if n]
         year_avgs[y] = {sid: {ynums[int(ci)]: v for ci, v in row.items() if ynums[int(ci)]}
                         for sid, row in yavg.items()}
-    overrides = {(r['year'], str(r['student_id']), r['ue_num']): r['decision']
-                 for r in pdb.execute('SELECT year, student_id, ue_num, decision FROM jury_decisions '
-                                      'WHERE promotion_id=?', (pid,))}
+    ue_overrides, red_overrides = {}, set()
+    for r in pdb.execute('SELECT year, student_id, ue_num, decision FROM jury_decisions '
+                         'WHERE promotion_id=?', (pid,)):
+        if r['ue_num'] == 0:                       # décision d'année (RED)
+            if r['decision'] == 'RED':
+                red_overrides.add((r['year'], str(r['student_id'])))
+        else:
+            ue_overrides[(r['year'], str(r['student_id']), r['ue_num'])] = r['decision']
 
-    def validated_above(sid, ue):
+    def validated_above(sid, ue, year):
         # UE validée (ADM ou ADMJ) à un niveau strictement supérieur → CMP en dessous
         for y2 in range(year + 1, 4):
             a2 = (year_avgs[y2].get(sid) or {}).get(ue)
-            if (a2 is not None and a2 >= 10) or overrides.get((y2, sid, ue)) == 'ADMJ':
+            if (a2 is not None and a2 >= 10) or ue_overrides.get((y2, sid, ue)) == 'ADMJ':
                 return True
         return False
 
-    where = 'promotion_id=?'
-    params = [pid]
+    all_sids = [str(r['id']) for r in pdb.execute(
+        'SELECT id FROM promotion_students WHERE promotion_id=?', (pid,))]
+    ue_codes, decisions = {}, {}
+    for y in (1, 2, 3):
+        ues = ue_by_year.get(y) or []
+        # UE « terminales » : absentes de l'année suivante (UE1/UE5 en 2e année). Elles ne
+        # pourront plus être rattrapées → doivent être validées pour autoriser un AJAC.
+        terminal = [u for u in ues if y < 3 and u not in (ue_by_year.get(y + 1) or [])]
+        for sid in all_sids:
+            codes = {}
+            for ue in ues:
+                annual = (year_avgs[y].get(sid) or {}).get(ue)
+                admj = ue_overrides.get((y, sid, ue)) == 'ADMJ'
+                code = None
+                if annual is not None:
+                    if annual >= 10:
+                        code = 'ADM'
+                    elif admj:
+                        code = 'ADMJ'
+                    elif validated_above(sid, ue, y):
+                        code = 'CMP'
+                    else:
+                        code = 'AJ'
+                codes[ue] = code
+            ue_codes[(y, sid)] = codes
+            if all(c is None for c in codes.values()):
+                decisions[(y, sid)] = None
+                continue
+            valid = {u for u, c in codes.items() if c in ('ADM', 'ADMJ', 'CMP')}
+            if len(valid) == len(ues):
+                base = 'ADMJ' if any(codes[u] == 'ADMJ' for u in ues) else 'ADM'
+            elif y < 3 and len(valid) >= _VALID_MIN_COMP and all(u in valid for u in terminal):
+                base = 'AJAC'
+            else:
+                base = 'AJ'
+            if base == 'AJ' and (y, sid) in red_overrides:
+                base = 'RED'
+            decisions[(y, sid)] = base
+    return {'nums': nums, 'sem_avgs': sem_avgs, 'year_avgs': year_avgs,
+            'ue_by_year': ue_by_year, 'ue_codes': ue_codes, 'decisions': decisions}
+
+def _jury_failed_before(comp, year):
+    """Étudiants (sid str) ajournés — décision AJ ou RED — à une année STRICTEMENT
+    antérieure à `year`. Ils sont retirés des grilles Jury et Notes des années/semestres
+    suivants (ils ne progressent pas). AJAC (autorisé à continuer) n'est PAS concerné."""
+    return {sid for (y, sid), dec in comp['decisions'].items()
+            if y < year and dec in ('AJ', 'RED')}
+
+_STUDENT_LEFT_STATUSES = ('Abandon', 'Sortie')
+
+def _sem_year(sem_code):
+    """Année d'étude (1..3) d'un code semestre 'S1'..'S6' ; 1 par défaut."""
+    try:
+        return (int(str(sem_code)[1:]) + 1) // 2
+    except (ValueError, IndexError):
+        return 1
+
+def _year_rosters(pdb, pid, comp=None):
+    """Effectif (ids d'étudiants) de chaque année 1..3 d'une promotion — « report auto ».
+    Année 1 = étudiants entrés en 1re année. Chaque année suivante reprend les étudiants
+    de l'année précédente qui PASSENT (décision jury ≠ AJ/RED) et ne sont pas partis
+    (Abandon/Sortie), plus les redoublants entrant directement cette année-là (entry_year).
+    Des ajustements manuels (promotion_year_override) retirent ('remove') ou réintègrent
+    ('add') un étudiant sur une année. Retourne {1:set, 2:set, 3:set}."""
+    meta = {}
+    for r in pdb.execute('''SELECT id, statut, abandon_semestre, entry_year
+                            FROM promotion_students WHERE promotion_id=?''', (pid,)):
+        meta[r['id']] = {
+            'statut': r['statut'],
+            'abandon_year': _sem_year(r['abandon_semestre']) if r['abandon_semestre'] else 1,
+            'entry': r['entry_year'] or 1}
+    removes = {1: set(), 2: set(), 3: set()}
+    adds = {1: set(), 2: set(), 3: set()}
+    for r in pdb.execute('SELECT year, student_id, action FROM promotion_year_override '
+                         'WHERE promotion_id=?', (pid,)):
+        if r['year'] in removes:
+            (removes if r['action'] == 'remove' else adds)[r['year']].add(r['student_id'])
+    comp = comp or _jury_compute(pdb, pid)
+    failed_at = {1: set(), 2: set(), 3: set()}
+    for (y, sid), dec in comp['decisions'].items():
+        if y in failed_at and dec in ('AJ', 'RED'):
+            failed_at[y].add(int(sid))
+
+    def left_before(sid, year):
+        m = meta.get(sid)
+        return bool(m and m['statut'] in _STUDENT_LEFT_STATUSES and m['abandon_year'] < year)
+
+    rosters = {}
+    for y in (1, 2, 3):
+        entrants = {sid for sid, m in meta.items() if m['entry'] == y}
+        if y == 1:
+            base = entrants
+        else:
+            survivors = {sid for sid in rosters[y - 1]
+                         if sid not in failed_at[y - 1] and not left_before(sid, y)}
+            base = survivors | entrants
+        rosters[y] = (base - removes[y]) | (adds[y] & set(meta.keys()))
+    return rosters
+
+def _jury_payload(pdb, pid, year, formation=None):
+    """Tableau de jury de l'année `year` (1..3) : par étudiant et par UE, les moyennes
+    semestrielles (UExy), la moyenne annuelle (UExNy), le code UE et la décision d'année.
+    Les étudiants ajournés (AJ/RED) à une année antérieure sont retirés de la liste."""
+    comp = _jury_compute(pdb, pid)
+    nums, sem_avgs = comp['nums'], comp['sem_avgs']
+    year_avgs, ue_by_year = comp['year_avgs'], comp['ue_by_year']
+    ue_codes, decisions = comp['ue_codes'], comp['decisions']
+    names_by_num = {v: k for k, v in nums.items()}
+    where, params = 'promotion_id=?', [pid]
     if formation in _SUBCOHORTS:
         where += ' AND formation=?'
         params.append(formation)
     students = [dict(r) for r in pdb.execute(
         f'''SELECT id, numero, nom, prenom, statut, formation FROM promotion_students
             WHERE {where} ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', params)]
+    roster = _year_rosters(pdb, pid, comp).get(year, set())
+    students = [s for s in students if s['id'] in roster]
     s_odd, s_even = f'S{2 * year - 1}', f'S{2 * year}'
     ues = ue_by_year.get(year) or []
-    # UE « terminales » : absentes de l'année suivante (UE1/UE5 en 2e année). Elles ne
-    # pourront plus être rattrapées → doivent être validées pour autoriser un AJAC.
     terminal = [u for u in ues if year < 3 and u not in (ue_by_year.get(year + 1) or [])]
     rows = {}
     for st in students:
         sid = str(st['id'])
+        codes = ue_codes.get((year, sid), {})
         per_ue = {}
         for ue in ues:
-            annual = (year_avgs[year].get(sid) or {}).get(ue)
-            admj = overrides.get((year, sid, ue)) == 'ADMJ'
-            code = None
-            if annual is not None:
-                if annual >= 10:
-                    code = 'ADM'
-                elif admj:
-                    code = 'ADMJ'
-                elif validated_above(sid, ue):
-                    code = 'CMP'
-                else:
-                    code = 'AJ'
             per_ue[str(ue)] = {'odd': (sem_avgs.get(s_odd, {}).get(sid) or {}).get(ue),
                                'even': (sem_avgs.get(s_even, {}).get(sid) or {}).get(ue),
-                               'annual': annual, 'code': code, 'admj': admj}
+                               'annual': (year_avgs[year].get(sid) or {}).get(ue),
+                               'code': codes.get(ue), 'admj': codes.get(ue) == 'ADMJ'}
         vals = [v['annual'] for v in per_ue.values() if v['annual'] is not None]
         gim = round(sum(vals) / len(vals), 2) if vals else None
-        codes = {u: per_ue[str(u)]['code'] for u in ues}
-        if all(c is None for c in codes.values()):
-            decision = None
-        else:
-            valid = {u for u, c in codes.items() if c in ('ADM', 'ADMJ', 'CMP')}
-            if len(valid) == len(ues):
-                decision = 'ADM'
-            elif year < 3 and len(valid) >= _VALID_MIN_COMP and all(u in valid for u in terminal):
-                decision = 'AJAC'
-            else:
-                decision = 'AJ'
-        rows[sid] = {'ues': per_ue, 'gim': gim, 'decision': decision}
+        dec = decisions.get((year, sid))
+        # red_eligible : candidat ajourné → le jury peut choisir AJ ou RED (menu déroulant)
+        rows[sid] = {'ues': per_ue, 'gim': gim, 'decision': dec,
+                     'red_eligible': dec in ('AJ', 'RED')}
     return {'year': year, 'semesters': [s_odd, s_even],
             'ues': [{'num': u, 'name': names_by_num.get(u, ''), 'terminal': u in terminal}
                     for u in ues],
@@ -3347,8 +3643,10 @@ def get_promotion_jury(pid, year):
 
 @app.route('/api/promotions/<int:pid>/jury/<int:year>', methods=['PUT'])
 def save_promotion_jury(pid, year):
-    """Enregistre les décisions de jury : body {decisions: [{student_id, ue, admj}]}.
-    admj=true pose un ADMJ sur l'UE (année `year`), admj=false le retire."""
+    """Enregistre les décisions de jury :
+      • {decisions: [{student_id, ue, admj}]}    — ADMJ posé/retiré sur une UE ;
+      • {year_decisions: [{student_id, red}]}    — RED posé/retiré sur un candidat AJ
+        (décision d'année, stockée en ue_num=0)."""
     err = _require_admin()
     if err:
         return err
@@ -3359,8 +3657,9 @@ def save_promotion_jury(pid, year):
         return error_response('Promotion introuvable', 404)
     valid_students = {r['id'] for r in pdb.execute(
         'SELECT id FROM promotion_students WHERE promotion_id=?', (pid,))}
+    body = request.get_json() or {}
     changed = 0
-    for d in (request.get_json() or {}).get('decisions') or []:
+    for d in body.get('decisions') or []:
         try:
             sid, ue = int(d.get('student_id')), int(d.get('ue'))
         except (TypeError, ValueError):
@@ -3374,11 +3673,45 @@ def save_promotion_jury(pid, year):
             pdb.execute('''DELETE FROM jury_decisions WHERE promotion_id=? AND year=?
                            AND student_id=? AND ue_num=?''', (pid, year, sid, ue))
         changed += 1
+    for d in body.get('year_decisions') or []:
+        try:
+            sid = int(d.get('student_id'))
+        except (TypeError, ValueError):
+            continue
+        if sid not in valid_students:
+            continue
+        if d.get('red'):
+            pdb.execute('''INSERT OR REPLACE INTO jury_decisions(promotion_id, year, student_id, ue_num, decision)
+                           VALUES(?,?,?,0,'RED')''', (pid, year, sid))
+        else:
+            pdb.execute('''DELETE FROM jury_decisions WHERE promotion_id=? AND year=?
+                           AND student_id=? AND ue_num=0''', (pid, year, sid))
+        changed += 1
     pdb.commit()
     _audit('JURY_SAVE', ip=_client_ip(), user=session.get('user'),
            promo=pid, year=year, decisions=changed)
     formation = (request.args.get('formation') or '').strip().upper() or None
     return jsonify(_jury_payload(pdb, pid, year, formation))
+
+def _coeff_codes(competences):
+    """Codes des matières ayant un coefficient non nul dans au moins une compétence."""
+    codes = set()
+    for cc in competences or []:
+        for code_k, val in (cc.get('coeffs') or {}).items():
+            try:
+                if float(val) != 0:
+                    codes.add(code_k)
+            except (TypeError, ValueError):
+                pass
+    return codes
+
+def _visible_note_components(components, competences):
+    """Matières affichées dans la grille de notes : celles ayant un coefficient dans le
+    programme, plus les saisies spéciales BONUS/PEN. Écarte les matières sans coefficient
+    (Aide à la réussite, Portfolio aux semestres impairs, etc.)."""
+    codes = _coeff_codes(competences)
+    return [m for m in (components or [])
+            if m.get('kind') in ('BONUS', 'PEN') or m.get('code') in codes]
 
 def _promo_notes_payload(pdb, pid, semester, formation=None):
     """Construit le tableau de notes : étudiants (effectif) × matières (référence),
@@ -3387,8 +3720,10 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     que cette sous-cohorte."""
     ref_all = _promo_coeffs(pdb, pid) or {}
     ref = ref_all.get(semester) or {'components': [], 'competences': []}
-    components = ref.get('components', [])
     competences = ref.get('competences', [])
+    # Matières sans coefficient dans le programme (Aide à la réussite, Portfolio impair…)
+    # → masquées de la grille de notes.
+    components = _visible_note_components(ref.get('components', []), competences)
     if formation in _SUBCOHORTS:
         students = [dict(r) for r in pdb.execute(
             '''SELECT id, numero, nom, prenom, statut, formation FROM promotion_students
@@ -3405,6 +3740,12 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     averages = _semester_competence_averages(pdb, pid, semester, competences, components)
     sem_num = int(semester[1:])
     year = (sem_num + 1) // 2   # 1,1,2,2,3,3
+    # Décisions de jury par année (ADM/ADMJ/AJAC/AJ/RED) — servent de « statut » dans la grille
+    comp = _jury_compute(pdb, pid)
+    dec = comp['decisions']
+    # Effectif de l'année (report auto depuis le jury + ajustements manuels)
+    roster = _year_rosters(pdb, pid, comp).get(year, set())
+    students = [s for s in students if s['id'] in roster]
     # Rappels : toutes les années précédentes (moyennes annuelles) puis le semestre antérieur.
     # kind ('year'/'semester') + year/sem servent au front pour grouper et coder les colonnes (UExy/UExNy).
     previous = []
@@ -3415,7 +3756,8 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
             previous.append({'short': f'{po}-{pe}', 'label': f'Année {py} ({po}–{pe})',
                              'kind': 'year', 'year': py,
                              'competences': ynames, 'averages': yavg,
-                             'validation': _year_validation(pdb, pid, ref_all, py)})
+                             'validation': _year_validation(pdb, pid, ref_all, py),
+                             'decision': {str(s['id']): dec.get((py, str(s['id']))) for s in students}})
     if sem_num % 2 == 0:
         psem = f'S{sem_num - 1}'
         pdata = ref_all.get(psem) or {}
@@ -3435,7 +3777,8 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
             'year_semesters': [s_odd, s_even], 'year_competences': year_competences,
             'year_averages': year_averages,
             'ue_numbers': _jury_ue_numbers(ref_all),
-            'year_validation': _year_validation(pdb, pid, ref_all, year)}
+            'year_validation': _year_validation(pdb, pid, ref_all, year),
+            'year_decision': {str(s['id']): dec.get((year, str(s['id']))) for s in students}}
 
 @app.route('/api/promotions/<int:pid>/notes/<semester>', methods=['GET'])
 def get_promotion_notes(pid, semester):
@@ -3489,7 +3832,46 @@ def save_promotion_notes(pid, semester):
                        DO UPDATE SET note=excluded.note, mention=excluded.mention''',
                     (pid, semester, sid, code, note_num, mention))
     pdb.commit()
-    return jsonify(_promo_notes_payload(pdb, pid, semester))
+    formation = (request.args.get('formation') or '').strip().upper() or None
+    return jsonify(_promo_notes_payload(pdb, pid, semester, formation))
+
+@app.route('/api/promotions/<int:pid>/notes/<semester>', methods=['DELETE'])
+def delete_promotion_notes(pid, semester):
+    """Supprime des notes saisies. Par défaut toutes les notes de la promo/semestre ;
+    restreint à une sous-cohorte via ?formation=FTP|ALT, et/ou à un seul étudiant via
+    ?student_id=N. Renvoie la grille rafraîchie (filtrée par la sous-cohorte courante)."""
+    err = _require_admin()
+    if err:
+        return err
+    if semester not in _PROMO_SEMESTERS:
+        return error_response('Semestre invalide', 400)
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    formation = (request.args.get('formation') or '').strip().upper() or None
+    sql = 'DELETE FROM student_marks WHERE promotion_id=? AND semester=?'
+    params = [pid, semester]
+    sid = request.args.get('student_id')
+    if sid:
+        try:
+            sid_int = int(sid)
+        except (TypeError, ValueError):
+            return error_response('Étudiant invalide', 400)
+        sql += ' AND student_id=?'
+        params.append(sid_int)
+    elif formation in _SUBCOHORTS:
+        # « Tout le semestre » : borné à la sous-cohorte affichée (non destructif pour l'autre)
+        sql += (' AND student_id IN (SELECT id FROM promotion_students'
+                ' WHERE promotion_id=? AND formation=?)')
+        params += [pid, formation]
+    deleted = pdb.execute(sql, params).rowcount
+    pdb.commit()
+    _audit('NOTES_DELETE', ip=_client_ip(), user=session.get('user'),
+           promo=pid, semester=semester, deleted=deleted,
+           scope=('student:' + sid) if sid else (formation or 'all'))
+    payload = _promo_notes_payload(pdb, pid, semester, formation)
+    payload['delete_report'] = {'deleted': deleted}
+    return jsonify(payload)
 
 def _cell_txt(v):
     return ('' if v is None else str(v)).strip()
@@ -3533,17 +3915,56 @@ def _apogee_marks_ws(ws):
         r += 1
     return elps, rows
 
+def _find_pv_code_row(ws, max_scan=30):
+    """Ligne des codes ELP (T3IS.../T3IR...) d'un PV de jury. Repérée dynamiquement
+    car sa position varie selon le modèle (ligne 6 sur un PV « matière », ligne 13
+    sur un PV de jury général). Retourne l'indice de la ligne qui contient le plus
+    de codes matière, ou None si aucune."""
+    best_row, best_n = None, 0
+    for r in range(1, min(max_scan, ws.max_row) + 1):
+        n = sum(1 for c in range(1, ws.max_column + 1)
+                if re.match(r'^T3I[SR]\d', _cell_txt(ws.cell(r, c).value), re.I))
+        if n > best_n:
+            best_row, best_n = r, n
+    return best_row
+
+def _pv_num(v):
+    """Numéro d'étudiant en texte, sans décimale parasite (22503981.0 → '22503981')."""
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return _cell_txt(v)
+
+def _pv_name_cols(ws, hdr_row):
+    """Colonnes NOM / Prénom repérées sur la ligne d'en-tête (accents ignorés).
+    Repli sur C/D, disposition standard des PV de jury."""
+    import unicodedata
+    nom_col = prenom_col = None
+    for c in range(1, ws.max_column + 1):
+        t = _cell_txt(ws.cell(hdr_row, c).value)
+        t = unicodedata.normalize('NFD', t).encode('ascii', 'ignore').decode().lower()
+        if 'prenom' in t and prenom_col is None:
+            prenom_col = c
+        elif 'nom' in t and nom_col is None:
+            nom_col = c
+    return nom_col or 3, prenom_col or 4
+
 def _pv_marks_ws(ws):
-    """Layout PV de jury : codes matière T3IS../T3IR.. en ligne 6, notes lignes 8+, n° col B."""
+    """Layout PV de jury : codes matière T3IS../T3IR.. sur une ligne d'en-tête (repérée
+    dynamiquement), notes en dessous, n° étudiant en col B, NOM/Prénom en cols C/D.
+    Retourne (elps, rows) — rows : {numero, nom, prenom, notes:{note_col:val}}."""
+    code_row = _find_pv_code_row(ws)
+    if not code_row:
+        return [], []
     elps = []
     for c in range(1, ws.max_column + 1):
-        code = _cell_txt(ws.cell(6, c).value)
+        code = _cell_txt(ws.cell(code_row, c).value)
         if re.match(r'^T3I[SR]\d', code, re.I):
-            elps.append({'note_col': c, 'code': code,
-                         'kind': _kind_from_code(code, ws.cell(7, c).value)})
+            elps.append({'note_col': c, 'code': code.upper(),
+                         'kind': _kind_from_code(code, ws.cell(code_row - 1, c).value)})
+    nom_col, prenom_col = _pv_name_cols(ws, code_row - 1)
     rows = []
-    for r in range(8, ws.max_row + 1):
-        num = _cell_txt(ws.cell(r, 2).value)
+    for r in range(code_row + 1, ws.max_row + 1):
+        num = _pv_num(ws.cell(r, 2).value)
         if not num or not num[0].isdigit():
             continue
         notes = {}
@@ -3551,7 +3972,10 @@ def _pv_marks_ws(ws):
             nv = _note_value(ws.cell(r, e['note_col']).value)
             if nv is not None:
                 notes[e['note_col']] = nv
-        rows.append({'numero': num, 'notes': notes})
+        rows.append({'numero': num,
+                     'nom': _cell_txt(ws.cell(r, nom_col).value),
+                     'prenom': _cell_txt(ws.cell(r, prenom_col).value),
+                     'notes': notes})
     return elps, rows
 
 def _parse_notes_file(path):
@@ -3561,11 +3985,8 @@ def _parse_notes_file(path):
     is_xlsm = path.lower().endswith('.xlsm')
     wb = openpyxl.load_workbook(path, data_only=True, keep_vba=is_xlsm)
     ws = wb.active
-    # PV de jury : 'N° Étudiant' en B5, ou codes matière en ligne 6
-    b5 = _cell_txt(ws.cell(5, 2).value).lower()
-    has_t3i_row6 = any(re.match(r'^T3I[SR]\d', _cell_txt(ws.cell(6, c).value), re.I)
-                       for c in range(1, ws.max_column + 1))
-    if 'tudiant' in b5 or has_t3i_row6:
+    # PV de jury : présence d'une ligne de codes matière T3IS../T3IR.. (position variable)
+    if _find_pv_code_row(ws):
         return _pv_marks_ws(ws)
     return _apogee_marks_ws(ws)
 
@@ -3656,7 +4077,8 @@ def import_promotion_notes(pid, semester):
     pdb.commit()
     _audit('NOTES_IMPORT', ip=_client_ip(), user=session.get('user'),
            promo=pid, semester=semester, notes=notes_set)
-    payload = _promo_notes_payload(pdb, pid, semester)
+    formation = (request.form.get('formation') or '').strip().upper() or None
+    payload = _promo_notes_payload(pdb, pid, semester, formation)
     payload['import_report'] = {'notes': notes_set, 'etudiants_rapproches': matched,
                                 'etudiants_non_trouves': unmatched, 'matieres_mappees': len(col2code)}
     return jsonify(payload)
@@ -3683,10 +4105,9 @@ def export_promotion_notes(pid, semester):
         return error_response('Promotion introuvable', 404)
 
     ref = (_promo_coeffs(pdb, pid) or {}).get(semester) or {}
-    components = ref.get('components', [])
-    # Portfolio non noté aux semestres impairs → masqué (cohérent avec la grille de saisie)
-    if int(semester[1:]) % 2 == 1:
-        components = [m for m in components if m.get('kind') != 'PORT']
+    # Matières sans coefficient dans le programme (Aide à la réussite, Portfolio impair…)
+    # → masquées, cohérent avec la grille de saisie.
+    components = _visible_note_components(ref.get('components', []), ref.get('competences', []))
     students = pdb.execute(
         '''SELECT id, numero, nom, prenom, naissance FROM promotion_students
            WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,)).fetchall()

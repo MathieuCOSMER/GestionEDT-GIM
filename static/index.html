@@ -17,6 +17,8 @@
         main { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
         /* Page Programme : deux tableaux de semestre côte à côte → pleine largeur */
         main:has(#page-programme.active) { max-width: none; }
+        /* Onglet Jury : large tableau (UE × 4 colonnes) → pleine largeur si nécessaire */
+        main:has(#page-promotions.active #promo-subtab-jury.active) { max-width: none; }
 
         .page { display: none; }
         .page.active { display: block; }
@@ -464,6 +466,15 @@
         <button type="button" id="promo-subtab-actions" class="subtab" onclick="showPromoTab('actions')">Actions</button>
     </div>
     <div id="promo-tab-effectif">
+        <div class="toolbar">
+            <div class="filters">
+                <label>Année de la cohorte :</label>
+                <select id="eff-year-select" onchange="onEffYearChange()"></select>
+                <span id="eff-year-hint" style="color:#6b7280;font-size:.85rem"></span>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="eff-report-btn" onclick="reportEffectifYear()" disabled
+                title="Réinitialiser l'effectif de cette année sur le report automatique du jury (efface les ajustements manuels)">↺ Reporter depuis le jury</button>
+        </div>
         <div id="promo-content"><div class="empty">Créez une promotion ou sélectionnez-en une pour gérer son effectif.</div></div>
     </div>
     <div id="promo-tab-groupes" style="display:none">
@@ -565,6 +576,7 @@
                 <button class="btn btn-primary btn-sm" style="margin-left:14px" id="notes-save-btn" onclick="saveNotesMarks()" disabled>💾 Enregistrer les notes</button>
                 <button class="btn btn-secondary btn-sm" id="notes-import-btn" onclick="openNotesImport()" disabled>Importer les notes</button>
                 <button class="btn btn-secondary btn-sm" id="notes-export-btn" onclick="exportNotes()" disabled>⬇ Exporter (.xlsx)</button>
+                <button class="btn btn-secondary btn-sm" id="notes-delete-btn" onclick="deleteSemesterNotes()" disabled style="color:#b91c1c">🗑 Supprimer les notes</button>
             </div>
         </div>
         <div id="notes-content"><div class="empty">Choisissez une sous-cohorte et un semestre pour saisir les notes.</div></div>
@@ -2011,6 +2023,8 @@ function renderConstraintsAdmin(list) {
 let _promotions = [];
 let _promoData = null;
 let _promoId = null;
+let _effData = null;      // effectif de l'année sélectionnée (onglet Effectifs)
+let _effYear = 1;         // année d'étude affichée (1..3)
 
 let _promoCoeffSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
 let _coeffPromoId = null;   // promotion dont on édite les coefficients
@@ -2022,7 +2036,8 @@ function showPromoTab(tab) {
         document.getElementById('promo-subtab-' + t).classList.toggle('active', tab === t);
         document.getElementById('promo-tab-' + t).style.display = tab === t ? '' : 'none';
     });
-    if (tab === 'notes') loadNotes();
+    if (tab === 'effectif') loadEffectif();
+    else if (tab === 'notes') loadNotes();
     else if (tab === 'jury') loadJuryGrid();
     else if (tab === 'calendrier') loadCalendrier();
     else if (tab === 'groupes') loadPromoGroups();
@@ -2892,15 +2907,16 @@ async function loadPromotions() {
 }
 
 function _togglePromoButtons(on) {
-    ['promo-delete-btn'].forEach(id =>
-        document.getElementById(id).disabled = !on);
+    ['promo-delete-btn', 'eff-report-btn'].forEach(id => {
+        const b = document.getElementById(id); if (b) b.disabled = !on;
+    });
 }
 
 async function onPromoChange() {
     const id = parseInt(document.getElementById('promo-select').value || '0');
     if (!id) {
-        _promoId = null; _promoData = null; _togglePromoButtons(false);
-        document.getElementById('promo-content').innerHTML = '<div class="empty">Sélectionnez une promotion.</div>';
+        _promoId = null; _promoData = null; _effData = null; _togglePromoButtons(false);
+        loadEffectif();
         loadNotesGrid();
         loadJuryGrid();
         return;
@@ -2913,9 +2929,9 @@ async function onPromoChange() {
     // Présélection de l'année de progression = celle correspondant à l'année
     // universitaire choisie en haut à droite (répartition calendaire courante).
     const yg = _ygForTopYear(_promoData.promotion.start_year);
-    _calYG = yg; _grpYG = yg;
+    _calYG = yg; _grpYG = yg; _effYear = yg;
     _togglePromoButtons(true);
-    renderPromoEffectif();
+    loadEffectif();
     if (_promoTab === 'notes') loadNotesGrid();
     else if (_promoTab === 'jury') loadJuryGrid();
     else if (_promoTab === 'calendrier') loadCalendrier();
@@ -2950,14 +2966,56 @@ function _statutColor(s) {
         : (s === 'Redoublant' ? '#fef3c7' : '#e5e7eb'));
 }
 
-function renderPromoEffectif() {
-    const d = _promoData;
+function _effYearLabel(y) {
+    const sy = (_promoData && _promoData.promotion) ? _promoData.promotion.start_year : null;
+    if (!sy) return 'Année ' + y;
+    const a = sy + (y - 1);
+    return `Année ${y} (${a}–${a + 1})`;
+}
+
+async function loadEffectif() {
     const el = document.getElementById('promo-content');
+    const sel = document.getElementById('eff-year-select');
+    if (!_promoId) {
+        _effData = null;
+        if (sel) sel.innerHTML = '';
+        el.innerHTML = '<div class="empty">Sélectionnez une promotion.</div>';
+        return;
+    }
+    if (sel) sel.innerHTML = [1, 2, 3].map(y =>
+        `<option value="${y}" ${y === _effYear ? 'selected' : ''}>${_effYearLabel(y)}</option>`).join('');
+    el.innerHTML = '<div class="spinner">Chargement…</div>';
+    try { _effData = await api(`/promotions/${_promoId}/effectif/${_effYear}`); }
+    catch (e) { toast('Erreur : ' + e.message, 'error'); el.innerHTML = '<div class="empty">Erreur de chargement.</div>'; return; }
+    renderPromoEffectif();
+}
+
+function onEffYearChange() {
+    _effYear = parseInt(document.getElementById('eff-year-select').value || '1') || 1;
+    loadEffectif();
+}
+
+async function reportEffectifYear() {
+    if (!_promoId) return;
+    if (!confirm(`Réinitialiser l'effectif de l'année ${_effYear} sur le report automatique du jury ?\nLes ajustements manuels de cette année seront effacés.`)) return;
+    try {
+        _effData = await api(`/promotions/${_promoId}/effectif/${_effYear}/report`, { method: 'POST' });
+        renderPromoEffectif();
+        toast('Effectif réinitialisé (report auto)');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+function renderPromoEffectif() {
+    const d = _effData;
+    const el = document.getElementById('promo-content');
+    if (!d) { el.innerHTML = '<div class="empty">Sélectionnez une promotion.</div>'; return; }
+    const y = d.year;
     const optList = st => d.statuses.map(s => `<option ${s === st ? 'selected' : ''}>${s}</option>`).join('');
     const semSelect = s => s.statut !== 'Abandon' ? '' :
         `<select onchange="changeAbandonSemestre(${s.id}, this.value)"
             style="margin-left:6px;padding:3px;border:1px solid #d1d5db;border-radius:4px">
             <option value="">— sem. —</option>${d.semesters.map(se => `<option ${se === s.abandon_semestre ? 'selected' : ''}>${se}</option>`).join('')}</select>`;
+    const tag = (txt, bg, title) => `<span title="${title || ''}" style="display:inline-block;padding:1px 6px;border-radius:6px;font-size:.66rem;font-weight:700;background:${bg};margin-left:6px">${txt}</span>`;
 
     // Une section par sous-cohorte (FTP / ALT)
     function section(formation) {
@@ -2974,17 +3032,17 @@ function renderPromoEffectif() {
         </div>`;
         if (!studs.length) {
             return header + `<div style="margin-bottom:8px">${badges}</div>
-                <div class="empty" style="margin-bottom:6px">Aucun étudiant dans cette sous-cohorte. Importez un effectif ou ajoutez un étudiant.</div>`;
+                <div class="empty" style="margin-bottom:6px">Aucun étudiant dans cette sous-cohorte pour l'année ${y}. Importez un effectif ou ajoutez un étudiant.</div>`;
         }
         const rows = studs.map((s, i) => `<tr>
             <td style="color:#9ca3af">${i + 1}</td>
-            <td><strong>${esc(s.nom || '')}</strong></td>
+            <td><strong>${esc(s.nom || '')}</strong>${(s.entrant && y > 1) ? tag('entrant', '#ddd6fe', 'Entré directement en année ' + y + ' (redoublant)') : ''}${s.manual === 'add' ? tag('ajouté', '#dbeafe', 'Ajouté manuellement à cette année') : ''}</td>
             <td>${esc(s.prenom || '')}</td>
             <td>${esc(s.numero || '')}</td>
             <td>${esc(s.naissance || '')}</td>
             <td style="white-space:nowrap"><select onchange="changeStudentStatus(${s.id}, this.value)"
                 style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${_statutColor(s.statut)}">${optList(s.statut)}</select>${semSelect(s)}</td>
-            <td><button class="btn btn-secondary btn-sm" title="Supprimer définitivement" onclick="deleteStudent(${s.id})">🗑</button></td>
+            <td><button class="btn btn-secondary btn-sm" title="Retirer de l'effectif de l'année ${y}${y === 1 ? ' (et des années suivantes)' : ''} — ne supprime pas ses notes" onclick="removeStudentYear(${s.id})">🗑</button></td>
         </tr>`).join('');
         return header + `<div style="margin-bottom:8px">${badges}</div>
             <div style="overflow:auto;max-height:45vh;border:1px solid #e5e7eb;border-radius:8px">
@@ -2995,29 +3053,36 @@ function renderPromoEffectif() {
             </div>`;
     }
 
-    el.innerHTML = _promoProgrammeSelector() + (d.subcohorts || ['FTP', 'ALT']).map(section).join('');
+    el.innerHTML = _promoProgrammeSelector()
+        + `<div style="font-size:.82rem;color:#6b7280;margin-bottom:10px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px">
+            Effectif de l'<strong>année ${y}</strong>. Il se compose automatiquement à partir du jury (les ajournés <strong>AJ/RED</strong> et les départs sont retirés des années suivantes) et reste ajustable à la main (+ Étudiant, retrait 🗑, ou import). Le retrait n'enlève l'étudiant que de l'effectif — ses notes sont conservées.</div>`
+        + (d.subcohorts || ['FTP', 'ALT']).map(section).join('');
 }
 
 async function changeStudentStatus(sid, statut) {
     try {
-        _promoData = await api(`/promotions/${_promoId}/students/${sid}`, { method: 'PUT', body: JSON.stringify({ statut }) });
-        renderPromoEffectif();
+        await api(`/promotions/${_promoId}/students/${sid}`, { method: 'PUT', body: JSON.stringify({ statut }) });
+        loadEffectif();
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
 async function changeAbandonSemestre(sid, sem) {
     try {
-        _promoData = await api(`/promotions/${_promoId}/students/${sid}`, { method: 'PUT', body: JSON.stringify({ abandon_semestre: sem }) });
-        renderPromoEffectif();
+        await api(`/promotions/${_promoId}/students/${sid}`, { method: 'PUT', body: JSON.stringify({ abandon_semestre: sem }) });
+        loadEffectif();
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
-async function deleteStudent(sid) {
-    if (!confirm('Supprimer définitivement cet étudiant de la promotion ?')) return;
+async function removeStudentYear(sid) {
+    const y = _effYear;
+    const msg = y === 1
+        ? 'Retirer cet étudiant de l\'effectif (années suivantes incluses) ? Ses notes seront conservées.'
+        : `Retirer cet étudiant de l'effectif de l'année ${y} ? Ses notes seront conservées.`;
+    if (!confirm(msg)) return;
     try {
-        _promoData = await api(`/promotions/${_promoId}/students/${sid}`, { method: 'DELETE' });
+        _effData = await api(`/promotions/${_promoId}/effectif/${y}/students/${sid}`, { method: 'DELETE' });
         renderPromoEffectif();
-        toast('Étudiant supprimé');
+        toast('Étudiant retiré de l\'année ' + y);
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
@@ -3083,17 +3148,17 @@ async function submitAddStudent() {
     };
     if (!body.nom && !body.prenom && !body.numero) { toast('Renseignez au moins un nom ou un numéro', 'error'); return; }
     try {
-        _promoData = await api(`/promotions/${_promoId}/students`, { method: 'POST', body: JSON.stringify(body) });
+        _effData = await api(`/promotions/${_promoId}/effectif/${_effYear}/students`, { method: 'POST', body: JSON.stringify(body) });
         closeModal('modal-add-student');
         renderPromoEffectif();
-        toast('Étudiant ajouté');
+        toast('Étudiant ajouté à l\'année ' + _effYear);
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
 function openPromoImport(formation) {
     _importFormation = (formation === 'ALT') ? 'ALT' : 'FTP';
     const h = document.querySelector('#modal-promo-import h2');
-    if (h) h.textContent = 'Importer un effectif — ' + _importFormation;
+    if (h) h.textContent = `Importer un effectif — ${_importFormation} · année ${_effYear}`;
     document.getElementById('promo-import-file').value = '';
     openModal('modal-promo-import');
 }
@@ -3105,13 +3170,13 @@ async function submitPromoImport() {
     btn.disabled = true; btn.textContent = 'Import en cours…';
     try {
         const fd = new FormData(); fd.append('file', f); fd.append('formation', _importFormation);
-        const r = await fetch(`/api/promotions/${_promoId}/students/import`, { method: 'POST', body: fd });
+        const r = await fetch(`/api/promotions/${_promoId}/effectif/${_effYear}/import`, { method: 'POST', body: fd });
         if (!r.ok) throw new Error(await r.text());
-        _promoData = await r.json();
+        _effData = await r.json();
         closeModal('modal-promo-import');
         renderPromoEffectif();
-        const rep = _promoData.import_report || {};
-        toast(`Import : ${rep.imported || 0} ajouté(s), ${rep.skipped || 0} déjà présent(s)`);
+        const rep = _effData.import_report || {};
+        toast(`Import (année ${_effYear}) : ${rep.imported || 0} ajouté(s), ${rep.skipped || 0} déjà présent(s)`);
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
     finally { btn.disabled = false; btn.textContent = 'Importer'; }
 }
@@ -3142,16 +3207,17 @@ async function loadNotesGrid() {
     const saveBtn = document.getElementById('notes-save-btn');
     const impBtn = document.getElementById('notes-import-btn');
     const expBtn = document.getElementById('notes-export-btn');
+    const delBtn = document.getElementById('notes-delete-btn');
     const el = document.getElementById('notes-content');
     if (!pid || !sem) {
-        _notesData = null; saveBtn.disabled = true; impBtn.disabled = true; expBtn.disabled = true;
+        _notesData = null; saveBtn.disabled = true; impBtn.disabled = true; expBtn.disabled = true; delBtn.disabled = true;
         el.innerHTML = '<div class="empty">Choisissez une promotion, une sous-cohorte et un semestre.</div>';
         return;
     }
     el.innerHTML = '<div class="spinner">Chargement…</div>';
     try { _notesData = await api(`/promotions/${pid}/notes/${sem}?formation=${encodeURIComponent(sub)}`); }
-    catch (e) { toast('Erreur : ' + e.message, 'error'); saveBtn.disabled = true; impBtn.disabled = true; expBtn.disabled = true; return; }
-    saveBtn.disabled = false; impBtn.disabled = false; expBtn.disabled = false;
+    catch (e) { toast('Erreur : ' + e.message, 'error'); saveBtn.disabled = true; impBtn.disabled = true; expBtn.disabled = true; delBtn.disabled = true; return; }
+    saveBtn.disabled = false; impBtn.disabled = false; expBtn.disabled = false; delBtn.disabled = false;
     renderNotesGrid();
 }
 
@@ -3176,10 +3242,11 @@ async function submitNotesImport() {
     if (!f) { toast('Choisissez un fichier', 'error'); return; }
     const pid = document.getElementById('promo-select').value;
     const sem = document.getElementById('notes-sem-select').value;
+    const sub = (document.getElementById('notes-sub-select') || {}).value || 'FTP';
     const btn = document.getElementById('notes-import-submit');
     btn.disabled = true; btn.textContent = 'Import en cours…';
     try {
-        const fd = new FormData(); fd.append('file', f);
+        const fd = new FormData(); fd.append('file', f); fd.append('formation', sub);
         const r = await fetch(`/api/promotions/${pid}/notes/${sem}/import`, { method: 'POST', body: fd });
         if (!r.ok) throw new Error(await r.text());
         _notesData = await r.json();
@@ -3288,8 +3355,9 @@ function renderNotesGrid() {
     }
     const _semNum = parseInt((d.semester || 'S0').slice(1)) || 0;
     const _year = d.year || ((_semNum + 1) >> 1);
-    // Portfolio non noté aux semestres impairs → masqué
-    const mats = (_semNum % 2 === 1) ? d.components.filter(m => m.kind !== 'PORT') : d.components;
+    // Les matières sans coefficient (Aide à la réussite, Portfolio impair…) sont déjà
+    // écartées côté serveur.
+    const mats = d.components;
     const comps = d.competences, prev = d.previous || [];
     const prevYears = prev.filter(g => g.kind !== 'semester');
     const prevSems = prev.filter(g => g.kind === 'semester');
@@ -3317,7 +3385,7 @@ function renderNotesGrid() {
         `</tr>`;
     const head = `<tr>` +
         (cg.prevYears ? prevYears.map(g =>
-            vth(`Statut A${g.year || ''}`, '#eef2ff', ';border-left:4px solid #6366f1' + wext(cwPrevY(g)), 'Statut ' + g.label, '#3730a3') +
+            vth('Statut', '#eef2ff', ';border-left:4px solid #6366f1' + wext(cwPrevY(g)), 'Décision du jury — ' + g.label, '#3730a3') +
             g.competences.map((name, ci) =>
                 vth(`UE${_ueNum(d, name, ci)}N${g.year || ''}`, '#eef2ff', wext(cwPrevY(g)), g.label + ' — ' + name, '#3730a3')).join('')).join('') : '') +
         (cg.bilan ? vth('Statut', '#dcfce7', ';border-left:4px solid #22c55e' + wext(cwBilan), 'Statut de l\'année en cours', '#166534') +
@@ -3336,8 +3404,8 @@ function renderNotesGrid() {
         const ya = (d.year_averages || {})[s.id] || {};
         let bilanCells = '';
         if (cg.bilan) {
-            const ys = _yearStatusBadge((d.year_validation || {})[s.id]);
-            bilanCells = `<td title="${ys.title}" style="text-align:center;white-space:nowrap;padding:2px 3px;border-left:4px solid #22c55e"><span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:.78rem;font-weight:700;${_YS_STYLE[ys.cls]}">${ys.label}</span></td>` +
+            const jd = (d.year_decision || {})[s.id];
+            bilanCells = `<td title="${jd ? _JURY_DEC_TITLE[jd] : 'Aucune décision'}" style="text-align:center;white-space:nowrap;padding:2px 3px;border-left:4px solid #22c55e"><span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:.78rem;font-weight:700;${jd ? _JURY_DEC_STYLE[jd] : 'background:#e5e7eb;color:#6b7280'}">${jd || '—'}</span></td>` +
                 (d.year_competences || []).map((name, ci) => {
                     const st = _yearUeStatus(ya[ci]);
                     const stl = st === 'ok' ? 'background:#dcfce7;color:#166534'
@@ -3351,8 +3419,8 @@ function renderNotesGrid() {
                 `<td style="text-align:center;background:#f5f7ff;color:#3730a3;font-size:.83rem;padding:1px 2px${(ci === 0 && first) ? ';border-left:4px solid ' + first : ''}">${_fmtAvg(ga[ci])}</td>`).join('');
         };
         const prevYearCells = cg.prevYears ? prevYears.map(g => {
-            const ys = _yearStatusBadge((g.validation || {})[s.id]);
-            return `<td title="${ys.title}" style="text-align:center;white-space:nowrap;padding:2px 3px;border-left:4px solid #6366f1;background:#f5f7ff"><span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:.78rem;font-weight:700;${_YS_STYLE[ys.cls]}">${ys.label}</span></td>` +
+            const jd = (g.decision || {})[s.id];
+            return `<td title="${jd ? _JURY_DEC_TITLE[jd] : 'Aucune décision'}" style="text-align:center;white-space:nowrap;padding:2px 3px;border-left:4px solid #6366f1;background:#f5f7ff"><span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:.78rem;font-weight:700;${jd ? _JURY_DEC_STYLE[jd] : 'background:#e5e7eb;color:#6b7280'}">${jd || '—'}</span></td>` +
                 prevCell(g, null);
         }).join('') : '';
         const prevSemCells = cg.prevSem ? prevSems.map(g => prevCell(g, '#818cf8')).join('') : '';
@@ -3371,7 +3439,7 @@ function renderNotesGrid() {
                 value="${v === undefined || v === null ? '' : v}"${special ? ' oninput="onNotesSpecialInput(this)"' : ''}
                 style="width:43px;padding:2px 1px;text-align:center;font-size:.9rem;border:1px solid #d1d5db;border-radius:4px">${calc}</td>`;
         }).join('') : '';
-        return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || ''))}" style="max-width:155px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${prevYearCells}${bilanCells}${prevSemCells}${avgCells}${cells}</tr>`;
+        return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || ''))}" style="max-width:155px;font-size:.78rem;padding:2px 4px"><div style="display:flex;align-items:center;gap:4px"><button onclick="deleteStudentNotes(${s.id})" title="Supprimer les notes de cet étudiant pour ce semestre" style="border:none;background:none;cursor:pointer;color:#b91c1c;font-size:.78rem;padding:0;line-height:1;flex:0 0 auto">🗑</button><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</span></div></td>${prevYearCells}${bilanCells}${prevSemCells}${avgCells}${cells}</tr>`;
     }).join('');
     const fbox = (key, lbl, show) => show ? `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">
         <input type="checkbox" ${cg[key] ? 'checked' : ''} onchange="toggleNotesColGroup('${key}', this.checked)">${lbl}</label>` : '';
@@ -3484,13 +3552,16 @@ const _JURY_CODE_TITLE = {
     AJ: 'Ajourné (moyenne annuelle < 10)',
 };
 const _JURY_DEC_STYLE = {
-    ADM: 'background:#16a34a;color:#fff', AJAC: 'background:#f59e0b;color:#fff',
-    AJ: 'background:#dc2626;color:#fff',
+    ADM: 'background:#16a34a;color:#fff', ADMJ: 'background:#d97706;color:#fff',
+    AJAC: 'background:#f59e0b;color:#fff', AJ: 'background:#dc2626;color:#fff',
+    RED: 'background:#7c3aed;color:#fff',
 };
 const _JURY_DEC_TITLE = {
-    ADM: 'Admis — toutes les UE validées',
+    ADM: 'Admis — toutes les UE validées sur les moyennes',
+    ADMJ: 'Admis par décision de jury — toutes les UE validées grâce à un ADMJ posé sur une UE',
     AJAC: 'Ajourné mais autorisé à continuer (≥ 3 UE validées)',
     AJ: 'Ajourné',
+    RED: 'Redoublant — décision du jury sur un candidat ajourné',
 };
 
 async function loadJuryGrid() {
@@ -3527,10 +3598,10 @@ function renderJuryGrid() {
     const bl = ';border-left:3px solid #6b7280';
     const head1 = `<tr><th class="nz-sticky" rowspan="2" style="min-width:170px;max-width:170px;vertical-align:bottom;font-size:.8rem">Étudiant</th>` +
         d.ues.map(u => `<th colspan="4" title="${u.terminal ? 'UE sans niveau supérieur : doit être validée pour un passage AJAC' : ''}"
-            style="text-align:center;background:#ede9fe;color:#4c1d95;font-size:.82rem;padding:5px 4px${bl}">UE${u.num} · ${esc(u.name)}${u.terminal ? ' *' : ''}</th>`).join('') +
-        `<th rowspan="2" style="background:#dcfce7;color:#166534;text-align:center;vertical-align:bottom;font-size:.82rem;padding:5px 6px;border-left:3px solid #22c55e">GIM${y}<br><span style="font-weight:400;font-size:.72rem">moyenne</span></th>` +
-        `<th rowspan="2" style="background:#f3f4f6;text-align:center;vertical-align:bottom;font-size:.82rem;padding:5px 6px${bl}">Décision</th></tr>`;
-    const sub = (txt, title, extra) => `<th title="${esc(title || '')}" style="text-align:center;background:#faf5ff;font-size:.74rem;font-weight:600;color:#6b7280;padding:3px 4px${extra || ''}">${txt}</th>`;
+            style="text-align:center;background:#ede9fe;color:#4c1d95;font-size:.66rem;padding:5px 3px${bl}">UE${u.num} · ${esc(u.name)}${u.terminal ? ' *' : ''}</th>`).join('') +
+        `<th rowspan="2" style="background:#dcfce7;color:#166534;text-align:center;vertical-align:bottom;font-size:.66rem;padding:5px 4px;border-left:3px solid #22c55e">GIM${y}<br><span style="font-weight:400;font-size:.58rem">moyenne</span></th>` +
+        `<th rowspan="2" style="background:#f3f4f6;text-align:center;vertical-align:bottom;font-size:.66rem;padding:5px 4px${bl}">Décision</th></tr>`;
+    const sub = (txt, title, extra) => `<th title="${esc(title || '')}" style="text-align:center;background:#faf5ff;font-size:.59rem;font-weight:600;color:#6b7280;padding:3px 3px${extra || ''}">${txt}</th>`;
     const head2 = '<tr>' + d.ues.map(u =>
         sub(`UE${sOdd}${u.num}`, `Moyenne S${sOdd}`, bl) + sub(`UE${sEven}${u.num}`, `Moyenne S${sEven}`) +
         sub(`UE${u.num}N${y}`, 'Moyenne annuelle (niveau ' + y + ')') + sub('Code', 'ADM / AJ / ADMJ / CMP')).join('') + '</tr>';
@@ -3546,20 +3617,31 @@ function renderJuryGrid() {
                 // AJ ↔ ADMJ : décision de jury modifiable
                 codeCell = `<td style="padding:1px 2px;text-align:center"><select class="jr-code" data-sid="${s.id}" data-ue="${u.num}"
                     onchange="onJuryCodeChange(this)" title="${_JURY_CODE_TITLE[v.code]}"
-                    style="font-size:.78rem;font-weight:700;border:1px solid #d1d5db;border-radius:4px;padding:1px 2px;${_JURY_CODE_STYLE[v.code]}">
+                    style="font-size:.62rem;font-weight:700;border:1px solid #d1d5db;border-radius:4px;padding:1px 1px;${_JURY_CODE_STYLE[v.code]}">
                     <option value="AJ"${v.code === 'AJ' ? ' selected' : ''}>AJ</option>
                     <option value="ADMJ"${v.code === 'ADMJ' ? ' selected' : ''}>ADMJ</option></select></td>`;
             } else {
-                codeCell = `<td title="${v.code ? _JURY_CODE_TITLE[v.code] : 'Non évaluée'}" style="text-align:center;font-weight:700;font-size:.78rem;${v.code ? _JURY_CODE_STYLE[v.code] : 'color:#9ca3af'}">${v.code || '—'}</td>`;
+                codeCell = `<td title="${v.code ? _JURY_CODE_TITLE[v.code] : 'Non évaluée'}" style="text-align:center;font-weight:700;font-size:.62rem;${v.code ? _JURY_CODE_STYLE[v.code] : 'color:#9ca3af'}">${v.code || '—'}</td>`;
             }
-            return `<td style="text-align:center;font-size:.85rem;color:#6b7280${bl}">${_fmtAvg(v.odd)}</td>` +
-                `<td style="text-align:center;font-size:.85rem;color:#6b7280">${_fmtAvg(v.even)}</td>` +
+            return `<td style="text-align:center;font-size:.82rem;color:#6b7280${bl}">${_fmtAvg(v.odd)}</td>` +
+                `<td style="text-align:center;font-size:.82rem;color:#6b7280">${_fmtAvg(v.even)}</td>` +
                 `<td style="text-align:center;font-weight:700;font-size:.88rem;${aStl}">${_fmtAvg(v.annual)}</td>` + codeCell;
         }).join('');
-        const gimCell = `<td style="text-align:center;font-weight:700;font-size:.9rem;background:#f0fdf4;color:#166534;border-left:3px solid #22c55e">${_fmtAvg(row.gim)}</td>`;
+        const gimCell = `<td style="text-align:center;font-weight:700;font-size:.88rem;background:#f0fdf4;color:#166534;border-left:3px solid #22c55e">${_fmtAvg(row.gim)}</td>`;
         const dec = row.decision;
-        const decCell = `<td class="jr-dec" data-sid="${s.id}" title="${dec ? _JURY_DEC_TITLE[dec] : 'Aucune note'}" style="text-align:center;padding:2px 4px${bl}">
-            <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:.78rem;font-weight:700;${dec ? _JURY_DEC_STYLE[dec] : 'background:#e5e7eb;color:#6b7280'}">${dec || '—'}</span></td>`;
+        let decCell;
+        if (row.red_eligible) {
+            // Candidat ajourné : le jury tranche AJ ou RED (redoublant)
+            const cur = dec === 'RED' ? 'RED' : 'AJ';
+            decCell = `<td style="text-align:center;padding:2px 3px${bl}"><select class="jr-yeardec" data-sid="${s.id}"
+                onchange="onJuryDecChange(this)" title="${_JURY_DEC_TITLE[cur]}"
+                style="font-size:.62rem;font-weight:700;border:none;border-radius:999px;padding:2px 5px;cursor:pointer;${_JURY_DEC_STYLE[cur]}">
+                <option value="AJ"${cur === 'AJ' ? ' selected' : ''}>AJ</option>
+                <option value="RED"${cur === 'RED' ? ' selected' : ''}>RED</option></select></td>`;
+        } else {
+            decCell = `<td class="jr-dec" data-sid="${s.id}" title="${dec ? _JURY_DEC_TITLE[dec] : 'Aucune note'}" style="text-align:center;padding:2px 3px${bl}">
+                <span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:.62rem;font-weight:700;${dec ? _JURY_DEC_STYLE[dec] : 'background:#e5e7eb;color:#6b7280'}">${dec || '—'}</span></td>`;
+        }
         return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || ''))}" style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${ueCells}${gimCell}${decCell}</tr>`;
     }).join('');
     const term = d.ues.filter(u => u.terminal).map(u => 'UE' + u.num).join(' et ');
@@ -3570,8 +3652,14 @@ function renderJuryGrid() {
             <span style="padding:1px 6px;border-radius:4px;${_JURY_CODE_STYLE.AJ}">AJ</span> &lt; 10 ·
             <span style="padding:1px 6px;border-radius:4px;${_JURY_CODE_STYLE.ADMJ}">ADMJ</span> admis par décision de jury (modifiable dans la colonne Code) ·
             <span style="padding:1px 6px;border-radius:4px;${_JURY_CODE_STYLE.CMP}">CMP</span> validée à un niveau supérieur.<br>
-            <strong>Décision :</strong> <strong>ADM</strong> toutes les UE validées · <strong>AJAC</strong> ≥ 3 UE validées (années 1 et 2${term ? ' ; en 2ᵉ année ' + term + ' (*) doivent être validées' : ''}) · <strong>AJ</strong> sinon.
-            Les modifications de code sont prises en compte après <strong>Enregistrer les décisions</strong>.</div>
+            <strong>Décision d'année :</strong>
+            <span style="padding:1px 6px;border-radius:4px;${_JURY_DEC_STYLE.ADM}">ADM</span> toutes les UE validées ·
+            <span style="padding:1px 6px;border-radius:4px;${_JURY_DEC_STYLE.ADMJ}">ADMJ</span> validée grâce à un ADMJ d'UE ·
+            <span style="padding:1px 6px;border-radius:4px;${_JURY_DEC_STYLE.AJAC}">AJAC</span> ≥ 3 UE validées (années 1 et 2${term ? ' ; en 2ᵉ année ' + term + ' (*) doivent être validées' : ''}) ·
+            <span style="padding:1px 6px;border-radius:4px;${_JURY_DEC_STYLE.AJ}">AJ</span> sinon.
+            Pour un candidat <strong>AJ</strong>, le jury peut choisir <span style="padding:1px 6px;border-radius:4px;${_JURY_DEC_STYLE.RED}">RED</span> (redoublant) dans la colonne Décision.
+            Un étudiant <strong>AJ</strong> ou <strong>RED</strong> à une année n'apparaît plus dans les grilles Jury et Notes des années suivantes.
+            Les modifications sont prises en compte après <strong>Enregistrer les décisions</strong>.</div>
         <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px">
             <table class="nz-table"><thead>${head1}${head2}</thead><tbody>${body}</tbody></table>
         </div>`;
@@ -3583,6 +3671,12 @@ function onJuryCodeChange(sel) {
     sel.title = _JURY_CODE_TITLE[sel.value];
 }
 
+function onJuryDecChange(sel) {
+    sel.style.cssText = sel.style.cssText.replace(/background:[^;]*;?|color:[^;]*;?/g, '')
+        + ';' + _JURY_DEC_STYLE[sel.value];
+    sel.title = _JURY_DEC_TITLE[sel.value];
+}
+
 async function saveJuryDecisions() {
     if (!_juryData) return;
     const pid = document.getElementById('promo-select').value;
@@ -3592,9 +3686,13 @@ async function saveJuryDecisions() {
     document.querySelectorAll('#jury-content select.jr-code').forEach(sel => {
         decisions.push({ student_id: +sel.dataset.sid, ue: +sel.dataset.ue, admj: sel.value === 'ADMJ' });
     });
+    const year_decisions = [];
+    document.querySelectorAll('#jury-content select.jr-yeardec').forEach(sel => {
+        year_decisions.push({ student_id: +sel.dataset.sid, red: sel.value === 'RED' });
+    });
     try {
         _juryData = await api(`/promotions/${pid}/jury/${year}?formation=${encodeURIComponent(sub)}`,
-            { method: 'PUT', body: JSON.stringify({ decisions }) });
+            { method: 'PUT', body: JSON.stringify({ decisions, year_decisions }) });
         renderJuryGrid();
         toast('Décisions de jury enregistrées');
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
@@ -3604,6 +3702,7 @@ async function saveNotesMarks() {
     if (!_notesData) return;
     const pid = document.getElementById('promo-select').value;
     const sem = document.getElementById('notes-sem-select').value;
+    const sub = (document.getElementById('notes-sub-select') || {}).value || 'FTP';
     const marks = []; let invalid = false;
     document.querySelectorAll('#notes-content input.nz-mark').forEach(inp => {
         const raw = inp.value.trim();
@@ -3625,9 +3724,38 @@ async function saveNotesMarks() {
     });
     if (invalid) { toast('Notes invalides (0–20).', 'error'); return; }
     try {
-        _notesData = await api(`/promotions/${pid}/notes/${sem}`, { method: 'PUT', body: JSON.stringify({ marks }) });
+        _notesData = await api(`/promotions/${pid}/notes/${sem}?formation=${encodeURIComponent(sub)}`, { method: 'PUT', body: JSON.stringify({ marks }) });
         renderNotesGrid();
         toast('Notes enregistrées');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// Supprime toutes les notes du semestre pour la sous-cohorte affichée
+async function deleteSemesterNotes() {
+    const pid = document.getElementById('promo-select').value;
+    const sem = document.getElementById('notes-sem-select').value;
+    const sub = (document.getElementById('notes-sub-select') || {}).value || 'FTP';
+    if (!pid || !sem) { toast('Choisissez une promotion et un semestre', 'error'); return; }
+    if (!confirm(`Supprimer TOUTES les notes du semestre ${sem} pour la sous-cohorte ${sub} ?\nCette action est irréversible.`)) return;
+    try {
+        _notesData = await api(`/promotions/${pid}/notes/${sem}?formation=${encodeURIComponent(sub)}`, { method: 'DELETE' });
+        renderNotesGrid();
+        toast(`${(_notesData.delete_report || {}).deleted || 0} note(s) supprimée(s)`);
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// Supprime les notes du semestre pour un seul étudiant
+async function deleteStudentNotes(sid) {
+    const pid = document.getElementById('promo-select').value;
+    const sem = document.getElementById('notes-sem-select').value;
+    const sub = (document.getElementById('notes-sub-select') || {}).value || 'FTP';
+    const st = ((_notesData || {}).students || []).find(s => s.id === sid) || {};
+    const name = ((st.nom || '') + ' ' + (st.prenom || '')).trim() || 'cet étudiant';
+    if (!confirm(`Supprimer les notes du semestre ${sem} de ${name} ?`)) return;
+    try {
+        _notesData = await api(`/promotions/${pid}/notes/${sem}?formation=${encodeURIComponent(sub)}&student_id=${sid}`, { method: 'DELETE' });
+        renderNotesGrid();
+        toast(`${(_notesData.delete_report || {}).deleted || 0} note(s) supprimée(s)`);
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
