@@ -627,8 +627,13 @@ def close_db(exception):
 # ===== Base des PROMOTIONS (cohorte sur 3 ans, indépendante de l'année) =====
 # Stockée à part car une promotion suit ses étudiants/résultats d'année en année.
 _PROMOTIONS_DB = os.environ.get('EDT_PROMOTIONS_DB') or os.path.join(_DB_DIR, 'promotions.db')
-_STUDENT_STATUSES = ['Actif', 'Abandon', 'Redoublant', 'Sortie']
+_STUDENT_STATUSES = ['Actif', 'RED', 'Abandon']
 _PROMO_SEMESTERS = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6']
+# Profil d'entrée de l'étudiant (valeurs autorisées ; '' = non renseigné)
+_STUDENT_BAC = ['SI2D', 'GEN', 'PRO', 'STL', 'Autre']
+_STUDENT_CURSUS = ['EI', 'RE', 'PB', 'PP']            # École d'ingé / Reprise d'étude / PostBac / PostPrépa
+_STUDENT_RECRUT = ['PS', 'EC', 'ADIUT']               # ParcourSup / eCandidat / ADIUT (étrangers)
+_STUDENT_PROFILE = {'bac': _STUDENT_BAC, 'cursus': _STUDENT_CURSUS, 'recrutement': _STUDENT_RECRUT}
 
 def _open_promotions_db():
     db = sqlite3.connect(_PROMOTIONS_DB, timeout=10)
@@ -738,6 +743,12 @@ def _apply_promotions_migrations(db):
         db.execute("ALTER TABLE promotion_students ADD COLUMN entry_year INTEGER DEFAULT 1")
     except sqlite3.OperationalError:
         pass
+    # Profil d'entrée : BAC obtenu, cursus antérieur, méthode de recrutement.
+    for _col in ('bac', 'cursus', 'recrutement'):
+        try:
+            db.execute(f"ALTER TABLE promotion_students ADD COLUMN {_col} TEXT")
+        except sqlite3.OperationalError:
+            pass
     # Ajustements manuels de l'effectif d'une année (par-dessus le calcul auto) :
     # action='remove' (retiré de l'année) ou 'add' (réintégré / ajouté à l'année).
     db.execute('''
@@ -751,6 +762,22 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
         )
     ''')
+    # Sort d'un redoublant (RED) décidé par le jury : réinscrit dans la promo cible
+    # (FTP/ALT) ou Abandon. target_student_id = étudiant créé dans la promo cible.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS promotion_red_transfer (
+            promotion_id      INTEGER NOT NULL,
+            student_id        INTEGER NOT NULL,
+            decision          TEXT NOT NULL,
+            target_student_id INTEGER,
+            PRIMARY KEY (promotion_id, student_id),
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
+    # Statuts simplifiés (Actif / RED / Abandon) : migre les anciennes valeurs.
+    db.execute("UPDATE promotion_students SET statut='RED' WHERE statut='Redoublant'")
+    db.execute("UPDATE promotion_students SET statut='Abandon' WHERE statut='Sortie'")
     db.commit()
     _merge_formation_promotions(db)
 
@@ -2568,6 +2595,11 @@ def update_promotion_student(pid, sid):
     for key in ('numero', 'nom', 'prenom', 'naissance'):
         if key in data:
             fields.append(f'{key}=?'); params.append((data.get(key) or '').strip())
+    # Profil d'entrée : BAC / cursus / recrutement (valeur autorisée ou vide)
+    for key, allowed in _STUDENT_PROFILE.items():
+        if key in data:
+            val = (data.get(key) or '').strip()
+            fields.append(f'{key}=?'); params.append(val if val in allowed else None)
     new_statut = None
     if 'statut' in data:
         st = (data.get('statut') or 'Actif').strip()
@@ -2664,7 +2696,8 @@ def _year_effectif_payload(pdb, pid, year):
         (pid, year))}
     students = []
     for r in pdb.execute('''SELECT id, numero, nom, prenom, naissance, statut, abandon_semestre,
-                                   formation, entry_year FROM promotion_students
+                                   formation, entry_year, bac, cursus, recrutement
+                            FROM promotion_students
                             WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''',
                          (pid,)):
         if r['id'] in roster:
@@ -2681,7 +2714,8 @@ def _year_effectif_payload(pdb, pid, year):
     return {'promotion': dict(promo), 'year': year, 'students': students,
             'sub_counts': sub_counts, 'subcohorts': list(_SUBCOHORTS),
             'total': len(students), 'statuses': _STUDENT_STATUSES,
-            'semesters': _PROMO_SEMESTERS, 'years': [1, 2, 3]}
+            'semesters': _PROMO_SEMESTERS, 'years': [1, 2, 3],
+            'profile_options': {k: list(v) for k, v in _STUDENT_PROFILE.items()}}
 
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>', methods=['GET'])
 def get_year_effectif(pid, year):
@@ -2822,6 +2856,154 @@ def import_year_students(pid, year):
     payload = _year_effectif_payload(db, pid, year)
     payload['import_report'] = {'imported': imported, 'skipped': skipped, 'total_fichier': len(students)}
     return jsonify(payload)
+
+# ---- Redoublants (RED) : bascule vers la promo cible (année +1) ou Abandon ----
+
+def _red_students(pdb, pid, comp=None):
+    """{student_id(int): année} des redoublants (décision de jury RED) d'une promotion."""
+    comp = comp or _jury_compute(pdb, pid)
+    return {int(sid): y for (y, sid), dec in comp['decisions'].items() if dec == 'RED'}
+
+def _red_target_promo(pdb, pid):
+    """Promotion cible d'un redoublant = celle dont la 1re année est un an après
+    (start_year + 1). Retourne (id ou None, nom affiché)."""
+    promo = pdb.execute('SELECT start_year FROM promotions WHERE id=?', (pid,)).fetchone()
+    if not promo:
+        return None, None
+    nxt = promo['start_year'] + 1
+    row = pdb.execute('SELECT id, name FROM promotions WHERE start_year=?', (nxt,)).fetchone()
+    return (row['id'] if row else None), (row['name'] if row else _promotion_name(nxt))
+
+def _ensure_target_promo(db, pid):
+    """Id de la promo cible d'un redoublant (start_year+1), CRÉÉE si absente (nom,
+    3 années universitaires, même programme que la source). Cas des RED en BUT1 dont
+    la cohorte suivante n'existe pas encore."""
+    src = db.execute('SELECT start_year, programme_id FROM promotions WHERE id=?', (pid,)).fetchone()
+    if not src:
+        return None
+    start = src['start_year'] + 1
+    row = db.execute('SELECT id FROM promotions WHERE start_year=?', (start,)).fetchone()
+    if row:
+        return row['id']
+    name = _promotion_name(start)
+    cur = db.execute('''INSERT INTO promotions(name, formation, start_year, end_year, programme_id, updated_at)
+                        VALUES(?,'MUT',?,?,?,CURRENT_TIMESTAMP)''',
+                     (name, start, start + 3, src['programme_id']))
+    new_id = cur.lastrowid
+    db.commit()
+    try:
+        _ensure_years_for_promo(start)
+    except Exception as e:
+        app.logger.warning('Création des années de la promo cible %s échouée : %s', new_id, e)
+    _audit('PROMO_CREATE', ip=_client_ip(), user=session.get('user'), promo=name, reason='RED_target')
+    return new_id
+
+def _red_payload(pdb, pid):
+    promo = pdb.execute('SELECT * FROM promotions WHERE id=?', (pid,)).fetchone()
+    if not promo:
+        return None
+    comp = _jury_compute(pdb, pid)
+    _reconcile_red_transfers(pdb, pid, comp)     # nettoie les bascules RED caduques
+    red = _red_students(pdb, pid, comp)
+    target_id, target_name = _red_target_promo(pdb, pid)
+    transfers = {r['student_id']: r['decision'] for r in pdb.execute(
+        'SELECT student_id, decision FROM promotion_red_transfer WHERE promotion_id=?', (pid,))}
+    info = {r['id']: r for r in pdb.execute(
+        '''SELECT id, numero, nom, prenom, naissance, formation FROM promotion_students
+           WHERE promotion_id=?''', (pid,))}
+    rows = []
+    for sid, year in red.items():
+        s = info.get(sid)
+        if not s:
+            continue
+        rows.append({'student_id': sid, 'numero': s['numero'], 'nom': s['nom'],
+                     'prenom': s['prenom'], 'formation': s['formation'] or 'FTP',
+                     'year': year, 'decision': transfers.get(sid)})
+    rows.sort(key=lambda r: ((r['formation'] or ''), (r['nom'] or '').lower(), (r['prenom'] or '').lower()))
+    return {'target_promo_id': target_id, 'target_promo_name': target_name,
+            'target_exists': target_id is not None, 'students': rows}
+
+@app.route('/api/promotions/<int:pid>/red', methods=['GET'])
+def get_red_students(pid):
+    err = _require_admin()
+    if err:
+        return err
+    payload = _red_payload(get_promotions_db(), pid)
+    if not payload:
+        return error_response('Promotion introuvable', 404)
+    return jsonify(payload)
+
+def _revert_red_transfer(db, pid, sid, prev, restore_statut='RED'):
+    """Annule une décision RED : supprime l'étudiant créé dans la promo cible et
+    rétablit le statut source (`restore_statut`). Utilisé au changement de décision
+    (reste 'RED') et à la réconciliation quand l'étudiant n'est plus RED ('Actif')."""
+    if not prev:
+        return
+    if prev['target_student_id']:
+        db.execute('DELETE FROM promotion_students WHERE id=?', (prev['target_student_id'],))
+    db.execute('UPDATE promotion_students SET statut=?, abandon_semestre=NULL WHERE id=?',
+               (restore_statut, sid))
+    db.execute('DELETE FROM promotion_red_transfer WHERE promotion_id=? AND student_id=?', (pid, sid))
+
+def _reconcile_red_transfers(db, pid, comp=None):
+    """Annule les bascules RED devenues caduques : un étudiant avec un transfert RED
+    mais dont la décision n'est PLUS RED (passée à ADM/ADMJ/AJAC/AJ) est retiré de la
+    promo cible (étudiant créé supprimé) et repasse en statut 'Actif'. Idempotent."""
+    red = _red_students(db, pid, comp)
+    n = 0
+    for t in db.execute('SELECT student_id, decision, target_student_id FROM promotion_red_transfer '
+                        'WHERE promotion_id=?', (pid,)).fetchall():
+        if t['student_id'] not in red:
+            _revert_red_transfer(db, pid, t['student_id'], t, restore_statut='Actif')
+            n += 1
+    if n:
+        db.commit()
+    return n
+
+@app.route('/api/promotions/<int:pid>/red/<int:sid>/decide', methods=['POST'])
+def decide_red_student(pid, sid):
+    """Décision pour un redoublant : 'FTP'/'ALT' (réinscription dans la promo cible à
+    l'année redoublée) ou 'ABANDON' (statut Abandon). Vide/'NONE' efface la décision."""
+    err = _require_admin()
+    if err:
+        return err
+    db = get_promotions_db()
+    s = db.execute('SELECT * FROM promotion_students WHERE id=? AND promotion_id=?', (sid, pid)).fetchone()
+    if not s:
+        return error_response('Étudiant introuvable', 404)
+    red = _red_students(db, pid)
+    if sid not in red:
+        return error_response("Cet étudiant n'est pas redoublant (RED)", 400)
+    year = red[sid]
+    decision = ((request.get_json() or {}).get('decision') or '').strip().upper()
+    prev = db.execute('SELECT decision, target_student_id FROM promotion_red_transfer '
+                      'WHERE promotion_id=? AND student_id=?', (pid, sid)).fetchone()
+    _revert_red_transfer(db, pid, sid, prev)
+    if decision in ('', 'NONE'):
+        db.commit()
+        return jsonify(_red_payload(db, pid))
+    if decision not in ('FTP', 'ALT', 'ABANDON'):
+        return error_response('Décision invalide', 400)
+    target_student_id = None
+    if decision == 'ABANDON':
+        db.execute("UPDATE promotion_students SET statut='Abandon', abandon_semestre=? WHERE id=?",
+                   (f'S{year * 2}', sid))
+    else:
+        target_id = _ensure_target_promo(db, pid)   # crée la promo cible si absente
+        if not target_id:
+            return error_response('Promotion cible introuvable', 400)
+        cur = db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance,
+                                                          statut, formation, entry_year)
+                            VALUES(?,?,?,?,?,'Actif',?,?)''',
+                         (target_id, s['numero'], s['nom'], s['prenom'], s['naissance'], decision, year))
+        target_student_id = cur.lastrowid
+        db.execute("UPDATE promotion_students SET statut='RED' WHERE id=?", (sid,))
+    db.execute('''INSERT OR REPLACE INTO promotion_red_transfer(promotion_id, student_id, decision, target_student_id)
+                  VALUES(?,?,?,?)''', (pid, sid, decision, target_student_id))
+    db.commit()
+    _audit('RED_DECIDE', ip=_client_ip(), user=session.get('user'),
+           promo=pid, student=sid, decision=decision, year=year)
+    return jsonify(_red_payload(db, pid))
 
 # ---- Notes d'une promotion pour un semestre (matières/compétences = référence) ----
 
@@ -3535,7 +3717,7 @@ def _jury_failed_before(comp, year):
     return {sid for (y, sid), dec in comp['decisions'].items()
             if y < year and dec in ('AJ', 'RED')}
 
-_STUDENT_LEFT_STATUSES = ('Abandon', 'Sortie')
+_STUDENT_LEFT_STATUSES = ('Abandon',)
 
 def _sem_year(sem_code):
     """Année d'étude (1..3) d'un code semestre 'S1'..'S6' ; 1 par défaut."""
@@ -3556,7 +3738,9 @@ def _year_rosters(pdb, pid, comp=None):
                             FROM promotion_students WHERE promotion_id=?''', (pid,)):
         meta[r['id']] = {
             'statut': r['statut'],
-            'abandon_year': _sem_year(r['abandon_semestre']) if r['abandon_semestre'] else 1,
+            # Année d'abandon connue seulement si un semestre est renseigné ; sinon None
+            # (l'étudiant reste visible partout tant que le semestre n'est pas précisé).
+            'abandon_year': _sem_year(r['abandon_semestre']) if r['abandon_semestre'] else None,
             'entry': r['entry_year'] or 1}
     removes = {1: set(), 2: set(), 3: set()}
     adds = {1: set(), 2: set(), 3: set()}
@@ -3572,7 +3756,8 @@ def _year_rosters(pdb, pid, comp=None):
 
     def left_before(sid, year):
         m = meta.get(sid)
-        return bool(m and m['statut'] in _STUDENT_LEFT_STATUSES and m['abandon_year'] < year)
+        return bool(m and m['statut'] in _STUDENT_LEFT_STATUSES
+                    and m['abandon_year'] is not None and m['abandon_year'] < year)
 
     rosters = {}
     for y in (1, 2, 3):
@@ -3688,6 +3873,7 @@ def save_promotion_jury(pid, year):
                            AND student_id=? AND ue_num=0''', (pid, year, sid))
         changed += 1
     pdb.commit()
+    _reconcile_red_transfers(pdb, pid)   # décision passée de RED à AJAC/ADMJ/… → retire de la promo cible
     _audit('JURY_SAVE', ip=_client_ip(), user=session.get('user'),
            promo=pid, year=year, decisions=changed)
     formation = (request.args.get('formation') or '').strip().upper() or None
@@ -3832,6 +4018,7 @@ def save_promotion_notes(pid, semester):
                        DO UPDATE SET note=excluded.note, mention=excluded.mention''',
                     (pid, semester, sid, code, note_num, mention))
     pdb.commit()
+    _reconcile_red_transfers(pdb, pid)   # une note peut faire passer un RED en ADM/AJAC → nettoyage
     formation = (request.args.get('formation') or '').strip().upper() or None
     return jsonify(_promo_notes_payload(pdb, pid, semester, formation))
 

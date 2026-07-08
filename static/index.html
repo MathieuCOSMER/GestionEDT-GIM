@@ -982,7 +982,7 @@
         <div class="form-group"><label>Date de naissance</label><input id="student-naissance" placeholder="jj/mm/aaaa"></div>
         <div class="form-group"><label>Statut</label>
             <select id="student-statut" onchange="toggleAddStudentSem()">
-                <option>Actif</option><option>Abandon</option><option>Redoublant</option><option>Sortie</option>
+                <option>Actif</option><option>RED</option><option>Abandon</option>
             </select>
         </div>
         <div class="form-group" id="student-sem-group" style="display:none"><label>Semestre d'abandon</label>
@@ -2025,6 +2025,7 @@ let _promoData = null;
 let _promoId = null;
 let _effData = null;      // effectif de l'année sélectionnée (onglet Effectifs)
 let _effYear = 1;         // année d'étude affichée (1..3)
+let _redData = null;      // redoublants (RED) de la promotion + décisions
 
 let _promoCoeffSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
 let _coeffPromoId = null;   // promotion dont on édite les coefficients
@@ -2963,7 +2964,7 @@ function _promoProgrammeSelector() {
 
 function _statutColor(s) {
     return s === 'Actif' ? '#dcfce7' : (s === 'Abandon' ? '#fee2e2'
-        : (s === 'Redoublant' ? '#fef3c7' : '#e5e7eb'));
+        : (s === 'RED' ? '#fef3c7' : '#e5e7eb'));
 }
 
 function _effYearLabel(y) {
@@ -2977,7 +2978,7 @@ async function loadEffectif() {
     const el = document.getElementById('promo-content');
     const sel = document.getElementById('eff-year-select');
     if (!_promoId) {
-        _effData = null;
+        _effData = null; _redData = null;
         if (sel) sel.innerHTML = '';
         el.innerHTML = '<div class="empty">Sélectionnez une promotion.</div>';
         return;
@@ -2985,8 +2986,12 @@ async function loadEffectif() {
     if (sel) sel.innerHTML = [1, 2, 3].map(y =>
         `<option value="${y}" ${y === _effYear ? 'selected' : ''}>${_effYearLabel(y)}</option>`).join('');
     el.innerHTML = '<div class="spinner">Chargement…</div>';
-    try { _effData = await api(`/promotions/${_promoId}/effectif/${_effYear}`); }
-    catch (e) { toast('Erreur : ' + e.message, 'error'); el.innerHTML = '<div class="empty">Erreur de chargement.</div>'; return; }
+    try {
+        const [eff, red] = await Promise.all([
+            api(`/promotions/${_promoId}/effectif/${_effYear}`),
+            api(`/promotions/${_promoId}/red`)]);
+        _effData = eff; _redData = red;
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); el.innerHTML = '<div class="empty">Erreur de chargement.</div>'; return; }
     renderPromoEffectif();
 }
 
@@ -3011,11 +3016,35 @@ function renderPromoEffectif() {
     if (!d) { el.innerHTML = '<div class="empty">Sélectionnez une promotion.</div>'; return; }
     const y = d.year;
     const optList = st => d.statuses.map(s => `<option ${s === st ? 'selected' : ''}>${s}</option>`).join('');
+    // Semestres de l'année affichée uniquement : abandonner dans S(2y-1)/S(2y) garde
+    // l'étudiant visible dans l'année en cours et ne le retire que des années suivantes.
+    const yearSems = ['S' + (2 * y - 1), 'S' + (2 * y)];
     const semSelect = s => s.statut !== 'Abandon' ? '' :
         `<select onchange="changeAbandonSemestre(${s.id}, this.value)"
             style="margin-left:6px;padding:3px;border:1px solid #d1d5db;border-radius:4px">
-            <option value="">— sem. —</option>${d.semesters.map(se => `<option ${se === s.abandon_semestre ? 'selected' : ''}>${se}</option>`).join('')}</select>`;
+            <option value="">— sem. —</option>${yearSems.map(se => `<option ${se === s.abandon_semestre ? 'selected' : ''}>${se}</option>`).join('')}</select>`;
     const tag = (txt, bg, title) => `<span title="${title || ''}" style="display:inline-block;padding:1px 6px;border-radius:6px;font-size:.66rem;font-weight:700;background:${bg};margin-left:6px">${txt}</span>`;
+    // Profil d'entrée (BAC / cursus / recrutement) : listes déroulantes
+    const profOpts = d.profile_options || { bac: [], cursus: [], recrutement: [] };
+    const profSelect = (s, field) => {
+        const cur = s[field] || '';
+        const opts = ['<option value="">—</option>'].concat(
+            (profOpts[field] || []).map(o => `<option${o === cur ? ' selected' : ''}>${esc(o)}</option>`)).join('');
+        return `<select onchange="changeStudentField(${s.id}, '${field}', this.value)"
+            style="padding:3px 4px;border:1px solid #d1d5db;border-radius:4px;font-size:.8rem">${opts}</select>`;
+    };
+    // Redoublants (RED) : badge affiché sur leur année RED, avec la décision prise
+    const redMap = {};
+    ((_redData && _redData.students) || []).forEach(rs => { redMap[rs.student_id] = rs; });
+    const redTarget = esc((_redData && _redData.target_promo_name) || '');
+    const redBadge = s => {
+        const rs = redMap[s.id];
+        if (!rs || rs.year !== y) return '';   // seulement sur l'année où il est RED
+        if (rs.decision === 'ABANDON') return tag('RED → Abandon', '#fee2e2', 'Redoublant — Abandon');
+        if (rs.decision === 'FTP' || rs.decision === 'ALT')
+            return tag(`RED → ${redTarget} ${rs.decision}`, '#dbeafe', 'Redoublant réinscrit dans ' + redTarget);
+        return tag('RED · à décider', '#fef3c7', 'Redoublant — décision à prendre dans le tableau ci-dessous');
+    };
 
     // Une section par sous-cohorte (FTP / ALT)
     function section(formation) {
@@ -3036,10 +3065,13 @@ function renderPromoEffectif() {
         }
         const rows = studs.map((s, i) => `<tr>
             <td style="color:#9ca3af">${i + 1}</td>
-            <td><strong>${esc(s.nom || '')}</strong>${(s.entrant && y > 1) ? tag('entrant', '#ddd6fe', 'Entré directement en année ' + y + ' (redoublant)') : ''}${s.manual === 'add' ? tag('ajouté', '#dbeafe', 'Ajouté manuellement à cette année') : ''}</td>
+            <td><strong>${esc(s.nom || '')}</strong>${(s.entrant && y > 1) ? tag('entrant', '#ddd6fe', 'Entré directement en année ' + y + ' (redoublant)') : ''}${s.manual === 'add' ? tag('ajouté', '#dbeafe', 'Ajouté manuellement à cette année') : ''}${redBadge(s)}</td>
             <td>${esc(s.prenom || '')}</td>
             <td>${esc(s.numero || '')}</td>
             <td>${esc(s.naissance || '')}</td>
+            <td>${profSelect(s, 'bac')}</td>
+            <td>${profSelect(s, 'cursus')}</td>
+            <td>${profSelect(s, 'recrutement')}</td>
             <td style="white-space:nowrap"><select onchange="changeStudentStatus(${s.id}, this.value)"
                 style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${_statutColor(s.statut)}">${optList(s.statut)}</select>${semSelect(s)}</td>
             <td><button class="btn btn-secondary btn-sm" title="Retirer de l'effectif de l'année ${y}${y === 1 ? ' (et des années suivantes)' : ''} — ne supprime pas ses notes" onclick="removeStudentYear(${s.id})">🗑</button></td>
@@ -3047,7 +3079,11 @@ function renderPromoEffectif() {
         return header + `<div style="margin-bottom:8px">${badges}</div>
             <div style="overflow:auto;max-height:45vh;border:1px solid #e5e7eb;border-radius:8px">
                 <table class="pn-table" style="table-layout:auto;width:100%">
-                    <thead><tr><th style="width:40px">#</th><th>Nom</th><th>Prénom</th><th>N° Apogée</th><th>Naissance</th><th style="width:210px">Statut</th><th style="width:60px"></th></tr></thead>
+                    <thead><tr><th style="width:40px">#</th><th>Nom</th><th>Prénom</th><th>N° Apogée</th><th>Naissance</th>
+                        <th title="BAC obtenu (SI2D, GEN, PRO, STL, Autre)">BAC</th>
+                        <th title="Cursus antérieur — EI: École d'ingé, RE: reprise d'étude, PB: PostBac, PP: PostPrépa">Cursus</th>
+                        <th title="Recrutement — PS: ParcourSup, EC: eCandidat, ADIUT: étrangers">Recrut.</th>
+                        <th style="width:210px">Statut</th><th style="width:60px"></th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
             </div>`;
@@ -3056,7 +3092,55 @@ function renderPromoEffectif() {
     el.innerHTML = _promoProgrammeSelector()
         + `<div style="font-size:.82rem;color:#6b7280;margin-bottom:10px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px">
             Effectif de l'<strong>année ${y}</strong>. Il se compose automatiquement à partir du jury (les ajournés <strong>AJ/RED</strong> et les départs sont retirés des années suivantes) et reste ajustable à la main (+ Étudiant, retrait 🗑, ou import). Le retrait n'enlève l'étudiant que de l'effectif — ses notes sont conservées.</div>`
-        + (d.subcohorts || ['FTP', 'ALT']).map(section).join('');
+        + (d.subcohorts || ['FTP', 'ALT']).map(section).join('')
+        + _renderRedSection();
+}
+
+// Tableau des redoublants (RED) : bascule vers la promo cible (FTP/ALT) ou Abandon
+function _renderRedSection() {
+    const r = _redData;
+    if (!r) return '';
+    const target = esc(r.target_promo_name || '—');
+    const dopt = (val, label, cur) =>
+        `<option value="${val}"${cur === val ? ' selected' : ''}>${label}</option>`;
+    let body;
+    if (!r.students.length) {
+        body = `<div class="empty" style="margin:6px 0">Aucun étudiant redoublant (RED) — les décisions RED se posent dans l'onglet Jury.</div>`;
+    } else {
+        const rows = r.students.map((s, i) => `<tr>
+            <td style="color:#9ca3af">${i + 1}</td>
+            <td><strong>${esc(s.nom || '')}</strong></td>
+            <td>${esc(s.prenom || '')}</td>
+            <td>${esc(s.numero || '')}</td>
+            <td>${esc(s.formation || 'FTP')}</td>
+            <td style="text-align:center">${s.year}</td>
+            <td><select onchange="decideRed(${s.student_id}, this.value)"
+                style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${s.decision === 'ABANDON' ? '#fee2e2' : (s.decision ? '#dbeafe' : '#fff')}">
+                ${dopt('', '— à décider —', s.decision || '')}
+                ${dopt('FTP', `RED → ${target} · FTP`, s.decision)}
+                ${dopt('ALT', `RED → ${target} · ALT`, s.decision)}
+                ${dopt('ABANDON', 'Abandon', s.decision)}
+            </select></td>
+        </tr>`).join('');
+        body = `<div style="overflow:auto;max-height:40vh;border:1px solid #e5e7eb;border-radius:8px">
+            <table class="pn-table" style="table-layout:auto;width:100%">
+                <thead><tr><th style="width:40px">#</th><th>Nom</th><th>Prénom</th><th>N° Apogée</th><th>Sous-cohorte</th><th>Année RED</th><th style="width:260px">Décision</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table></div>`;
+    }
+    const warn = !r.target_exists ? `<span style="color:#b45309;font-size:.8rem;margin-left:8px">Promo cible « ${target} » inexistante — elle sera créée automatiquement à la 1re réinscription.</span>` : '';
+    return `<div style="margin-top:24px;border-top:2px solid #e5e7eb;padding-top:14px">
+        <h3 style="margin:0 0 4px;color:#374151">Redoublants (RED) → ${target}${warn}</h3>
+        <div style="font-size:.82rem;color:#6b7280;margin-bottom:8px">Un redoublant bascule dans la promotion dont la 1re année est un an après (<strong>${target}</strong>), à l'année qu'il redouble. Choisissez pour chacun : réinscription en <strong>FTP</strong> ou <strong>ALT</strong>, ou <strong>Abandon</strong>.</div>
+        ${body}</div>`;
+}
+
+async function decideRed(sid, decision) {
+    try {
+        await api(`/promotions/${_promoId}/red/${sid}/decide`, { method: 'POST', body: JSON.stringify({ decision }) });
+        await loadEffectif();
+        toast(decision ? 'Décision enregistrée' : 'Décision effacée');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); loadEffectif(); }
 }
 
 async function changeStudentStatus(sid, statut) {
@@ -3064,6 +3148,15 @@ async function changeStudentStatus(sid, statut) {
         await api(`/promotions/${_promoId}/students/${sid}`, { method: 'PUT', body: JSON.stringify({ statut }) });
         loadEffectif();
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// Profil d'entrée (BAC / cursus / recrutement) : mise à jour sans rechargement
+async function changeStudentField(sid, field, value) {
+    try {
+        await api(`/promotions/${_promoId}/students/${sid}`, { method: 'PUT', body: JSON.stringify({ [field]: value }) });
+        const s = ((_effData && _effData.students) || []).find(x => x.id === sid);
+        if (s) s[field] = value;
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); loadEffectif(); }
 }
 
 async function changeAbandonSemestre(sid, sem) {
