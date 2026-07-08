@@ -2890,8 +2890,10 @@ async function loadPromotions() {
     try { _promotions = await api('/promotions'); }
     catch (e) { _promotions = []; }
     const sel = document.getElementById('promo-select');
-    sel.innerHTML = '<option value="">—</option>' + _promotions.map(p =>
-        `<option value="${p.id}">${esc(p.name)} (${p.actifs}/${p.total})</option>`).join('');
+    sel.innerHTML = '<option value="">—</option>' + _promotions.map(p => {
+        const yl = _promoYearLabel(p.start_year);
+        return `<option value="${p.id}">${esc(p.name)}${yl ? ' · ' + yl : ''} (${p.actifs}/${p.total})</option>`;
+    }).join('');
     // Présélection : promo courante si toujours présente, sinon la première de la liste
     if (!(_promoId && _promotions.some(p => p.id === _promoId)) && _promotions.length) {
         _promoId = _promotions[0].id;
@@ -5493,6 +5495,17 @@ function _ygForTopYear(startYear) {
     if (!topStart || !startYear) return 1;
     const yg = topStart - startYear + 1;
     return (yg >= 1 && yg <= 3) ? yg : 1;
+}
+
+// Année en cours d'une promotion selon l'année universitaire choisie en haut à droite :
+// BUT1/BUT2/BUT3, OLD (cohorte terminée) ou À VENIR (pas encore commencée).
+function _promoYearLabel(startYear) {
+    const yv = (document.getElementById('year-select') || {}).value || '';
+    const topStart = parseInt((yv.split('-')[0]) || '');
+    if (!topStart || !startYear) return '';
+    const yg = topStart - startYear + 1;
+    if (yg >= 1 && yg <= 3) return 'BUT' + yg;
+    return yg > 3 ? 'OLD' : 'À VENIR';
 }
 
 // ===== ONGLET GROUPES (par année de la cohorte, cours mutualisés FTP+ALT) =====
