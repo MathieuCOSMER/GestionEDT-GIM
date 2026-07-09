@@ -5913,8 +5913,7 @@ async function loadRepartition() {
         }));
 
         _repartitionData = { weeks, rows, special_weeks, specialBySem, promoRows, selected: sems };
-        populateRepartitionFilters(rows);
-        renderRepartition(_repartitionData);
+        renderRepartition(_repartitionData); // repeuple aussi les filtres Enseignant/Salle
     } catch(e) {
         el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
     }
@@ -6053,10 +6052,18 @@ function populateOptionFilter(selectId, allValue, values) {
     sel.value = uniq.includes(current) ? current : '';
 }
 
-// Remplit les filtres Enseignant et Salle d'après les lignes affichées.
+// Remplit les filtres Enseignant et Salle d'après les lignes affichées,
+// chaque liste tenant compte du filtre de l'autre (sans se filtrer elle-même).
 function populateRepartitionFilters(rows) {
-    populateOptionFilter('filter-teacher-repartition', 'Tous',   rows.map(r => r.teacher));
-    populateOptionFilter('filter-room-repartition',    'Toutes', rows.map(r => r.room));
+    const tSel = document.getElementById('filter-teacher-repartition');
+    const rSel = document.getElementById('filter-room-repartition');
+    // Valeurs courantes, ignorées si elles ont disparu des lignes affichées
+    const curT = tSel && rows.some(r => r.teacher === tSel.value) ? tSel.value : '';
+    const curR = rSel && rows.some(r => r.room === rSel.value) ? rSel.value : '';
+    populateOptionFilter('filter-teacher-repartition', 'Tous',
+        rows.filter(r => !curR || r.room === curR).map(r => r.teacher));
+    populateOptionFilter('filter-room-repartition',    'Toutes',
+        rows.filter(r => !curT || r.teacher === curT).map(r => r.room));
     // Enseignant connecté : sa fiche est présélectionnée.
     // Vacataire : verrouillé sur son nom ; titulaire : présélectionné mais modifiable.
     if (state.role === 'teacher' && state.teacherName) {
@@ -6076,6 +6083,17 @@ function populateRepartitionFilters(rows) {
 
 function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
     const el = document.getElementById('repartition-table');
+    const formFilter = document.getElementById('filter-formation-repartition').value; // '', 'ftp', 'alt'
+    const matFilter = ((document.getElementById('filter-search-repartition') || {}).value || '').trim().toLowerCase(); // recherche matière
+    // Listes Enseignant / Salle recalculées à chaque affichage : uniquement les
+    // valeurs présentes dans les lignes affichées (semestres sélectionnés,
+    // formation, recherche matière). MUT reste visible quel que soit le filtre formation.
+    const matchForm = r => formFilter === '' || r.formation === 'MUT'
+        || r.formation === (formFilter === 'ftp' ? 'FTP' : 'ALT');
+    const matchMat = r => !matFilter || (r.course_code + ' ' + (r.course_name || '')).toLowerCase().includes(matFilter);
+    populateRepartitionFilters(rows.filter(r => matchForm(r) && matchMat(r)));
+    const teacherFilter = document.getElementById('filter-teacher-repartition').value; // '' = tous
+    const roomFilter = document.getElementById('filter-room-repartition').value; // '' = toutes
     if (!rows.length) { el.innerHTML = '<div class="empty">Aucune donnée</div>'; return; }
 
     const emptySp = { vacation_ftp: [], stage_ftp: [], company_alt: [] };
@@ -6085,10 +6103,6 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
     const typeColors = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' };
     const selected = (_repartitionData && _repartitionData.selected) || [];
     const showSem = selected.length > 1; // affiche le code semestre dès que plusieurs semestres
-    const formFilter = document.getElementById('filter-formation-repartition').value; // '', 'ftp', 'alt'
-    const teacherFilter = document.getElementById('filter-teacher-repartition').value; // '' = tous
-    const roomFilter = document.getElementById('filter-room-repartition').value; // '' = toutes
-    const matFilter = ((document.getElementById('filter-search-repartition') || {}).value || '').trim().toLowerCase(); // recherche matière
     // Colonne où débute le semestre pair → double barre de séparation
     const evenStart = parseInt((state.config || {}).semester_even_start_week);
 
