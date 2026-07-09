@@ -775,6 +775,20 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
         )
     ''')
+    # Sous-cohorte (FTP/ALT) par année : un étudiant peut basculer d'une année sur l'autre.
+    # Absence de ligne = formation de base (promotion_students.formation). Report auto :
+    # la formation d'une année vaut le dernier changement d'une année <= (voir _year_formation_map).
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS promotion_year_formation (
+            promotion_id INTEGER NOT NULL,
+            year         INTEGER NOT NULL,
+            student_id   INTEGER NOT NULL,
+            formation    TEXT NOT NULL,
+            PRIMARY KEY (promotion_id, year, student_id),
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
     # Statuts simplifiés (Actif / RED / Abandon) : migre les anciennes valeurs.
     db.execute("UPDATE promotion_students SET statut='RED' WHERE statut='Redoublant'")
     db.execute("UPDATE promotion_students SET statut='Abandon' WHERE statut='Sortie'")
@@ -2694,6 +2708,7 @@ def _year_effectif_payload(pdb, pid, year):
     overrides = {r['student_id']: r['action'] for r in pdb.execute(
         'SELECT student_id, action FROM promotion_year_override WHERE promotion_id=? AND year=?',
         (pid, year))}
+    fm = _year_formation_map(pdb, pid, year)          # sous-cohorte propre à cette année
     students = []
     for r in pdb.execute('''SELECT id, numero, nom, prenom, naissance, statut, abandon_semestre,
                                    formation, entry_year, bac, cursus, recrutement
@@ -2702,6 +2717,7 @@ def _year_effectif_payload(pdb, pid, year):
                          (pid,)):
         if r['id'] in roster:
             d = dict(r)
+            d['formation'] = fm.get(r['id'], d.get('formation') or 'FTP')
             d['entrant'] = (r['entry_year'] or 1) == year
             d['manual'] = overrides.get(r['id'])
             students.append(d)
@@ -2781,6 +2797,33 @@ def remove_year_student(pid, year, sid):
         return error_response('Étudiant introuvable', 404)
     db.execute('''INSERT OR REPLACE INTO promotion_year_override(promotion_id, year, student_id, action)
                   VALUES(?,?,?,'remove')''', (pid, year, sid))
+    db.commit()
+    return jsonify(_year_effectif_payload(db, pid, year))
+
+@app.route('/api/promotions/<int:pid>/effectif/<int:year>/students/<int:sid>/cohorte', methods=['POST'])
+def set_year_cohorte(pid, year, sid):
+    """Change la sous-cohorte (FTP/ALT) d'un étudiant À PARTIR de l'année `year` (les
+    années antérieures sont conservées ; report aux années suivantes tant qu'un autre
+    changement n'est pas posé)."""
+    err = _require_admin()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    db = get_promotions_db()
+    if not db.execute('SELECT 1 FROM promotion_students WHERE id=? AND promotion_id=?', (sid, pid)).fetchone():
+        return error_response('Étudiant introuvable', 404)
+    formation = ((request.get_json() or {}).get('formation') or '').strip().upper()
+    if formation not in _SUBCOHORTS:
+        return error_response('Sous-cohorte invalide', 400)
+    # Formation héritée (année précédente / base) : si identique, pas d'override (nettoyage).
+    inherited = _year_formation_map(db, pid, year - 1).get(sid, 'FTP')
+    if formation == inherited:
+        db.execute('DELETE FROM promotion_year_formation WHERE promotion_id=? AND year=? AND student_id=?',
+                   (pid, year, sid))
+    else:
+        db.execute('''INSERT OR REPLACE INTO promotion_year_formation(promotion_id, year, student_id, formation)
+                      VALUES(?,?,?,?)''', (pid, year, sid, formation))
     db.commit()
     return jsonify(_year_effectif_payload(db, pid, year))
 
@@ -3719,6 +3762,20 @@ def _jury_failed_before(comp, year):
 
 _STUDENT_LEFT_STATUSES = ('Abandon',)
 
+def _year_formation_map(pdb, pid, year):
+    """Sous-cohorte (FTP/ALT) de chaque étudiant POUR une année d'étude donnée : le
+    dernier changement de cohorte d'une année <= `year`, sinon la formation de base.
+    Un changement en année N vaut donc pour N et les années suivantes (report auto),
+    sans modifier les années antérieures. Retourne {student_id: 'FTP'|'ALT'}."""
+    base = {r['id']: (r['formation'] or 'FTP')
+            for r in pdb.execute('SELECT id, formation FROM promotion_students WHERE promotion_id=?', (pid,))}
+    over = {}
+    for r in pdb.execute('''SELECT year, student_id, formation FROM promotion_year_formation
+                            WHERE promotion_id=? AND year<=? ORDER BY year''', (pid, year)):
+        if r['formation'] in _SUBCOHORTS:
+            over[r['student_id']] = r['formation']   # ORDER BY year → le plus récent l'emporte
+    return {sid: over.get(sid, base.get(sid, 'FTP')) for sid in base}
+
 def _sem_year(sem_code):
     """Année d'étude (1..3) d'un code semestre 'S1'..'S6' ; 1 par défaut."""
     try:
@@ -3780,15 +3837,20 @@ def _jury_payload(pdb, pid, year, formation=None):
     year_avgs, ue_by_year = comp['year_avgs'], comp['ue_by_year']
     ue_codes, decisions = comp['ue_codes'], comp['decisions']
     names_by_num = {v: k for k, v in nums.items()}
-    where, params = 'promotion_id=?', [pid]
-    if formation in _SUBCOHORTS:
-        where += ' AND formation=?'
-        params.append(formation)
     students = [dict(r) for r in pdb.execute(
-        f'''SELECT id, numero, nom, prenom, statut, formation FROM promotion_students
-            WHERE {where} ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', params)]
+        '''SELECT id, numero, nom, prenom, statut, formation FROM promotion_students
+           WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,))]
     roster = _year_rosters(pdb, pid, comp).get(year, set())
-    students = [s for s in students if s['id'] in roster]
+    fm = _year_formation_map(pdb, pid, year)          # sous-cohorte propre à cette année
+    kept = []
+    for s in students:
+        if s['id'] not in roster:
+            continue
+        s['formation'] = fm.get(s['id'], s.get('formation') or 'FTP')
+        if formation in _SUBCOHORTS and s['formation'] != formation:
+            continue
+        kept.append(s)
+    students = kept
     s_odd, s_even = f'S{2 * year - 1}', f'S{2 * year}'
     ues = ue_by_year.get(year) or []
     terminal = [u for u in ues if year < 3 and u not in (ue_by_year.get(year + 1) or [])]
@@ -3910,15 +3972,9 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     # Matières sans coefficient dans le programme (Aide à la réussite, Portfolio impair…)
     # → masquées de la grille de notes.
     components = _visible_note_components(ref.get('components', []), competences)
-    if formation in _SUBCOHORTS:
-        students = [dict(r) for r in pdb.execute(
-            '''SELECT id, numero, nom, prenom, statut, formation FROM promotion_students
-               WHERE promotion_id=? AND formation=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''',
-            (pid, formation))]
-    else:
-        students = [dict(r) for r in pdb.execute(
-            '''SELECT id, numero, nom, prenom, statut, formation FROM promotion_students
-               WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,))]
+    students = [dict(r) for r in pdb.execute(
+        '''SELECT id, numero, nom, prenom, statut, formation FROM promotion_students
+           WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,))]
     marks = {}
     for r in pdb.execute('''SELECT student_id, matiere_code, note, mention FROM student_marks
                             WHERE promotion_id=? AND semester=? AND note IS NOT NULL''', (pid, semester)):
@@ -3929,9 +3985,18 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     # Décisions de jury par année (ADM/ADMJ/AJAC/AJ/RED) — servent de « statut » dans la grille
     comp = _jury_compute(pdb, pid)
     dec = comp['decisions']
-    # Effectif de l'année (report auto depuis le jury + ajustements manuels)
+    # Effectif de l'année (report auto + ajustements) et sous-cohorte propre à l'année
     roster = _year_rosters(pdb, pid, comp).get(year, set())
-    students = [s for s in students if s['id'] in roster]
+    fm = _year_formation_map(pdb, pid, year)
+    kept = []
+    for s in students:
+        if s['id'] not in roster:
+            continue
+        s['formation'] = fm.get(s['id'], s.get('formation') or 'FTP')
+        if formation in _SUBCOHORTS and s['formation'] != formation:
+            continue
+        kept.append(s)
+    students = kept
     # Rappels : toutes les années précédentes (moyennes annuelles) puis le semestre antérieur.
     # kind ('year'/'semester') + year/sem servent au front pour grouper et coder les colonnes (UExy/UExNy).
     previous = []
