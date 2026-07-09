@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS teachers (
     structure TEXT,
     corps_code TEXT,
     status TEXT DEFAULT 'Titulaire',
+    password_hash TEXT,
+    password_allowed INTEGER DEFAULT 0,
     max_hours_day REAL DEFAULT 6,
     priority INTEGER DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

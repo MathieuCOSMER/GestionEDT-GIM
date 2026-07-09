@@ -332,12 +332,35 @@
             <label>Identifiant</label>
             <input id="login-user" autocomplete="username" oninput="onLoginUserInput()" onkeydown="if(event.key==='Enter')loginEnterFromUser()">
         </div>
-        <div class="form-group" id="login-pass-group" style="display:none">
+        <div class="form-group" id="login-pass-group">
             <label>Mot de passe</label>
-            <input id="login-pass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+            <input id="login-pass" type="password" autocomplete="current-password"
+                   placeholder="Mot de passe (optionnel — accès Promotions)"
+                   onkeydown="if(event.key==='Enter')doLogin()">
+        </div>
+        <!-- Création du mot de passe par l'enseignant (visible si l'admin l'a autorisée) -->
+        <div id="login-init-form" style="display:none">
+            <div class="form-group">
+                <label>Nouveau mot de passe</label>
+                <input id="login-init-p1" type="password" autocomplete="new-password">
+            </div>
+            <div class="form-group">
+                <label>Confirmez le mot de passe</label>
+                <input id="login-init-p2" type="password" autocomplete="new-password"
+                       onkeydown="if(event.key==='Enter')submitPwdInit()">
+            </div>
+            <div style="font-size:.78rem;color:#6b7280;margin:-4px 0 10px">
+                Au moins 8 caractères, dont une majuscule et un caractère spécial.
+            </div>
+            <button class="btn btn-primary" onclick="submitPwdInit()">Enregistrer et se connecter</button>
+            <button class="btn btn-secondary" style="margin-left:6px" onclick="cancelPwdInit()">Annuler</button>
         </div>
         <div id="login-error"></div>
-        <button class="btn btn-primary" onclick="doLogin()">Se connecter</button>
+        <div id="login-main-actions">
+            <button class="btn btn-primary" id="login-submit-btn" onclick="doLogin()">Se connecter</button>
+            <button class="btn btn-secondary" id="login-init-btn" style="display:none;margin-left:6px"
+                    onclick="showPwdInit()">Initialiser mon mot de passe</button>
+        </div>
     </div>
 </div>
 
@@ -1186,6 +1209,23 @@
                     <option value="Vacataire">Vacataire</option>
                 </select>
             </div>
+            <div class="form-group admin-only" id="teacher-pwd-block">
+                <label>Accès Promotions <span id="teacher-password-state" style="font-weight:400;color:#6b7280"></span></label>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+                    <button type="button" class="btn btn-secondary btn-sm" id="teacher-pwd-allow"
+                            onclick="teacherPwdAction('allow')">Autoriser la création du mot de passe</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="teacher-pwd-reset"
+                            onclick="teacherPwdAction('reset')">Réinitialiser le mot de passe</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="teacher-pwd-revoke"
+                            onclick="teacherPwdAction('revoke')" style="color:#b91c1c">Révoquer l'accès</button>
+                </div>
+                <div style="font-size:.78rem;color:#6b7280;margin-top:4px">
+                    L'enseignant crée lui-même son mot de passe sur l'écran de connexion (bouton
+                    « Initialiser mon mot de passe »). Il débloque la consultation des Promotions
+                    (Effectifs, Notes, Jury). Réinitialiser supprime l'ancien mot de passe et
+                    fait réapparaître le bouton ; révoquer retire tout accès.
+                </div>
+            </div>
             <div class="form-actions">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('modal-teacher')">Annuler</button>
                 <button type="submit" class="btn btn-primary">Enregistrer</button>
@@ -1406,24 +1446,88 @@ function showLogin() {
     document.getElementById('login-user').focus();
 }
 
-// Le champ mot de passe n'apparaît que pour l'admin
+// Mot de passe : obligatoire pour l'admin, optionnel pour un enseignant
+// (le renseigner débloque l'onglet Promotions en lecture seule)
 function loginIsAdmin() {
     return (document.getElementById('login-user').value || '').trim().toLowerCase() === 'admin';
 }
+let _pwdInitTimer = null;
 function onLoginUserInput() {
-    document.getElementById('login-pass-group').style.display = loginIsAdmin() ? '' : 'none';
+    document.getElementById('login-pass-group').style.display = '';
+    document.getElementById('login-pass').placeholder = loginIsAdmin()
+        ? 'Mot de passe' : 'Mot de passe (optionnel — accès Promotions)';
+    // Bouton « Initialiser mon mot de passe » : uniquement si l'admin a autorisé
+    // la création pour cet identifiant et qu'aucun mot de passe n'existe encore.
+    cancelPwdInit();
+    document.getElementById('login-init-btn').style.display = 'none';
+    clearTimeout(_pwdInitTimer);
+    const name = document.getElementById('login-user').value.trim();
+    if (!name || loginIsAdmin()) return;
+    _pwdInitTimer = setTimeout(async () => {
+        try {
+            const r = await api('/password-init/status?username=' + encodeURIComponent(name));
+            if (r.can_init && document.getElementById('login-user').value.trim() === name) {
+                document.getElementById('login-init-btn').style.display = '';
+            }
+        } catch (e) { /* silencieux : le bouton reste masqué */ }
+    }, 350);
 }
 function loginEnterFromUser() {
-    if (loginIsAdmin()) document.getElementById('login-pass').focus();
-    else doLogin();
+    document.getElementById('login-pass').focus();
 }
 
-function applyRole(role, user, teacher, status) {
+// ===== Création du mot de passe par l'enseignant (auto-service) =====
+function pwdPolicyOk(p) {
+    return p.length >= 8 && /[A-Z]/.test(p) && /[^A-Za-z0-9]/.test(p);
+}
+function showPwdInit() {
+    document.getElementById('login-init-form').style.display = '';
+    document.getElementById('login-pass-group').style.display = 'none';
+    document.getElementById('login-main-actions').style.display = 'none';
+    document.getElementById('login-error').textContent = '';
+    document.getElementById('login-init-p1').focus();
+}
+function cancelPwdInit() {
+    document.getElementById('login-init-form').style.display = 'none';
+    document.getElementById('login-init-p1').value = '';
+    document.getElementById('login-init-p2').value = '';
+    document.getElementById('login-pass-group').style.display = '';
+    document.getElementById('login-main-actions').style.display = '';
+}
+async function submitPwdInit() {
+    const username = document.getElementById('login-user').value.trim();
+    const p1 = document.getElementById('login-init-p1').value;
+    const p2 = document.getElementById('login-init-p2').value;
+    const errEl = document.getElementById('login-error');
+    errEl.textContent = '';
+    if (p1 !== p2) { errEl.textContent = 'Les deux mots de passe ne correspondent pas'; return; }
+    if (!pwdPolicyOk(p1)) {
+        errEl.textContent = 'Au moins 8 caractères, dont une majuscule et un caractère spécial';
+        return;
+    }
+    try {
+        await api('/password-init', { method: 'POST',
+            body: JSON.stringify({ username, password: p1, password2: p2 }) });
+        // Connexion immédiate avec le mot de passe fraîchement créé
+        document.getElementById('login-pass').value = p1;
+        cancelPwdInit();
+        document.getElementById('login-init-btn').style.display = 'none';
+        toast('Mot de passe enregistré');
+        await doLogin();
+    } catch (e) {
+        let msg = 'Erreur lors de la création du mot de passe';
+        try { msg = JSON.parse(e.message).error || msg; } catch (_) { /* garde le défaut */ }
+        errEl.textContent = msg;
+    }
+}
+
+function applyRole(role, user, teacher, status, promoAccess) {
     state.role = role;
     state.user = user;
     state.teacherName = teacher || null;
     state.teacherStatus = status || null;
     state.teacherTitulaire = (role === 'teacher' && status === 'Titulaire');
+    state.promoAccess = (role === 'admin') || !!promoAccess;
     document.body.classList.toggle('role-teacher', role === 'teacher');
     document.body.classList.toggle('role-vacataire', role === 'teacher' && status !== 'Titulaire');
     const badge = document.getElementById('role-badge');
@@ -1457,7 +1561,7 @@ async function checkAuth() {
     try {
         const me = await api('/me');
         document.getElementById('login-overlay').style.display = 'none';
-        applyRole(me.role, me.username, me.teacher, me.status);
+        applyRole(me.role, me.username, me.teacher, me.status, me.promo_access);
         goHome();
     } catch (e) {
         showLogin();
@@ -1468,7 +1572,7 @@ let _loginLockTimer = null;
 
 // Verrouille le bouton de connexion pendant `secs` secondes avec compte à rebours
 function lockLoginButton(secs) {
-    const btn = document.querySelector('#login-card .btn') ||
+    const btn = document.getElementById('login-submit-btn') ||
                 document.querySelector('.login-card .btn');
     if (!btn) return;
     clearInterval(_loginLockTimer);
@@ -1498,7 +1602,7 @@ async function doLogin() {
         const me = await api('/login', { method: 'POST', body: JSON.stringify({ username, password }) });
         document.getElementById('login-pass').value = '';
         document.getElementById('login-overlay').style.display = 'none';
-        applyRole(me.role, me.username, me.teacher, me.status);
+        applyRole(me.role, me.username, me.teacher, me.status, me.promo_access);
         goHome();
     } catch (e) {
         // Message renvoyé par le serveur (ex. throttle « Réessayez dans N s »)
@@ -1690,7 +1794,41 @@ function openTeacherModal(id = null) {
     document.getElementById('teacher-structure').value = t ? t.structure || '' : '';
     document.getElementById('teacher-corps').value = t ? t.corps || '' : '';
     document.getElementById('teacher-status').value = (t && t.status) ? t.status : 'Titulaire';
+    refreshTeacherPwdBlock(t);
     openModal('modal-teacher');
+}
+
+// Bloc « Accès Promotions » de la fiche : état + boutons selon la situation.
+// Masqué pour un nouvel enseignant (enregistrer la fiche d'abord).
+function refreshTeacherPwdBlock(t) {
+    const block = document.getElementById('teacher-pwd-block');
+    if (!t) { block.style.display = 'none'; return; }
+    block.style.display = '';
+    document.getElementById('teacher-password-state').textContent =
+        t.has_password ? '— mot de passe défini'
+        : t.password_allowed ? '— autorisé, en attente de création par l\'enseignant'
+        : '— non autorisé';
+    document.getElementById('teacher-pwd-allow').style.display = t.password_allowed ? 'none' : '';
+    document.getElementById('teacher-pwd-reset').style.display = t.has_password ? '' : 'none';
+    document.getElementById('teacher-pwd-revoke').style.display =
+        (t.password_allowed || t.has_password) ? '' : 'none';
+}
+
+async function teacherPwdAction(action) {
+    const id = document.getElementById('teacher-id').value;
+    if (!id) return;
+    if (action === 'reset' && !confirm('Supprimer le mot de passe actuel ?\nL\'enseignant devra en créer un nouveau sur l\'écran de connexion.')) return;
+    if (action === 'revoke' && !confirm('Révoquer l\'accès Promotions de cet enseignant ?\nSon mot de passe est supprimé et il ne pourra plus en créer.')) return;
+    try {
+        const r = await api('/teachers/' + id + '/password-access',
+            { method: 'PUT', body: JSON.stringify({ action }) });
+        const t = state.teachers.find(x => x.id === parseInt(id));
+        if (t) { t.has_password = r.has_password; t.password_allowed = r.password_allowed; }
+        refreshTeacherPwdBlock(t || r);
+        toast(action === 'allow' ? 'Création du mot de passe autorisée'
+            : action === 'reset' ? 'Mot de passe réinitialisé'
+            : 'Accès Promotions révoqué');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
 async function submitTeacher(e) {
@@ -2084,9 +2222,36 @@ let _promoCoeffSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
 let _coeffPromoId = null;   // promotion dont on édite les coefficients
 
 let _promoTab = 'effectif';
+// Enseignant (lecture seule) : seuls Effectifs / Notes / Jury sont accessibles
+const _promoTeacherTabs = ['effectif', 'notes', 'jury'];
+function applyPromoSubtabsForRole() {
+    const teacherView = state.role === 'teacher';
+    ['effectif', 'tuteurs', 'groupes', 'calendrier', 'notes', 'jury', 'actions'].forEach(t => {
+        const btn = document.getElementById('promo-subtab-' + t);
+        if (btn) btn.style.display = (teacherView && !_promoTeacherTabs.includes(t)) ? 'none' : '';
+    });
+}
+// Enseignant : consultation seule — désactive toute édition dans les grilles
+// Promotions et masque les boutons d'action (appelé après chaque rendu).
+function applyPromoReadOnly() {
+    if (state.role !== 'teacher') return;
+    ['promo-content', 'tuteurs-content', 'notes-content', 'jury-content'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.querySelectorAll('input, select, textarea').forEach(i => i.disabled = true);
+        el.querySelectorAll('button').forEach(b => b.style.display = 'none');
+    });
+    ['eff-report-btn', 'notes-save-btn', 'notes-import-btn', 'notes-export-btn',
+     'notes-delete-btn', 'jury-save-btn'].forEach(id => {
+        const b = document.getElementById(id);
+        if (b) b.style.display = 'none';
+    });
+}
 function showPromoTab(tab) {
+    if (state.role === 'teacher' && !_promoTeacherTabs.includes(tab)) tab = 'effectif';
     _promoTab = tab;
-    ['effectif', 'groupes', 'calendrier', 'notes', 'jury', 'actions'].forEach(t => {
+    applyPromoSubtabsForRole();
+    ['effectif', 'tuteurs', 'groupes', 'calendrier', 'notes', 'jury', 'actions'].forEach(t => {
         document.getElementById('promo-subtab-' + t).classList.toggle('active', tab === t);
         document.getElementById('promo-tab-' + t).style.display = tab === t ? '' : 'none';
     });
@@ -2940,6 +3105,7 @@ async function deleteProgramme() {
 }
 
 async function loadPromotions() {
+    applyPromoSubtabsForRole(); // enseignant : masque Groupes/Calendrier/Actions
     try { _promotions = await api('/promotions'); }
     catch (e) { _promotions = []; }
     const sel = document.getElementById('promo-select');
@@ -3156,6 +3322,7 @@ function renderPromoEffectif() {
             Effectif de l'<strong>année ${y}</strong>. Il se compose automatiquement à partir du jury (les ajournés <strong>AJ/RED</strong> et les départs sont retirés des années suivantes) et reste ajustable à la main (+ Étudiant, retrait 🗑, ou import). Le retrait n'enlève l'étudiant que de l'effectif — ses notes sont conservées.</div>`
         + (d.subcohorts || ['FTP', 'ALT']).map(section).join('')
         + _renderRedSection();
+    applyPromoReadOnly();
 }
 
 // Tableau des redoublants (RED) : bascule vers la promo cible (FTP/ALT) ou Abandon
@@ -3633,6 +3800,7 @@ function renderNotesGrid() {
         <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px;width:90vw;margin-left:calc(50% - 45vw)">
             <table class="nz-table"><thead>${groupRow}${head}</thead><tbody>${body}</tbody></table>
         </div>`;
+    applyPromoReadOnly();
 }
 
 // Barème bonus/pénalité (miroir du backend) pour l'affichage en direct des points
@@ -3828,6 +3996,7 @@ function renderJuryGrid() {
         <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px">
             <table class="nz-table"><thead>${head1}${head2}</thead><tbody>${body}</tbody></table>
         </div>`;
+    applyPromoReadOnly();
 }
 
 function onJuryCodeChange(sel) {

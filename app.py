@@ -6,6 +6,7 @@ Manages timetables for IUT GIM Toulon
 from flask import Flask, request, jsonify, send_file, send_from_directory, g, session, redirect
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
 import os
 import re
@@ -80,7 +81,8 @@ AUTH_USERS = {
     },
 }
 # Routes API accessibles sans être connecté
-_PUBLIC_API = {'/api/login', '/api/logout', '/api/me'}
+_PUBLIC_API = {'/api/login', '/api/logout', '/api/me',
+               '/api/password-init', '/api/password-init/status'}
 
 # Database configuration
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1009,6 +1011,30 @@ def _apply_migrations(db):
     # Statut enseignant : Titulaire / Vacataire
     if 'status' not in [r[1] for r in db.execute("PRAGMA table_info(teachers)").fetchall()]:
         db.execute("ALTER TABLE teachers ADD COLUMN status TEXT DEFAULT 'Titulaire'")
+    # Mot de passe enseignant (haché) : débloque l'accès lecture seule aux Promotions.
+    # L'enseignant le crée lui-même au login (bouton d'initialisation) une fois
+    # autorisé par l'admin (password_allowed=1). NB : la table teachers est par année
+    # scolaire — l'autorisation se gère dans l'année active de l'admin ; les années
+    # créées par copie l'héritent.
+    if 'password_hash' not in [r[1] for r in db.execute("PRAGMA table_info(teachers)").fetchall()]:
+        db.execute("ALTER TABLE teachers ADD COLUMN password_hash TEXT")
+    if 'password_allowed' not in [r[1] for r in db.execute("PRAGMA table_info(teachers)").fetchall()]:
+        db.execute("ALTER TABLE teachers ADD COLUMN password_allowed INTEGER DEFAULT 0")
+        # Compat : un mot de passe déjà défini vaut autorisation
+        db.execute("UPDATE teachers SET password_allowed = 1 WHERE password_hash IS NOT NULL")
+    # Enseignant référent par MATIÈRE (groupe de sous-matières, clé = code sans
+    # lettre finale, cf. _mat_base_key) et par face (FTP/ALT) — choix MANUEL de
+    # l'admin, prioritaire sur la règle automatique (titulaire unique intervenant).
+    db.execute('DROP TABLE IF EXISTS course_referents')  # 1er jet abandonné (référent par sous-matière)
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS matiere_referents (
+            matiere_key TEXT NOT NULL,
+            formation TEXT NOT NULL CHECK (formation IN ('FTP', 'ALT')),
+            teacher_id INTEGER,
+            PRIMARY KEY (matiere_key, formation),
+            FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE SET NULL
+        )
+    ''')
     # Auto-migration depuis semester_special_weeks (données legacy)
     db.execute('''
         INSERT OR IGNORE INTO special_calendar (week_number, week_type)
@@ -1551,11 +1577,22 @@ def login():
         session.pop('teacher_name', None)
         _audit('LOGIN_OK', ip=ip, user=key, role='admin')
         return jsonify({'username': key, 'role': user['role']})
-    # Sinon : connexion enseignant par nom de famille (insensible à la casse)
+    # Sinon : connexion enseignant par nom de famille (insensible à la casse).
+    # Sans mot de passe : accès EDT habituel. Avec mot de passe (défini par
+    # l'admin dans la fiche enseignant) : la session débloque en plus l'onglet
+    # Promotions en lecture seule (promo_access). Un mot de passe fourni mais
+    # incorrect refuse TOUTE connexion (pas de session dégradée silencieuse).
     if username:
         db = get_db()
-        row = db.execute('SELECT name, status FROM teachers WHERE LOWER(name) = LOWER(?)', (username,)).fetchone()
+        row = db.execute('SELECT name, status, password_hash FROM teachers WHERE LOWER(name) = LOWER(?)', (username,)).fetchone()
         if row:
+            promo_access = False
+            if password:
+                if not row['password_hash'] or not check_password_hash(row['password_hash'], password):
+                    _register_login_failure(ip)
+                    _audit('LOGIN_FAIL', ip=ip, user=username, role='teacher')
+                    return error_response('Identifiant ou mot de passe incorrect', 401)
+                promo_access = True
             _reset_login_failures(ip)
             status = row['status'] or 'Titulaire'
             session.permanent = True
@@ -1563,9 +1600,11 @@ def login():
             session['role'] = 'teacher'
             session['teacher_name'] = row['name']
             session['teacher_status'] = status
-            _audit('LOGIN_OK', ip=ip, user=row['name'], role='teacher')
+            session['promo_access'] = promo_access
+            _audit('LOGIN_OK', ip=ip, user=row['name'], role='teacher', promo=int(promo_access))
             return jsonify({'username': row['name'], 'role': 'teacher',
-                            'teacher': row['name'], 'status': status})
+                            'teacher': row['name'], 'status': status,
+                            'promo_access': promo_access})
     _register_login_failure(ip)
     _audit('LOGIN_FAIL', ip=ip, user=username, role='-')
     return error_response('Identifiant ou mot de passe incorrect', 401)
@@ -1577,12 +1616,72 @@ def logout():
     session.clear()
     return jsonify({'message': 'Déconnecté'})
 
+# ===== Initialisation du mot de passe enseignant (auto-service, pré-connexion) =====
+# L'enseignant choisit son mot de passe au login, uniquement si l'admin l'a
+# autorisé (password_allowed=1) et tant qu'aucun mot de passe n'est défini.
+
+_PWD_POLICY_MSG = ('Le mot de passe doit contenir au moins 8 caractères, '
+                   'dont une majuscule et un caractère spécial')
+
+def _password_policy_ok(pwd):
+    return (len(pwd) >= 8
+            and re.search(r'[A-Z]', pwd) is not None
+            and re.search(r'[^A-Za-z0-9]', pwd) is not None)
+
+@app.route('/api/password-init/status', methods=['GET'])
+def password_init_status():
+    """Indique si le bouton « Initialiser mon mot de passe » doit s'afficher
+    pour cet identifiant. Ne révèle rien d'autre (inconnu = non autorisé)."""
+    username = (request.args.get('username') or '').strip()
+    can_init = False
+    if username and username.lower() != 'admin':
+        row = get_db().execute(
+            'SELECT password_allowed, password_hash FROM teachers WHERE LOWER(name) = LOWER(?)',
+            (username,)).fetchone()
+        if row and row['password_allowed'] and not row['password_hash']:
+            can_init = True
+    return jsonify({'can_init': can_init})
+
+@app.route('/api/password-init', methods=['POST'])
+def password_init():
+    """Création du mot de passe par l'enseignant lui-même (saisi deux fois).
+    Refusé si non autorisé par l'admin ou si un mot de passe existe déjà."""
+    ip = _client_ip()
+    wait = _login_retry_after(ip)
+    if wait > 0:
+        _audit('PWD_INIT_BLOCKED', ip=ip, wait=wait)
+        return error_response(
+            f'Trop de tentatives. Réessayez dans {wait} seconde(s).', 429)
+    data = request.get_json() or {}
+    username = (data.get('username') or '').strip()
+    p1 = data.get('password') or ''
+    p2 = data.get('password2') or ''
+    db = get_db()
+    row = db.execute(
+        'SELECT id, name, password_allowed, password_hash FROM teachers WHERE LOWER(name) = LOWER(?)',
+        (username,)).fetchone() if username else None
+    if not row or not row['password_allowed'] or row['password_hash']:
+        _register_login_failure(ip)
+        _audit('PWD_INIT_REFUSED', ip=ip, user=username)
+        return error_response("Initialisation du mot de passe non autorisée pour cet identifiant", 403)
+    if p1 != p2:
+        return error_response('Les deux mots de passe ne correspondent pas')
+    if not _password_policy_ok(p1):
+        return error_response(_PWD_POLICY_MSG)
+    db.execute('UPDATE teachers SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+               (generate_password_hash(p1), row['id']))
+    db.commit()
+    _reset_login_failures(ip)
+    _audit('TEACHER_PWD_INIT', ip=ip, teacher=row['name'])
+    return jsonify({'message': 'Mot de passe enregistré'}), 200
+
 @app.route('/api/me', methods=['GET'])
 def me():
     if session.get('role'):
         return jsonify({'username': session.get('user'), 'role': session.get('role'),
                         'teacher': session.get('teacher_name'),
-                        'status': session.get('teacher_status')})
+                        'status': session.get('teacher_status'),
+                        'promo_access': bool(session.get('promo_access'))})
     return error_response('Non authentifié', 401)
 
 @app.route('/api/audit-log', methods=['GET'])
@@ -1922,6 +2021,16 @@ def _require_admin():
     if session.get('role') != 'admin':
         return error_response('Accès réservé à l\'administrateur', 403)
     return None
+
+def _require_promo_read():
+    """Lecture Promotions : admin, ou enseignant connecté avec mot de passe
+    (session promo_access) — en GET/HEAD uniquement. Les écritures restent admin."""
+    role = session.get('role')
+    if role == 'admin':
+        return None
+    if role == 'teacher' and session.get('promo_access') and request.method in ('GET', 'HEAD'):
+        return None
+    return error_response('Accès réservé', 403)
 
 def _notes_year_dir():
     d = os.path.join(_NOTES_DIR, get_current_year() or 'default')
@@ -2427,7 +2536,7 @@ def _promotion_payload(db, pid):
 
 @app.route('/api/promotions', methods=['GET'])
 def list_promotions():
-    err = _require_admin()
+    err = _require_promo_read()
     if err:
         return err
     rows = get_promotions_db().execute('''
@@ -2564,7 +2673,7 @@ def create_promotion():
 
 @app.route('/api/promotions/<int:pid>', methods=['GET'])
 def get_promotion(pid):
-    err = _require_admin()
+    err = _require_promo_read()
     if err:
         return err
     payload = _promotion_payload(get_promotions_db(), pid)
@@ -2754,7 +2863,7 @@ def _year_effectif_payload(pdb, pid, year):
 
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>', methods=['GET'])
 def get_year_effectif(pid, year):
-    err = _require_admin()
+    err = _require_promo_read()
     if err:
         return err
     if year not in (1, 2, 3):
@@ -2987,7 +3096,7 @@ def _red_payload(pdb, pid):
 
 @app.route('/api/promotions/<int:pid>/red', methods=['GET'])
 def get_red_students(pid):
-    err = _require_admin()
+    err = _require_promo_read()
     if err:
         return err
     payload = _red_payload(get_promotions_db(), pid)
@@ -3896,7 +4005,7 @@ def _jury_payload(pdb, pid, year, formation=None):
 
 @app.route('/api/promotions/<int:pid>/jury/<int:year>', methods=['GET'])
 def get_promotion_jury(pid, year):
-    err = _require_admin()
+    err = _require_promo_read()
     if err:
         return err
     if year not in (1, 2, 3):
@@ -4052,7 +4161,7 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
 
 @app.route('/api/promotions/<int:pid>/notes/<semester>', methods=['GET'])
 def get_promotion_notes(pid, semester):
-    err = _require_admin()
+    err = _require_promo_read()
     if err:
         return err
     if semester not in _PROMO_SEMESTERS:
@@ -4527,6 +4636,14 @@ def pn_pdf_download():
 
 # ======================= TEACHERS CRUD =======================
 
+def _teacher_public(d):
+    """Version « publique » d'une fiche enseignant : le hash de mot de passe ne
+    sort jamais de la base, seuls les booléens has_password (mot de passe créé)
+    et password_allowed (création autorisée par l'admin) sont exposés à l'API."""
+    d['has_password'] = bool(d.pop('password_hash', None))
+    d['password_allowed'] = bool(d.get('password_allowed'))
+    return d
+
 @app.route('/api/teachers', methods=['GET'])
 def get_teachers():
     """Get all teachers"""
@@ -4534,7 +4651,7 @@ def get_teachers():
         db = get_db()
         cursor = db.cursor()
         cursor.execute('SELECT * FROM teachers ORDER BY name')
-        teachers = rows_to_list(cursor.fetchall())
+        teachers = [_teacher_public(t) for t in rows_to_list(cursor.fetchall())]
         return jsonify(teachers), 200
     except Exception as e:
         return error_response(f'Error fetching teachers: {str(e)}', 500)
@@ -4565,7 +4682,7 @@ def create_teacher():
         db.commit()
         teacher_id = cursor.lastrowid
         cursor.execute('SELECT * FROM teachers WHERE id = ?', (teacher_id,))
-        teacher = row_to_dict(cursor.fetchone())
+        teacher = _teacher_public(row_to_dict(cursor.fetchone()))
         return jsonify(teacher), 201
     except sqlite3.IntegrityError:
         return error_response('Teacher name already exists')
@@ -4583,8 +4700,8 @@ def get_teacher(teacher_id):
         
         if not teacher:
             return error_response('Teacher not found', 404)
-        
-        return jsonify(row_to_dict(teacher)), 200
+
+        return jsonify(_teacher_public(row_to_dict(teacher))), 200
     except Exception as e:
         return error_response(f'Error fetching teacher: {str(e)}', 500)
 
@@ -4618,7 +4735,7 @@ def update_teacher(teacher_id):
         db.commit()
         
         cursor.execute('SELECT * FROM teachers WHERE id = ?', (teacher_id,))
-        teacher = row_to_dict(cursor.fetchone())
+        teacher = _teacher_public(row_to_dict(cursor.fetchone()))
         return jsonify(teacher), 200
     except sqlite3.IntegrityError:
         return error_response('Teacher name already exists')
@@ -4642,6 +4759,43 @@ def delete_teacher(teacher_id):
         return jsonify({'message': 'Teacher deleted'}), 200
     except Exception as e:
         return error_response(f'Error deleting teacher: {str(e)}', 500)
+
+@app.route('/api/teachers/<int:teacher_id>/password-access', methods=['PUT'])
+def set_teacher_password_access(teacher_id):
+    """Gère l'accès Promotions d'un enseignant (admin seul). Body {action} :
+      • allow  → autorise l'enseignant à créer son mot de passe au login ;
+      • reset  → supprime le mot de passe actuel (le bouton d'initialisation
+                 réapparaît au login, l'autorisation est conservée) ;
+      • revoke → supprime le mot de passe ET retire l'autorisation.
+    Le mot de passe lui-même n'est jamais choisi ni connu de l'admin."""
+    err = _require_admin()
+    if err:
+        return err
+    db = get_db()
+    row = db.execute('SELECT name FROM teachers WHERE id = ?', (teacher_id,)).fetchone()
+    if not row:
+        return error_response('Teacher not found', 404)
+    action = (request.get_json() or {}).get('action') or ''
+    if action == 'allow':
+        db.execute('UPDATE teachers SET password_allowed = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                   (teacher_id,))
+        event = 'TEACHER_PWD_ALLOWED'
+    elif action == 'reset':
+        db.execute('''UPDATE teachers SET password_hash = NULL, password_allowed = 1,
+                      updated_at = CURRENT_TIMESTAMP WHERE id = ?''', (teacher_id,))
+        event = 'TEACHER_PWD_RESET'
+    elif action == 'revoke':
+        db.execute('''UPDATE teachers SET password_hash = NULL, password_allowed = 0,
+                      updated_at = CURRENT_TIMESTAMP WHERE id = ?''', (teacher_id,))
+        event = 'TEACHER_PWD_REVOKED'
+    else:
+        return error_response('Action invalide (allow, reset ou revoke)')
+    db.commit()
+    _audit(event, ip=_client_ip(), teacher=row['name'])
+    t = db.execute('SELECT password_allowed, password_hash FROM teachers WHERE id = ?',
+                   (teacher_id,)).fetchone()
+    return jsonify({'password_allowed': bool(t['password_allowed']),
+                    'has_password': bool(t['password_hash'])}), 200
 
 @app.route('/api/teachers/<int:teacher_id>/availability', methods=['GET'])
 def get_teacher_availability(teacher_id):
