@@ -4423,7 +4423,7 @@ function renderCourses() {
     const showFtpCol = formFilter !== 'alt';
     const showAltCol = formFilter !== 'ftp';
     const noCellFilter = formFilter === '' && !teacherFilter && !roomFilter;
-    const ncol = 10 + (showFtpCol ? 1 : 0) + (showAltCol ? 1 : 0);
+    const ncol = 11 + (showFtpCol ? 1 : 0) + (showAltCol ? 1 : 0);
     const q = ((document.getElementById('filter-search-matieres') || {}).value || '').trim().toLowerCase();
 
     // Conversion en HETD via le réglage partagé _HETD_COEFS (onglet Paramètres)
@@ -4490,6 +4490,7 @@ function renderCourses() {
                 ${showFtpCol ? '<td style="text-align:center;color:#bbb">—</td>' : ''}
                 ${showAltCol ? '<td style="text-align:center;color:#bbb">—</td>' : ''}
                 <td style="text-align:center;color:#bbb">—</td>
+                <!--REF-->
                 ${actions}
             </tr>`];
         }
@@ -4517,7 +4518,7 @@ function renderCourses() {
                 ${pnCell(t)}
                 ${hoursCells}
                 ${salleCell(t)}
-                ${i === 0 ? actions : ''}
+                ${i === 0 ? '<!--REF-->' + actions : ''}
             </tr>`;
         });
     }
@@ -4575,6 +4576,29 @@ function renderCourses() {
         </td>`;
     }
 
+    // Colonne « Référent » : un référent par face (FTP/ALT) pour la matière
+    // ENTIÈRE (cellule fusionnée sur tout le groupe de sous-matières). Liste
+    // déroulante des intervenants, présélectionnée sur le titulaire unique
+    // (auto) ou le choix admin ; vide (bordure rouge) quand plusieurs
+    // titulaires se partagent les sous-matières.
+    function matiereRefTd(subs, rowspan) {
+        const key = matBaseKey((subs[0] || {}).code);
+        const refs = (subs[0] || {}).referents || {};
+        const line = face => {
+            const r = refs[face];
+            if (!r || !(r.options || []).length) return '';
+            const tag = `<span style="font-weight:700;font-size:.66rem;color:${face === 'FTP' ? '#0369a1' : '#9a3412'}">${face}</span>`;
+            const opts = '<option value="">— à définir —</option>' + r.options.map(o =>
+                `<option value="${o.id}"${o.id === r.teacher_id ? ' selected' : ''}>${esc(o.name)}${o.titulaire ? '' : ' (vac.)'}</option>`).join('');
+            const auto = r.auto ? ' <span title="Présélection automatique : seul titulaire intervenant sur la matière" style="color:#9ca3af;font-size:.68rem">auto</span>' : '';
+            return `<div style="white-space:nowrap;margin:2px 0">${tag} <select onchange="saveMatiereReferent('${esc(key)}', '${face}', this.value)"
+                title="Référent de la matière (face ${face}) : présélectionné automatiquement si un seul titulaire intervient, modifiable parmi les intervenants"
+                style="font-size:.72rem;padding:2px 3px;border:1px solid ${r.teacher_id ? '#d1d5db' : '#fca5a5'};border-radius:4px;max-width:112px">${opts}</select>${auto}</div>`;
+        };
+        const html = (showFtpCol ? line('FTP') : '') + (showAltCol ? line('ALT') : '');
+        return `<td rowspan="${rowspan}" style="font-size:.78rem;vertical-align:middle">${html || '<span style="color:#bbb">—</span>'}</td>`;
+    }
+
     // Un groupe = une matière générale (programme/hors-programme) + colonne récap + sous-matières.
     function renderGroup(comp, fallbackCode, subs, sem, orphanRed) {
         let all = [];
@@ -4588,6 +4612,10 @@ function renderCourses() {
             }
             return '';
         }
+        // Cellule « Référent » fusionnée : remplace le 1er marqueur <!--REF-->
+        // (1re ligne du groupe), les marqueurs des sous-matières suivantes sont retirés.
+        const refCell = matiereRefTd(subs, all.length);
+        all = all.map((r, i) => r.split('<!--REF-->').join(i === 0 ? refCell : ''));
         // Cellules fusionnées (Matière + Récap) injectées sur la 1re ligne du groupe.
         all[0] = all[0].replace(/^(\s*<tr[^>]*>)/, (m) => m + parentLeftTd(comp, fallbackCode, sem, all.length, orphanRed) + recapTd(comp, subs, all.length));
         return all.join('');
@@ -4627,6 +4655,7 @@ function renderCourses() {
             <th rowspan="2" style="width:58px">Type</th>
             <th colspan="${heuresCols}" style="text-align:center;border-bottom:1px solid #e5e7eb">Heures</th>
             <th rowspan="2" style="width:70px;text-align:center">Salle</th>
+            <th rowspan="2" style="width:135px" title="Enseignant référent de la matière (toutes sous-matières confondues), par face FTP/ALT. Présélectionné automatiquement si un seul titulaire intervient ; modifiable par l'admin parmi les intervenants.">Référent</th>
             <th rowspan="2" style="width:84px">Actions</th>
         </tr>
         <tr>
@@ -5071,6 +5100,21 @@ async function deleteCourse(id) {
         state.courses = await api('/courses' + svcQ());
         renderCourses();
         toast('Matière supprimée');
+    } catch(err) { toast('Erreur : ' + err.message, 'error'); }
+}
+
+// Choix admin du référent d'une face (FTP/ALT) d'une matière (groupe de
+// sous-matières) — prioritaire sur la présélection automatique ; valeur vide
+// = retour à la règle automatique (titulaire unique).
+async function saveMatiereReferent(key, face, teacherId) {
+    try {
+        await api('/matiere-referents' + svcQ(), {
+            method: 'PUT',
+            body: JSON.stringify({ matiere_key: key, formation: face, teacher_id: teacherId })
+        });
+        state.courses = await api('/courses' + svcQ());
+        renderCourses();
+        toast(teacherId ? 'Référent ' + face + ' enregistré' : 'Référent ' + face + ' réinitialisé (règle automatique)');
     } catch(err) { toast('Erreur : ' + err.message, 'error'); }
 }
 

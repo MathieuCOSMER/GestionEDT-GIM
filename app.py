@@ -5332,6 +5332,95 @@ def set_category_codes():
 
 # ======================= COURSES CRUD =======================
 
+def _mat_base_key(code):
+    """Clé de regroupement matière (= matBaseKey côté front) : enlève une lettre
+    finale (R1.03a→R1.03) et normalise le dernier groupe numérique sur 2 chiffres
+    (SAE1.1→SAE1.01)."""
+    c = re.sub(r'[a-z]$', '', code or '')
+    return re.sub(r'\.(\d+)$', lambda m: '.' + str(int(m.group(1))).zfill(2), c)
+
+def _matiere_referents(db):
+    """Référent par MATIÈRE (groupe de sous-matières partageant la même clé) et
+    par face (FTP/ALT). Intervenants d'une face = enseignants des sessions
+    actives de toutes les sous-matières (FTP : formation_type 0 et 2 ; ALT : 1
+    et 2). Choix admin (matiere_referents) prioritaire tant que l'enseignant
+    intervient encore ; sinon un titulaire UNIQUE parmi les intervenants →
+    référent automatique ; sinon à définir."""
+    faces = {}   # (matiere_key, 'FTP'/'ALT') -> {teacher_id: {id, name, titulaire}}
+    for r in db.execute('''
+            SELECT c.code, cs.formation_type, t.id AS tid, t.name, t.status
+            FROM course_sessions cs
+            JOIN teachers t ON cs.teacher_id = t.id
+            JOIN courses c ON c.id = cs.course_id
+            WHERE cs.nb_sessions > 0 OR cs.total_hours > 0'''):
+        key = _mat_base_key(r['code'])
+        for face in (('FTP',) if r['formation_type'] == 0 else
+                     ('ALT',) if r['formation_type'] == 1 else
+                     ('FTP', 'ALT') if r['formation_type'] == 2 else ()):
+            faces.setdefault((key, face), {})[r['tid']] = {
+                'id': r['tid'], 'name': r['name'],
+                'titulaire': (r['status'] or 'Titulaire') == 'Titulaire'}
+    manual = {(r['matiere_key'], r['formation']): r['teacher_id'] for r in
+              db.execute('SELECT matiere_key, formation, teacher_id FROM matiere_referents')}
+    out = {}
+    for (key, face), teachers in faces.items():
+        tits = [t for t in teachers.values() if t['titulaire']]
+        chosen = teachers.get(manual.get((key, face)))
+        if chosen:
+            ref = {'teacher_id': chosen['id'], 'name': chosen['name'], 'auto': False}
+        elif len(tits) == 1:
+            ref = {'teacher_id': tits[0]['id'], 'name': tits[0]['name'], 'auto': True}
+        else:
+            ref = {'teacher_id': None, 'name': None, 'auto': False}
+        ref['options'] = sorted(
+            ({'id': t['id'], 'name': t['name'], 'titulaire': t['titulaire']}
+             for t in teachers.values()),
+            key=lambda x: x['name'])
+        out.setdefault(key, {})[face] = ref
+    return out
+
+@app.route('/api/matiere-referents', methods=['PUT'])
+def set_matiere_referent():
+    """Choix admin du référent d'une face (FTP/ALT) d'une matière — prioritaire
+    sur la présélection automatique. Body {matiere_key, formation, teacher_id} ;
+    teacher_id vide → efface le choix (retour à la règle automatique)."""
+    err = _require_admin()
+    if err:
+        return err
+    data = request.get_json() or {}
+    key = (data.get('matiere_key') or '').strip()
+    formation = (data.get('formation') or '').upper()
+    if not key:
+        return error_response('matiere_key requis')
+    if formation not in ('FTP', 'ALT'):
+        return error_response("formation doit valoir 'FTP' ou 'ALT'")
+    db = get_db()
+    tid = data.get('teacher_id')
+    if tid in ('', None):
+        db.execute('DELETE FROM matiere_referents WHERE matiere_key = ? AND formation = ?',
+                   (key, formation))
+    else:
+        try:
+            tid = int(tid)
+        except (TypeError, ValueError):
+            return error_response('teacher_id invalide')
+        fts = (0, 2) if formation == 'FTP' else (1, 2)
+        # L'enseignant doit intervenir sur cette face d'une sous-matière du groupe.
+        rows = db.execute('''SELECT DISTINCT c.code FROM course_sessions cs
+                             JOIN courses c ON c.id = cs.course_id
+                             WHERE cs.teacher_id = ? AND cs.formation_type IN (?, ?)
+                               AND (cs.nb_sessions > 0 OR cs.total_hours > 0)''',
+                          (tid, *fts)).fetchall()
+        if not any(_mat_base_key(r['code']) == key for r in rows):
+            return error_response(f"Cet enseignant n'intervient pas sur la face {formation} de cette matière")
+        db.execute('''INSERT INTO matiere_referents (matiere_key, formation, teacher_id)
+                      VALUES (?, ?, ?)
+                      ON CONFLICT (matiere_key, formation) DO UPDATE SET
+                          teacher_id = excluded.teacher_id''',
+                   (key, formation, tid))
+    db.commit()
+    return jsonify({'message': 'Référent enregistré'})
+
 @app.route('/api/courses', methods=['GET'])
 def get_courses():
     """Get all courses with hours and rooms per teaching type"""
@@ -5421,9 +5510,13 @@ def get_courses():
         courses = rows_to_list(cursor.fetchall())
         # Résolution dynamique des semaines pour les cours en "dates par défaut"
         cfg = get_year_config()
+        refs = _matiere_referents(db)
         for c in courses:
             sw, ew = resolve_course_weeks(c, cfg)
             c['start_week'], c['end_week'] = sw, ew
+            # Référents au niveau matière : identiques pour toutes les
+            # sous-matières d'un même groupe (clé _mat_base_key).
+            c['referents'] = refs.get(_mat_base_key(c['code']), {})
         return jsonify(courses), 200
     except Exception as e:
         return error_response(f'Error fetching courses: {str(e)}', 500)
