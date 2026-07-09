@@ -292,13 +292,18 @@
            (l'accès en écriture est filtré par rôle/onglet, pas par cette règle) */
         body.role-teacher .admin-only,
         body.role-teacher .rep-tool-restricted { display: none !important; }
-        /* Ordre des onglets pour l'enseignant : Globale, Calendaire, Liste, Programme */
-        body.role-teacher #nav-repartition-enseignant { order: 1; }
-        body.role-teacher #nav-repartition { order: 2; }
-        body.role-teacher #nav-enseignants { order: 3; }
-        body.role-teacher #nav-programme { order: 4; }
-        body.role-teacher #nav-contraintes { order: 5; }
+        /* Ordre des onglets pour l'enseignant : Service, Gestion, Programme.
+           Le sous-onglet Matières du Service reste réservé à l'admin. */
+        body.role-teacher #svc-tab-matieres { display: none !important; }
+        body.role-teacher #nav-service { order: 1; }
+        body.role-teacher #nav-enseignants { order: 2; }
+        body.role-teacher #nav-programme { order: 3; }
         body.role-teacher #nav-right { order: 99; }
+        /* Barre de sous-onglets Service enseignant (sous la nav) */
+        #service-bar { display: flex; align-items: center; gap: 4px; padding: 6px 16px;
+                       background: #f3f4f6; border-bottom: 1px solid #e5e7eb; }
+        #service-bar .svc-year { margin-left: auto; display: flex; align-items: center; gap: 6px;
+                                 font-size: .85rem; color: #6b7280; white-space: nowrap; }
         /* Case « Taux horaires » + Export : réservés à l'admin et aux titulaires */
         body.role-vacataire .rates-toggle,
         body.role-vacataire .export-btn { display: none !important; }
@@ -338,28 +343,34 @@
 
 <nav>
     <strong>EDT Manager</strong>
-    <button onclick="showPage('repartition')" class="active" id="nav-repartition">Répartition Calendaire</button>
-    <button onclick="showPage('repartition-enseignant')" id="nav-repartition-enseignant">Bilan Global</button>
-    <button onclick="showPage('matieres')" id="nav-matieres">Matières</button>
+    <button onclick="showServicePage()" class="active" id="nav-service">Service enseignant</button>
     <button onclick="showPage('salles')" id="nav-salles">Salles</button>
-    <button onclick="showPage('enseignants')" id="nav-enseignants">Liste des enseignants</button>
+    <button onclick="showPage('enseignants')" id="nav-enseignants">Gestion enseignant</button>
     <button onclick="showPage('journal')" id="nav-journal" class="admin-only">Journal</button>
-    <button onclick="showPage('contraintes')" id="nav-contraintes">Contraintes</button>
     <button onclick="showPage('programme')" id="nav-programme">Programme</button>
-    <button onclick="showPage('promotions')" id="nav-promotions" class="admin-only">Promotions</button>
+    <button onclick="showPage('promotions')" id="nav-promotions">Promotions</button>
     <button onclick="showPage('parametres')" id="nav-parametres" class="admin-only">Paramètres</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
-        <span style="font-size:.8rem;color:#6b7280;white-space:nowrap">Année :</span>
-        <select id="year-select" onchange="switchYear()"
-                style="padding:4px 10px;border-radius:6px;border:1px solid #c7d2fe;background:#eef2ff;color:#4f46e5;font-weight:700;font-size:.88rem;cursor:pointer">
-            <option>…</option>
-        </select>
         <span id="role-badge" class="role-badge" style="display:none"></span>
         <button class="btn btn-secondary btn-sm" onclick="logout()" title="Se déconnecter" style="white-space:nowrap">
             Déconnexion
         </button>
     </div>
 </nav>
+
+<!-- Sous-onglets Service enseignant + année de consultation (n'impacte que ces vues) -->
+<div id="service-bar" style="display:none">
+    <button type="button" id="svc-tab-repartition-enseignant" class="subtab" onclick="showPage('repartition-enseignant')">Bilan Global</button>
+    <button type="button" id="svc-tab-repartition" class="subtab" onclick="showPage('repartition')">Répartition Calendaire</button>
+    <button type="button" id="svc-tab-matieres" class="subtab" onclick="showPage('matieres')">Matières</button>
+    <button type="button" id="svc-tab-contraintes" class="subtab" onclick="showPage('contraintes')">Contraintes</button>
+    <span class="svc-year">Année :
+        <select id="service-year-select" onchange="switchServiceYear()"
+                style="padding:4px 10px;border-radius:6px;border:1px solid #c7d2fe;background:#eef2ff;color:#4f46e5;font-weight:700;font-size:.88rem;cursor:pointer">
+            <option>…</option>
+        </select>
+    </span>
+</div>
 
 <main>
 
@@ -378,7 +389,7 @@
         </div>
     </div>
     <div class="link-grid">
-        <div class="link-card" onclick="showPage('enseignants')"><h3>Liste des enseignants</h3><p>Gérer les enseignants</p></div>
+        <div class="link-card" onclick="showPage('enseignants')"><h3>Gestion enseignant</h3><p>Gérer les enseignants</p></div>
         <div class="link-card" onclick="showPage('matieres')"><h3>Matières</h3><p>Consulter les matières</p></div>
         <div class="link-card" onclick="showPage('salles')"><h3>Salles</h3><p>Gérer les salles</p></div>
         <div class="link-card" onclick="showPage('repartition-enseignant')"><h3>Bilan Global</h3><p>Vue par enseignant</p></div>
@@ -389,7 +400,7 @@
 <!-- ===== ENSEIGNANTS ===== -->
 <div class="page" id="page-enseignants">
     <div class="toolbar">
-        <h1>Liste des enseignants</h1>
+        <h1>Gestion enseignant</h1>
         <button class="btn btn-primary admin-only" onclick="openTeacherModal()">+ Ajouter</button>
     </div>
     <div id="teachers-table"><div class="spinner">Chargement…</div></div>
@@ -706,6 +717,20 @@
 <div class="page" id="page-parametres">
     <div class="toolbar"><h1>Paramètres</h1></div>
     <div style="max-width:560px">
+        <h3 style="color:#374151;margin:8px 0">Année universitaire active</h3>
+        <p style="color:#6b7280;font-size:.9rem;margin-top:0">
+            Année de travail de tous les onglets (Matières, Salles, Gestion enseignant, Journal…).
+            L'onglet <strong>Service enseignant</strong> a son propre sélecteur d'affichage et
+            n'est pas concerné par ce réglage.
+        </p>
+        <div style="display:flex;gap:10px;align-items:center;margin:12px 0 24px">
+            <select id="param-year-select"
+                    style="padding:6px 12px;border-radius:6px;border:1px solid #c7d2fe;background:#eef2ff;color:#4f46e5;font-weight:700;font-size:.9rem;cursor:pointer">
+                <option>…</option>
+            </select>
+            <button class="btn btn-primary" onclick="applyDefaultYear()">Appliquer</button>
+        </div>
+
         <h3 style="color:#374151;margin:8px 0">Coefficients de conversion en HETD</h3>
         <p style="color:#6b7280;font-size:.9rem;margin-top:0">
             Heures Équivalent TD utilisées pour le calcul du service (onglet <strong>Bilan global</strong>)
@@ -1409,17 +1434,16 @@ function applyRole(role, user, teacher, status) {
             ? (user + ' · ' + (status === 'Vacataire' ? 'vacataire' : 'titulaire'))
             : 'Admin';
     }
-    // Enseignant : onglets de répartition + programme (consultation, avec le
-    // sous-onglet Contenu) + ses contraintes ;
-    // seul le titulaire voit la liste des enseignants (consultation seule)
-    const teacherTabs = ['nav-repartition', 'nav-repartition-enseignant', 'nav-programme', 'nav-contraintes'];
+    // Enseignant : onglet Service enseignant (Bilan Global / Calendaire /
+    // Contraintes) + Programme (consultation, avec le sous-onglet Contenu) ;
+    // seul le titulaire voit la gestion des enseignants (consultation seule)
+    const teacherTabs = ['nav-service', 'nav-programme'];
     if (state.teacherTitulaire) teacherTabs.push('nav-enseignants');
+    // Connexion avec mot de passe : Promotions en lecture seule (Effectifs/Notes/Jury)
+    if (role === 'teacher' && state.promoAccess) teacherTabs.push('nav-promotions');
     document.querySelectorAll('nav button[id^="nav-"]').forEach(b => {
         b.style.display = (role === 'teacher' && !teacherTabs.includes(b.id)) ? 'none' : '';
     });
-    // Chaque utilisateur (admin ou enseignant) choisit son année de consultation.
-    const ys = document.getElementById('year-select');
-    if (ys) ys.disabled = false;
 }
 
 function goHome() {
@@ -1502,11 +1526,33 @@ function toast(msg, type = 'success') {
 }
 
 // ===== NAVIGATION =====
+// Onglet « Service enseignant » : regroupe Bilan Global, Répartition Calendaire
+// et Contraintes en sous-onglets, avec sa propre année de consultation
+// (_serviceYear, passée en ?year= aux API de ces trois vues uniquement).
+const _servicePages = ['repartition-enseignant', 'repartition', 'matieres', 'contraintes'];
+let _serviceTab = 'repartition';   // dernier sous-onglet Service visité
+let _serviceYear = '';             // année affichée dans Service enseignant
+
+// Suffixe ?year=/&year= pour les appels API des vues Service enseignant
+function svcQ(sep = '?') {
+    return _serviceYear ? sep + 'year=' + encodeURIComponent(_serviceYear) : '';
+}
+
+function showServicePage() { showPage(_serviceTab); }
+
 function showPage(name) {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
     document.getElementById('page-' + name).classList.add('active');
-    document.getElementById('nav-' + name).classList.add('active');
+    const isService = _servicePages.includes(name);
+    if (isService) _serviceTab = name;
+    const navBtn = document.getElementById(isService ? 'nav-service' : 'nav-' + name);
+    if (navBtn) navBtn.classList.add('active');
+    document.getElementById('service-bar').style.display = isService ? '' : 'none';
+    _servicePages.forEach(p => {
+        const b = document.getElementById('svc-tab-' + p);
+        if (b) b.classList.toggle('active', name === p);
+    });
     loadPage(name);
 }
 
@@ -1514,16 +1560,24 @@ async function loadPage(name, forceReload) {
     try {
         if (name === 'dashboard') await loadDashboard();
         else if (name === 'enseignants') {
-            if (forceReload || !state.teachers.length) state.teachers = await api('/teachers');
+            // Toujours recharger : state.teachers peut contenir l'année du
+            // Service enseignant (Bilan Global) — ici on veut l'année active.
+            state.teachers = await api('/teachers');
             renderTeachers();
         }
         else if (name === 'matieres') {
-            if (forceReload || !state.courses.length) [state.courses, state.semesters] = await Promise.all([api('/courses'), api('/semesters')]);
-            await Promise.all([loadMatProg(), loadHetdCoefs()]);
+            // Vue Service enseignant : matières de l'année choisie (_serviceYear).
+            // Toujours recharger : le cache peut venir d'une autre année (Programme › Contenu).
+            [state.courses, state.semesters] = await Promise.all([
+                api('/courses' + svcQ()), api('/semesters' + svcQ())
+            ]);
+            await Promise.all([loadMatProg(svcQ()), loadHetdCoefs(svcQ())]);
             renderCourses();
         }
         else if (name === 'salles') {
-            if (forceReload || !state.rooms.length) state.rooms = await api('/rooms');
+            // Toujours recharger : state.rooms peut contenir l'année du Service
+            // (listes du modal matière) — ici on veut l'année active.
+            state.rooms = await api('/rooms');
             renderRooms();
         }
         else if (name === 'journal') { await loadJournal(); }
@@ -1535,10 +1589,12 @@ async function loadPage(name, forceReload) {
         else if (name === 'promotions') { await loadPromotions(); }
         else if (name === 'parametres') { await loadParametres(); }
         else if (name === 'repartition-enseignant') {
+            // Vue Service enseignant : données de l'année choisie (_serviceYear)
             const [sessions, teachers, pg] = await Promise.all([
-                api('/course-sessions'), api('/teachers'), api('/promotion-groups')
+                api('/course-sessions' + svcQ()), api('/teachers' + svcQ()),
+                api('/promotion-groups' + svcQ())
             ]);
-            await loadHetdCoefs();
+            await loadHetdCoefs(svcQ());
             state.sessions = sessions;
             state.teachers = teachers;
             state.promotionGroups = pg;
@@ -1578,30 +1634,27 @@ async function loadDashboard() {
 async function loadYears() {
     try {
         const data = await api('/years');
-        const sel = document.getElementById('year-select');
-        sel.innerHTML = data.years.length
-            ? data.years.map(y => `<option value="${y}" ${y === data.current ? 'selected' : ''}>${y}</option>`).join('')
-            : '<option value="">Aucune année</option>';
+        state.defaultYear = data.current || '';
+        // Année de consultation du Service enseignant : initialisée sur l'année active
+        if (!_serviceYear) _serviceYear = state.defaultYear;
+        const sel = document.getElementById('service-year-select');
+        if (sel) {
+            sel.innerHTML = data.years.length
+                ? data.years.map(y => `<option value="${y}" ${y === _serviceYear ? 'selected' : ''}>${y}</option>`).join('')
+                : '<option value="">Aucune année</option>';
+        }
     } catch(e) { /* silencieux */ }
 }
 
-async function switchYear() {
-    const year = document.getElementById('year-select').value;
-    if (!year) return;
-    try {
-        // Admin : change le défaut global de l'établissement.
-        // Enseignant : choix personnel limité à sa session.
-        const endpoint = state.role === 'admin' ? '/years/current' : '/years/session';
-        await api(endpoint, { method: 'PUT', body: JSON.stringify({ year }) });
-        // Réinitialiser les caches (contexte année) pour forcer un rechargement
-        ['teachers', 'courses', 'rooms', 'sessions', 'semesters', 'promotionGroups'].forEach(k => { state[k] = []; });
-        state.config = null;
-        _repartitionData = null;
-        _notesData = null;
-        await loadYears();
-        showPage(state.role === 'teacher' ? 'repartition-enseignant' : 'repartition');
-        toast(`Année ${year} activée`);
-    } catch(e) { toast('Erreur : ' + e.message, 'error'); }
+// Change l'année AFFICHÉE dans Service enseignant (Bilan Global, Répartition
+// Calendaire, Contraintes). Purement local : n'impacte pas les autres onglets,
+// qui travaillent sur l'année active (modifiable dans Paramètres).
+function switchServiceYear() {
+    _serviceYear = document.getElementById('service-year-select').value;
+    state.config = null;
+    _repartitionData = null;
+    showPage(_serviceTab);
+    toast(`Affichage de l'année ${_serviceYear}`);
 }
 
 // ===== ENSEIGNANTS =====
@@ -1686,8 +1739,8 @@ function matBaseKey(code) {
 
 // Programme par semestre, résolu automatiquement (cohorte de l'année active).
 // FTP et ALT d'une même année partagent le même programme → pas de choix de promo.
-async function loadMatProg() {
-    try { _matProg = await api('/matieres-programme'); }
+async function loadMatProg(q = '') {
+    try { _matProg = await api('/matieres-programme' + q); }
     catch (e) { _matProg = null; }
 }
 
@@ -1910,9 +1963,9 @@ async function loadConstraints() {
     el.innerHTML = '<div class="spinner">Chargement…</div>';
     try {
         if (state.role === 'admin') {
-            renderConstraintsAdmin(await api('/constraints') || []);
+            renderConstraintsAdmin(await api('/constraints' + svcQ()) || []);
         } else {
-            renderConstraintsTeacher(await api('/constraints/me') || {});
+            renderConstraintsTeacher(await api('/constraints/me' + svcQ()) || {});
         }
     } catch (e) {
         el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
@@ -1925,7 +1978,7 @@ function renderConstraintsTeacher(d) {
     const el = document.getElementById('contraintes-content');
     const fileBlock = d.has_file
         ? `<div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-               <a class="btn btn-secondary btn-sm" href="/api/constraints/me/file">📎 ${esc(d.file_original || 'fichier')}</a>
+               <a class="btn btn-secondary btn-sm" href="/api/constraints/me/file${svcQ()}">📎 ${esc(d.file_original || 'fichier')}</a>
                <button class="btn btn-secondary btn-sm" style="color:#b91c1c" onclick="deleteConstraintFile()">Supprimer le fichier</button>
            </div>`
         : '<div style="margin-top:8px;color:#9ca3af">Aucun fichier déposé.</div>';
@@ -1952,7 +2005,7 @@ function renderConstraintsTeacher(d) {
 async function saveMyConstraints() {
     const content = (document.getElementById('constraints-text') || {}).value || '';
     try {
-        const r = await fetch('/api/constraints/me', {
+        const r = await fetch('/api/constraints/me' + svcQ(), {
             method: 'PUT', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content })
         });
@@ -1969,7 +2022,7 @@ async function uploadConstraintFile(input) {
     const fd = new FormData();
     fd.append('file', f);
     try {
-        const r = await fetch('/api/constraints/me/file', { method: 'POST', body: fd });
+        const r = await fetch('/api/constraints/me/file' + svcQ(), { method: 'POST', body: fd });
         if (!r.ok) {
             let msg = 'Échec de l\'envoi';
             try { msg = JSON.parse(await r.text()).error || msg; } catch (_) {}
@@ -1985,7 +2038,7 @@ async function uploadConstraintFile(input) {
 async function deleteConstraintFile() {
     if (!confirm('Supprimer le fichier déposé ?')) return;
     try {
-        const r = await fetch('/api/constraints/me/file', { method: 'DELETE' });
+        const r = await fetch('/api/constraints/me/file' + svcQ(), { method: 'DELETE' });
         if (!r.ok) throw new Error(await r.text());
         toast('Fichier supprimé');
         loadConstraints();
@@ -2012,7 +2065,7 @@ function renderConstraintsAdmin(list) {
             <td class="pn-mat"><strong>${esc(c.teacher_name || '')}</strong></td>
             <td class="ens-cell${c.content ? '' : ' pn-empty'}">${c.content ? esc(c.content) : '—'}</td>
             <td>${c.has_file
-                ? `<a class="btn btn-secondary btn-sm" href="/api/constraints/${c.teacher_id}/file">📎 ${esc(c.file_original || 'fichier')}</a>`
+                ? `<a class="btn btn-secondary btn-sm" href="/api/constraints/${c.teacher_id}/file${svcQ()}">📎 ${esc(c.file_original || 'fichier')}</a>`
                 : '<span style="color:#9ca3af">—</span>'}</td>
             <td style="white-space:nowrap;color:#6b7280;font-size:.8rem">${esc(c.updated_at || '')}</td>
         </tr>`).join('') +
@@ -4490,9 +4543,10 @@ function setCourseParentInfo(code, semesterCode) {
 }
 
 async function openCourseModal(id = null) {
-    if (!state.rooms.length) state.rooms = await api('/rooms');
-    if (!state.teachers.length) state.teachers = await api('/teachers');
-    if (!state.config) state.config = await api('/config');
+    // Modal matière (Service enseignant) : listes de l'année choisie (_serviceYear)
+    state.rooms = await api('/rooms' + svcQ());
+    state.teachers = await api('/teachers' + svcQ());
+    state.config = await api('/config' + svcQ());
     const cfg = state.config;
     buildWeekSelects(cfg.academic_start_week, cfg.academic_end_week);
 
@@ -4558,8 +4612,8 @@ async function openCourseModal(id = null) {
             if (isMut) {
                 // CM/TD depuis MUT (formation_type=2), TP/PT depuis FTP (0)
                 try {
-                    const thMut = await api('/courses/' + id + '/teaching-hours?formation_type=2');
-                    const thFtp = await api('/courses/' + id + '/teaching-hours?formation_type=0');
+                    const thMut = await api('/courses/' + id + '/teaching-hours?formation_type=2' + svcQ('&'));
+                    const thFtp = await api('/courses/' + id + '/teaching-hours?formation_type=0' + svcQ('&'));
                     const rooms = {}, teachers = {};
                     ['CM','TD'].forEach(t => {
                         const info = thMut[t] || {};
@@ -4582,7 +4636,7 @@ async function openCourseModal(id = null) {
                 } catch(e) { console.warn('Erreur chargement heures MUT:', e); }
                 // ALT TP/PT
                 try {
-                    const thAlt = await api('/courses/' + id + '/teaching-hours?formation_type=1');
+                    const thAlt = await api('/courses/' + id + '/teaching-hours?formation_type=1' + svcQ('&'));
                     const rooms = {}, teachers = {};
                     ['TP','PT'].forEach(t => {
                         const info = thAlt[t] || {};
@@ -4598,7 +4652,7 @@ async function openCourseModal(id = null) {
             } else {
                 // Heures FTP
                 try {
-                    const th = await api('/courses/' + id + '/teaching-hours?formation_type=0');
+                    const th = await api('/courses/' + id + '/teaching-hours?formation_type=0' + svcQ('&'));
                     const rooms = {}, teachers = {};
                     ['CM','TD','TP','PT'].forEach(t => {
                         const info = th[t] || {};
@@ -4613,7 +4667,7 @@ async function openCourseModal(id = null) {
                 } catch(e) { console.warn('Erreur chargement heures FTP:', e); }
                 // Heures ALT
                 try {
-                    const th = await api('/courses/' + id + '/teaching-hours?formation_type=1');
+                    const th = await api('/courses/' + id + '/teaching-hours?formation_type=1' + svcQ('&'));
                     const rooms = {}, teachers = {};
                     ['CM','TD','TP','PT'].forEach(t => {
                         const info = th[t] || {};
@@ -4677,31 +4731,31 @@ async function submitCourse(e) {
     try {
         let courseId = id;
         if (!id) {
-            const res = await api('/courses', { method: 'POST', body: JSON.stringify(base) });
+            const res = await api('/courses' + svcQ(), { method: 'POST', body: JSON.stringify(base) });
             courseId = res.id;
         } else {
-            await api('/courses/' + id, { method: 'PUT', body: JSON.stringify(base) });
+            await api('/courses/' + id + svcQ(), { method: 'PUT', body: JSON.stringify(base) });
         }
 
         if (isMut) {
             // CM/TD → MUT (formation_type=2)
             const typesMut = { CM: panelFtp.CM, TD: panelFtp.TD, TP: {hours:0}, PT: {hours:0} };
-            await api('/courses/' + courseId + '/teaching-hours?formation_type=2', { method: 'PUT', body: JSON.stringify(typesMut) });
+            await api('/courses/' + courseId + '/teaching-hours?formation_type=2' + svcQ('&'), { method: 'PUT', body: JSON.stringify(typesMut) });
             // FTP : uniquement TP/PT, effacer CM/TD
             const typesFtpOnly = { CM: {hours:0}, TD: {hours:0}, TP: panelFtp.TP, PT: panelFtp.PT };
-            await api('/courses/' + courseId + '/teaching-hours?formation_type=0', { method: 'PUT', body: JSON.stringify(typesFtpOnly) });
+            await api('/courses/' + courseId + '/teaching-hours?formation_type=0' + svcQ('&'), { method: 'PUT', body: JSON.stringify(typesFtpOnly) });
             // ALT : uniquement TP/PT, effacer CM/TD
             const typesAltOnly = { CM: {hours:0}, TD: {hours:0}, TP: panelAlt.TP, PT: panelAlt.PT };
-            await api('/courses/' + courseId + '/teaching-hours?formation_type=1', { method: 'PUT', body: JSON.stringify(typesAltOnly) });
+            await api('/courses/' + courseId + '/teaching-hours?formation_type=1' + svcQ('&'), { method: 'PUT', body: JSON.stringify(typesAltOnly) });
         } else {
             // Classique : FTP + ALT séparés, effacer MUT
-            await api('/courses/' + courseId + '/teaching-hours?formation_type=0', { method: 'PUT', body: JSON.stringify(panelFtp) });
-            await api('/courses/' + courseId + '/teaching-hours?formation_type=1', { method: 'PUT', body: JSON.stringify(panelAlt) });
+            await api('/courses/' + courseId + '/teaching-hours?formation_type=0' + svcQ('&'), { method: 'PUT', body: JSON.stringify(panelFtp) });
+            await api('/courses/' + courseId + '/teaching-hours?formation_type=1' + svcQ('&'), { method: 'PUT', body: JSON.stringify(panelAlt) });
             const clearMut = { CM: {hours:0}, TD: {hours:0}, TP: {hours:0}, PT: {hours:0} };
-            await api('/courses/' + courseId + '/teaching-hours?formation_type=2', { method: 'PUT', body: JSON.stringify(clearMut) });
+            await api('/courses/' + courseId + '/teaching-hours?formation_type=2' + svcQ('&'), { method: 'PUT', body: JSON.stringify(clearMut) });
         }
         closeModal('modal-course');
-        [state.courses, state.semesters] = await Promise.all([api('/courses'), api('/semesters')]);
+        [state.courses, state.semesters] = await Promise.all([api('/courses' + svcQ()), api('/semesters' + svcQ())]);
         renderCourses();
         toast(id ? 'Matière modifiée' : 'Matière ajoutée');
     } catch(err) { toast('Erreur : ' + err.message, 'error'); }
@@ -4711,8 +4765,8 @@ async function submitCourse(e) {
 async function deleteCourse(id) {
     if (!confirm('Supprimer cette matière et toutes ses sessions ?')) return;
     try {
-        await api('/courses/' + id, { method: 'DELETE' });
-        state.courses = await api('/courses');
+        await api('/courses/' + id + svcQ(), { method: 'DELETE' });
+        state.courses = await api('/courses' + svcQ());
         renderCourses();
         toast('Matière supprimée');
     } catch(err) { toast('Erreur : ' + err.message, 'error'); }
@@ -4780,7 +4834,7 @@ async function _loadWeeklyFormation(c, ft) {
     _weeklyActive = ['CM','TD','TP','PT'].filter(t => _weeklyHours[t] > 0);
     weeklyData = { CM: {}, TD: {}, TP: {}, PT: {} };
     try {
-        const wd = await api('/courses/' + _weeklyModalCourseId + '/weekly-distribution?formation_type=' + ft);
+        const wd = await api('/courses/' + _weeklyModalCourseId + '/weekly-distribution?formation_type=' + ft + svcQ('&'));
         ['CM','TD','TP','PT'].forEach(t => {
             weeklyData[t] = {};
             Object.entries(wd[t]||{}).forEach(([w,h]) => { weeklyData[t][parseInt(w)] = parseFloat(h)||0; });
@@ -4914,7 +4968,7 @@ async function submitWeekly() {
     }
 
     try {
-        await api('/courses/' + _weeklyModalCourseId + '/weekly-distribution?formation_type=' + _weeklyFormationType,
+        await api('/courses/' + _weeklyModalCourseId + '/weekly-distribution?formation_type=' + _weeklyFormationType + svcQ('&'),
             { method: 'PUT', body: JSON.stringify(weeklyData) });
         closeModal('modal-weekly');
         toast('Répartition enregistrée');
@@ -5013,20 +5067,46 @@ function renderSessions() {
 const _HETD_COEFS = { CM: 1.5, TD: 1.0, TP: 2/3, PT: 1.0 };
 
 // Charge les coefficients HETD partagés (Bilan global + Matières) depuis le serveur.
-async function loadHetdCoefs() {
+async function loadHetdCoefs(q = '') {
     try {
-        const c = await api('/hetd-coeffs');
+        const c = await api('/hetd-coeffs' + q);
         Object.assign(_HETD_COEFS, { CM: +c.cm, TD: +c.td, TP: +c.tp, PT: +c.pt });
     } catch (e) { /* garde les valeurs par défaut */ }
 }
 
 async function loadParametres() {
+    // Sélecteur d'année active (défaut global du serveur)
+    try {
+        const data = await api('/years');
+        state.defaultYear = data.current || '';
+        document.getElementById('param-year-select').innerHTML = data.years.length
+            ? data.years.map(y => `<option value="${y}" ${y === data.current ? 'selected' : ''}>${y}</option>`).join('')
+            : '<option value="">Aucune année</option>';
+    } catch (e) { /* silencieux */ }
     let c = { cm: _HETD_COEFS.CM, td: _HETD_COEFS.TD, tp: _HETD_COEFS.TP, pt: _HETD_COEFS.PT };
     try { c = await api('/hetd-coeffs'); } catch (e) { /* défauts */ }
     document.getElementById('hetd-cm').value = c.cm;
     document.getElementById('hetd-td').value = c.td;
     document.getElementById('hetd-tp').value = Math.round(c.tp * 1000) / 1000;
     document.getElementById('hetd-pt').value = c.pt;
+}
+
+// Change l'année universitaire ACTIVE de l'établissement (défaut global du
+// serveur) : tous les onglets hors Service enseignant travaillent sur elle.
+async function applyDefaultYear() {
+    const year = document.getElementById('param-year-select').value;
+    if (!year) return;
+    if (year === state.defaultYear) { toast(`L'année ${year} est déjà active`); return; }
+    try {
+        await api('/years/current', { method: 'PUT', body: JSON.stringify({ year }) });
+        state.defaultYear = year;
+        // Réinitialiser les caches liés à l'année pour forcer un rechargement
+        ['teachers', 'courses', 'rooms', 'sessions', 'semesters', 'promotionGroups'].forEach(k => { state[k] = []; });
+        state.config = null;
+        _notesData = null;
+        await loadYears();
+        toast(`Année ${year} activée pour tout le site`);
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
 // Restauration complète du site depuis un fichier de sauvegarde .zip (admin).
@@ -5378,15 +5458,17 @@ const altHeatBg = h => heatBg(h, 35, 20, 40);
 // ===== ORDONNANCEMENT =====
 
 async function openOrderingModal() {
-    if (!state.courses.length) state.courses = await api('/courses');
-    buildOrderingSelects();
+    // Matières de l'année du Service enseignant (liste locale : ne pollue pas
+    // le cache state.courses de l'onglet Matières, qui suit l'année active)
+    const courses = await api('/courses' + svcQ());
+    buildOrderingSelects(courses);
     await loadOrderings();
     openModal('modal-ordering');
 }
 
-function buildOrderingSelects() {
+function buildOrderingSelects(courses) {
     const none = '<option value="">— Choisir —</option>';
-    const opts = none + state.courses
+    const opts = none + courses
         .slice().sort((a, b) => (a.semester_code||'').localeCompare(b.semester_code||'') || a.code.localeCompare(b.code))
         .map(c => `<option value="${c.id}">${esc(c.semester_code||'')} · ${esc(c.code)} — ${esc(c.name)}</option>`)
         .join('');
@@ -5396,7 +5478,7 @@ function buildOrderingSelects() {
 
 async function loadOrderings() {
     try {
-        const rows = await api('/course-orderings');
+        const rows = await api('/course-orderings' + svcQ());
         renderOrderingList(rows);
     } catch(e) {
         document.getElementById('ordering-list').innerHTML = '<div class="empty">Erreur chargement</div>';
@@ -5435,7 +5517,7 @@ async function addOrdering() {
     if (!pred || !succ) { toast('Sélectionnez les deux matières', 'error'); return; }
     if (pred === succ)  { toast('Les deux matières doivent être différentes', 'error'); return; }
     try {
-        await api('/course-orderings', {
+        await api('/course-orderings' + svcQ(), {
             method: 'POST',
             body: JSON.stringify({ course_id_pred: pred, course_id_succ: succ, min_gap_weeks: gap }),
         });
@@ -5446,7 +5528,7 @@ async function addOrdering() {
 
 async function deleteOrdering(id) {
     try {
-        await api('/course-orderings/' + id, { method: 'DELETE' });
+        await api('/course-orderings/' + id + svcQ(), { method: 'DELETE' });
         toast('Contrainte supprimée');
         loadOrderings();
     } catch(e) { toast('Erreur : ' + e.message, 'error'); }
@@ -5505,19 +5587,20 @@ function _calQ() {
 }
 
 // Année de progression (1/2/3) d'une cohorte correspondant à l'année
-// universitaire sélectionnée en haut à droite (répartition calendaire courante).
+// universitaire ACTIVE de l'établissement (state.defaultYear — les onglets hors
+// Service enseignant ne dépendent pas du sélecteur d'année du Service).
 function _ygForTopYear(startYear) {
-    const yv = (document.getElementById('year-select') || {}).value || '';
+    const yv = state.defaultYear || '';
     const topStart = parseInt((yv.split('-')[0]) || '');
     if (!topStart || !startYear) return 1;
     const yg = topStart - startYear + 1;
     return (yg >= 1 && yg <= 3) ? yg : 1;
 }
 
-// Année en cours d'une promotion selon l'année universitaire choisie en haut à droite :
+// Année en cours d'une promotion selon l'année universitaire active :
 // BUT1/BUT2/BUT3, OLD (cohorte terminée) ou À VENIR (pas encore commencée).
 function _promoYearLabel(startYear) {
-    const yv = (document.getElementById('year-select') || {}).value || '';
+    const yv = state.defaultYear || '';
     const topStart = parseInt((yv.split('-')[0]) || '');
     if (!topStart || !startYear) return '';
     const yg = topStart - startYear + 1;
@@ -5593,13 +5676,13 @@ function updateCalYearWarning() {
     const el = document.getElementById('cal-year-warning');
     if (!el) return;
     const calYear = calAcademicYear();
-    const activeYear = (document.getElementById('year-select') || {}).value || '';
+    const activeYear = state.defaultYear || '';
     const show = !!(calYear && activeYear && calYear !== activeYear);
     el.style.display = show ? '' : 'none';
     if (show) el.innerHTML = `⚠️ Ce calendrier modifie l'année <strong>${esc(calYear)}</strong>, `
         + `différente de l'année active <strong>${esc(activeYear)}</strong>. `
-        + `Les autres onglets (Répartition, Matières…) affichent l'année active : les modifications faites ici `
-        + `(semaines, commentaires…) n'y apparaîtront qu'en basculant le sélecteur d'année sur ${esc(calYear)}.`;
+        + `Les autres onglets (Matières, Notes…) travaillent sur l'année active ; en Service enseignant, `
+        + `choisissez l'année ${esc(calYear)} pour voir ces modifications.`;
 }
 
 // Changer d'année de la cohorte = changer de base année → recharger.
@@ -5865,7 +5948,7 @@ async function loadRepartition() {
         return;
     }
     try {
-        if (!state.config) state.config = await api('/config');
+        state.config = await api('/config' + svcQ());   // config de l'année du Service
         // Ensemble « promo » = semestres sélectionnés + leurs pairs (pour les totaux hebdo)
         const promoSet = [];
         sems.forEach(s => {
@@ -5875,10 +5958,11 @@ async function loadRepartition() {
         });
         const datas = {};
         await Promise.all(promoSet.map(async s => {
-            datas[s] = await api('/repartition?semester=' + encodeURIComponent(s));
+            datas[s] = await api('/repartition?semester=' + encodeURIComponent(s) + svcQ('&'));
         }));
         const [wc, calRaw, catCodes] = await Promise.all([
-            api('/week-comments'), api('/special-calendar'), api('/category-codes')
+            api('/week-comments' + svcQ()), api('/special-calendar' + svcQ()),
+            api('/category-codes' + svcQ())
         ]);
         _weekComments = wc || {};
         _specialCalRaw = calRaw || {};
@@ -5955,8 +6039,8 @@ async function loadRepJour() {
     const yg = parseInt(document.getElementById('repj-annee').value) || 1;
     const sems = ['S' + (yg * 2 - 1), 'S' + (yg * 2)];
     try {
-        if (!state.config) state.config = await api('/config');
-        const datas = await Promise.all(sems.map(s => api('/repartition?semester=' + encodeURIComponent(s))));
+        state.config = await api('/config' + svcQ());
+        const datas = await Promise.all(sems.map(s => api('/repartition?semester=' + encodeURIComponent(s) + svcQ('&'))));
         const anchor = (state.config && state.config.academic_start_week) || 36;
         const mw = maxWeek();
         const skey = w => (w >= anchor ? w - anchor : w - anchor + mw);
@@ -6518,7 +6602,7 @@ function onRepartitionCellClick(e) {
 
 async function updateRepartitionCell(sid, week, newHours, td) {
     try {
-        await api(`/weekly-hours/${sid}/${week}`, {
+        await api(`/weekly-hours/${sid}/${week}` + svcQ(), {
             method: 'PUT',
             body: JSON.stringify({ hours: newHours }),
         });
@@ -6616,6 +6700,7 @@ function exportRepartitionExcel() {
     if (f) params.set('formation', f);
     const t = (document.getElementById('filter-teacher-repartition') || {}).value || '';
     if (t) params.set('teacher', t);
+    if (_serviceYear) params.set('year', _serviceYear);
     window.location.href = '/api/export/repartition?' + params.toString();
 }
 
@@ -6631,7 +6716,7 @@ async function importRepartitionExcel(input) {
     formData.append('file', file);
 
     try {
-        const res = await fetch('/api/import/repartition', { method: 'POST', body: formData });
+        const res = await fetch('/api/import/repartition' + svcQ(), { method: 'POST', body: formData });
         const data = await res.json();
         if (!res.ok) { alert('Erreur : ' + (data.error || 'Import échoué')); return; }
 
@@ -6651,7 +6736,7 @@ async function runRepartitionChecks() {
     const panel = document.getElementById('checks-panel');
     panel.innerHTML = '<div class="spinner">Vérification…</div>';
     try {
-        const data = await api('/checks/repartition');
+        const data = await api('/checks/repartition' + svcQ());
         renderChecksPanel(data);
     } catch(err) {
         panel.innerHTML = '<div class="empty">Erreur : ' + esc(err.message) + '</div>';

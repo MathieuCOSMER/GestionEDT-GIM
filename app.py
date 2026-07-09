@@ -1403,17 +1403,36 @@ def _daily_backup_hook():
     except Exception:
         pass
 
-# Endpoints du calendrier : peuvent cibler une année universitaire précise via
-# ?year=AAAA-AAAA (édition du calendrier d'une cohorte sur ses 3 années, chacune
-# stockée dans une base année différente).
+# Endpoints pouvant cibler une année universitaire précise via ?year=AAAA-AAAA :
+# calendrier de cohorte (édition sur 3 années) et onglet Service enseignant
+# (Bilan Global / Répartition Calendaire / Contraintes ont leur propre sélecteur
+# d'année, sans impacter l'année active utilisée par les autres onglets).
 _YEAR_OVERRIDE_PATHS = {
     '/api/special-calendar', '/api/config', '/api/week-comments',
     '/api/category-codes', '/api/promotion-groups',
 }
+_YEAR_OVERRIDE_PREFIXES = (
+    '/api/repartition',          # tableaux annuel + journalier
+    '/api/checks/repartition',
+    '/api/weekly-hours',         # édition des heures depuis la répartition
+    '/api/course-sessions',
+    '/api/teachers',
+    '/api/courses',              # onglet Matières + modal d'ordonnancement
+    '/api/semesters',
+    '/api/rooms',                # listes du modal matière
+    '/api/matieres-programme',
+    '/api/matiere-referents',
+    '/api/course-orderings',
+    '/api/hetd-coeffs',
+    '/api/constraints',
+    '/api/export/repartition',
+    '/api/import/repartition',
+)
 
 @app.before_request
 def _apply_year_override():
-    if request.path in _YEAR_OVERRIDE_PATHS:
+    p = request.path
+    if p in _YEAR_OVERRIDE_PATHS or p.startswith(_YEAR_OVERRIDE_PREFIXES):
         y = request.args.get('year')
         if y and _is_year(y) and os.path.exists(db_path_for_year(y)):
             g._year_override = y
