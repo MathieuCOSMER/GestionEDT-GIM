@@ -493,6 +493,7 @@
     </div>
     <div class="subtabs" id="promo-subtabs">
         <button type="button" id="promo-subtab-effectif" class="subtab active" onclick="showPromoTab('effectif')">Effectifs</button>
+        <button type="button" id="promo-subtab-tuteurs" class="subtab" onclick="showPromoTab('tuteurs')">Tuteurs</button>
         <button type="button" id="promo-subtab-groupes" class="subtab" onclick="showPromoTab('groupes')">Groupes</button>
         <button type="button" id="promo-subtab-calendrier" class="subtab" onclick="showPromoTab('calendrier')">Calendrier</button>
         <button type="button" id="promo-subtab-notes" class="subtab" onclick="showPromoTab('notes')">Notes</button>
@@ -510,6 +511,20 @@
                 title="Réinitialiser l'effectif de cette année sur le report automatique du jury (efface les ajustements manuels)">↺ Reporter depuis le jury</button>
         </div>
         <div id="promo-content"><div class="empty">Créez une promotion ou sélectionnez-en une pour gérer son effectif.</div></div>
+    </div>
+    <div id="promo-tab-tuteurs" style="display:none">
+        <div class="toolbar">
+            <div class="filters">
+                <label>Année de la cohorte :</label>
+                <select id="tut-year-select" onchange="onTutYearChange()"></select>
+                <span style="color:#6b7280;font-size:.85rem">
+                    Tuteur universitaire et tuteur entreprise par étudiant.
+                    ALT : la saisie vaut aussi pour les années suivantes sauf changement ;
+                    FTP : saisie par stage (2ᵉ et 3ᵉ année).
+                </span>
+            </div>
+        </div>
+        <div id="tuteurs-content"><div class="empty">Sélectionnez une promotion.</div></div>
     </div>
     <div id="promo-tab-groupes" style="display:none">
         <div class="toolbar">
@@ -2256,6 +2271,7 @@ function showPromoTab(tab) {
         document.getElementById('promo-tab-' + t).style.display = tab === t ? '' : 'none';
     });
     if (tab === 'effectif') loadEffectif();
+    else if (tab === 'tuteurs') loadTuteurs();
     else if (tab === 'notes') loadNotes();
     else if (tab === 'jury') loadJuryGrid();
     else if (tab === 'calendrier') loadCalendrier();
@@ -3139,6 +3155,7 @@ async function onPromoChange() {
     if (!id) {
         _promoId = null; _promoData = null; _effData = null; _togglePromoButtons(false);
         loadEffectif();
+        loadTuteurs();
         loadNotesGrid();
         loadJuryGrid();
         return;
@@ -3151,10 +3168,11 @@ async function onPromoChange() {
     // Présélection de l'année de progression = celle correspondant à l'année
     // universitaire choisie en haut à droite (répartition calendaire courante).
     const yg = _ygForTopYear(_promoData.promotion.start_year);
-    _calYG = yg; _grpYG = yg; _effYear = yg;
+    _calYG = yg; _grpYG = yg; _effYear = yg; _tutYear = yg;
     _togglePromoButtons(true);
     loadEffectif();
-    if (_promoTab === 'notes') loadNotesGrid();
+    if (_promoTab === 'tuteurs') loadTuteurs();
+    else if (_promoTab === 'notes') loadNotesGrid();
     else if (_promoTab === 'jury') loadJuryGrid();
     else if (_promoTab === 'calendrier') loadCalendrier();
     else if (_promoTab === 'groupes') loadPromoGroups();
@@ -3219,6 +3237,121 @@ async function loadEffectif() {
 function onEffYearChange() {
     _effYear = parseInt(document.getElementById('eff-year-select').value || '1') || 1;
     loadEffectif();
+}
+
+// ===== SOUS-ONGLET TUTEURS (universitaire + entreprise, par étudiant) =====
+// ALT : la saisie d'une année reste valable les suivantes sauf changement
+// (badge « hérité »). FTP : saisie par stage, uniquement sur l'année affichée.
+let _tutYear = 1;
+let _tutData = null;
+
+function onTutYearChange() {
+    _tutYear = parseInt(document.getElementById('tut-year-select').value || '1') || 1;
+    loadTuteurs();
+}
+
+async function loadTuteurs() {
+    const el = document.getElementById('tuteurs-content');
+    const sel = document.getElementById('tut-year-select');
+    if (!_promoId) {
+        _tutData = null;
+        if (sel) sel.innerHTML = '';
+        el.innerHTML = '<div class="empty">Sélectionnez une promotion.</div>';
+        return;
+    }
+    if (sel) sel.innerHTML = [1, 2, 3].map(y =>
+        `<option value="${y}" ${y === _tutYear ? 'selected' : ''}>${_effYearLabel(y)}</option>`).join('');
+    el.innerHTML = '<div class="spinner">Chargement…</div>';
+    try {
+        // Liste des enseignants de l'année active pour le tuteur universitaire
+        const [teachers, data] = await Promise.all([
+            api('/teachers'), api(`/promotions/${_promoId}/tuteurs/${_tutYear}`)
+        ]);
+        _tutData = data;
+        _tutData.teachers = teachers.map(t => t.name).sort((a, b) => a.localeCompare(b));
+        renderTuteurs();
+    } catch (e) {
+        el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
+    }
+}
+
+function renderTuteurs() {
+    const d = _tutData;
+    const el = document.getElementById('tuteurs-content');
+    if (!d || !d.students.length) {
+        el.innerHTML = '<div class="empty">Aucun étudiant dans l\'effectif de cette année.</div>';
+        return;
+    }
+    const univOptions = cur => '<option value="">—</option>'
+        + d.teachers.map(n => `<option value="${esc(n)}"${n === cur ? ' selected' : ''}>${esc(n)}</option>`).join('')
+        // Tuteur enregistré mais absent de la liste (ancien enseignant) : conservé
+        + (cur && !d.teachers.includes(cur) ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : '');
+    const inputStyle = 'width:95%;padding:4px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:.82rem';
+    const section = (title, subtitle, list) => {
+        if (!list.length) return '';
+        const rows = list.map((s, i) => `<tr data-tut-sid="${s.id}">
+            <td style="color:#9ca3af">${i + 1}</td>
+            <td><strong>${esc(s.nom || '')}</strong></td>
+            <td>${esc(s.prenom || '')}</td>
+            <td><select class="tut-univ" onchange="saveTuteurRow(${s.id})"
+                style="padding:4px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:.82rem;max-width:180px">${univOptions(s.tuteur_univ)}</select></td>
+            <td><input class="tut-ent" value="${esc(s.tuteur_entreprise)}" onchange="saveTuteurRow(${s.id})"
+                placeholder="Nom du tuteur" style="${inputStyle}"></td>
+            <td><input class="tut-soc" value="${esc(s.entreprise)}" onchange="saveTuteurRow(${s.id})"
+                placeholder="Entreprise / organisme" style="${inputStyle}"></td>
+            <td class="tut-badge" style="font-size:.72rem;color:#6b7280;white-space:nowrap">${
+                s.inherited_from ? `hérité de l'année ${s.inherited_from}` : ''}</td>
+        </tr>`).join('');
+        return `<h3 style="margin:14px 0 4px;color:#374151">${title}
+                <span style="font-weight:400;font-size:.8rem;color:#6b7280">${subtitle}</span></h3>
+            <div style="overflow:auto;max-height:38vh;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px">
+            <table class="pn-table" style="table-layout:auto;width:100%">
+                <thead><tr><th style="width:36px">#</th><th>Nom</th><th>Prénom</th>
+                    <th style="width:190px">Tuteur universitaire</th>
+                    <th style="width:190px">Tuteur entreprise</th>
+                    <th style="width:190px">Entreprise</th>
+                    <th style="width:130px"></th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table></div>`;
+    };
+    const alt = d.students.filter(s => s.formation === 'ALT');
+    const ftp = d.students.filter(s => s.formation !== 'ALT');
+    let html = section('ALT — Alternants',
+        'saisie conservée les années suivantes sauf changement', alt);
+    if (_tutYear >= 2) {
+        html += section(`FTP — Stage ${_tutYear}ᵉ année`,
+            'saisie propre à ce stage (pas de report)', ftp);
+    } else if (ftp.length) {
+        html += `<h3 style="margin:14px 0 4px;color:#374151">FTP</h3>
+            <div class="empty" style="margin:6px 0">Pas de stage en 1ʳᵉ année — les tuteurs FTP se saisissent
+            sur l'année 2 et l'année 3.</div>`;
+    }
+    el.innerHTML = html || '<div class="empty">Aucun étudiant.</div>';
+}
+
+async function saveTuteurRow(sid) {
+    const row = document.querySelector(`tr[data-tut-sid="${sid}"]`);
+    if (!row) return;
+    const body = {
+        tuteur_univ: row.querySelector('.tut-univ').value,
+        tuteur_entreprise: row.querySelector('.tut-ent').value.trim(),
+        entreprise: row.querySelector('.tut-soc').value.trim(),
+    };
+    try {
+        await api(`/promotions/${_promoId}/tuteurs/${_tutYear}/${sid}`,
+            { method: 'PUT', body: JSON.stringify(body) });
+        const badge = row.querySelector('.tut-badge');
+        if (!body.tuteur_univ && !body.tuteur_entreprise && !body.entreprise) {
+            // Tout effacé : un ALT peut retomber sur la valeur héritée → recharger
+            loadTuteurs();
+        } else if (badge) {
+            badge.textContent = ''; // la saisie de cette année remplace l'héritage
+        }
+        toast('Tuteurs enregistrés');
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+        loadTuteurs();
+    }
 }
 
 async function reportEffectifYear() {

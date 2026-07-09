@@ -794,6 +794,24 @@ def _apply_promotions_migrations(db):
     # Statuts simplifiés (Actif / RED / Abandon) : migre les anciennes valeurs.
     db.execute("UPDATE promotion_students SET statut='RED' WHERE statut='Redoublant'")
     db.execute("UPDATE promotion_students SET statut='Abandon' WHERE statut='Sortie'")
+    # Tuteurs (universitaire + entreprise) par étudiant et par année d'étude.
+    # ALT : la ligne la plus récente ≤ année affichée s'applique (héritage sauf
+    # changement) ; FTP (stages 2e/3e année) : uniquement la ligne de l'année exacte.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS student_tutors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            promotion_id INTEGER NOT NULL,
+            student_id INTEGER NOT NULL,
+            year INTEGER NOT NULL CHECK (year IN (1, 2, 3)),
+            tuteur_univ TEXT,
+            tuteur_entreprise TEXT,
+            entreprise TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (student_id, year),
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
     db.commit()
     _merge_formation_promotions(db)
 
@@ -2872,6 +2890,80 @@ def get_year_effectif(pid, year):
     if not payload:
         return error_response('Promotion introuvable', 404)
     return jsonify(payload)
+
+@app.route('/api/promotions/<int:pid>/tuteurs/<int:year>', methods=['GET'])
+def get_year_tuteurs(pid, year):
+    """Tuteurs (universitaire + entreprise) de l'effectif d'une année.
+    ALT : une saisie faite une année reste valable les années suivantes tant
+    qu'elle n'est pas remplacée (inherited_from = année d'origine). FTP : la
+    saisie vaut uniquement pour l'année du stage (pas de report)."""
+    err = _require_admin()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    pdb = get_promotions_db()
+    payload = _year_effectif_payload(pdb, pid, year)
+    if not payload:
+        return error_response('Promotion introuvable', 404)
+    by_student = {}
+    for r in pdb.execute('''SELECT student_id, year, tuteur_univ, tuteur_entreprise, entreprise
+                            FROM student_tutors WHERE promotion_id = ? AND year <= ?''',
+                         (pid, year)):
+        by_student.setdefault(r['student_id'], {})[r['year']] = r
+    students = []
+    for s in payload['students']:
+        t = by_student.get(s['id'], {})
+        entry, inherited = None, None
+        if year in t:
+            entry = t[year]
+        elif (s.get('formation') or 'FTP') == 'ALT' and t:
+            prev = max(t.keys())
+            entry, inherited = t[prev], prev
+        students.append({
+            'id': s['id'], 'numero': s['numero'], 'nom': s['nom'], 'prenom': s['prenom'],
+            'formation': s.get('formation') or 'FTP', 'statut': s['statut'],
+            'tuteur_univ': (entry['tuteur_univ'] if entry else '') or '',
+            'tuteur_entreprise': (entry['tuteur_entreprise'] if entry else '') or '',
+            'entreprise': (entry['entreprise'] if entry else '') or '',
+            'inherited_from': inherited,
+        })
+    return jsonify({'year': year, 'students': students,
+                    'subcohorts': payload['subcohorts']})
+
+@app.route('/api/promotions/<int:pid>/tuteurs/<int:year>/<int:sid>', methods=['PUT'])
+def set_year_tuteurs(pid, year, sid):
+    """Enregistre les tuteurs d'un étudiant pour une année d'étude. Tous les
+    champs vides → suppression de la ligne de l'année (un ALT retombe alors sur
+    la valeur héritée de l'année précédente, s'il y en a une)."""
+    err = _require_admin()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotion_students WHERE id = ? AND promotion_id = ?',
+                       (sid, pid)).fetchone():
+        return error_response('Étudiant introuvable', 404)
+    data = request.get_json() or {}
+    tu = (data.get('tuteur_univ') or '').strip()
+    te = (data.get('tuteur_entreprise') or '').strip()
+    en = (data.get('entreprise') or '').strip()
+    if not (tu or te or en):
+        pdb.execute('DELETE FROM student_tutors WHERE promotion_id = ? AND student_id = ? AND year = ?',
+                    (pid, sid, year))
+    else:
+        pdb.execute('''INSERT INTO student_tutors
+                           (promotion_id, student_id, year, tuteur_univ, tuteur_entreprise, entreprise)
+                       VALUES (?, ?, ?, ?, ?, ?)
+                       ON CONFLICT (student_id, year) DO UPDATE SET
+                           tuteur_univ = excluded.tuteur_univ,
+                           tuteur_entreprise = excluded.tuteur_entreprise,
+                           entreprise = excluded.entreprise,
+                           updated_at = CURRENT_TIMESTAMP''',
+                    (pid, sid, year, tu, te, en))
+    pdb.commit()
+    return jsonify({'message': 'Tuteurs enregistrés'})
 
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>/students', methods=['POST'])
 def add_year_student(pid, year):
