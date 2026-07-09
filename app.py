@@ -812,6 +812,38 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
         )
     ''')
+    # Saisie des notes PAR SOUS-MATIÈRE (onglet Saisie Notes, enseignants).
+    # La note matière (student_marks) = moyenne pondérée des sous-notes,
+    # recalculée automatiquement quand toutes les sous-notes comptées sont là.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS submatiere_marks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            promotion_id INTEGER NOT NULL,
+            semester TEXT NOT NULL,
+            student_id INTEGER NOT NULL,
+            code TEXT NOT NULL,             -- code de la sous-matière (ex R1.05a)
+            note REAL,
+            mention TEXT,                   -- 'ABI' (compte 0 dans la moyenne)
+            UNIQUE (promotion_id, semester, student_id, code),
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
+    # Pondération (définie par le référent de la matière) + statut provisoire/
+    # définitif de chaque colonne de saisie, par face FTP/ALT. Pondération
+    # absente = 1 ; 0 = sous-matière exclue (pas de note à saisir).
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS submatiere_meta (
+            promotion_id INTEGER NOT NULL,
+            semester TEXT NOT NULL,
+            formation TEXT NOT NULL CHECK (formation IN ('FTP', 'ALT')),
+            code TEXT NOT NULL,
+            weight REAL,
+            definitive INTEGER DEFAULT 0,
+            UNIQUE (promotion_id, semester, formation, code),
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE
+        )
+    ''')
     db.commit()
     _merge_formation_promotions(db)
 
@@ -1407,12 +1439,19 @@ import re as _re
 _COURSE_CONTENT_RE = _re.compile(r'^/api/courses/\d+/content$')
 # Reconnaît /api/constraints/me[...] (l'enseignant gère SES propres contraintes)
 _CONSTRAINTS_SELF_RE = _re.compile(r'^/api/constraints/me(/file)?$')
+# Reconnaît la saisie de notes par sous-matière (onglet Saisie Notes) : ouverte
+# aux enseignants avec promo_access, l'autorisation fine (colonne éditable,
+# référent) est vérifiée dans les handlers.
+_SAISIE_WRITE_RE = _re.compile(r'^/api/promotions/\d+/saisie/S[1-6]/(notes|weights)$')
 
 def _is_course_content_path(path):
     return bool(_COURSE_CONTENT_RE.match(path))
 
 def _is_constraints_self_path(path):
     return bool(_CONSTRAINTS_SELF_RE.match(path))
+
+def _is_saisie_write_path(path):
+    return bool(_SAISIE_WRITE_RE.match(path))
 
 def teacher_intervenes_in_course(course_id, teacher_name):
     """Vrai si l'enseignant (par nom) intervient dans une session de la matière."""
@@ -1497,7 +1536,8 @@ def _require_auth():
     if role != 'admin' and request.method not in ('GET', 'HEAD'):
         # Exception : l'enseignant intervenant peut éditer le contenu de SA matière.
         # L'autorisation fine (intervenant ou non) est vérifiée dans le handler.
-        if role == 'teacher' and (_is_course_content_path(path) or _is_constraints_self_path(path)):
+        if role == 'teacher' and (_is_course_content_path(path) or _is_constraints_self_path(path)
+                                  or (_is_saisie_write_path(path) and session.get('promo_access'))):
             return
         # Le choix de l'année universitaire est personnel à la session : autorisé à tous
         if path == '/api/years/session':
@@ -4181,6 +4221,28 @@ def _visible_note_components(components, competences):
     return [m for m in (components or [])
             if m.get('kind') in ('BONUS', 'PEN') or m.get('code') in codes]
 
+def _semester_roster(pdb, pid, semester, formation=None, comp=None):
+    """Étudiants d'une grille de notes d'un semestre : effectif de l'année
+    correspondante (report auto + ajustements), sous-cohorte résolue pour
+    l'année, filtre optionnel FTP/ALT. Renvoie (students, comp jury)."""
+    year = (int(semester[1:]) + 1) // 2   # 1,1,2,2,3,3
+    students = [dict(r) for r in pdb.execute(
+        '''SELECT id, numero, nom, prenom, statut, formation FROM promotion_students
+           WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,))]
+    if comp is None:
+        comp = _jury_compute(pdb, pid)
+    roster = _year_rosters(pdb, pid, comp).get(year, set())
+    fm = _year_formation_map(pdb, pid, year)
+    kept = []
+    for s in students:
+        if s['id'] not in roster:
+            continue
+        s['formation'] = fm.get(s['id'], s.get('formation') or 'FTP')
+        if formation in _SUBCOHORTS and s['formation'] != formation:
+            continue
+        kept.append(s)
+    return kept, comp
+
 def _promo_notes_payload(pdb, pid, semester, formation=None):
     """Construit le tableau de notes : étudiants (effectif) × matières (référence),
     notes saisies, moyennes de compétences, rappels (semestre antérieur / année précédente)
@@ -4192,9 +4254,6 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     # Matières sans coefficient dans le programme (Aide à la réussite, Portfolio impair…)
     # → masquées de la grille de notes.
     components = _visible_note_components(ref.get('components', []), competences)
-    students = [dict(r) for r in pdb.execute(
-        '''SELECT id, numero, nom, prenom, statut, formation FROM promotion_students
-           WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,))]
     marks = {}
     for r in pdb.execute('''SELECT student_id, matiere_code, note, mention FROM student_marks
                             WHERE promotion_id=? AND semester=? AND note IS NOT NULL''', (pid, semester)):
@@ -4203,20 +4262,9 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     sem_num = int(semester[1:])
     year = (sem_num + 1) // 2   # 1,1,2,2,3,3
     # Décisions de jury par année (ADM/ADMJ/AJAC/AJ/RED) — servent de « statut » dans la grille
-    comp = _jury_compute(pdb, pid)
+    # + effectif de l'année (report auto + ajustements) et sous-cohorte propre à l'année
+    students, comp = _semester_roster(pdb, pid, semester, formation)
     dec = comp['decisions']
-    # Effectif de l'année (report auto + ajustements) et sous-cohorte propre à l'année
-    roster = _year_rosters(pdb, pid, comp).get(year, set())
-    fm = _year_formation_map(pdb, pid, year)
-    kept = []
-    for s in students:
-        if s['id'] not in roster:
-            continue
-        s['formation'] = fm.get(s['id'], s.get('formation') or 'FTP')
-        if formation in _SUBCOHORTS and s['formation'] != formation:
-            continue
-        kept.append(s)
-    students = kept
     # Rappels : toutes les années précédentes (moyennes annuelles) puis le semestre antérieur.
     # kind ('year'/'semester') + year/sem servent au front pour grouper et coder les colonnes (UExy/UExNy).
     previous = []
@@ -4244,6 +4292,9 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     year_averages, year_competences = _year_competence_averages(pdb, pid, s_odd, s_even, ref_all)
     return {'semester': semester, 'year': year, 'components': components,
             'competences': [{'name': c.get('name', ''), 'coeffs': c.get('coeffs', {})} for c in competences],
+            # Statut de la saisie enseignant par matière (Saisie Notes) :
+            # 'provisoire' / 'definitif' — indicateur affiché dans Bulletins
+            'saisie_status': _saisie_status(pdb, pid, semester, formation),
             'students': students, 'marks': marks, 'averages': averages, 'previous': previous,
             'year_semesters': [s_odd, s_even], 'year_competences': year_competences,
             'year_averages': year_averages,
@@ -4344,6 +4395,344 @@ def delete_promotion_notes(pid, semester):
     payload = _promo_notes_payload(pdb, pid, semester, formation)
     payload['delete_report'] = {'deleted': deleted}
     return jsonify(payload)
+
+# ===== SAISIE NOTES (onglet Saisie Notes : notes par SOUS-MATIÈRE, enseignants) =====
+# Chaque enseignant (connecté avec mot de passe → promo_access) saisit les notes
+# des sous-matières qu'il a en charge. La note matière (student_marks, onglet
+# Bulletins) = moyenne pondérée des sous-notes ; le RÉFÉRENT de la matière
+# ([[referents]] de l'année) définit la pondération (0 = sous-matière exclue,
+# pas de note à saisir). Statut provisoire/définitif par colonne (sous-matière
+# × face). La note matière reportée reste modifiable par l'admin.
+
+def _promo_semester_year(pdb, pid, semester):
+    """Année universitaire (AAAA-AAAA) correspondant au semestre d'une promotion."""
+    p = pdb.execute('SELECT start_year FROM promotions WHERE id=?', (pid,)).fetchone()
+    if not p:
+        return None
+    y = p['start_year'] + (int(semester[1:]) + 1) // 2 - 1
+    return f'{y}-{y + 1}'
+
+def _saisie_groups(ydb, semester, formation):
+    """Sous-matières (courses) d'un semestre de la base année, groupées par
+    matière (_mat_base_key). Pour chaque sous-matière : enseignants actifs de
+    la face demandée, `on_face` (a des séances sur la face) et `any_session`
+    (a des séances tout court) — une sous-matière sans séance sur la face ne
+    compte pas dans la moyenne de cette face (sauf si elle n'a aucune séance :
+    saisie admin possible sur les deux faces)."""
+    fts = (0, 2) if formation == 'FTP' else (1, 2)
+    subs = {}
+    for r in ydb.execute('''SELECT c.id, c.code, c.name FROM courses c
+                            JOIN semesters s ON s.id = c.semester_id
+                            WHERE s.code = ?''', (semester,)):
+        subs[r['id']] = {'code': r['code'], 'name': r['name'],
+                         'teachers': set(), 'on_face': False, 'any_session': False}
+    for r in ydb.execute('''SELECT cs.course_id, cs.formation_type, t.name
+                            FROM course_sessions cs JOIN teachers t ON t.id = cs.teacher_id
+                            WHERE cs.nb_sessions > 0 OR cs.total_hours > 0'''):
+        c = subs.get(r['course_id'])
+        if not c:
+            continue
+        c['any_session'] = True
+        if r['formation_type'] in fts:
+            c['on_face'] = True
+            c['teachers'].add(r['name'])
+    groups = {}
+    for c in subs.values():
+        groups.setdefault(_mat_base_key(c['code']), []).append(c)
+    return groups
+
+def _saisie_counted(c, weight):
+    """Une sous-matière compte dans la moyenne de la face si elle y a des
+    séances (ou n'en a nulle part) et que sa pondération est > 0."""
+    return (c['on_face'] or not c['any_session']) and weight > 0
+
+def _saisie_payload(pdb, pid, semester, formation, teacher_name=None):
+    """Grille de saisie : étudiants (sous-cohorte) × sous-matières groupées par
+    matière. `teacher_name` (enseignant connecté) restreint aux matières où il
+    intervient : ses colonnes sont éditables, les autres visibles en lecture
+    seule (notes + pondérations). Admin (teacher_name=None) : tout éditable."""
+    year_label = _promo_semester_year(pdb, pid, semester)
+    path = db_path_for_year(year_label) if year_label else None
+    base = {'semester': semester, 'formation': formation, 'year': year_label}
+    if not (path and os.path.isfile(path)):
+        return {**base, 'available': False, 'groups': [], 'students': [],
+                'marks': {}, 'official': {}}
+    ydb = _open_connection(path)
+    try:
+        groups_raw = _saisie_groups(ydb, semester, formation)
+        refs = _matiere_referents(ydb)
+    finally:
+        ydb.close()
+    ref = (_promo_coeffs(pdb, pid) or {}).get(semester) or {}
+    components = _visible_note_components(ref.get('components', []), ref.get('competences', []))
+    comp_by_code = {c.get('code'): c for c in components if c.get('code')}
+    students, _ = _semester_roster(pdb, pid, semester, formation)
+    meta = {r['code']: r for r in pdb.execute(
+        '''SELECT code, weight, definitive FROM submatiere_meta
+           WHERE promotion_id=? AND semester=? AND formation=?''', (pid, semester, formation))}
+    tkey = (teacher_name or '').strip().lower()
+    out_groups = []
+    for key in sorted(groups_raw):
+        compo = comp_by_code.get(key)
+        if not compo:
+            continue   # matière hors référence (Bonus, Aide à la réussite…) : pas de note
+        r = (refs.get(key) or {}).get(formation) or {}
+        referent = r.get('name')
+        is_ref = bool(tkey) and bool(referent) and referent.strip().lower() == tkey
+        mine, subs = False, []
+        for c in sorted(groups_raw[key], key=lambda x: x['code']):
+            m = meta.get(c['code'])
+            w = m['weight'] if (m and m['weight'] is not None) else 1.0
+            teaches = bool(tkey) and any(t.strip().lower() == tkey for t in c['teachers'])
+            mine = mine or teaches
+            subs.append({'code': c['code'], 'name': c['name'],
+                         'teachers': sorted(c['teachers']),
+                         'weight': w, 'counted': _saisie_counted(c, w),
+                         # face_ok : la sous-matière existe sur la face (sert au
+                         # recalcul live côté client quand la pondération change)
+                         'face_ok': c['on_face'] or not c['any_session'],
+                         'definitive': bool(m and m['definitive']),
+                         'editable': (teacher_name is None or teaches) and _saisie_counted(c, w)})
+        if teacher_name is not None and not (mine or is_ref):
+            continue   # l'enseignant ne voit que les matières dont il a la charge
+        out_groups.append({'key': key,
+                           'label': compo.get('short_label') or compo.get('label') or key,
+                           'referent': referent,
+                           'is_referent': teacher_name is None or is_ref,
+                           'subs': subs})
+    codes = {s['code'] for grp in out_groups for s in grp['subs']}
+    sids = {s['id'] for s in students}
+    marks = {}
+    for r in pdb.execute('''SELECT student_id, code, note, mention FROM submatiere_marks
+                            WHERE promotion_id=? AND semester=? AND note IS NOT NULL''',
+                         (pid, semester)):
+        if r['student_id'] in sids and r['code'] in codes:
+            marks[f"{r['student_id']}_{r['code']}"] = r['mention'] if r['mention'] else r['note']
+    keys = {grp['key'] for grp in out_groups}
+    official = {}   # note matière actuelle (Bulletins) — affichée à côté de la moyenne calculée
+    for r in pdb.execute('''SELECT student_id, matiere_code, note, mention FROM student_marks
+                            WHERE promotion_id=? AND semester=? AND note IS NOT NULL''',
+                         (pid, semester)):
+        if r['student_id'] in sids and r['matiere_code'] in keys:
+            official[f"{r['student_id']}_{r['matiere_code']}"] = r['mention'] if r['mention'] else r['note']
+    return {**base, 'available': True, 'groups': out_groups, 'students': students,
+            'marks': marks, 'official': official}
+
+def _recompute_matiere_marks(pdb, pid, semester, keys):
+    """Reporte la moyenne pondérée des sous-notes dans la note matière
+    (student_marks, utilisée par Bulletins/Jury) pour les matières `keys` —
+    seulement quand TOUTES les sous-matières comptées (pondération > 0 sur la
+    face de l'étudiant) ont une note. La note reportée reste modifiable par
+    l'admin (écrasée au prochain enregistrement de saisie de la matière)."""
+    year_label = _promo_semester_year(pdb, pid, semester)
+    path = db_path_for_year(year_label) if year_label else None
+    if not keys or not (path and os.path.isfile(path)):
+        return
+    ydb = _open_connection(path)
+    try:
+        by_face = {f: _saisie_groups(ydb, semester, f) for f in _SUBCOHORTS}
+    finally:
+        ydb.close()
+    students, _ = _semester_roster(pdb, pid, semester)
+    weights = {(r['formation'], r['code']): r['weight'] for r in pdb.execute(
+        '''SELECT formation, code, weight FROM submatiere_meta
+           WHERE promotion_id=? AND semester=?''', (pid, semester))}
+    notes = {(r['student_id'], r['code']): r['note'] for r in pdb.execute(
+        '''SELECT student_id, code, note FROM submatiere_marks
+           WHERE promotion_id=? AND semester=? AND note IS NOT NULL''', (pid, semester))}
+    for s in students:
+        f = s['formation'] if s['formation'] in _SUBCOHORTS else 'FTP'
+        for key in keys:
+            wsubs = []
+            for c in by_face[f].get(key) or []:
+                w = weights.get((f, c['code']))
+                w = 1.0 if w is None else w
+                if _saisie_counted(c, w):
+                    wsubs.append((c['code'], w))
+            if not wsubs:
+                continue
+            vals = [(notes.get((s['id'], code)), w) for code, w in wsubs]
+            if any(n is None for n, _ in vals):
+                continue   # saisie incomplète : la note matière n'est pas touchée
+            avg = round(sum(n * w for n, w in vals) / sum(w for _, w in vals), 2)
+            pdb.execute('''INSERT INTO student_marks(promotion_id, semester, student_id, matiere_code, note, mention)
+                           VALUES(?,?,?,?,?,NULL)
+                           ON CONFLICT(promotion_id, semester, student_id, matiere_code)
+                           DO UPDATE SET note=excluded.note, mention=NULL''',
+                        (pid, semester, s['id'], key, avg))
+    pdb.commit()
+
+def _saisie_status(pdb, pid, semester, formation):
+    """{matiere_code: 'definitif'|'provisoire'} pour les matières dont des
+    sous-notes ont été saisies (indicateur affiché dans Bulletins)."""
+    if formation not in _SUBCOHORTS:
+        return {}
+    year_label = _promo_semester_year(pdb, pid, semester)
+    path = db_path_for_year(year_label) if year_label else None
+    if not (path and os.path.isfile(path)):
+        return {}
+    ydb = _open_connection(path)
+    try:
+        groups = _saisie_groups(ydb, semester, formation)
+    finally:
+        ydb.close()
+    meta = {r['code']: r for r in pdb.execute(
+        '''SELECT code, weight, definitive FROM submatiere_meta
+           WHERE promotion_id=? AND semester=? AND formation=?''', (pid, semester, formation))}
+    with_marks = {r['code'] for r in pdb.execute(
+        '''SELECT DISTINCT m.code FROM submatiere_marks m
+           JOIN promotion_students ps ON ps.id = m.student_id
+           WHERE m.promotion_id=? AND m.semester=? AND ps.formation=?''',
+        (pid, semester, formation))}
+    out = {}
+    for key, subs in groups.items():
+        counted = []
+        for c in subs:
+            m = meta.get(c['code'])
+            w = m['weight'] if (m and m['weight'] is not None) else 1.0
+            if _saisie_counted(c, w):
+                counted.append(c['code'])
+        if not counted or not any(code in with_marks for code in counted):
+            continue   # aucune saisie enseignant sur cette matière
+        alldef = all(meta.get(code) and meta[code]['definitive'] for code in counted)
+        out[key] = 'definitif' if alldef else 'provisoire'
+    return out
+
+def _saisie_teacher_ctx():
+    """(teacher_name, err) : None pour l'admin (tous droits) ; nom de
+    l'enseignant si connecté avec mot de passe (promo_access) ; 403 sinon."""
+    role = session.get('role')
+    if role == 'admin':
+        return None, None
+    if role == 'teacher' and session.get('promo_access'):
+        return session.get('teacher_name') or '', None
+    return None, error_response('Accès réservé', 403)
+
+@app.route('/api/promotions/<int:pid>/saisie/<semester>', methods=['GET'])
+def get_promotion_saisie(pid, semester):
+    teacher, err = _saisie_teacher_ctx()
+    if err:
+        return err
+    if semester not in _PROMO_SEMESTERS:
+        return error_response('Semestre invalide', 400)
+    formation = (request.args.get('formation') or 'FTP').strip().upper()
+    if formation not in _SUBCOHORTS:
+        return error_response('Sous-cohorte invalide', 400)
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    return jsonify(_saisie_payload(pdb, pid, semester, formation, teacher))
+
+@app.route('/api/promotions/<int:pid>/saisie/<semester>/notes', methods=['PUT'])
+def save_promotion_saisie(pid, semester):
+    """Enregistre des colonnes de saisie {formation, columns: [{code, notes:
+    {student_id: note|''|ABI}, definitive}]}. Un enseignant ne peut écrire que
+    les colonnes marquées éditables pour lui (il enseigne la sous-matière sur
+    la face et la pondération est > 0) ; l'admin peut tout écrire."""
+    teacher, err = _saisie_teacher_ctx()
+    if err:
+        return err
+    if semester not in _PROMO_SEMESTERS:
+        return error_response('Semestre invalide', 400)
+    data = request.get_json() or {}
+    formation = (data.get('formation') or '').strip().upper()
+    if formation not in _SUBCOHORTS:
+        return error_response('Sous-cohorte invalide', 400)
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    payload = _saisie_payload(pdb, pid, semester, formation, teacher)
+    editable = {s['code']: grp['key'] for grp in payload['groups']
+                for s in grp['subs'] if s['editable']}
+    valid_sids = {s['id'] for s in payload['students']}
+    keys = set()
+    for col in (data.get('columns') or []):
+        code = (col.get('code') or '').strip()
+        if code not in editable:
+            return error_response(f'Sous-matière {code} non modifiable', 403)
+        keys.add(editable[code])
+        for sid_s, val in (col.get('notes') or {}).items():
+            try:
+                sid = int(sid_s)
+            except (TypeError, ValueError):
+                continue
+            if sid not in valid_sids:
+                continue
+            if val in (None, ''):
+                pdb.execute('''DELETE FROM submatiere_marks WHERE promotion_id=?
+                               AND semester=? AND student_id=? AND code=?''',
+                            (pid, semester, sid, code))
+                continue
+            if isinstance(val, str) and val.strip().upper() == 'ABI':
+                note, mention = 0.0, 'ABI'
+            else:
+                try:
+                    note, mention = float(val), None
+                except (TypeError, ValueError):
+                    continue
+            pdb.execute('''INSERT INTO submatiere_marks(promotion_id, semester, student_id, code, note, mention)
+                           VALUES(?,?,?,?,?,?)
+                           ON CONFLICT(promotion_id, semester, student_id, code)
+                           DO UPDATE SET note=excluded.note, mention=excluded.mention''',
+                        (pid, semester, sid, code, note, mention))
+        if 'definitive' in col:
+            pdb.execute('''INSERT INTO submatiere_meta(promotion_id, semester, formation, code, weight, definitive)
+                           VALUES(?,?,?,?,NULL,?)
+                           ON CONFLICT(promotion_id, semester, formation, code)
+                           DO UPDATE SET definitive=excluded.definitive''',
+                        (pid, semester, formation, code, 1 if col.get('definitive') else 0))
+    pdb.commit()
+    _recompute_matiere_marks(pdb, pid, semester, keys)
+    _reconcile_red_transfers(pdb, pid)
+    _audit('SAISIE_NOTES', ip=_client_ip(), user=session.get('user'),
+           promo=pid, semester=semester, formation=formation,
+           cols=len(data.get('columns') or []))
+    return jsonify(_saisie_payload(pdb, pid, semester, formation, teacher))
+
+@app.route('/api/promotions/<int:pid>/saisie/<semester>/weights', methods=['PUT'])
+def save_promotion_saisie_weights(pid, semester):
+    """Pondérations d'une matière {formation, matiere_key, weights: {code: w}}.
+    Réservé à l'admin et au RÉFÉRENT de la matière sur cette face (w >= 0 ;
+    0 exclut la sous-matière de la moyenne et de la saisie)."""
+    teacher, err = _saisie_teacher_ctx()
+    if err:
+        return err
+    if semester not in _PROMO_SEMESTERS:
+        return error_response('Semestre invalide', 400)
+    data = request.get_json() or {}
+    formation = (data.get('formation') or '').strip().upper()
+    if formation not in _SUBCOHORTS:
+        return error_response('Sous-cohorte invalide', 400)
+    key = (data.get('matiere_key') or '').strip()
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    payload = _saisie_payload(pdb, pid, semester, formation, teacher)
+    grp = next((x for x in payload['groups'] if x['key'] == key), None)
+    if not grp:
+        return error_response('Matière introuvable', 404)
+    if not grp['is_referent']:
+        return error_response('Réservé au référent de la matière', 403)
+    codes = {s['code'] for s in grp['subs']}
+    for code, w in (data.get('weights') or {}).items():
+        if code not in codes:
+            continue
+        try:
+            w = float(w)
+        except (TypeError, ValueError):
+            return error_response(f'Pondération invalide pour {code}')
+        if w < 0:
+            return error_response('Une pondération ne peut pas être négative')
+        pdb.execute('''INSERT INTO submatiere_meta(promotion_id, semester, formation, code, weight, definitive)
+                       VALUES(?,?,?,?,?,0)
+                       ON CONFLICT(promotion_id, semester, formation, code)
+                       DO UPDATE SET weight=excluded.weight''',
+                    (pid, semester, formation, code, w))
+    pdb.commit()
+    _recompute_matiere_marks(pdb, pid, semester, {key})
+    _audit('SAISIE_WEIGHTS', ip=_client_ip(), user=session.get('user'),
+           promo=pid, semester=semester, formation=formation, matiere=key)
+    return jsonify(_saisie_payload(pdb, pid, semester, formation, teacher))
 
 def _cell_txt(v):
     return ('' if v is None else str(v)).strip()

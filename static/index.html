@@ -19,6 +19,7 @@
         main:has(#page-programme.active) { max-width: none; }
         /* Onglet Jury : large tableau (UE × 4 colonnes) → pleine largeur si nécessaire */
         main:has(#page-promotions.active #promo-subtab-jury.active) { max-width: none; }
+        main:has(#page-promotions.active #promo-subtab-saisie.active) { max-width: none; }
 
         .page { display: none; }
         .page.active { display: block; }
@@ -496,7 +497,8 @@
         <button type="button" id="promo-subtab-tuteurs" class="subtab" onclick="showPromoTab('tuteurs')">Tuteurs</button>
         <button type="button" id="promo-subtab-groupes" class="subtab" onclick="showPromoTab('groupes')">Groupes</button>
         <button type="button" id="promo-subtab-calendrier" class="subtab" onclick="showPromoTab('calendrier')">Calendrier</button>
-        <button type="button" id="promo-subtab-notes" class="subtab" onclick="showPromoTab('notes')">Notes</button>
+        <button type="button" id="promo-subtab-saisie" class="subtab" onclick="showPromoTab('saisie')">Saisie Notes</button>
+        <button type="button" id="promo-subtab-notes" class="subtab" onclick="showPromoTab('notes')">Bulletins</button>
         <button type="button" id="promo-subtab-jury" class="subtab" onclick="showPromoTab('jury')">Jury</button>
         <button type="button" id="promo-subtab-actions" class="subtab" onclick="showPromoTab('actions')">Actions</button>
     </div>
@@ -608,6 +610,28 @@
             <button class="btn btn-primary" onclick="openNewPromotion()">+ Nouvelle promotion</button>
             <button class="btn btn-secondary" id="promo-delete-btn" onclick="deletePromotion()" disabled>🗑 Supprimer la promotion sélectionnée</button>
         </div>
+    </div>
+    <div id="promo-tab-saisie" style="display:none">
+        <div class="toolbar">
+            <div class="filters">
+                <label>Sous-cohorte :</label>
+                <select id="saisie-sub-select" onchange="loadSaisieGrid()">
+                    <option value="FTP">FTP</option><option value="ALT">ALT</option>
+                </select>
+                <label style="margin-left:12px">Semestre :</label>
+                <select id="saisie-sem-select" onchange="loadSaisieGrid()">
+                    <option value="">—</option>
+                    <option selected>S1</option><option>S2</option><option>S3</option>
+                    <option>S4</option><option>S5</option><option>S6</option>
+                </select>
+                <button class="btn btn-primary btn-sm" style="margin-left:14px" id="saisie-save-btn" onclick="saveSaisie()" disabled>💾 Enregistrer</button>
+                <span style="margin-left:14px;font-size:.8rem;color:#6b7280">
+                    Notes par sous-matière — la note matière (Bulletins) est la moyenne pondérée.
+                    <span style="color:#b45309">⏳ provisoire</span> · <span style="color:#15803d">✓ définitif</span>
+                </span>
+            </div>
+        </div>
+        <div id="saisie-content"><div class="empty">Choisissez une sous-cohorte et un semestre.</div></div>
     </div>
     <div id="promo-tab-notes" style="display:none">
         <div class="toolbar">
@@ -1441,8 +1465,10 @@ async function api(endpoint, opts = {}) {
     const method = (opts.method || 'GET').toUpperCase();
     // Garde côté client : visiteur / enseignant = lecture seule (le serveur l'impose aussi).
     // Exception : le choix de l'année universitaire est personnel à la session.
+    // Exceptions : choix d'année de session, et saisie de notes par sous-matière
+    // (l'autorisation fine — colonne éditable, référent — est vérifiée côté serveur)
     if (state.role === 'teacher' && method !== 'GET' && method !== 'HEAD'
-            && endpoint !== '/years/session') {
+            && endpoint !== '/years/session' && !/\/saisie\/S[1-6]\//.test(endpoint)) {
         toast('Lecture seule', 'error');
         throw new Error('Lecture seule');
     }
@@ -2238,10 +2264,10 @@ let _coeffPromoId = null;   // promotion dont on édite les coefficients
 
 let _promoTab = 'effectif';
 // Enseignant (lecture seule) : seuls Effectifs / Notes / Jury sont accessibles
-const _promoTeacherTabs = ['effectif', 'notes', 'jury'];
+const _promoTeacherTabs = ['effectif', 'saisie', 'notes', 'jury'];
 function applyPromoSubtabsForRole() {
     const teacherView = state.role === 'teacher';
-    ['effectif', 'tuteurs', 'groupes', 'calendrier', 'notes', 'jury', 'actions'].forEach(t => {
+    ['effectif', 'tuteurs', 'groupes', 'calendrier', 'saisie', 'notes', 'jury', 'actions'].forEach(t => {
         const btn = document.getElementById('promo-subtab-' + t);
         if (btn) btn.style.display = (teacherView && !_promoTeacherTabs.includes(t)) ? 'none' : '';
     });
@@ -2266,12 +2292,13 @@ function showPromoTab(tab) {
     if (state.role === 'teacher' && !_promoTeacherTabs.includes(tab)) tab = 'effectif';
     _promoTab = tab;
     applyPromoSubtabsForRole();
-    ['effectif', 'tuteurs', 'groupes', 'calendrier', 'notes', 'jury', 'actions'].forEach(t => {
+    ['effectif', 'tuteurs', 'groupes', 'calendrier', 'saisie', 'notes', 'jury', 'actions'].forEach(t => {
         document.getElementById('promo-subtab-' + t).classList.toggle('active', tab === t);
         document.getElementById('promo-tab-' + t).style.display = tab === t ? '' : 'none';
     });
     if (tab === 'effectif') loadEffectif();
     else if (tab === 'tuteurs') loadTuteurs();
+    else if (tab === 'saisie') loadSaisieGrid();
     else if (tab === 'notes') loadNotes();
     else if (tab === 'jury') loadJuryGrid();
     else if (tab === 'calendrier') loadCalendrier();
@@ -3156,6 +3183,7 @@ async function onPromoChange() {
         _promoId = null; _promoData = null; _effData = null; _togglePromoButtons(false);
         loadEffectif();
         loadTuteurs();
+        loadSaisieGrid();
         loadNotesGrid();
         loadJuryGrid();
         return;
@@ -3172,6 +3200,7 @@ async function onPromoChange() {
     _togglePromoButtons(true);
     loadEffectif();
     if (_promoTab === 'tuteurs') loadTuteurs();
+    else if (_promoTab === 'saisie') loadSaisieGrid();
     else if (_promoTab === 'notes') loadNotesGrid();
     else if (_promoTab === 'jury') loadJuryGrid();
     else if (_promoTab === 'calendrier') loadCalendrier();
@@ -3660,6 +3689,227 @@ async function deletePromotion() {
 // ===== NOTES (sous-onglet Promotions) — liées à l'effectif + référence coeff =====
 let _notesData = null;
 
+// ===== SOUS-ONGLET SAISIE NOTES (notes par sous-matière, enseignants) =====
+// Chaque enseignant saisit les notes des sous-matières qu'il a en charge ; la
+// note matière (Bulletins) = moyenne pondérée (pondération fixée par le
+// référent, 0 = exclue). Colonnes des autres enseignants visibles en lecture
+// seule. Statut provisoire/définitif par colonne.
+let _saisieData = null;
+
+async function loadSaisieGrid() {
+    const pid = document.getElementById('promo-select').value;
+    const sem = document.getElementById('saisie-sem-select').value;
+    const sub = (document.getElementById('saisie-sub-select') || {}).value || 'FTP';
+    const saveBtn = document.getElementById('saisie-save-btn');
+    const el = document.getElementById('saisie-content');
+    if (!pid || !sem) {
+        _saisieData = null; saveBtn.disabled = true;
+        el.innerHTML = '<div class="empty">Choisissez une promotion, une sous-cohorte et un semestre.</div>';
+        return;
+    }
+    el.innerHTML = '<div class="spinner">Chargement…</div>';
+    try { _saisieData = await api(`/promotions/${pid}/saisie/${sem}?formation=${encodeURIComponent(sub)}`); }
+    catch (e) { toast('Erreur : ' + e.message, 'error'); saveBtn.disabled = true; return; }
+    renderSaisieGrid();
+}
+
+function renderSaisieGrid() {
+    const d = _saisieData;
+    const el = document.getElementById('saisie-content');
+    const saveBtn = document.getElementById('saisie-save-btn');
+    saveBtn.disabled = true;
+    if (!d.available) {
+        el.innerHTML = `<div class="empty">Base de l'année ${esc(d.year || '?')} introuvable — les sous-matières de ce semestre ne sont pas connues.</div>`;
+        return;
+    }
+    if (!d.groups.length) {
+        el.innerHTML = '<div class="empty">' + (state.role === 'teacher'
+            ? 'Aucune matière à votre charge ce semestre sur cette sous-cohorte.'
+            : 'Aucune sous-matière pour ce semestre (voir l\'onglet Matières de l\'année).') + '</div>';
+        return;
+    }
+    if (!d.students.length) {
+        el.innerHTML = '<div class="empty">Aucun étudiant dans cette sous-cohorte.</div>';
+        return;
+    }
+    const editable = d.groups.some(g => g.subs.some(s => s.editable));
+    const anyRef = d.groups.some(g => g.is_referent);
+    saveBtn.disabled = !(editable || anyRef);
+    const CW = 74;
+    // Ligne 1 : matières (groupes) ; ligne 2 : sous-matières + Moy. ;
+    // ligne 3 : pondérations (référent) + case « définitif » (enseignant de la colonne)
+    let h1 = '<tr><th class="nz-sticky" rowspan="3" style="min-width:165px;max-width:165px;vertical-align:bottom">Étudiant</th>';
+    let h2 = '<tr>', h3 = '<tr>';
+    d.groups.forEach(g => {
+        const multi = g.subs.length > 1;
+        h1 += `<th colspan="${g.subs.length + (multi ? 1 : 0)}" style="background:#ede9fe;color:#4c1d95;text-align:center;font-size:.8rem;padding:4px 6px;border-left:4px solid #8b5cf6;border-bottom:2px solid #8b5cf6"
+                   title="${esc(g.label)}${g.referent ? ' — référent : ' + esc(g.referent) : ''}">${esc(g.key)}<br>
+                   <span style="font-weight:400;font-size:.7rem">${g.referent ? 'réf. ' + esc(g.referent) : '<span style="color:#b91c1c">réf. à définir</span>'}</span></th>`;
+        g.subs.forEach((s, i) => {
+            const off = !s.counted;
+            const defColor = s.definitive ? '#15803d' : '#b45309';
+            h2 += `<th style="text-align:center;font-size:.75rem;padding:4px 2px;width:${CW}px;min-width:${CW}px${i === 0 ? ';border-left:4px solid #8b5cf6' : ''}${off ? ';opacity:.45' : ''}"
+                       title="${esc(s.name)}${s.teachers.length ? ' — ' + esc(s.teachers.join(', ')) : ''}${off ? ' — exclue de la moyenne (pondération 0)' : ''}">
+                   ${esc(s.code)}${s.editable ? '' : ' 🔒'}<br>
+                   <span style="font-weight:400;font-size:.68rem;color:#6b7280">${esc(s.teachers.join(', ') || '—')}</span></th>`;
+            const wInput = multi
+                ? `<input type="number" min="0" step="0.5" value="${s.weight}" data-w="${esc(g.key)}|${esc(s.code)}"
+                       ${g.is_referent ? '' : 'disabled'} onchange="renderSaisieDirty()"
+                       title="Pondération dans la moyenne de ${esc(g.key)} (0 = exclue)${g.is_referent ? '' : ' — modifiable par le référent'}"
+                       style="width:44px;font-size:.72rem;text-align:center">`
+                : '<span style="color:#9ca3af">—</span>';
+            h3 += `<th style="text-align:center;padding:3px 2px;font-size:.7rem;font-weight:400${i === 0 ? ';border-left:4px solid #8b5cf6' : ''}${off ? ';opacity:.45' : ''}">
+                   ${wInput}<br>
+                   <label title="Notes définitives (décochée = provisoires)" style="cursor:pointer;color:${defColor}">
+                       <input type="checkbox" data-def="${esc(s.code)}" ${s.definitive ? 'checked' : ''} ${s.editable ? '' : 'disabled'}>
+                       ${s.definitive ? '✓ définitif' : '⏳ prov.'}</label></th>`;
+        });
+        if (multi) {
+            h2 += `<th style="text-align:center;font-size:.75rem;background:#f0fdf4;color:#166534;width:${CW}px" rowspan="2"
+                       title="Moyenne pondérée — reportée dans la note matière (Bulletins) quand toutes les sous-notes comptées sont saisies">Moy.<br>${esc(g.key)}</th>`;
+        }
+    });
+    h1 += '</tr>'; h2 += '</tr>'; h3 += '</tr>';
+    const rows = d.students.map(st => {
+        let tr = `<tr><td class="nz-sticky" style="font-size:.82rem;white-space:nowrap">${esc(st.nom)} ${esc(st.prenom)}${st.statut && st.statut !== 'Actif' ? ` <span style="font-size:.68rem;color:#9ca3af">(${esc(st.statut)})</span>` : ''}</td>`;
+        d.groups.forEach(g => {
+            const multi = g.subs.length > 1;
+            g.subs.forEach((s, i) => {
+                const v = d.marks[`${st.id}_${s.code}`];
+                const vs = v === undefined ? '' : v;
+                const bl = i === 0 ? 'border-left:4px solid #ede9fe;' : '';
+                if (s.editable) {
+                    tr += `<td style="${bl}padding:2px;text-align:center">
+                           <input type="text" inputmode="decimal" value="${esc(String(vs))}"
+                               data-note="${esc(s.code)}|${st.id}" data-grp="${esc(g.key)}"
+                               oninput="updateSaisieAvg(this)"
+                               style="width:${CW - 14}px;text-align:center;font-size:.82rem;border:1px solid #d1d5db;border-radius:4px;padding:3px 2px"></td>`;
+                } else {
+                    tr += `<td style="${bl}text-align:center;font-size:.82rem;color:#374151${s.counted ? '' : ';opacity:.45'}">${vs === '' ? '<span style="color:#d1d5db">—</span>' : esc(String(vs))}</td>`;
+                }
+            });
+            if (multi) {
+                const off = d.official[`${st.id}_${g.key}`];
+                tr += `<td data-avg="${esc(g.key)}|${st.id}" style="text-align:center;font-size:.82rem;font-weight:600;background:#f0fdf4;color:#166534"
+                           title="${off !== undefined ? 'Note matière actuelle (Bulletins) : ' + esc(String(off)) : 'Pas encore de note matière'}">${_saisieAvgTxt(g, st.id)}</td>`;
+            }
+        });
+        return tr + '</tr>';
+    }).join('');
+    el.innerHTML = `<div style="overflow:auto;max-height:calc(100vh - 210px)">
+        <table class="notes-grid" style="border-collapse:collapse;font-size:.85rem">
+        <thead>${h1}${h2}${h3}</thead><tbody>${rows}</tbody></table></div>
+        <p style="font-size:.78rem;color:#6b7280;margin:8px 2px">Notes sur 20 (ou <strong>ABI</strong>).
+        🔒 = colonne d'un autre enseignant (lecture seule). La moyenne pondérée est reportée dans
+        la note matière (Bulletins) quand toutes les sous-notes comptées sont saisies ; elle reste
+        modifiable par l'admin.</p>`;
+}
+
+// Valeur courante d'une cellule (input éditable ou note chargée), pour la moyenne live
+function _saisieCellVal(code, sid) {
+    const inp = document.querySelector(`[data-note="${CSS.escape(code + '|' + sid)}"]`);
+    const raw = inp ? inp.value : (( _saisieData.marks[`${sid}_${code}`] ?? '') + '');
+    const t = String(raw).trim().toUpperCase();
+    if (t === '') return null;
+    if (t === 'ABI') return 0;
+    const n = parseFloat(String(raw).replace(',', '.'));
+    return isNaN(n) ? null : n;
+}
+
+// Pondération courante d'une sous-matière (input du référent ou valeur chargée)
+function _saisieWeight(g, s) {
+    const inp = document.querySelector(`[data-w="${CSS.escape(g.key + '|' + s.code)}"]`);
+    const w = inp ? parseFloat(inp.value) : s.weight;
+    return isNaN(w) ? s.weight : w;
+}
+
+function _saisieAvgTxt(g, sid) {
+    let sw = 0, sum = 0;
+    for (const s of g.subs) {
+        if (!s.face_ok) continue;                    // pas de séance sur cette face
+        const w = _saisieWeight(g, s);
+        if (!(w > 0)) continue;                      // pondération 0 : exclue
+        const v = _saisieCellVal(s.code, sid);
+        if (v === null) return '<span style="color:#d1d5db">…</span>';
+        sw += w; sum += v * w;
+    }
+    if (!sw) return '<span style="color:#d1d5db">—</span>';
+    return (Math.round(sum / sw * 100) / 100).toString();
+}
+
+function updateSaisieAvg(inp) {
+    const key = inp.dataset.grp;
+    const sid = inp.dataset.note.split('|')[1];
+    const g = _saisieData.groups.find(x => x.key === key);
+    const td = document.querySelector(`[data-avg="${CSS.escape(key + '|' + sid)}"]`);
+    if (g && td) td.innerHTML = _saisieAvgTxt(g, sid);
+}
+
+// Un changement de pondération : rafraîchit toutes les moyennes du groupe
+function renderSaisieDirty() {
+    if (!_saisieData) return;
+    _saisieData.students.forEach(st => {
+        _saisieData.groups.forEach(g => {
+            const td = document.querySelector(`[data-avg="${CSS.escape(g.key + '|' + st.id)}"]`);
+            if (td) td.innerHTML = _saisieAvgTxt(g, st.id);
+        });
+    });
+}
+
+async function saveSaisie() {
+    const d = _saisieData;
+    if (!d) return;
+    const pid = document.getElementById('promo-select').value;
+    const sem = document.getElementById('saisie-sem-select').value;
+    const sub = (document.getElementById('saisie-sub-select') || {}).value || 'FTP';
+    const btn = document.getElementById('saisie-save-btn');
+    btn.disabled = true;
+    try {
+        // 1) Pondérations modifiées (groupes dont on est référent)
+        for (const g of d.groups) {
+            if (!g.is_referent || g.subs.length < 2) continue;
+            const weights = {}; let changed = false;
+            for (const s of g.subs) {
+                const w = _saisieWeight(g, s);
+                weights[s.code] = w;
+                if (w !== s.weight) changed = true;
+            }
+            if (changed) {
+                await api(`/promotions/${pid}/saisie/${sem}/weights`, {
+                    method: 'PUT',
+                    body: JSON.stringify({ formation: sub, matiere_key: g.key, weights })
+                });
+            }
+        }
+        // 2) Colonnes éditables : notes + statut définitif
+        const columns = [];
+        for (const g of d.groups) {
+            for (const s of g.subs) {
+                if (!s.editable) continue;
+                const notes = {};
+                document.querySelectorAll(`[data-note^="${CSS.escape(s.code + '|')}"]`).forEach(inp => {
+                    notes[inp.dataset.note.split('|')[1]] = inp.value.trim().replace(',', '.');
+                });
+                const defCb = document.querySelector(`[data-def="${CSS.escape(s.code)}"]`);
+                columns.push({ code: s.code, notes, definitive: !!(defCb && defCb.checked) });
+            }
+        }
+        if (columns.length) {
+            _saisieData = await api(`/promotions/${pid}/saisie/${sem}/notes`, {
+                method: 'PUT',
+                body: JSON.stringify({ formation: sub, columns })
+            });
+        } else {
+            _saisieData = await api(`/promotions/${pid}/saisie/${sem}?formation=${encodeURIComponent(sub)}`);
+        }
+        renderSaisieGrid();
+        toast('Saisie enregistrée');
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+        btn.disabled = false;
+    }
+}
+
 async function loadNotes() {
     // La promotion est pilotée par le sélecteur partagé en haut de l'onglet.
     loadNotesGrid();
@@ -3860,8 +4110,13 @@ function renderNotesGrid() {
             vth(`UE${g.sem || ''}${_ueNum(d, name, ci)}`, '#eef2ff', (ci === 0 ? ';border-left:4px solid #818cf8' : '') + wext(cwPrevS(g)), g.label + ' — ' + name, '#3730a3')).join('')).join('') : '') +
         (cg.ue ? comps.map((c, ci) =>
             vth(`UE${_semNum}${_ueNum(d, c.name, ci)}`, '#ede9fe', (ci === 0 ? ';border-left:4px solid #8b5cf6' : '') + wext(cwUe), `${c.name} — moyenne du semestre ${d.semester}`, '#4c1d95')).join('') : '') +
-        (cg.notes ? mats.map((m, mi) =>
-            vth(m.code + ' · ' + (m.short_label || matAcronym(m.label)), _coeffKindColor(m.kind), mi === 0 ? ';border-left:4px solid #6b7280' : '', (m.apogee_code ? m.apogee_code + ' — ' : '') + m.label, '')).join('') : '') +
+        (cg.notes ? mats.map((m, mi) => {
+            // Indicateur de saisie enseignant (onglet Saisie Notes) : ⏳ provisoire / ✓ définitif
+            const st = (d.saisie_status || {})[m.code];
+            const flag = st ? (st === 'definitif' ? ' ✓' : ' ⏳') : '';
+            const flagTitle = st ? ` — saisie enseignant ${st === 'definitif' ? 'définitive' : 'provisoire'}` : '';
+            return vth(m.code + ' · ' + (m.short_label || matAcronym(m.label)) + flag, _coeffKindColor(m.kind), mi === 0 ? ';border-left:4px solid #6b7280' : '', (m.apogee_code ? m.apogee_code + ' — ' : '') + m.label + flagTitle, '');
+        }).join('') : '') +
         `</tr>`;
     const statutBadge = st => (st && st !== 'Actif') ? ` <span style="font-size:.68rem;color:#9ca3af">(${esc(st)})</span>` : '';
     const body = d.students.map(s => {
