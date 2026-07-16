@@ -293,12 +293,12 @@
            (l'accès en écriture est filtré par rôle/onglet, pas par cette règle) */
         body.role-teacher .admin-only,
         body.role-teacher .rep-tool-restricted { display: none !important; }
-        /* Ordre des onglets pour l'enseignant : Service, Gestion, Programme.
+        /* Ordre des onglets pour l'enseignant : Service, Programme, Mon Compte.
            Le sous-onglet Matières du Service reste réservé à l'admin. */
         body.role-teacher #svc-tab-matieres { display: none !important; }
         body.role-teacher #nav-service { order: 1; }
-        body.role-teacher #nav-enseignants { order: 2; }
         body.role-teacher #nav-programme { order: 3; }
+        body.role-teacher #nav-mon-compte { order: 4; }
         body.role-teacher #nav-right { order: 99; }
         /* Barre de sous-onglets Service enseignant (sous la nav) */
         #service-bar { display: flex; align-items: center; gap: 4px; padding: 6px 16px;
@@ -372,6 +372,7 @@
     <button onclick="showPage('enseignants')" id="nav-enseignants">Gestion enseignant</button>
     <button onclick="showPage('journal')" id="nav-journal" class="admin-only">Journal</button>
     <button onclick="showPage('programme')" id="nav-programme">Programme</button>
+    <button onclick="showPage('mon-compte')" id="nav-mon-compte" style="display:none">Mon Compte</button>
     <button onclick="showPage('promotions')" id="nav-promotions">Promotions</button>
     <button onclick="showPage('parametres')" id="nav-parametres" class="admin-only">Paramètres</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
@@ -480,6 +481,14 @@
         <h1 id="contraintes-title">Contraintes d'emploi du temps</h1>
     </div>
     <div id="contraintes-content"><div class="spinner">Chargement…</div></div>
+</div>
+
+<!-- ===== MON COMPTE (enseignant connecté) ===== -->
+<div class="page" id="page-mon-compte">
+    <div class="toolbar">
+        <h1>Mon Compte</h1>
+    </div>
+    <div id="mon-compte-content"><div class="spinner">Chargement…</div></div>
 </div>
 
 <!-- ===== PROMOTIONS (admin) ===== -->
@@ -1483,7 +1492,8 @@ async function api(endpoint, opts = {}) {
     // Exceptions : choix d'année de session, et saisie de notes par sous-matière
     // (l'autorisation fine — colonne éditable, référent — est vérifiée côté serveur)
     if (state.role === 'teacher' && method !== 'GET' && method !== 'HEAD'
-            && endpoint !== '/years/session' && !/\/saisie\/S[1-6]\//.test(endpoint)) {
+            && endpoint !== '/years/session' && !endpoint.startsWith('/my-account')
+            && !/\/saisie\/S[1-6]\//.test(endpoint)) {
         toast('Lecture seule', 'error');
         throw new Error('Lecture seule');
     }
@@ -1594,15 +1604,17 @@ function applyRole(role, user, teacher, status, promoAccess) {
             ? (user + ' · ' + (status === 'Vacataire' ? 'vacataire' : 'titulaire'))
             : 'Admin';
     }
-    // Enseignant : onglet Service enseignant (Bilan Global / Calendaire /
-    // Contraintes) + Programme (consultation, avec le sous-onglet Contenu) ;
-    // seul le titulaire voit la gestion des enseignants (consultation seule)
-    const teacherTabs = ['nav-service', 'nav-programme'];
-    if (state.teacherTitulaire) teacherTabs.push('nav-enseignants');
+    // Enseignant : onglets Service enseignant (Bilan Global / Calendaire /
+    // Contraintes), Programme (consultation) et Mon Compte.
+    const teacherTabs = ['nav-service', 'nav-programme', 'nav-mon-compte'];
     // Connexion avec mot de passe : Promotions en lecture seule (Effectifs/Notes/Jury)
     if (role === 'teacher' && state.promoAccess) teacherTabs.push('nav-promotions');
     document.querySelectorAll('nav button[id^="nav-"]').forEach(b => {
-        b.style.display = (role === 'teacher' && !teacherTabs.includes(b.id)) ? 'none' : '';
+        let show;
+        if (b.id === 'nav-mon-compte') show = role === 'teacher';            // enseignants seuls
+        else if (b.id === 'nav-enseignants') show = role === 'admin';        // admin seul
+        else show = !(role === 'teacher' && !teacherTabs.includes(b.id));
+        b.style.display = show ? '' : 'none';
     });
 }
 
@@ -1758,9 +1770,22 @@ async function loadPage(name, forceReload) {
             state.sessions = sessions;
             state.teachers = teachers;
             state.promotionGroups = pg;
+            // Heures hors GIM du connecté (personnelles : visibles par lui seul)
+            state.myExternal = [];
+            if (state.role === 'teacher') {
+                try { state.myExternal = (await api('/my-account' + svcQ())).external_hours || []; }
+                catch (e) { /* pas de fiche cette année : silencieux */ }
+            }
+            // Admin : lignes hors GIM déclarées publiques par les enseignants
+            state.publicExternal = [];
+            if (state.role === 'admin') {
+                try { state.publicExternal = await api('/external-hours/public' + svcQ()); }
+                catch (e) { /* silencieux */ }
+            }
             populateTeacherRepFilter();
             renderTeacherRepartition();
         }
+        else if (name === 'mon-compte') { await loadMonCompte(); }
         else if (name === 'repartition') {
             await loadRepartition();
             if (_repTab === 'jour') await loadRepJour();
@@ -1815,6 +1840,141 @@ function switchServiceYear() {
     _repartitionData = null;
     showPage(_serviceTab);
     toast(`Affichage de l'année ${_serviceYear}`);
+}
+
+// ===== MON COMPTE (enseignant connecté) =====
+// Coordonnées de SA fiche + heures HETD hors GIM (année active).
+// Chaque ligne d'heures est privée par défaut ; « Public » = visible AUSSI par
+// l'admin dans le Bilan Global (jamais par les autres enseignants).
+let _myAccount = null;
+
+async function loadMonCompte() {
+    const el = document.getElementById('mon-compte-content');
+    if (state.role !== 'teacher') {
+        el.innerHTML = '<div class="empty">Onglet réservé aux enseignants connectés.</div>';
+        return;
+    }
+    try {
+        _myAccount = await api('/my-account');
+        renderMonCompte();
+    } catch (e) {
+        _myAccount = null;
+        el.innerHTML = '<div class="empty">Fiche enseignant introuvable pour cette année.</div>';
+    }
+}
+
+function renderMonCompte() {
+    const el = document.getElementById('mon-compte-content');
+    const t = _myAccount.teacher || {};
+    const ext = _myAccount.external_hours || [];
+    const total = _myAccount.total_external_hetd || 0;
+    const ay = state.defaultYear ? ` (${state.defaultYear})` : '';
+    const visBadge = (e) => e.is_public
+        ? `<span title="Visible par vous et par l'administrateur (personne d'autre)"
+               style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:.72rem;font-weight:700;background:#fef3c7;color:#92400e">Public (admin)</span>`
+        : `<span title="Visible par vous seul"
+               style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:.72rem;font-weight:700;background:#e5e7eb;color:#374151">Privé</span>`;
+    const extRows = ext.map(e => `<tr>
+            <td>${esc(e.label || '')}</td>
+            <td style="text-align:right;font-weight:600;color:#4f46e5">${(parseFloat(e.hetd) || 0).toFixed(2)}</td>
+            <td style="text-align:center">${visBadge(e)}</td>
+            <td style="text-align:center;white-space:nowrap">
+                <button class="btn btn-secondary btn-sm" title="${e.is_public ? 'Rendre privé' : "Rendre public (visible par l'admin)"}"
+                    onclick="toggleMonCompteExt(${e.id}, ${e.is_public ? 0 : 1})">${e.is_public ? '🔒' : '👁'}</button>
+                <button class="btn btn-danger btn-sm" title="Supprimer" onclick="delMonCompteExt(${e.id})">🗑</button>
+            </td>
+        </tr>`).join('');
+    el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;align-items:start;max-width:1050px">
+        <div style="border:1px solid #e5e7eb;border-radius:8px;background:#fff;padding:16px">
+            <h2 style="margin:0 0 4px;font-size:1.05rem;color:#4f46e5">Mes coordonnées${ay}</h2>
+            <p style="margin:0 0 12px;font-size:.8rem;color:#6b7280">
+                Nom, corps et statut sont gérés par l'administration.</p>
+            <div class="form-group"><label>Nom</label>
+                <input value="${esc(t.name || '')}" disabled></div>
+            <div class="form-group"><label>Corps / Statut</label>
+                <input value="${esc([t.corps_code, t.status].filter(Boolean).join(' — '))}" disabled></div>
+            <div class="form-group"><label>Email de contact</label>
+                <input id="mc-email" type="email" value="${esc(t.email || '')}" placeholder="prenom.nom@..."></div>
+            <div class="form-group"><label>Téléphone</label>
+                <input id="mc-phone" value="${esc(t.phone || '')}" placeholder="06..."></div>
+            <div class="form-group"><label>Employeur</label>
+                <input id="mc-structure" value="${esc(t.structure || '')}" placeholder="ex. IUT de Toulon, Lycée..."></div>
+            <button class="btn btn-primary" onclick="saveMonCompteContact()">Enregistrer</button>
+        </div>
+        <div style="border:1px solid #e5e7eb;border-radius:8px;background:#fff;padding:16px">
+            <h2 style="margin:0 0 4px;font-size:1.05rem;color:#4f46e5">Heures hors GIM${ay}</h2>
+            <p style="margin:0 0 12px;font-size:.8rem;color:#6b7280">
+                Heures (en HETD) effectuées dans un autre département ou établissement.
+                Elles s'ajoutent à votre Bilan Global et à vos heures complémentaires.
+                <strong>Privé</strong> : visible par vous seul ·
+                <strong>Public</strong> : visible aussi par l'administrateur
+                (uniquement lui — jamais par les autres enseignants).</p>
+            <table style="margin-bottom:10px">
+                <thead><tr><th>Département / établissement</th>
+                    <th style="text-align:right">HETD</th>
+                    <th style="text-align:center">Visibilité</th><th style="width:86px"></th></tr></thead>
+                <tbody>${extRows || '<tr><td colspan="4" style="color:#9ca3af;text-align:center">Aucune heure hors GIM</td></tr>'}</tbody>
+                ${ext.length ? `<tfoot><tr style="background:#f9fafb;font-weight:700">
+                    <td>Total</td><td style="text-align:right;color:#4f46e5">${total.toFixed(2)}</td><td></td><td></td>
+                </tr></tfoot>` : ''}
+            </table>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+                <div class="form-group" style="flex:2;min-width:150px;margin:0"><label>Intitulé</label>
+                    <input id="mc-ext-label" placeholder="ex. Dépt GEII, IUT ..."></div>
+                <div class="form-group" style="flex:1;min-width:80px;margin:0"><label>HETD</label>
+                    <input id="mc-ext-hetd" type="number" min="0.5" step="0.5" placeholder="0"></div>
+                <label style="display:flex;align-items:center;gap:5px;font-size:.82rem;cursor:pointer;padding-bottom:6px"
+                       title="Public : visible uniquement par l'administrateur (jamais par les autres enseignants)">
+                    <input type="checkbox" id="mc-ext-public"> Public (admin)</label>
+                <button class="btn btn-primary" onclick="addMonCompteExt()">+ Ajouter</button>
+            </div>
+        </div>
+    </div>`;
+}
+
+async function saveMonCompteContact() {
+    try {
+        _myAccount = await api('/my-account', { method: 'PUT', body: JSON.stringify({
+            email: document.getElementById('mc-email').value,
+            phone: document.getElementById('mc-phone').value,
+            structure: document.getElementById('mc-structure').value,
+        }) });
+        renderMonCompte();
+        toast('Coordonnées enregistrées');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function addMonCompteExt() {
+    const label = document.getElementById('mc-ext-label').value.trim();
+    const hetd = parseFloat(document.getElementById('mc-ext-hetd').value);
+    const is_public = document.getElementById('mc-ext-public').checked ? 1 : 0;
+    if (!label) { toast('Intitulé requis', 'error'); return; }
+    if (!(hetd > 0)) { toast('Nombre d\'HETD invalide', 'error'); return; }
+    try {
+        _myAccount = await api('/my-account/external-hours',
+            { method: 'POST', body: JSON.stringify({ label, hetd, is_public }) });
+        renderMonCompte();
+        toast('Heures hors GIM ajoutées');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function toggleMonCompteExt(id, is_public) {
+    try {
+        _myAccount = await api('/my-account/external-hours/' + id,
+            { method: 'PUT', body: JSON.stringify({ is_public }) });
+        renderMonCompte();
+        toast(is_public ? 'Ligne rendue publique (visible par l\'admin)' : 'Ligne rendue privée');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function delMonCompteExt(id) {
+    if (!confirm('Supprimer cette ligne d\'heures hors GIM ?')) return;
+    try {
+        _myAccount = await api('/my-account/external-hours/' + id, { method: 'DELETE' });
+        renderMonCompte();
+        toast('Ligne supprimée');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
 // ===== ENSEIGNANTS =====
@@ -5849,6 +6009,13 @@ function renderTeacherRepartition() {
     // Total global
     let gTotalBrut = 0, gTotalPond = 0, gTotalHetd = 0;
     let gStatutory = 0, gHComp = 0, nStatutory = 0;   // titulaires avec corps (MCF/PRAG…)
+    let gExtHetd = 0;                                  // heures hors GIM du connecté (son bloc)
+
+    // Bloc de l'enseignant connecté ? (heures hors GIM + heures comp. : lui seul)
+    const meRec = state.role === 'teacher' && state.teacherName
+        ? (state.teachers||[]).find(t => (t.name||'').toLowerCase() === state.teacherName.toLowerCase())
+        : null;
+    const isSelfBlock = (tid) => !!meRec && String(meRec.id) === String(tid);
 
     const blocks = teacherIds.map(tid => {
         const data = byTeacher[tid];
@@ -5908,15 +6075,43 @@ function renderTeacherRepartition() {
         });
         const rows = courseGroups.map(c => courseSubtotalRow(c) + c.rows.join('')).join('');
 
+        // Heures hors GIM (onglet Mon Compte) :
+        //  • bloc de l'enseignant connecté → toutes SES lignes (privées + publiques) ;
+        //  • admin → uniquement les lignes déclarées PUBLIQUES par chaque enseignant ;
+        //  • autres enseignants / visiteurs → rien (le serveur ne les expose pas).
+        const isSelf = isSelfBlock(tid);
+        let extList = [], extNote = '';
+        if (isSelf) {
+            extList = state.myExternal || [];
+            extNote = 'visible par vous seul (onglet Mon Compte)';
+        } else if (state.role === 'admin') {
+            extList = (state.publicExternal || []).filter(e => String(e.teacher_id) === String(tid));
+            extNote = 'déclarées publiques par l\'enseignant';
+        }
+        let extRowsHtml = '', extHetd = 0;
+        if (extList.length) {
+            extHetd = extList.reduce((s,e) => s + (parseFloat(e.hetd)||0), 0);
+            extRowsHtml = `<tr style="background:#fffbeb;font-weight:600">
+                    <td colspan="9" style="text-align:left;color:#92400e">Hors GIM — ${extNote}</td>
+                    <td style="text-align:right;color:#92400e">${extHetd.toFixed(2)}</td>
+                </tr>` + extList.map(e => `<tr style="background:#fffdf5">
+                    <td></td><td colspan="8" style="color:#92400e">${esc(e.label||'')}${isSelf && e.is_public ? ' <span style="font-size:.72rem">(public — admin)</span>' : ''}</td>
+                    <td style="text-align:right;color:#92400e;font-weight:600">${(parseFloat(e.hetd)||0).toFixed(2)}</td>
+                </tr>`).join('');
+            tHetd += extHetd;
+            gExtHetd += extHetd;
+        }
+
         gTotalBrut += tBrut; gTotalPond += tPond; gTotalHetd += tHetd;
 
         // Heures complémentaires : HETD effectuées − service statutaire du corps
         // (MCF 192, PRAG/PRCE/PLP 384), uniquement pour les titulaires.
+        // Visibles par l'admin ; un enseignant ne voit que les SIENNES.
         const tRec = (state.teachers||[]).find(x => String(x.id) === String(tid));
         const corps = ((tRec||{}).corps_code||'').toUpperCase();
         const statutory = ((tRec||{}).status||'Titulaire') === 'Titulaire' ? _STATUTORY_HETD[corps] : undefined;
         let hcHtml = '';
-        if (statutory) {
+        if (statutory && (state.role === 'admin' || isSelf)) {
             const hc = tHetd - statutory;
             gStatutory += statutory; gHComp += hc; nStatutory++;
             hcHtml = ` &nbsp;|&nbsp; Service ${statutory} HETD (${esc(corps)})
@@ -5931,7 +6126,7 @@ function renderTeacherRepartition() {
                 <div style="font-size:.85rem;color:#374151">
                     CM ${sumByType.CM.toFixed(1)}h · TD ${sumByType.TD.toFixed(1)}h · TP ${sumByType.TP.toFixed(1)}h · PT ${sumByType.PT.toFixed(1)}h
                     &nbsp;|&nbsp; <strong>${tPond.toFixed(1)}h</strong> pondérées
-                    &nbsp;|&nbsp; <strong style="color:#4f46e5">${tHetd.toFixed(2)} HETD</strong>${hcHtml}
+                    &nbsp;|&nbsp; <strong style="color:#4f46e5">${tHetd.toFixed(2)} HETD</strong>${extHetd ? ` <span style="color:#92400e;font-size:.78rem">(dont ${extHetd.toFixed(2)} hors GIM)</span>` : ''}${hcHtml}
                 </div>
             </div>
             <div class="overflow-x"><table style="margin:0">
@@ -5943,7 +6138,7 @@ function renderTeacherRepartition() {
                     <th style="text-align:right">Coef.</th>
                     <th style="text-align:right">HETD</th>
                 </tr></thead>
-                <tbody>${rows}</tbody>
+                <tbody>${rows}${extRowsHtml}</tbody>
             </table></div>
         </div>`;
     }).join('');
@@ -5954,7 +6149,7 @@ function renderTeacherRepartition() {
             <div><span style="color:#6b7280;font-size:.85rem">Sessions :</span> <strong>${sessions.length}</strong></div>
             <div><span style="color:#6b7280;font-size:.85rem">Total heures brutes :</span> <strong>${gTotalBrut.toFixed(1)}h</strong></div>
             <div><span style="color:#6b7280;font-size:.85rem">Total heures pondérées :</span> <strong>${gTotalPond.toFixed(1)}h</strong></div>
-            <div><span style="color:#6b7280;font-size:.85rem">Total HETD :</span> <strong style="color:#4f46e5">${gTotalHetd.toFixed(2)}</strong></div>
+            <div><span style="color:#6b7280;font-size:.85rem">Total HETD :</span> <strong style="color:#4f46e5">${gTotalHetd.toFixed(2)}</strong>${gExtHetd ? ` <span style="color:#92400e;font-size:.78rem">(dont ${gExtHetd.toFixed(2)} hors GIM${state.role === 'admin' ? ', déclarées publiques' : ', visibles par vous seul'})</span>` : ''}</div>
             ${nStatutory ? `<div title="Titulaires avec corps renseigné (MCF 192 / PRAG·PRCE·PLP 384) : HETD effectuées − service statutaire">
                 <span style="color:#6b7280;font-size:.85rem">Heures comp. (${nStatutory} titulaire${nStatutory > 1 ? 's' : ''}, service dû ${gStatutory} HETD) :</span>
                 <strong style="color:${gHComp >= 0 ? '#059669' : '#dc2626'}">${gHComp >= 0 ? '+' : ''}${gHComp.toFixed(2)}</strong></div>` : ''}

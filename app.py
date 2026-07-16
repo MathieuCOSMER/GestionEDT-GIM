@@ -1219,6 +1219,24 @@ def _apply_migrations(db):
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (yg, ft, cm, td, tp, tp8, pt))
 
+    # Heures HETD effectuées dans un autre département (onglet Mon Compte).
+    # Saisies par l'enseignant lui-même et visibles par lui seul, sauf lignes
+    # marquées publiques (is_public=1) : alors visibles AUSSI par l'admin
+    # (Bilan global), jamais par les autres enseignants.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS teacher_external_hours (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            teacher_id INTEGER NOT NULL,
+            label      TEXT NOT NULL,
+            hetd       REAL NOT NULL DEFAULT 0,
+            is_public  INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE
+        )
+    ''')
+    if 'is_public' not in [r[1] for r in db.execute("PRAGMA table_info(teacher_external_hours)").fetchall()]:
+        db.execute("ALTER TABLE teacher_external_hours ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0")
+
     # ======================= GESTION DES NOTES (admin) =======================
     # Promotion de notes (1 fichier Apogée importé = 1 promo, ex: BUT1 FI S2)
     db.execute('''
@@ -1520,6 +1538,8 @@ _YEAR_OVERRIDE_PREFIXES = (
     '/api/course-orderings',
     '/api/hetd-coeffs',
     '/api/constraints',
+    '/api/my-account',           # onglet Mon Compte (contact + heures hors GIM)
+    '/api/external-hours',       # heures hors GIM publiques (admin, Bilan Global)
     '/api/export/repartition',
     '/api/import/repartition',
 )
@@ -1549,6 +1569,7 @@ def _require_auth():
         # Exception : l'enseignant intervenant peut éditer le contenu de SA matière.
         # L'autorisation fine (intervenant ou non) est vérifiée dans le handler.
         if role == 'teacher' and (_is_course_content_path(path) or _is_constraints_self_path(path)
+                                  or path.startswith('/api/my-account')
                                   or (_is_saisie_write_path(path) and session.get('promo_access'))):
             return
         # Le choix de l'année universitaire est personnel à la session : autorisé à tous
@@ -5289,6 +5310,138 @@ def set_teacher_password_access(teacher_id):
                    (teacher_id,)).fetchone()
     return jsonify({'password_allowed': bool(t['password_allowed']),
                     'has_password': bool(t['password_hash'])}), 200
+
+# ======================= MON COMPTE (enseignant connecté) =======================
+# Fiche contact + heures HETD effectuées hors GIM. Ces heures sont personnelles :
+# elles ne sont renvoyées que par ces endpoints, à l'enseignant lui-même — sauf
+# les lignes marquées publiques, exposées à l'admin via /api/external-hours/public.
+
+def _my_teacher_row(db):
+    """Fiche teachers (base de l'année consultée) de l'enseignant connecté, ou None."""
+    name = session.get('teacher_name')
+    if session.get('role') != 'teacher' or not name:
+        return None
+    return db.execute('SELECT * FROM teachers WHERE LOWER(name) = LOWER(?)', (name,)).fetchone()
+
+def _my_account_payload(db, t):
+    ext = rows_to_list(db.execute(
+        'SELECT id, label, hetd, is_public FROM teacher_external_hours WHERE teacher_id = ? ORDER BY id',
+        (t['id'],)).fetchall())
+    return {
+        'teacher': {'id': t['id'], 'name': t['name'], 'email': t['email'], 'phone': t['phone'],
+                    'structure': t['structure'], 'corps_code': t['corps_code'], 'status': t['status']},
+        'external_hours': ext,
+        'total_external_hetd': round(sum(float(e['hetd'] or 0) for e in ext), 2),
+    }
+
+@app.route('/api/my-account', methods=['GET'])
+def my_account_get():
+    db = get_db()
+    t = _my_teacher_row(db)
+    if not t:
+        return error_response('Réservé aux enseignants connectés', 403)
+    return jsonify(_my_account_payload(db, t)), 200
+
+@app.route('/api/my-account', methods=['PUT'])
+def my_account_update():
+    """L'enseignant met à jour ses coordonnées : email, téléphone, employeur.
+    (Nom, corps et statut restent gérés par l'admin dans la fiche enseignant.)"""
+    db = get_db()
+    t = _my_teacher_row(db)
+    if not t:
+        return error_response('Réservé aux enseignants connectés', 403)
+    data = request.get_json() or {}
+    fields, values = [], []
+    for field in ['email', 'phone', 'structure']:
+        if field in data:
+            v = (data.get(field) or '').strip() or None
+            fields.append(f'{field} = ?')
+            values.append(v)
+    if not fields:
+        return error_response('Aucun champ à mettre à jour')
+    values.append(t['id'])
+    db.execute(f'UPDATE teachers SET {", ".join(fields)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?', values)
+    db.commit()
+    t = db.execute('SELECT * FROM teachers WHERE id = ?', (t['id'],)).fetchone()
+    return jsonify(_my_account_payload(db, t)), 200
+
+@app.route('/api/my-account/external-hours', methods=['POST'])
+def my_account_add_external():
+    """Ajoute une ligne d'heures hors GIM. Body : {label, hetd}."""
+    db = get_db()
+    t = _my_teacher_row(db)
+    if not t:
+        return error_response('Réservé aux enseignants connectés', 403)
+    data = request.get_json() or {}
+    label = (data.get('label') or '').strip()
+    if not label:
+        return error_response('Intitulé requis (ex. département, établissement)')
+    try:
+        hetd = float(data.get('hetd'))
+    except (TypeError, ValueError):
+        return error_response('Nombre d\'HETD invalide')
+    if not (0 < hetd <= 1000):
+        return error_response('Nombre d\'HETD invalide (entre 0 et 1000)')
+    db.execute('INSERT INTO teacher_external_hours (teacher_id, label, hetd, is_public) VALUES (?, ?, ?, ?)',
+               (t['id'], label, hetd, 1 if data.get('is_public') else 0))
+    db.commit()
+    return jsonify(_my_account_payload(db, t)), 201
+
+@app.route('/api/my-account/external-hours/<int:ext_id>', methods=['PUT'])
+def my_account_update_external(ext_id):
+    """Modifie une ligne d'heures hors GIM (uniquement les siennes).
+    Body : {is_public} et/ou {label, hetd}."""
+    db = get_db()
+    t = _my_teacher_row(db)
+    if not t:
+        return error_response('Réservé aux enseignants connectés', 403)
+    row = db.execute('SELECT * FROM teacher_external_hours WHERE id = ? AND teacher_id = ?',
+                     (ext_id, t['id'])).fetchone()
+    if not row:
+        return error_response('Ligne introuvable', 404)
+    data = request.get_json() or {}
+    label = (data.get('label') or '').strip() if 'label' in data else row['label']
+    if not label:
+        return error_response('Intitulé requis')
+    hetd = row['hetd']
+    if 'hetd' in data:
+        try:
+            hetd = float(data.get('hetd'))
+        except (TypeError, ValueError):
+            return error_response('Nombre d\'HETD invalide')
+        if not (0 < hetd <= 1000):
+            return error_response('Nombre d\'HETD invalide (entre 0 et 1000)')
+    is_public = (1 if data.get('is_public') else 0) if 'is_public' in data else row['is_public']
+    db.execute('UPDATE teacher_external_hours SET label = ?, hetd = ?, is_public = ? WHERE id = ?',
+               (label, hetd, is_public, ext_id))
+    db.commit()
+    return jsonify(_my_account_payload(db, t)), 200
+
+@app.route('/api/my-account/external-hours/<int:ext_id>', methods=['DELETE'])
+def my_account_delete_external(ext_id):
+    """Supprime une ligne d'heures hors GIM (uniquement les siennes)."""
+    db = get_db()
+    t = _my_teacher_row(db)
+    if not t:
+        return error_response('Réservé aux enseignants connectés', 403)
+    cur = db.execute('DELETE FROM teacher_external_hours WHERE id = ? AND teacher_id = ?',
+                     (ext_id, t['id']))
+    db.commit()
+    if cur.rowcount == 0:
+        return error_response('Ligne introuvable', 404)
+    return jsonify(_my_account_payload(db, t)), 200
+
+@app.route('/api/external-hours/public', methods=['GET'])
+def public_external_hours():
+    """Lignes d'heures hors GIM déclarées PUBLIQUES par leur enseignant.
+    Réservé à l'admin (Bilan global) — jamais exposé aux autres enseignants."""
+    if session.get('role') != 'admin':
+        return error_response('Accès réservé à l\'administrateur', 403)
+    rows = get_db().execute('''
+        SELECT teacher_id, label, hetd FROM teacher_external_hours
+        WHERE is_public = 1 ORDER BY teacher_id, id
+    ''').fetchall()
+    return jsonify(rows_to_list(rows)), 200
 
 @app.route('/api/teachers/<int:teacher_id>/availability', methods=['GET'])
 def get_teacher_availability(teacher_id):
