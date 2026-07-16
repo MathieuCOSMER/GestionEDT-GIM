@@ -1241,7 +1241,15 @@
             <div class="form-group"><label>Email</label><input id="teacher-email" type="email"></div>
             <div class="form-group"><label>Téléphone</label><input id="teacher-phone"></div>
             <div class="form-group"><label>Structure</label><input id="teacher-structure"></div>
-            <div class="form-group"><label>Corps</label><input id="teacher-corps"></div>
+            <div class="form-group"><label>Corps</label>
+                <select id="teacher-corps">
+                    <option value="">—</option>
+                    <option value="MCF">MCF (service 192 HETD)</option>
+                    <option value="PRAG">PRAG (service 384 HETD)</option>
+                    <option value="PRCE">PRCE (service 384 HETD)</option>
+                    <option value="PLP">PLP (service 384 HETD)</option>
+                </select>
+            </div>
             <div class="form-group"><label>Statut</label>
                 <select id="teacher-status">
                     <option value="Titulaire">Titulaire</option>
@@ -1304,6 +1312,13 @@
                     <select id="course-type">
                         <option value="Ressource">Ressource</option>
                         <option value="SAE">SAE</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Type de TP</label>
+                    <select id="course-tp-type" title="Taille des groupes de TP : détermine le nombre de groupes utilisé pour le calcul du service (Bilan global)">
+                        <option value="TP12">TP12 (groupes de 12)</option>
+                        <option value="TP8">TP8 (groupes de 8)</option>
                     </select>
                 </div>
             </div>
@@ -1815,7 +1830,7 @@ function renderTeachers() {
             <td>${esc(t.email||'')}</td>
             <td>${esc(t.phone||'')}</td>
             <td>${esc(t.structure||'')}</td>
-            <td>${esc(t.corps||'')}</td>
+            <td>${esc(t.corps_code||'')}</td>
             <td>${esc(t.status||'Titulaire')}</td>
             ${state.role === 'admin' ? `<td>
                 <button class="btn btn-secondary btn-sm" onclick="openTeacherModal(${t.id})">Éditer</button>
@@ -1833,7 +1848,7 @@ function openTeacherModal(id = null) {
     document.getElementById('teacher-email').value = t ? t.email || '' : '';
     document.getElementById('teacher-phone').value = t ? t.phone || '' : '';
     document.getElementById('teacher-structure').value = t ? t.structure || '' : '';
-    document.getElementById('teacher-corps').value = t ? t.corps || '' : '';
+    document.getElementById('teacher-corps').value = t ? t.corps_code || '' : '';
     document.getElementById('teacher-status').value = (t && t.status) ? t.status : 'Titulaire';
     refreshTeacherPwdBlock(t);
     openModal('modal-teacher');
@@ -1880,7 +1895,7 @@ async function submitTeacher(e) {
         email: document.getElementById('teacher-email').value,
         phone: document.getElementById('teacher-phone').value,
         structure: document.getElementById('teacher-structure').value,
-        corps: document.getElementById('teacher-corps').value,
+        corps_code: document.getElementById('teacher-corps').value,
         status: document.getElementById('teacher-status').value,
     };
     try {
@@ -4690,12 +4705,12 @@ function renderCourses() {
     const filterTypes = c => [
         { label: 'CM', ftp: c.cm_hours, ftpT: c.cm_teacher, ftpR: c.cm_room, alt: c.alt_cm_hours, altT: c.alt_cm_teacher, altR: c.alt_cm_room },
         { label: 'TD', ftp: c.td_hours, ftpT: c.td_teacher, ftpR: c.td_room, alt: c.alt_td_hours, altT: c.alt_td_teacher, altR: c.alt_td_room },
-        { label: 'TP', ftp: c.tp_hours, ftpT: c.tp_teacher, ftpR: c.tp_room, alt: c.alt_tp_hours, altT: c.alt_tp_teacher, altR: c.alt_tp_room },
+        { label: 'TP', disp: c.tp_type === 'TP8' ? 'TP8' : 'TP12', ftp: c.tp_hours, ftpT: c.tp_teacher, ftpR: c.tp_room, alt: c.alt_tp_hours, altT: c.alt_tp_teacher, altR: c.alt_tp_room },
         { label: 'PT', ftp: c.pt_hours, ftpT: c.pt_teacher, ftpR: c.pt_room, alt: c.alt_pt_hours, altT: c.alt_pt_teacher, altR: c.alt_pt_room },
     ].map(t => {
         const keepFtp = showFtpCol && t.ftp && (!teacherFilter || t.ftpT === teacherFilter) && (!roomFilter || t.ftpR === roomFilter);
         const keepAlt = showAltCol && t.alt && (!teacherFilter || t.altT === teacherFilter) && (!roomFilter || t.altR === roomFilter);
-        return { label: t.label,
+        return { label: t.label, disp: t.disp,
                  ftp: keepFtp ? t.ftp : 0, ftpT: keepFtp ? t.ftpT : null, ftpR: keepFtp ? t.ftpR : null,
                  alt: keepAlt ? t.alt : 0, altT: keepAlt ? t.altT : null, altR: keepAlt ? t.altR : null };
     }).filter(t => t.ftp || t.alt);
@@ -4769,7 +4784,7 @@ function renderCourses() {
                 <td rowspan="${nRows}">${esc(c.name||'')}</td>
                 <td rowspan="${nRows}" style="text-align:center;white-space:nowrap">${weeksCell}</td>
                 <td rowspan="${nRows}">${badge}</td>` : ''}
-                <td style="font-size:.75rem;font-weight:600;text-align:center">${t.label}</td>
+                <td style="font-size:.75rem;font-weight:600;text-align:center">${t.disp || t.label}</td>
                 ${pnCell(t)}
                 ${hoursCells}
                 ${salleCell(t)}
@@ -5156,6 +5171,7 @@ async function openCourseModal(id = null) {
     document.getElementById('course-name').value = '';
     { const pi = document.getElementById('course-parent-info'); if (pi) { pi.style.display = 'none'; pi.innerHTML = ''; } }
     document.getElementById('course-type').value = 'Ressource';
+    document.getElementById('course-tp-type').value = 'TP12';
     document.getElementById('course-semester').value = '';
     document.getElementById('course-start-week').value = '';
     document.getElementById('course-end-week').value = '';
@@ -5183,6 +5199,7 @@ async function openCourseModal(id = null) {
             document.getElementById('course-name').value = c.name || '';
             setCourseParentInfo(c.code, c.semester_code);
             document.getElementById('course-type').value = c.course_type || 'Ressource';
+            document.getElementById('course-tp-type').value = c.tp_type === 'TP8' ? 'TP8' : 'TP12';
             document.getElementById('course-semester').value = c.semester_id || '';
             document.getElementById('course-start-week').value = c.start_week || '';
             document.getElementById('course-end-week').value = c.end_week || '';
@@ -5304,6 +5321,7 @@ async function submitCourse(e) {
         code:          document.getElementById('course-code').value,
         name:          document.getElementById('course-name').value,
         course_type:   document.getElementById('course-type').value,
+        tp_type:       document.getElementById('course-tp-type').value,
         semester_id:   semId,
         default_weeks: useDefault ? 1 : 0,
         // En mode "par défaut", le backend calcule les semaines dynamiquement
@@ -5757,11 +5775,24 @@ function _ttKey(tt) {
     return u.startsWith('TP') ? 'TP' : u;
 }
 
-function _pgMultiplier(yg, ft, tt) {
+function _pgMultiplier(yg, ft, tt, tpType) {
     const pg = (state.promotionGroups||[]).find(p => p.year_group === yg && p.formation_type === ft);
     if (!pg) return 1;
     const k = _ttKey(tt);
+    // TP : le nb de groupes dépend du type de TP de la matière (TP12 / TP8)
+    if (k === 'TP' && String(tpType||'').toUpperCase() === 'TP8')
+        return pg.tp8_groups || pg.tp_groups || 1;
     return pg[`${k.toLowerCase()}_groups`] || 1;
+}
+
+// Service statutaire (HETD dues) par corps — heures complémentaires du Bilan global
+const _STATUTORY_HETD = { MCF: 192, PRAG: 384, PRCE: 384, PLP: 384 };
+
+// Libellé de type affiché : TP → TP12/TP8 selon la matière
+function _ttDisplay(s) {
+    return _ttKey(s.teaching_type) === 'TP'
+        ? (s.tp_type === 'TP8' ? 'TP8' : 'TP12')
+        : (s.teaching_type || '');
 }
 
 function populateTeacherRepFilter() {
@@ -5817,6 +5848,7 @@ function renderTeacherRepartition() {
 
     // Total global
     let gTotalBrut = 0, gTotalPond = 0, gTotalHetd = 0;
+    let gStatutory = 0, gHComp = 0, nStatutory = 0;   // titulaires avec corps (MCF/PRAG…)
 
     const blocks = teacherIds.map(tid => {
         const data = byTeacher[tid];
@@ -5845,7 +5877,7 @@ function renderTeacherRepartition() {
         const courseGroups = [];
         data.sessions.forEach(s => {
             const brut = parseFloat(s.total_hours) || 0;
-            const mult = _pgMultiplier(s.year_group, s.formation_type, s.teaching_type);
+            const mult = _pgMultiplier(s.year_group, s.formation_type, s.teaching_type, s.tp_type);
             const pond = brut * mult;
             const coef = _HETD_COEFS[_ttKey(s.teaching_type)] || 1.0;
             const hetd = pond * coef;
@@ -5866,7 +5898,7 @@ function renderTeacherRepartition() {
                 <td><strong>${esc(s.course_code||'')}</strong></td>
                 <td>${esc(s.course_name||'')}</td>
                 <td>${formationLabel(s.formation_type)}</td>
-                <td><span class="badge badge-${(s.teaching_type||'cm').toLowerCase()}">${esc(s.teaching_type||'')}</span></td>
+                <td><span class="badge badge-${_ttKey(s.teaching_type).toLowerCase()}">${esc(_ttDisplay(s))}</span></td>
                 <td style="text-align:right">${brut.toFixed(1)}h</td>
                 <td style="text-align:center">× ${mult}</td>
                 <td style="text-align:right">${pond.toFixed(1)}h</td>
@@ -5878,14 +5910,28 @@ function renderTeacherRepartition() {
 
         gTotalBrut += tBrut; gTotalPond += tPond; gTotalHetd += tHetd;
 
+        // Heures complémentaires : HETD effectuées − service statutaire du corps
+        // (MCF 192, PRAG/PRCE/PLP 384), uniquement pour les titulaires.
+        const tRec = (state.teachers||[]).find(x => String(x.id) === String(tid));
+        const corps = ((tRec||{}).corps_code||'').toUpperCase();
+        const statutory = ((tRec||{}).status||'Titulaire') === 'Titulaire' ? _STATUTORY_HETD[corps] : undefined;
+        let hcHtml = '';
+        if (statutory) {
+            const hc = tHetd - statutory;
+            gStatutory += statutory; gHComp += hc; nStatutory++;
+            hcHtml = ` &nbsp;|&nbsp; Service ${statutory} HETD (${esc(corps)})
+                    &nbsp;|&nbsp; <strong style="color:${hc >= 0 ? '#059669' : '#dc2626'}"
+                        title="${hc >= 0 ? 'Heures complémentaires' : 'Sous-service (heures manquantes)'}">H. comp. ${hc >= 0 ? '+' : ''}${hc.toFixed(2)}</strong>`;
+        }
+
         return `
         <div style="margin-bottom:22px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;background:#fff">
             <div style="background:#eef2ff;padding:10px 14px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-                <h3 style="margin:0;color:#4f46e5;font-size:1.05rem">${esc(data.name)}</h3>
+                <h3 style="margin:0;color:#4f46e5;font-size:1.05rem">${esc(data.name)}${corps ? ` <span style="font-size:.75rem;font-weight:600;color:#6b7280">${esc(corps)}</span>` : ''}</h3>
                 <div style="font-size:.85rem;color:#374151">
                     CM ${sumByType.CM.toFixed(1)}h · TD ${sumByType.TD.toFixed(1)}h · TP ${sumByType.TP.toFixed(1)}h · PT ${sumByType.PT.toFixed(1)}h
                     &nbsp;|&nbsp; <strong>${tPond.toFixed(1)}h</strong> pondérées
-                    &nbsp;|&nbsp; <strong style="color:#4f46e5">${tHetd.toFixed(2)} HETD</strong>
+                    &nbsp;|&nbsp; <strong style="color:#4f46e5">${tHetd.toFixed(2)} HETD</strong>${hcHtml}
                 </div>
             </div>
             <div class="overflow-x"><table style="margin:0">
@@ -5909,6 +5955,9 @@ function renderTeacherRepartition() {
             <div><span style="color:#6b7280;font-size:.85rem">Total heures brutes :</span> <strong>${gTotalBrut.toFixed(1)}h</strong></div>
             <div><span style="color:#6b7280;font-size:.85rem">Total heures pondérées :</span> <strong>${gTotalPond.toFixed(1)}h</strong></div>
             <div><span style="color:#6b7280;font-size:.85rem">Total HETD :</span> <strong style="color:#4f46e5">${gTotalHetd.toFixed(2)}</strong></div>
+            ${nStatutory ? `<div title="Titulaires avec corps renseigné (MCF 192 / PRAG·PRCE·PLP 384) : HETD effectuées − service statutaire">
+                <span style="color:#6b7280;font-size:.85rem">Heures comp. (${nStatutory} titulaire${nStatutory > 1 ? 's' : ''}, service dû ${gStatutory} HETD) :</span>
+                <strong style="color:${gHComp >= 0 ? '#059669' : '#dc2626'}">${gHComp >= 0 ? '+' : ''}${gHComp.toFixed(2)}</strong></div>` : ''}
         </div>`;
 
     el.innerHTML = summary + blocks;
@@ -5932,15 +5981,15 @@ function renderPromotionGroups(rows) {
     const el = document.getElementById('promo-groups-editor');
     const yg = _grpYG;
     const get = (ft) => (_promoGroupsRows).find(r => r.year_group === yg && r.formation_type === ft)
-        || { cm_groups: 1, td_groups: 1, tp_groups: 1, pt_groups: 1 };
+        || { cm_groups: 1, td_groups: 1, tp_groups: 1, tp8_groups: 1, pt_groups: 1 };
     const dash = '<span style="color:#d1d5db">—</span>';
     const inp = (ft, field) => {
         const v = get(ft)[field]; const val = (v != null ? v : 1);
         return `<input type="number" min="1" step="1" value="${val}" data-yg="${yg}" data-ft="${ft}" data-field="${field}" style="width:56px;padding:3px 6px;text-align:center">`;
     };
     const ay = grpAcademicYear() ? ' (' + grpAcademicYear() + ')' : '';
-    // Grille TD/TP × FTP/ALT/MUT. CM = 1 groupe (non éditable).
-    let tdFTP, tdALT, tdMUT, tpFTP, tpALT, intro;
+    // Grille TD/TP12/TP8 × FTP/ALT/MUT. CM = 1 groupe (non éditable).
+    let tdFTP, tdALT, tdMUT, tpFTP, tpALT, tp8FTP, tp8ALT, intro;
     if (yg === 3) {
         tdFTP = dash; tdALT = dash; tdMUT = inp(2, 'td_groups');
         tpFTP = inp(0, 'tp_groups'); tpALT = inp(1, 'tp_groups');
@@ -5950,6 +5999,7 @@ function renderPromotionGroups(rows) {
         tpFTP = inp(0, 'tp_groups'); tpALT = inp(1, 'tp_groups');
         intro = `Année ${yg}${ay} : TD FTP / ALT / MUT et TP FTP / ALT. CM = 1 groupe.`;
     }
+    tp8FTP = inp(0, 'tp8_groups'); tp8ALT = inp(1, 'tp8_groups');
     const td = (h) => `<td style="text-align:center;padding:5px 12px">${h}</td>`;
     el.innerHTML = `
         <p style="margin:0 0 8px;font-size:.85rem;color:#6b7280">${intro}</p>
@@ -5959,7 +6009,8 @@ function renderPromotionGroups(rows) {
             </thead>
             <tbody>
                 <tr style="border-top:1px solid #f3f4f6"><td style="padding:5px 12px;text-align:center"><strong>TD</strong></td>${td(tdFTP)}${td(tdALT)}${td(tdMUT)}</tr>
-                <tr style="border-top:1px solid #f3f4f6"><td style="padding:5px 12px;text-align:center"><strong>TP</strong></td>${td(tpFTP)}${td(tpALT)}${td(dash)}</tr>
+                <tr style="border-top:1px solid #f3f4f6"><td style="padding:5px 12px;text-align:center" title="Matières en TP à 12 étudiants"><strong>TP12</strong></td>${td(tpFTP)}${td(tpALT)}${td(dash)}</tr>
+                <tr style="border-top:1px solid #f3f4f6"><td style="padding:5px 12px;text-align:center" title="Matières en TP à 8 étudiants (défini dans la fiche matière)"><strong>TP8</strong></td>${td(tp8FTP)}${td(tp8ALT)}${td(dash)}</tr>
             </tbody>
         </table>
         <div style="margin-top:10px;display:flex;gap:8px;justify-content:center">

@@ -1181,6 +1181,12 @@ def _apply_migrations(db):
         db.execute('ALTER TABLE courses ADD COLUMN mutualized INTEGER DEFAULT 0')
     except sqlite3.OperationalError:
         pass
+    # Type de TP de la matière : TP12 (groupes de 12) ou TP8 (groupes de 8) —
+    # détermine le nombre de groupes utilisé pour le calcul du service (Bilan global)
+    try:
+        db.execute("ALTER TABLE courses ADD COLUMN tp_type TEXT DEFAULT 'TP12'")
+    except sqlite3.OperationalError:
+        pass
     # Nombre de groupes de TD/TP par (année, formation) pour le calcul du service
     db.execute('''
         CREATE TABLE IF NOT EXISTS promotion_groups (
@@ -1189,23 +1195,29 @@ def _apply_migrations(db):
             cm_groups      INTEGER NOT NULL DEFAULT 1,
             td_groups      INTEGER NOT NULL DEFAULT 1,
             tp_groups      INTEGER NOT NULL DEFAULT 1,
+            tp8_groups     INTEGER NOT NULL DEFAULT 1,
             pt_groups      INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY (year_group, formation_type)
         )
     ''')
+    # Colonne tp8_groups (nb de groupes des TP à 8) sur les bases existantes :
+    # initialisée sur tp_groups (comportement inchangé tant que non ajustée)
+    if 'tp8_groups' not in [r[1] for r in db.execute("PRAGMA table_info(promotion_groups)").fetchall()]:
+        db.execute("ALTER TABLE promotion_groups ADD COLUMN tp8_groups INTEGER NOT NULL DEFAULT 1")
+        db.execute("UPDATE promotion_groups SET tp8_groups = tp_groups")
     # Valeurs par défaut : FTP 2 TD / 3 TP, ALT et MUT 1 TD / 1 TP, CM/PT = 1
     _PG_DEFAULTS = [
-        # year_group, formation_type, cm, td, tp, pt
-        (1, 0, 1, 2, 3, 1), (1, 1, 1, 1, 1, 1), (1, 2, 1, 1, 1, 1),
-        (2, 0, 1, 2, 3, 1), (2, 1, 1, 1, 1, 1), (2, 2, 1, 1, 1, 1),
-        (3, 0, 1, 2, 3, 1), (3, 1, 1, 1, 1, 1), (3, 2, 1, 1, 1, 1),
+        # year_group, formation_type, cm, td, tp, tp8, pt
+        (1, 0, 1, 2, 3, 3, 1), (1, 1, 1, 1, 1, 1, 1), (1, 2, 1, 1, 1, 1, 1),
+        (2, 0, 1, 2, 3, 3, 1), (2, 1, 1, 1, 1, 1, 1), (2, 2, 1, 1, 1, 1, 1),
+        (3, 0, 1, 2, 3, 3, 1), (3, 1, 1, 1, 1, 1, 1), (3, 2, 1, 1, 1, 1, 1),
     ]
-    for yg, ft, cm, td, tp, pt in _PG_DEFAULTS:
+    for yg, ft, cm, td, tp, tp8, pt in _PG_DEFAULTS:
         db.execute('''
             INSERT OR IGNORE INTO promotion_groups
-                (year_group, formation_type, cm_groups, td_groups, tp_groups, pt_groups)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (yg, ft, cm, td, tp, pt))
+                (year_group, formation_type, cm_groups, td_groups, tp_groups, tp8_groups, pt_groups)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (yg, ft, cm, td, tp, tp8, pt))
 
     # ======================= GESTION DES NOTES (admin) =======================
     # Promotion de notes (1 fichier Apogée importé = 1 promo, ex: BUT1 FI S2)
@@ -5818,7 +5830,7 @@ def get_courses():
         cursor = db.cursor()
         cursor.execute('''
             SELECT c.id, c.code, c.name, c.semester_id, c.course_type,
-                   c.start_week, c.end_week, c.default_weeks, c.mutualized,
+                   c.start_week, c.end_week, c.default_weeks, c.mutualized, c.tp_type,
                    c.content, c.content_pn, c.created_at, c.updated_at,
                    s.code as semester_code,
                    GROUP_CONCAT(DISTINCT t.name) as teacher_names,
@@ -5892,7 +5904,7 @@ def get_courses():
             LEFT JOIN course_sessions cs ON cs.course_id = c.id
             LEFT JOIN teachers t ON cs.teacher_id = t.id
             GROUP BY c.id, c.code, c.name, c.semester_id, c.course_type,
-                     c.start_week, c.end_week, c.default_weeks, c.mutualized,
+                     c.start_week, c.end_week, c.default_weeks, c.mutualized, c.tp_type,
                      c.content, c.content_pn, c.created_at, c.updated_at, s.code
             ORDER BY s.code, c.code
         ''')
@@ -5938,8 +5950,8 @@ def create_course():
             return error_response(f'Semaine de fin hors plage année scolaire ({sw_label})', 400)
 
         cursor.execute('''
-            INSERT INTO courses (code, name, semester_id, course_type, start_week, end_week, default_weeks, mutualized)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO courses (code, name, semester_id, course_type, start_week, end_week, default_weeks, mutualized, tp_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             data['code'],
             data['name'],
@@ -5949,6 +5961,7 @@ def create_course():
             end_week,
             default_weeks,
             1 if data.get('mutualized') else 0,
+            'TP8' if str(data.get('tp_type', '')).upper() == 'TP8' else 'TP12',
         ))
         db.commit()
         course_id = cursor.lastrowid
@@ -6059,10 +6072,14 @@ def update_course(course_id):
                     label = 'début' if wk_field == 'start_week' else 'fin'
                     return error_response(f'Semaine de {label} hors plage année scolaire ({sw_label})', 400)
 
+        # Normaliser le type de TP (TP12 par défaut)
+        if 'tp_type' in data:
+            data['tp_type'] = 'TP8' if str(data.get('tp_type') or '').upper() == 'TP8' else 'TP12'
+
         # Update fields
         update_fields = []
         values = []
-        for field in ['code', 'name', 'semester_id', 'course_type', 'start_week', 'end_week', 'default_weeks', 'mutualized']:
+        for field in ['code', 'name', 'semester_id', 'course_type', 'start_week', 'end_week', 'default_weeks', 'mutualized', 'tp_type']:
             if field in data:
                 update_fields.append(f'{field} = ?')
                 values.append(data[field])
@@ -6272,7 +6289,7 @@ def get_course_sessions():
         cursor = db.cursor()
         cursor.execute('''
             SELECT cs.*, c.code as course_code, c.name as course_name,
-                   c.semester_id, s.code as semester_code, s.year_group,
+                   c.semester_id, c.tp_type, s.code as semester_code, s.year_group,
                    t.name as teacher_name
             FROM course_sessions cs
             JOIN courses c ON cs.course_id = c.id
@@ -6567,22 +6584,23 @@ def calculate_hetd(teaching_type, total_hours):
     return total_hours * coefficient
 
 def _load_promotion_groups(db):
-    """Retourne {(year_group, formation_type): {cm,td,tp,pt}}"""
-    cur = db.execute('SELECT year_group, formation_type, cm_groups, td_groups, tp_groups, pt_groups FROM promotion_groups')
+    """Retourne {(year_group, formation_type): {cm,td,tp,tp8,pt}}"""
+    cur = db.execute('SELECT year_group, formation_type, cm_groups, td_groups, tp_groups, tp8_groups, pt_groups FROM promotion_groups')
     return {(r['year_group'], r['formation_type']): {
         'CM': r['cm_groups'], 'TD': r['td_groups'],
-        'TP': r['tp_groups'], 'PT': r['pt_groups']
+        'TP': r['tp_groups'], 'TP8': r['tp8_groups'], 'PT': r['pt_groups']
     } for r in cur.fetchall()}
 
-def _group_multiplier(pg_map, year_group, formation_type, teaching_type):
-    """Nb de groupes pour (année, formation, type d'enseignement). 1 si non trouvé."""
+def _group_multiplier(pg_map, year_group, formation_type, teaching_type, tp_type=None):
+    """Nb de groupes pour (année, formation, type d'enseignement). 1 si non trouvé.
+    Pour les TP, `tp_type` de la matière (TP12/TP8) choisit le nb de groupes."""
     groups = pg_map.get((year_group, formation_type))
     if not groups:
         return 1
     # Normaliser TP12, TP8 → TP (sécurité même si déjà migré)
     tt = teaching_type.upper().replace(' ', '')
     if tt.startswith('TP'):
-        tt = 'TP'
+        tt = 'TP8' if (tp_type or '').upper().replace(' ', '') == 'TP8' else 'TP'
     return groups.get(tt, 1)
 
 @app.route('/api/promotion-groups', methods=['GET'])
@@ -6591,7 +6609,7 @@ def get_promotion_groups():
     try:
         db = get_db()
         cur = db.execute('''
-            SELECT year_group, formation_type, cm_groups, td_groups, tp_groups, pt_groups
+            SELECT year_group, formation_type, cm_groups, td_groups, tp_groups, tp8_groups, pt_groups
             FROM promotion_groups
             ORDER BY year_group, formation_type
         ''')
@@ -6613,16 +6631,18 @@ def update_promotion_groups():
             cm = max(1, int(entry.get('cm_groups', 1)))
             td = max(1, int(entry.get('td_groups', 1)))
             tp = max(1, int(entry.get('tp_groups', 1)))
+            tp8 = max(1, int(entry.get('tp8_groups', entry.get('tp_groups', 1))))
             pt = max(1, int(entry.get('pt_groups', 1)))
             db.execute('''
-                INSERT INTO promotion_groups (year_group, formation_type, cm_groups, td_groups, tp_groups, pt_groups)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO promotion_groups (year_group, formation_type, cm_groups, td_groups, tp_groups, tp8_groups, pt_groups)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(year_group, formation_type) DO UPDATE SET
                     cm_groups = excluded.cm_groups,
                     td_groups = excluded.td_groups,
                     tp_groups = excluded.tp_groups,
+                    tp8_groups = excluded.tp8_groups,
                     pt_groups = excluded.pt_groups
-            ''', (yg, ft, cm, td, tp, pt))
+            ''', (yg, ft, cm, td, tp, tp8, pt))
         db.commit()
         return jsonify({'success': True}), 200
     except Exception as e:
@@ -6643,7 +6663,7 @@ def get_teacher_service(teacher_id):
 
         cursor.execute('''
             SELECT cs.id, c.code as course_code, cs.teaching_type, cs.total_hours,
-                   cs.formation_type, s.year_group
+                   cs.formation_type, s.year_group, c.tp_type
             FROM course_sessions cs
             JOIN courses c ON cs.course_id = c.id
             JOIN semesters s ON c.semester_id = s.id
@@ -6657,7 +6677,7 @@ def get_teacher_service(teacher_id):
         total_hetd = 0
 
         for session in sessions:
-            mult = _group_multiplier(pg_map, session['year_group'], session['formation_type'], session['teaching_type'])
+            mult = _group_multiplier(pg_map, session['year_group'], session['formation_type'], session['teaching_type'], session['tp_type'])
             effective_hours = (session['total_hours'] or 0) * mult
             hetd = calculate_hetd(session['teaching_type'], effective_hours)
             total_hetd += hetd
@@ -6690,7 +6710,7 @@ def get_all_service():
         cursor.execute('''
             SELECT t.id AS teacher_id, t.name AS teacher_name,
                    cs.teaching_type, cs.total_hours,
-                   cs.formation_type, s.year_group
+                   cs.formation_type, s.year_group, c.tp_type
             FROM teachers t
             JOIN course_sessions cs ON cs.teacher_id = t.id
             JOIN courses c ON cs.course_id = c.id
@@ -6707,7 +6727,7 @@ def get_all_service():
             if tid not in agg:
                 agg[tid] = {'teacher_id': tid, 'teacher_name': r['teacher_name'],
                             'cm_hours': 0, 'td_hours': 0, 'tp_hours': 0, 'pt_hours': 0}
-            mult = _group_multiplier(pg_map, r['year_group'], r['formation_type'], r['teaching_type'])
+            mult = _group_multiplier(pg_map, r['year_group'], r['formation_type'], r['teaching_type'], r['tp_type'])
             h = (r['total_hours'] or 0) * mult
             tt = r['teaching_type'].upper().replace(' ', '')
             if tt == 'CM':
