@@ -6489,7 +6489,8 @@ def get_course_sessions():
             JOIN courses c ON cs.course_id = c.id
             JOIN semesters s ON c.semester_id = s.id
             LEFT JOIN teachers t ON cs.teacher_id = t.id
-            ORDER BY s.code, c.code, cs.formation_type, cs.teaching_type
+            ORDER BY s.code, c.code, cs.formation_type,
+                     CASE cs.teaching_type WHEN 'CM' THEN 0 WHEN 'TD' THEN 1 WHEN 'TP' THEN 2 WHEN 'PT' THEN 3 ELSE 4 END
         ''')
         sessions = rows_to_list(cursor.fetchall())
         return jsonify(sessions), 200
@@ -6642,7 +6643,7 @@ def get_course_sessions_by_course(course_id):
             JOIN courses c ON cs.course_id = c.id
             LEFT JOIN teachers t ON cs.teacher_id = t.id
             WHERE cs.course_id = ?
-            ORDER BY cs.teaching_type
+            ORDER BY CASE cs.teaching_type WHEN 'CM' THEN 0 WHEN 'TD' THEN 1 WHEN 'TP' THEN 2 WHEN 'PT' THEN 3 ELSE 4 END
         ''', (course_id,))
         sessions = rows_to_list(cursor.fetchall())
         return jsonify(sessions), 200

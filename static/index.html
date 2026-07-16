@@ -5950,6 +5950,13 @@ function _ttKey(tt) {
     return u.startsWith('TP') ? 'TP' : u;
 }
 
+// Ordre d'affichage des types d'enseignement : CM - TD - TP - PT (partout)
+const _TT_ORDER = { CM: 0, TD: 1, TP: 2, PT: 3 };
+function _ttOrder(tt) {
+    const o = _TT_ORDER[_ttKey(tt)];
+    return o === undefined ? 4 : o;
+}
+
 function _pgMultiplier(semCode, ft, tt, tpType) {
     const k = _ttKey(tt);
     if (k === 'CM') return 1;                       // CM : toujours 1 groupe
@@ -6040,12 +6047,12 @@ function renderTeacherRepartition() {
 
     const blocks = teacherIds.map(tid => {
         const data = byTeacher[tid];
-        // Tri : semestre, code cours, formation, type
+        // Tri : semestre, code cours, type (CM-TD-TP-PT), formation
         data.sessions.sort((a,b) =>
             (a.semester_code||'').localeCompare(b.semester_code||'') ||
             (a.course_code||'').localeCompare(b.course_code||'') ||
-            (a.formation_type - b.formation_type) ||
-            (a.teaching_type||'').localeCompare(b.teaching_type||'')
+            (_ttOrder(a.teaching_type) - _ttOrder(b.teaching_type)) ||
+            (a.formation_type - b.formation_type)
         );
 
         let tBrut = 0, tPond = 0, tHetd = 0;
