@@ -1219,6 +1219,43 @@ def _apply_migrations(db):
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (yg, ft, cm, td, tp, tp8, pt))
 
+    # Groupes par SEMESTRE (remplace l'ancienne granularité par année de
+    # promotion_groups) : nb de groupes TD / TP12 / TP8 / PT pour chaque
+    # (semestre, face). formation_type : 0=FTP, 1=ALT, 2=Promo entière
+    # (utilisé quand le semestre est mutualisé). CM = toujours 1 groupe.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS semester_groups (
+            semester_code  TEXT NOT NULL,
+            formation_type INTEGER NOT NULL,
+            td_groups      INTEGER NOT NULL DEFAULT 1,
+            tp_groups      INTEGER NOT NULL DEFAULT 1,
+            tp8_groups     INTEGER NOT NULL DEFAULT 1,
+            pt_groups      INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY (semester_code, formation_type)
+        )
+    ''')
+    # Reprise des valeurs existantes de promotion_groups (année → ses 2 semestres)
+    if not db.execute('SELECT 1 FROM semester_groups LIMIT 1').fetchone():
+        for r in db.execute('SELECT * FROM promotion_groups').fetchall():
+            for sem in (f"S{2 * r['year_group'] - 1}", f"S{2 * r['year_group']}"):
+                db.execute('''
+                    INSERT OR IGNORE INTO semester_groups
+                        (semester_code, formation_type, td_groups, tp_groups, tp8_groups, pt_groups)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (sem, r['formation_type'], r['td_groups'], r['tp_groups'],
+                      r['tp8_groups'], r['pt_groups']))
+    # Compléter les lignes manquantes (semestres × faces) avec les défauts
+    for _sem in ('S1', 'S2', 'S3', 'S4', 'S5', 'S6'):
+        for _ft in (0, 1, 2):
+            db.execute('''
+                INSERT OR IGNORE INTO semester_groups
+                    (semester_code, formation_type, td_groups, tp_groups, tp8_groups, pt_groups)
+                VALUES (?, ?, 1, 1, 1, 1)
+            ''', (_sem, _ft))
+    # Flag « semestre mutualisé » (FTP + ALT ensemble) sur la table semesters
+    if 'mutualized' not in [r[1] for r in db.execute("PRAGMA table_info(semesters)").fetchall()]:
+        db.execute("ALTER TABLE semesters ADD COLUMN mutualized INTEGER NOT NULL DEFAULT 0")
+
     # Heures HETD effectuées dans un autre département (onglet Mon Compte).
     # Saisies par l'enseignant lui-même et visibles par lui seul, sauf lignes
     # marquées publiques (is_public=1) : alors visibles AUSSI par l'admin
@@ -1522,7 +1559,7 @@ def _daily_backup_hook():
 # d'année, sans impacter l'année active utilisée par les autres onglets).
 _YEAR_OVERRIDE_PATHS = {
     '/api/special-calendar', '/api/config', '/api/week-comments',
-    '/api/category-codes', '/api/promotion-groups',
+    '/api/category-codes', '/api/semester-groups',
 }
 _YEAR_OVERRIDE_PREFIXES = (
     '/api/repartition',          # tableaux annuel + journalier
@@ -6736,70 +6773,148 @@ def calculate_hetd(teaching_type, total_hours):
     coefficient = coefficients.get(teaching_type, 1.0)
     return total_hours * coefficient
 
-def _load_promotion_groups(db):
-    """Retourne {(year_group, formation_type): {cm,td,tp,tp8,pt}}"""
-    cur = db.execute('SELECT year_group, formation_type, cm_groups, td_groups, tp_groups, tp8_groups, pt_groups FROM promotion_groups')
-    return {(r['year_group'], r['formation_type']): {
-        'CM': r['cm_groups'], 'TD': r['td_groups'],
-        'TP': r['tp_groups'], 'TP8': r['tp8_groups'], 'PT': r['pt_groups']
+def _load_semester_groups(db):
+    """Retourne ({(semester_code, formation_type): {td,tp,tp8,pt}}, {sem mutualisés})."""
+    cur = db.execute('SELECT semester_code, formation_type, td_groups, tp_groups, tp8_groups, pt_groups FROM semester_groups')
+    sg = {(r['semester_code'], r['formation_type']): {
+        'TD': r['td_groups'], 'TP': r['tp_groups'],
+        'TP8': r['tp8_groups'], 'PT': r['pt_groups']
     } for r in cur.fetchall()}
+    mut = {r['code'] for r in db.execute('SELECT code FROM semesters WHERE mutualized = 1').fetchall()}
+    return sg, mut
 
-def _group_multiplier(pg_map, year_group, formation_type, teaching_type, tp_type=None):
-    """Nb de groupes pour (année, formation, type d'enseignement). 1 si non trouvé.
-    Pour les TP, `tp_type` de la matière (TP12/TP8) choisit le nb de groupes."""
-    groups = pg_map.get((year_group, formation_type))
+def _group_multiplier(sg_map, mut_set, semester_code, formation_type, teaching_type, tp_type=None):
+    """Nb de groupes pour (semestre, face, type d'enseignement). CM = 1 groupe.
+    Semestre mutualisé : les groupes « Promo » (ft=2) s'appliquent à toutes les
+    sessions du semestre. Pour les TP, `tp_type` (TP12/TP8) choisit la ligne."""
+    tt = teaching_type.upper().replace(' ', '')
+    if tt == 'CM':
+        return 1
+    ft = 2 if semester_code in mut_set else formation_type
+    groups = sg_map.get((semester_code, ft))
     if not groups:
         return 1
-    # Normaliser TP12, TP8 → TP (sécurité même si déjà migré)
-    tt = teaching_type.upper().replace(' ', '')
     if tt.startswith('TP'):
         tt = 'TP8' if (tp_type or '').upper().replace(' ', '') == 'TP8' else 'TP'
     return groups.get(tt, 1)
 
-@app.route('/api/promotion-groups', methods=['GET'])
-def get_promotion_groups():
-    """Liste des groupes par (année, formation)"""
+@app.route('/api/semester-groups', methods=['GET'])
+def get_semester_groups():
+    """Groupes par (semestre, face) + flags « semestre mutualisé ».
+    Retour : {groups: [...], mutualized: {S1: 0/1, ...}}"""
     try:
         db = get_db()
         cur = db.execute('''
-            SELECT year_group, formation_type, cm_groups, td_groups, tp_groups, tp8_groups, pt_groups
-            FROM promotion_groups
-            ORDER BY year_group, formation_type
+            SELECT semester_code, formation_type, td_groups, tp_groups, tp8_groups, pt_groups
+            FROM semester_groups
+            ORDER BY semester_code, formation_type
         ''')
-        return jsonify(rows_to_list(cur.fetchall())), 200
+        mut = {r['code']: int(r['mutualized'] or 0)
+               for r in db.execute('SELECT code, mutualized FROM semesters').fetchall()}
+        return jsonify({'groups': rows_to_list(cur.fetchall()), 'mutualized': mut}), 200
     except Exception as e:
-        return error_response(f'Error loading promotion groups: {str(e)}', 500)
+        return error_response(f'Error loading semester groups: {str(e)}', 500)
 
-@app.route('/api/promotion-groups', methods=['PUT'])
-def update_promotion_groups():
-    """Mise à jour bulk. Body: [{year_group, formation_type, cm_groups, td_groups, tp_groups, pt_groups}, ...]"""
+@app.route('/api/semester-groups', methods=['PUT'])
+def update_semester_groups():
+    """Mise à jour bulk des groupes.
+    Body: [{semester_code, formation_type, td_groups, tp_groups, tp8_groups, pt_groups}, ...]"""
     try:
         data = request.get_json()
         if not isinstance(data, list):
-            return error_response('Expected a list of promotion group entries')
+            return error_response('Expected a list of semester group entries')
         db = get_db()
         for entry in data:
-            yg = int(entry.get('year_group'))
+            sem = str(entry.get('semester_code') or '').upper()
+            if sem not in ('S1', 'S2', 'S3', 'S4', 'S5', 'S6'):
+                return error_response(f'Semestre invalide : {sem}')
             ft = int(entry.get('formation_type'))
-            cm = max(1, int(entry.get('cm_groups', 1)))
             td = max(1, int(entry.get('td_groups', 1)))
             tp = max(1, int(entry.get('tp_groups', 1)))
             tp8 = max(1, int(entry.get('tp8_groups', entry.get('tp_groups', 1))))
             pt = max(1, int(entry.get('pt_groups', 1)))
             db.execute('''
-                INSERT INTO promotion_groups (year_group, formation_type, cm_groups, td_groups, tp_groups, tp8_groups, pt_groups)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(year_group, formation_type) DO UPDATE SET
-                    cm_groups = excluded.cm_groups,
+                INSERT INTO semester_groups (semester_code, formation_type, td_groups, tp_groups, tp8_groups, pt_groups)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(semester_code, formation_type) DO UPDATE SET
                     td_groups = excluded.td_groups,
                     tp_groups = excluded.tp_groups,
                     tp8_groups = excluded.tp8_groups,
                     pt_groups = excluded.pt_groups
-            ''', (yg, ft, cm, td, tp, tp8, pt))
+            ''', (sem, ft, td, tp, tp8, pt))
         db.commit()
         return jsonify({'success': True}), 200
     except Exception as e:
-        return error_response(f'Error updating promotion groups: {str(e)}', 500)
+        return error_response(f'Error updating semester groups: {str(e)}', 500)
+
+@app.route('/api/semesters/<sem_code>/mutualized', methods=['PUT'])
+def set_semester_mutualized(sem_code):
+    """Bascule « semestre mutualisé » (FTP + ALT ensemble). Body : {mutualized: 0/1}.
+    • Passage en mutualisé : toutes les matières du semestre passent en MUT ;
+      leurs CM/TD FTP/ALT sont fusionnés en sessions MUT (face FTP prioritaire).
+    • Retour en non mutualisé : les matières repassent en non-MUT ; les CM/TD
+      MUT sont recopiés sur les deux faces FTP et ALT."""
+    try:
+        sem_code = (sem_code or '').upper()
+        db = get_db()
+        srow = db.execute('SELECT id, mutualized FROM semesters WHERE code = ?', (sem_code,)).fetchone()
+        if not srow:
+            return error_response('Semestre introuvable', 404)
+        target = 1 if (request.get_json() or {}).get('mutualized') else 0
+        sid = srow['id']
+
+        def _delete_session(cs_id):
+            db.execute('DELETE FROM weekly_hours WHERE course_session_id = ?', (cs_id,))
+            db.execute('DELETE FROM course_sessions WHERE id = ?', (cs_id,))
+
+        courses = db.execute('SELECT id FROM courses WHERE semester_id = ?', (sid,)).fetchall()
+        for c in courses:
+            for tt in ('CM', 'TD'):
+                rows = {r['formation_type']: r for r in db.execute(
+                    'SELECT * FROM course_sessions WHERE course_id = ? AND teaching_type = ?',
+                    (c['id'], tt)).fetchall()}
+                if target:
+                    # → MUT : garder une seule session (MUT sinon FTP sinon ALT) en ft=2
+                    if 2 in rows:
+                        for ft in (0, 1):
+                            if ft in rows:
+                                _delete_session(rows[ft]['id'])
+                    elif 0 in rows:
+                        if 1 in rows:
+                            _delete_session(rows[1]['id'])
+                        db.execute('UPDATE course_sessions SET formation_type = 2 WHERE id = ?',
+                                   (rows[0]['id'],))
+                    elif 1 in rows:
+                        db.execute('UPDATE course_sessions SET formation_type = 2 WHERE id = ?',
+                                   (rows[1]['id'],))
+                else:
+                    # → non MUT : recopier la session MUT sur les faces FTP et ALT
+                    if 2 in rows:
+                        m = rows[2]
+                        if 0 in rows:
+                            _delete_session(m['id'])
+                        else:
+                            db.execute('UPDATE course_sessions SET formation_type = 0 WHERE id = ?',
+                                       (m['id'],))
+                        if 1 not in rows:
+                            db.execute('''
+                                INSERT INTO course_sessions
+                                    (course_id, teacher_id, formation_type, teaching_type,
+                                     nb_sessions, total_hours, slot_duration, room_name, promo,
+                                     sessions_per_week_max)
+                                VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+                            ''', (m['course_id'], m['teacher_id'], tt, m['nb_sessions'],
+                                  m['total_hours'], m['slot_duration'], m['room_name'],
+                                  m['promo'], m['sessions_per_week_max']))
+        db.execute('UPDATE courses SET mutualized = ?, updated_at = CURRENT_TIMESTAMP WHERE semester_id = ?',
+                   (target, sid))
+        db.execute('UPDATE semesters SET mutualized = ? WHERE id = ?', (target, sid))
+        db.commit()
+        _audit('SEMESTER_MUTUALIZED', ip=_client_ip(), user=session.get('user'),
+               semester=sem_code, mutualized=target, courses=len(courses))
+        return jsonify({'semester': sem_code, 'mutualized': target, 'courses': len(courses)}), 200
+    except Exception as e:
+        return error_response(f'Error toggling mutualized semester: {str(e)}', 500)
 
 @app.route('/api/service/teacher/<int:teacher_id>', methods=['GET'])
 def get_teacher_service(teacher_id):
@@ -6816,7 +6931,7 @@ def get_teacher_service(teacher_id):
 
         cursor.execute('''
             SELECT cs.id, c.code as course_code, cs.teaching_type, cs.total_hours,
-                   cs.formation_type, s.year_group, c.tp_type
+                   cs.formation_type, s.code as semester_code, c.tp_type
             FROM course_sessions cs
             JOIN courses c ON cs.course_id = c.id
             JOIN semesters s ON c.semester_id = s.id
@@ -6824,13 +6939,13 @@ def get_teacher_service(teacher_id):
         ''', (teacher_id,))
         sessions = cursor.fetchall()
 
-        pg_map = _load_promotion_groups(db)
+        sg_map, mut_set = _load_semester_groups(db)
 
         service_details = []
         total_hetd = 0
 
         for session in sessions:
-            mult = _group_multiplier(pg_map, session['year_group'], session['formation_type'], session['teaching_type'], session['tp_type'])
+            mult = _group_multiplier(sg_map, mut_set, session['semester_code'], session['formation_type'], session['teaching_type'], session['tp_type'])
             effective_hours = (session['total_hours'] or 0) * mult
             hetd = calculate_hetd(session['teaching_type'], effective_hours)
             total_hetd += hetd
@@ -6855,7 +6970,8 @@ def get_teacher_service(teacher_id):
 @app.route('/api/service/all', methods=['GET'])
 def get_all_service():
     """Get all teachers' service hours with breakdown by type.
-    Heures multipliées par le nb de groupes (table promotion_groups) selon (year_group, formation_type)."""
+    Heures multipliées par le nb de groupes (table semester_groups) selon (semestre, face),
+    groupes « Promo » si le semestre est mutualisé."""
     try:
         db = get_db()
         cursor = db.cursor()
@@ -6863,7 +6979,7 @@ def get_all_service():
         cursor.execute('''
             SELECT t.id AS teacher_id, t.name AS teacher_name,
                    cs.teaching_type, cs.total_hours,
-                   cs.formation_type, s.year_group, c.tp_type
+                   cs.formation_type, s.code AS semester_code, c.tp_type
             FROM teachers t
             JOIN course_sessions cs ON cs.teacher_id = t.id
             JOIN courses c ON cs.course_id = c.id
@@ -6871,7 +6987,7 @@ def get_all_service():
             ORDER BY t.name
         ''')
         rows = cursor.fetchall()
-        pg_map = _load_promotion_groups(db)
+        sg_map, mut_set = _load_semester_groups(db)
 
         # Agréger par enseignant en multipliant par le nb de groupes
         agg = {}
@@ -6880,7 +6996,7 @@ def get_all_service():
             if tid not in agg:
                 agg[tid] = {'teacher_id': tid, 'teacher_name': r['teacher_name'],
                             'cm_hours': 0, 'td_hours': 0, 'tp_hours': 0, 'pt_hours': 0}
-            mult = _group_multiplier(pg_map, r['year_group'], r['formation_type'], r['teaching_type'], r['tp_type'])
+            mult = _group_multiplier(sg_map, mut_set, r['semester_code'], r['formation_type'], r['teaching_type'], r['tp_type'])
             h = (r['total_hours'] or 0) * mult
             tt = r['teaching_type'].upper().replace(' ', '')
             if tt == 'CM':

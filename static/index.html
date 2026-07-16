@@ -542,7 +542,7 @@
             <div class="filters">
                 <label>Année de la cohorte :</label>
                 <select id="grp-year-select" onchange="onGrpYearChange()"></select>
-                <span style="color:#6b7280;font-size:.85rem">Groupes des cours mutualisés (FTP + ALT) de l'année sélectionnée.</span>
+                <span style="color:#6b7280;font-size:.85rem">Nb de groupes TD / TP12 / TP8 / PT par semestre, et semestres mutualisés (FTP + ALT ensemble).</span>
             </div>
         </div>
         <div id="promo-groups-editor" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;text-align:center"><div class="spinner">Chargement…</div></div>
@@ -1479,7 +1479,7 @@
 
 <script>
 // ===== STATE =====
-const state = { teachers: [], courses: [], rooms: [], sessions: [], semesters: [], config: null, promotionGroups: [], role: null, user: null };
+const state = { teachers: [], courses: [], rooms: [], sessions: [], semesters: [], config: null, semesterGroups: [], mutSemesters: {}, role: null, user: null };
 
 // Dernière semaine de la 1re année civile (52 ou 53 selon le calendrier ISO ; ex: 2026-2027 → 53)
 function maxWeek() { return (state.config && state.config.academic_max_week) || 52; }
@@ -1762,14 +1762,15 @@ async function loadPage(name, forceReload) {
         else if (name === 'parametres') { await loadParametres(); }
         else if (name === 'repartition-enseignant') {
             // Vue Service enseignant : données de l'année choisie (_serviceYear)
-            const [sessions, teachers, pg] = await Promise.all([
+            const [sessions, teachers, sg] = await Promise.all([
                 api('/course-sessions' + svcQ()), api('/teachers' + svcQ()),
-                api('/promotion-groups' + svcQ())
+                api('/semester-groups' + svcQ())
             ]);
             await loadHetdCoefs(svcQ());
             state.sessions = sessions;
             state.teachers = teachers;
-            state.promotionGroups = pg;
+            state.semesterGroups = sg.groups || [];
+            state.mutSemesters = sg.mutualized || {};
             // Heures hors GIM du connecté (personnelles : visibles par lui seul)
             state.myExternal = [];
             if (state.role === 'teacher') {
@@ -5880,7 +5881,8 @@ async function applyDefaultYear() {
         await api('/years/current', { method: 'PUT', body: JSON.stringify({ year }) });
         state.defaultYear = year;
         // Réinitialiser les caches liés à l'année pour forcer un rechargement
-        ['teachers', 'courses', 'rooms', 'sessions', 'semesters', 'promotionGroups'].forEach(k => { state[k] = []; });
+        ['teachers', 'courses', 'rooms', 'sessions', 'semesters', 'semesterGroups'].forEach(k => { state[k] = []; });
+        state.mutSemesters = {};
         state.config = null;
         _notesData = null;
         await loadYears();
@@ -5935,14 +5937,17 @@ function _ttKey(tt) {
     return u.startsWith('TP') ? 'TP' : u;
 }
 
-function _pgMultiplier(yg, ft, tt, tpType) {
-    const pg = (state.promotionGroups||[]).find(p => p.year_group === yg && p.formation_type === ft);
-    if (!pg) return 1;
+function _pgMultiplier(semCode, ft, tt, tpType) {
     const k = _ttKey(tt);
+    if (k === 'CM') return 1;                       // CM : toujours 1 groupe
+    // Semestre mutualisé : les groupes « Promo » (ft=2) s'appliquent à tout
+    const useFt = (state.mutSemesters||{})[semCode] ? 2 : ft;
+    const g = (state.semesterGroups||[]).find(p => p.semester_code === semCode && p.formation_type === useFt);
+    if (!g) return 1;
     // TP : le nb de groupes dépend du type de TP de la matière (TP12 / TP8)
-    if (k === 'TP' && String(tpType||'').toUpperCase() === 'TP8')
-        return pg.tp8_groups || pg.tp_groups || 1;
-    return pg[`${k.toLowerCase()}_groups`] || 1;
+    if (k === 'TP')
+        return (String(tpType||'').toUpperCase() === 'TP8' ? g.tp8_groups : g.tp_groups) || 1;
+    return g[`${k.toLowerCase()}_groups`] || 1;
 }
 
 // Service statutaire (HETD dues) par corps — heures complémentaires du Bilan global
@@ -6044,7 +6049,7 @@ function renderTeacherRepartition() {
         const courseGroups = [];
         data.sessions.forEach(s => {
             const brut = parseFloat(s.total_hours) || 0;
-            const mult = _pgMultiplier(s.year_group, s.formation_type, s.teaching_type, s.tp_type);
+            const mult = _pgMultiplier(s.semester_code, s.formation_type, s.teaching_type, s.tp_type);
             const pond = brut * mult;
             const coef = _HETD_COEFS[_ttKey(s.teaching_type)] || 1.0;
             const hetd = pond * coef;
@@ -6165,50 +6170,64 @@ function hetd(s) {
     return (cm*1.5 + td*1.0 + tp*(2/3) + pt*1.0).toFixed(2);
 }
 
-// ----- Groupes par promotion -----
-const _FORMATION_LABELS = { 0: 'FTP', 1: 'ALT', 2: 'MUT' };
-const _YEAR_LABELS = { 1: '1A (S1+S2)', 2: '2A (S3+S4)', 3: '3A (S5+S6)' };
+// ----- Groupes par semestre (onglet Promotions › Groupes) -----
+let _semGroupsData = null;   // {groups: [...], mutualized: {S1:0/1,...}} de l'année consultée
 
-let _promoGroupsRows = [];   // dernières données /promotion-groups (pour re-render au changement de cohorte)
-
-function renderPromotionGroups(rows) {
-    _promoGroupsRows = rows || _promoGroupsRows || [];
+function renderPromotionGroups(data) {
+    _semGroupsData = data || _semGroupsData || { groups: [], mutualized: {} };
     const el = document.getElementById('promo-groups-editor');
     const yg = _grpYG;
-    const get = (ft) => (_promoGroupsRows).find(r => r.year_group === yg && r.formation_type === ft)
-        || { cm_groups: 1, td_groups: 1, tp_groups: 1, tp8_groups: 1, pt_groups: 1 };
-    const dash = '<span style="color:#d1d5db">—</span>';
-    const inp = (ft, field) => {
-        const v = get(ft)[field]; const val = (v != null ? v : 1);
-        return `<input type="number" min="1" step="1" value="${val}" data-yg="${yg}" data-ft="${ft}" data-field="${field}" style="width:56px;padding:3px 6px;text-align:center">`;
-    };
+    const sems = [`S${2 * yg - 1}`, `S${2 * yg}`];
     const ay = grpAcademicYear() ? ' (' + grpAcademicYear() + ')' : '';
-    // Grille TD/TP12/TP8 × FTP/ALT/MUT. CM = 1 groupe (non éditable).
-    let tdFTP, tdALT, tdMUT, tpFTP, tpALT, tp8FTP, tp8ALT, intro;
-    if (yg === 3) {
-        tdFTP = dash; tdALT = dash; tdMUT = inp(2, 'td_groups');
-        tpFTP = inp(0, 'tp_groups'); tpALT = inp(1, 'tp_groups');
-        intro = `Année 3${ay} : TD mutualisé (MUT), TP séparés FTP / ALT. CM = 1 groupe.`;
-    } else {
-        tdFTP = inp(0, 'td_groups'); tdALT = inp(1, 'td_groups'); tdMUT = inp(2, 'td_groups');
-        tpFTP = inp(0, 'tp_groups'); tpALT = inp(1, 'tp_groups');
-        intro = `Année ${yg}${ay} : TD FTP / ALT / MUT et TP FTP / ALT. CM = 1 groupe.`;
-    }
-    tp8FTP = inp(0, 'tp8_groups'); tp8ALT = inp(1, 'tp8_groups');
+
+    const get = (sem, ft) => (_semGroupsData.groups || []).find(r => r.semester_code === sem && r.formation_type === ft)
+        || { td_groups: 1, tp_groups: 1, tp8_groups: 1, pt_groups: 1 };
+    const inp = (sem, ft, field) => {
+        const v = get(sem, ft)[field];
+        return `<input type="number" min="1" step="1" value="${v != null ? v : 1}" data-sem="${sem}" data-ft="${ft}" data-field="${field}" style="width:56px;padding:3px 6px;text-align:center">`;
+    };
     const td = (h) => `<td style="text-align:center;padding:5px 12px">${h}</td>`;
+
+    const semCard = (sem) => {
+        const isMut = !!(_semGroupsData.mutualized || {})[sem];
+        // Mutualisé : une seule colonne « Promo » (ft=2) ; sinon FTP / ALT
+        const cols = isMut ? [[2, 'Promo (FTP + ALT)']] : [[0, 'FTP'], [1, 'ALT']];
+        const row = (label, field, title) => `
+            <tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:5px 12px;text-align:center"${title ? ` title="${title}"` : ''}><strong>${label}</strong></td>
+                ${cols.map(([ft]) => td(inp(sem, ft, field))).join('')}
+            </tr>`;
+        return `
+        <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;min-width:250px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;flex-wrap:wrap">
+                <strong style="color:#4f46e5;font-size:1.02rem">${sem}</strong>
+                <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;cursor:pointer"
+                       title="Semestre mutualisé : FTP et ALT suivent les cours ensemble. Toutes les matières du semestre passent en MUT et les groupes sont définis pour la promo entière.">
+                    <input type="checkbox" ${isMut ? 'checked' : ''} onchange="toggleSemesterMut('${sem}', this)">
+                    Semestre mutualisé
+                </label>
+            </div>
+            <table style="border-collapse:collapse;text-align:center;margin:0 auto">
+                <thead style="background:#f3f4f6">
+                    <tr><th style="padding:6px 12px"></th>${cols.map(([,label]) => `<th style="padding:6px 12px;text-align:center">${label}</th>`).join('')}</tr>
+                </thead>
+                <tbody>
+                    ${row('TD', 'td_groups')}
+                    ${row('TP12', 'tp_groups', 'Matières en TP à 12 étudiants')}
+                    ${row('TP8', 'tp8_groups', 'Matières en TP à 8 étudiants (défini dans la fiche matière)')}
+                    ${row('PT', 'pt_groups', 'Projet tutoré')}
+                </tbody>
+            </table>
+        </div>`;
+    };
+
     el.innerHTML = `
-        <p style="margin:0 0 8px;font-size:.85rem;color:#6b7280">${intro}</p>
-        <table style="border-collapse:collapse;background:#fff;border-radius:6px;overflow:hidden;text-align:center;margin:0 auto">
-            <thead style="background:#f3f4f6">
-                <tr><th style="padding:6px 12px;text-align:center"></th><th style="padding:6px 12px;text-align:center">FTP</th><th style="padding:6px 12px;text-align:center">ALT</th><th style="padding:6px 12px;text-align:center">MUT</th></tr>
-            </thead>
-            <tbody>
-                <tr style="border-top:1px solid #f3f4f6"><td style="padding:5px 12px;text-align:center"><strong>TD</strong></td>${td(tdFTP)}${td(tdALT)}${td(tdMUT)}</tr>
-                <tr style="border-top:1px solid #f3f4f6"><td style="padding:5px 12px;text-align:center" title="Matières en TP à 12 étudiants"><strong>TP12</strong></td>${td(tpFTP)}${td(tpALT)}${td(dash)}</tr>
-                <tr style="border-top:1px solid #f3f4f6"><td style="padding:5px 12px;text-align:center" title="Matières en TP à 8 étudiants (défini dans la fiche matière)"><strong>TP8</strong></td>${td(tp8FTP)}${td(tp8ALT)}${td(dash)}</tr>
-            </tbody>
-        </table>
-        <div style="margin-top:10px;display:flex;gap:8px;justify-content:center">
+        <p style="margin:0 0 10px;font-size:.85rem;color:#6b7280">
+            Année ${yg}${ay} : nombre de groupes par semestre — TD, TP12, TP8 et PT. CM = 1 groupe (non éditable).
+            Semestre <strong>mutualisé</strong> : toutes les matières passent en MUT et les groupes valent pour la promo entière.
+        </p>
+        <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap">${sems.map(semCard).join('')}</div>
+        <div style="margin-top:12px;display:flex;gap:8px;justify-content:center">
             <button class="btn btn-primary btn-sm" onclick="savePromotionGroups()">Enregistrer</button>
             <span id="promo-groups-status" style="font-size:.85rem;color:#10b981;align-self:center"></span>
         </div>
@@ -6216,22 +6235,48 @@ function renderPromotionGroups(rows) {
 }
 
 async function savePromotionGroups() {
-    // Regroupe les saisies par (année, formation). CM = 1 (fixe) ; PT = défaut.
+    // Regroupe les saisies par (semestre, face). CM = 1 (fixe).
     const map = {};
     document.querySelectorAll('#promo-groups-editor input[data-field]').forEach(inp => {
-        const yg = parseInt(inp.dataset.yg), ft = parseInt(inp.dataset.ft);
-        const k = yg + '-' + ft;
-        if (!map[k]) map[k] = { year_group: yg, formation_type: ft, cm_groups: 1 };
+        const sem = inp.dataset.sem, ft = parseInt(inp.dataset.ft);
+        const k = sem + '-' + ft;
+        if (!map[k]) map[k] = { semester_code: sem, formation_type: ft };
         map[k][inp.dataset.field] = Math.max(1, parseInt(inp.value) || 1);
     });
     const rows = Object.values(map);
     if (!rows.length) return;
     try {
-        await api('/promotion-groups' + _grpQ(), { method: 'PUT', body: JSON.stringify(rows) });
+        await api('/semester-groups' + _grpQ(), { method: 'PUT', body: JSON.stringify(rows) });
+        // Mémoriser localement pour re-render sans rechargement
+        rows.forEach(r => {
+            const cur = (_semGroupsData.groups || []).find(g => g.semester_code === r.semester_code && g.formation_type === r.formation_type);
+            if (cur) Object.assign(cur, r);
+            else (_semGroupsData.groups = _semGroupsData.groups || []).push(r);
+        });
         document.getElementById('promo-groups-status').textContent = '✓ Enregistré';
-        setTimeout(() => { document.getElementById('promo-groups-status').textContent = ''; }, 2000);
+        setTimeout(() => { const s = document.getElementById('promo-groups-status'); if (s) s.textContent = ''; }, 2000);
     } catch(e) {
         toast('Erreur enregistrement : ' + e.message, 'error');
+    }
+}
+
+async function toggleSemesterMut(sem, checkbox) {
+    const target = checkbox.checked;
+    const msg = target
+        ? `Passer le semestre ${sem} en MUTUALISÉ ?\n\nToutes les matières de ${sem} passent en MUT : leurs CM/TD FTP et ALT sont fusionnés en sessions communes (les heures de la face FTP sont conservées en cas de doublon). Les groupes seront définis pour la promo entière.`
+        : `Repasser le semestre ${sem} en NON mutualisé ?\n\nToutes les matières de ${sem} repassent en non-MUT : leurs CM/TD communs sont recopiés sur les deux faces FTP et ALT.`;
+    if (!confirm(msg)) { checkbox.checked = !target; return; }
+    try {
+        // Enregistrer d'abord les nb de groupes saisis (la grille va changer de colonnes)
+        await savePromotionGroups();
+        const r = await api('/semesters/' + sem + '/mutualized' + _grpQ(),
+            { method: 'PUT', body: JSON.stringify({ mutualized: target ? 1 : 0 }) });
+        (_semGroupsData.mutualized = _semGroupsData.mutualized || {})[sem] = r.mutualized;
+        renderPromotionGroups();
+        toast(`${sem} ${r.mutualized ? 'mutualisé' : 'non mutualisé'} — ${r.courses} matière(s) mise(s) à jour`);
+    } catch(e) {
+        checkbox.checked = !target;
+        toast('Erreur : ' + e.message, 'error');
     }
 }
 
@@ -6497,8 +6542,8 @@ async function loadPromoGroups() {
     el.innerHTML = '<div class="spinner">Chargement…</div>';
     buildGrpYearSelect();
     try {
-        const rows = await api('/promotion-groups' + _grpQ());
-        renderPromotionGroups(rows);
+        const data = await api('/semester-groups' + _grpQ());
+        renderPromotionGroups(data);
     } catch (e) {
         el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
     }
