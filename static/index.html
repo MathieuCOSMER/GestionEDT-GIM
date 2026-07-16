@@ -4827,7 +4827,9 @@ async function savePnGroup(firstId, ids) {
 }
 
 // Semestre mutualisé avec TP communs à la promo ? (TP stockés en MUT, ft=2)
-function _semTpCommon(semesterId) {
+// Les SAÉ ne sont pas concernées : leurs TP restent gérés par face.
+function _semTpCommon(semesterId, courseType) {
+    if (String(courseType||'').toUpperCase() === 'SAE') return false;
     const s = (state.semesters||[]).find(x => x.id === semesterId);
     return !!(s && s.mutualized && !s.tp_separate);
 }
@@ -4937,7 +4939,7 @@ function renderCourses() {
         // fusionnée (colspan 2) au lieu de deux cellules FTP / ALT.
         return types.map((t, i) => {
             const mutSpan = c.mutualized && showFtpCol && showAltCol
-                && (t.label === 'CM' || t.label === 'TD' || (t.label === 'TP' && _semTpCommon(c.semester_id)));
+                && (t.label === 'CM' || t.label === 'TD' || (t.label === 'TP' && _semTpCommon(c.semester_id, c.course_type)));
             let hoursCells;
             if (mutSpan) {
                 const h = t.ftp || t.alt, teacher = t.ftpT || t.altT;
@@ -5384,7 +5386,7 @@ async function openCourseModal(id = null) {
             if (isMut) {
                 // CM/TD depuis MUT (formation_type=2), TP/PT depuis FTP (0).
                 // TP communs à la promo (semestre mutualisé, tp_separate=0) : TP depuis MUT.
-                const tpCommon = _semTpCommon(c.semester_id);
+                const tpCommon = _semTpCommon(c.semester_id, c.course_type);
                 try {
                     const thMut = await api('/courses/' + id + '/teaching-hours?formation_type=2' + svcQ('&'));
                     const thFtp = await api('/courses/' + id + '/teaching-hours?formation_type=0' + svcQ('&'));
@@ -5515,7 +5517,7 @@ async function submitCourse(e) {
 
         if (isMut) {
             // TP communs à la promo (semestre mutualisé, tp_separate=0) : TP → MUT aussi
-            const tpCommon = _semTpCommon(semId);
+            const tpCommon = _semTpCommon(semId, document.getElementById('course-type').value);
             // CM/TD (+ TP communs) → MUT (formation_type=2)
             const typesMut = { CM: panelFtp.CM, TD: panelFtp.TD, TP: tpCommon ? panelFtp.TP : {hours:0}, PT: {hours:0} };
             await api('/courses/' + courseId + '/teaching-hours?formation_type=2' + svcQ('&'), { method: 'PUT', body: JSON.stringify(typesMut) });
@@ -6266,7 +6268,8 @@ function renderPromotionGroups(data) {
     el.innerHTML = `
         <p style="margin:0 0 10px;font-size:.85rem;color:#6b7280">
             Année ${yg}${ay} : nombre de groupes par semestre — TD, TP12, TP8 et PT. CM = 1 groupe (non éditable).
-            Semestre <strong>mutualisé</strong> : toutes les matières passent en MUT et les groupes valent pour la promo entière.
+            Semestre <strong>mutualisé</strong> : les ressources passent en MUT et les groupes valent pour la promo entière.
+            Les <strong>SAÉ</strong> ne sont pas concernées (réglage individuel dans la fiche matière).
         </p>
         <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap">${sems.map(semCard).join('')}</div>
         <div style="margin-top:12px;display:flex;gap:8px;justify-content:center">
@@ -6306,8 +6309,8 @@ async function toggleSemesterMut(sem, checkbox) {
     const target = checkbox.checked;
     const tpSep = (_semGroupsData.tp_separate || {})[sem] !== 0;
     const msg = target
-        ? `Passer le semestre ${sem} en MUTUALISÉ ?\n\nToutes les matières de ${sem} passent en MUT : leurs CM/TD FTP et ALT sont fusionnés en sessions communes${tpSep ? '' : ', ainsi que leurs TP (TP communs à la promo)'} — les heures de la face FTP sont conservées en cas de doublon. Les groupes seront définis pour la promo entière.`
-        : `Repasser le semestre ${sem} en NON mutualisé ?\n\nToutes les matières de ${sem} repassent en non-MUT : leurs CM/TD (et TP communs éventuels) sont recopiés sur les deux faces FTP et ALT.`;
+        ? `Passer le semestre ${sem} en MUTUALISÉ ?\n\nLes ressources de ${sem} passent en MUT : leurs CM/TD FTP et ALT sont fusionnés en sessions communes${tpSep ? '' : ', ainsi que leurs TP (TP communs à la promo)'} — les heures de la face FTP sont conservées en cas de doublon. Les groupes seront définis pour la promo entière.\n\nLes SAÉ ne sont pas concernées (réglage individuel dans la fiche matière).`
+        : `Repasser le semestre ${sem} en NON mutualisé ?\n\nLes ressources de ${sem} repassent en non-MUT : leurs CM/TD (et TP communs éventuels) sont recopiés sur les deux faces FTP et ALT.\n\nLes SAÉ ne sont pas concernées (réglage individuel dans la fiche matière).`;
     if (!confirm(msg)) { checkbox.checked = !target; return; }
     try {
         // Enregistrer d'abord les nb de groupes saisis (la grille va changer de colonnes)
@@ -6326,8 +6329,8 @@ async function toggleSemesterMut(sem, checkbox) {
 async function toggleSemesterTpSep(sem, checkbox) {
     const target = checkbox.checked;   // coché = TP distincts FTP / ALT
     const msg = target
-        ? `Rendre les TP de ${sem} DISTINCTS FTP / ALT ?\n\nLes lignes TP MUT de chaque matière sont recopiées sur les deux faces FTP et ALT (répartition calendaire propre à chaque face). Les groupes TP12 / TP8 se définissent alors par face.`
-        : `Rendre les TP de ${sem} COMMUNS à la promo ?\n\nLes TP FTP et ALT de chaque matière sont fusionnés en une seule ligne TP MUT (heures de la face FTP conservées en cas de doublon). Une seule ligne TP dans la répartition calendaire.`;
+        ? `Rendre les TP de ${sem} DISTINCTS FTP / ALT ?\n\nLes lignes TP MUT de chaque ressource sont recopiées sur les deux faces FTP et ALT (répartition calendaire propre à chaque face). Les groupes TP12 / TP8 se définissent alors par face. Les SAÉ ne sont pas concernées.`
+        : `Rendre les TP de ${sem} COMMUNS à la promo ?\n\nLes TP FTP et ALT de chaque ressource sont fusionnés en une seule ligne TP MUT (heures de la face FTP conservées en cas de doublon). Une seule ligne TP dans la répartition calendaire. Les SAÉ ne sont pas concernées.`;
     if (!confirm(msg)) { checkbox.checked = !target; return; }
     try {
         await savePromotionGroups();

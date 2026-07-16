@@ -6914,10 +6914,12 @@ def _split_sessions_from_mut(db, course_id, teaching_types):
 @app.route('/api/semesters/<sem_code>/mutualized', methods=['PUT'])
 def set_semester_mutualized(sem_code):
     """Bascule « semestre mutualisé » (FTP + ALT ensemble). Body : {mutualized: 0/1}.
-    • Passage en mutualisé : toutes les matières du semestre passent en MUT ;
+    Les SAÉ ne sont PAS concernées : elles gardent leur réglage individuel
+    (case « Mutualisé » de la fiche matière).
+    • Passage en mutualisé : les ressources du semestre passent en MUT ;
       leurs CM/TD FTP/ALT sont fusionnés en sessions MUT (face FTP prioritaire),
       et les TP aussi si le semestre est en « TP communs » (tp_separate=0).
-    • Retour en non mutualisé : les matières repassent en non-MUT ; les CM/TD
+    • Retour en non mutualisé : les ressources repassent en non-MUT ; les CM/TD
       (et TP MUT éventuels) sont recopiés sur les deux faces FTP et ALT."""
     try:
         sem_code = (sem_code or '').upper()
@@ -6929,14 +6931,17 @@ def set_semester_mutualized(sem_code):
         sid = srow['id']
         tp_separate = 1 if (srow['tp_separate'] is None or srow['tp_separate']) else 0
 
-        courses = db.execute('SELECT id FROM courses WHERE semester_id = ?', (sid,)).fetchall()
+        courses = db.execute(
+            "SELECT id FROM courses WHERE semester_id = ? AND UPPER(COALESCE(course_type,'')) != 'SAE'",
+            (sid,)).fetchall()
         for c in courses:
             if target:
                 types = ('CM', 'TD') if tp_separate else ('CM', 'TD', 'TP')
                 _merge_sessions_to_mut(db, c['id'], types)
             else:
                 _split_sessions_from_mut(db, c['id'], ('CM', 'TD', 'TP'))
-        db.execute('UPDATE courses SET mutualized = ?, updated_at = CURRENT_TIMESTAMP WHERE semester_id = ?',
+        db.execute('''UPDATE courses SET mutualized = ?, updated_at = CURRENT_TIMESTAMP
+                      WHERE semester_id = ? AND UPPER(COALESCE(course_type,'')) != 'SAE' ''',
                    (target, sid))
         db.execute('UPDATE semesters SET mutualized = ? WHERE id = ?', (target, sid))
         db.commit()
@@ -6949,9 +6954,10 @@ def set_semester_mutualized(sem_code):
 @app.route('/api/semesters/<sem_code>/tp-separate', methods=['PUT'])
 def set_semester_tp_separate(sem_code):
     """Semestre mutualisé : TP FTP / ALT distincts ou communs. Body : {tp_separate: 0/1}.
+    Les SAÉ ne sont pas concernées (réglage individuel dans la fiche matière).
     • distincts (1) : les TP restent (ou redeviennent) des lignes FTP et ALT
       séparées — utile pour une répartition calendaire différente par face ;
-    • communs (0) : les TP de chaque matière sont fusionnés en une ligne TP MUT
+    • communs (0) : les TP de chaque ressource sont fusionnés en une ligne TP MUT
       (face FTP conservée en cas de doublon)."""
     try:
         sem_code = (sem_code or '').upper()
@@ -6962,7 +6968,9 @@ def set_semester_tp_separate(sem_code):
         target = 1 if (request.get_json() or {}).get('tp_separate') else 0
         sid = srow['id']
 
-        courses = db.execute('SELECT id FROM courses WHERE semester_id = ?', (sid,)).fetchall()
+        courses = db.execute(
+            "SELECT id FROM courses WHERE semester_id = ? AND UPPER(COALESCE(course_type,'')) != 'SAE'",
+            (sid,)).fetchall()
         # Restructuration des sessions TP uniquement si le semestre est mutualisé
         if srow['mutualized']:
             for c in courses:
