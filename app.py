@@ -1255,6 +1255,10 @@ def _apply_migrations(db):
     # Flag « semestre mutualisé » (FTP + ALT ensemble) sur la table semesters
     if 'mutualized' not in [r[1] for r in db.execute("PRAGMA table_info(semesters)").fetchall()]:
         db.execute("ALTER TABLE semesters ADD COLUMN mutualized INTEGER NOT NULL DEFAULT 0")
+    # Semestre mutualisé : TP FTP / ALT distincts (1, défaut — lignes séparées
+    # pour la répartition calendaire) ou TP communs à la promo (0, ligne TP MUT)
+    if 'tp_separate' not in [r[1] for r in db.execute("PRAGMA table_info(semesters)").fetchall()]:
+        db.execute("ALTER TABLE semesters ADD COLUMN tp_separate INTEGER NOT NULL DEFAULT 1")
 
     # Heures HETD effectuées dans un autre département (onglet Mon Compte).
     # Saisies par l'enseignant lui-même et visibles par lui seul, sauf lignes
@@ -6040,13 +6044,13 @@ def get_courses():
                             THEN cs.room_name END) as td_room,
                    MAX(CASE WHEN cs.teaching_type='TD' AND cs.formation_type IN (0,2)
                             THEN t.name END) as td_teacher,
-                   COALESCE(SUM(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=0
+                   COALESCE(SUM(CASE WHEN cs.teaching_type='TP' AND cs.formation_type IN (0,2)
                                      THEN cs.total_hours ELSE 0 END), 0) as tp_hours,
-                   MAX(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=0
+                   MAX(CASE WHEN cs.teaching_type='TP' AND cs.formation_type IN (0,2)
                             THEN cs.slot_duration END) as tp_slot_duration,
-                   MAX(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=0
+                   MAX(CASE WHEN cs.teaching_type='TP' AND cs.formation_type IN (0,2)
                             THEN cs.room_name END) as tp_room,
-                   MAX(CASE WHEN cs.teaching_type='TP' AND cs.formation_type=0
+                   MAX(CASE WHEN cs.teaching_type='TP' AND cs.formation_type IN (0,2)
                             THEN t.name END) as tp_teacher,
                    COALESCE(SUM(CASE WHEN cs.teaching_type='PT' AND cs.formation_type=0
                                      THEN cs.total_hours ELSE 0 END), 0) as pt_hours,
@@ -6774,23 +6778,31 @@ def calculate_hetd(teaching_type, total_hours):
     return total_hours * coefficient
 
 def _load_semester_groups(db):
-    """Retourne ({(semester_code, formation_type): {td,tp,tp8,pt}}, {sem mutualisés})."""
+    """Retourne ({(semestre, face): {td,tp,tp8,pt}}, {sem mutualisés}, {sem à TP distincts})."""
     cur = db.execute('SELECT semester_code, formation_type, td_groups, tp_groups, tp8_groups, pt_groups FROM semester_groups')
     sg = {(r['semester_code'], r['formation_type']): {
         'TD': r['td_groups'], 'TP': r['tp_groups'],
         'TP8': r['tp8_groups'], 'PT': r['pt_groups']
     } for r in cur.fetchall()}
-    mut = {r['code'] for r in db.execute('SELECT code FROM semesters WHERE mutualized = 1').fetchall()}
-    return sg, mut
+    mut, tpsep = set(), set()
+    for r in db.execute('SELECT code, mutualized, tp_separate FROM semesters').fetchall():
+        if r['mutualized']:
+            mut.add(r['code'])
+        if r['tp_separate'] is None or r['tp_separate']:
+            tpsep.add(r['code'])
+    return sg, mut, tpsep
 
-def _group_multiplier(sg_map, mut_set, semester_code, formation_type, teaching_type, tp_type=None):
+def _group_multiplier(sg_map, mut_set, tpsep_set, semester_code, formation_type, teaching_type, tp_type=None):
     """Nb de groupes pour (semestre, face, type d'enseignement). CM = 1 groupe.
-    Semestre mutualisé : les groupes « Promo » (ft=2) s'appliquent à toutes les
-    sessions du semestre. Pour les TP, `tp_type` (TP12/TP8) choisit la ligne."""
+    Semestre mutualisé : groupes « Promo » (ft=2) pour tout, SAUF les TP quand
+    ils restent distincts FTP/ALT (tp_separate) → groupes de la face.
+    Pour les TP, `tp_type` de la matière (TP12/TP8) choisit la ligne."""
     tt = teaching_type.upper().replace(' ', '')
     if tt == 'CM':
         return 1
-    ft = 2 if semester_code in mut_set else formation_type
+    ft = formation_type
+    if semester_code in mut_set and not (tt.startswith('TP') and semester_code in tpsep_set):
+        ft = 2
     groups = sg_map.get((semester_code, ft))
     if not groups:
         return 1
@@ -6809,9 +6821,12 @@ def get_semester_groups():
             FROM semester_groups
             ORDER BY semester_code, formation_type
         ''')
-        mut = {r['code']: int(r['mutualized'] or 0)
-               for r in db.execute('SELECT code, mutualized FROM semesters').fetchall()}
-        return jsonify({'groups': rows_to_list(cur.fetchall()), 'mutualized': mut}), 200
+        mut, tpsep = {}, {}
+        for r in db.execute('SELECT code, mutualized, tp_separate FROM semesters').fetchall():
+            mut[r['code']] = int(r['mutualized'] or 0)
+            tpsep[r['code']] = 1 if (r['tp_separate'] is None or r['tp_separate']) else 0
+        return jsonify({'groups': rows_to_list(cur.fetchall()),
+                        'mutualized': mut, 'tp_separate': tpsep}), 200
     except Exception as e:
         return error_response(f'Error loading semester groups: {str(e)}', 500)
 
@@ -6847,65 +6862,79 @@ def update_semester_groups():
     except Exception as e:
         return error_response(f'Error updating semester groups: {str(e)}', 500)
 
+def _merge_sessions_to_mut(db, course_id, teaching_types):
+    """Fusionne les sessions FTP/ALT des types donnés en une session MUT (ft=2).
+    En cas de doublon, la face FTP est conservée (ALT supprimée)."""
+    def _delete_session(cs_id):
+        db.execute('DELETE FROM weekly_hours WHERE course_session_id = ?', (cs_id,))
+        db.execute('DELETE FROM course_sessions WHERE id = ?', (cs_id,))
+    for tt in teaching_types:
+        rows = {r['formation_type']: r for r in db.execute(
+            'SELECT * FROM course_sessions WHERE course_id = ? AND teaching_type = ?',
+            (course_id, tt)).fetchall()}
+        if 2 in rows:
+            for ft in (0, 1):
+                if ft in rows:
+                    _delete_session(rows[ft]['id'])
+        elif 0 in rows:
+            if 1 in rows:
+                _delete_session(rows[1]['id'])
+            db.execute('UPDATE course_sessions SET formation_type = 2 WHERE id = ?', (rows[0]['id'],))
+        elif 1 in rows:
+            db.execute('UPDATE course_sessions SET formation_type = 2 WHERE id = ?', (rows[1]['id'],))
+
+def _split_sessions_from_mut(db, course_id, teaching_types):
+    """Recopie les sessions MUT (ft=2) des types donnés sur les faces FTP et ALT."""
+    def _delete_session(cs_id):
+        db.execute('DELETE FROM weekly_hours WHERE course_session_id = ?', (cs_id,))
+        db.execute('DELETE FROM course_sessions WHERE id = ?', (cs_id,))
+    for tt in teaching_types:
+        rows = {r['formation_type']: r for r in db.execute(
+            'SELECT * FROM course_sessions WHERE course_id = ? AND teaching_type = ?',
+            (course_id, tt)).fetchall()}
+        if 2 not in rows:
+            continue
+        m = rows[2]
+        if 0 in rows:
+            _delete_session(m['id'])
+        else:
+            db.execute('UPDATE course_sessions SET formation_type = 0 WHERE id = ?', (m['id'],))
+        if 1 not in rows:
+            db.execute('''
+                INSERT INTO course_sessions
+                    (course_id, teacher_id, formation_type, teaching_type,
+                     nb_sessions, total_hours, slot_duration, room_name, promo,
+                     sessions_per_week_max)
+                VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+            ''', (m['course_id'], m['teacher_id'], tt, m['nb_sessions'],
+                  m['total_hours'], m['slot_duration'], m['room_name'],
+                  m['promo'], m['sessions_per_week_max']))
+
 @app.route('/api/semesters/<sem_code>/mutualized', methods=['PUT'])
 def set_semester_mutualized(sem_code):
     """Bascule « semestre mutualisé » (FTP + ALT ensemble). Body : {mutualized: 0/1}.
     • Passage en mutualisé : toutes les matières du semestre passent en MUT ;
-      leurs CM/TD FTP/ALT sont fusionnés en sessions MUT (face FTP prioritaire).
+      leurs CM/TD FTP/ALT sont fusionnés en sessions MUT (face FTP prioritaire),
+      et les TP aussi si le semestre est en « TP communs » (tp_separate=0).
     • Retour en non mutualisé : les matières repassent en non-MUT ; les CM/TD
-      MUT sont recopiés sur les deux faces FTP et ALT."""
+      (et TP MUT éventuels) sont recopiés sur les deux faces FTP et ALT."""
     try:
         sem_code = (sem_code or '').upper()
         db = get_db()
-        srow = db.execute('SELECT id, mutualized FROM semesters WHERE code = ?', (sem_code,)).fetchone()
+        srow = db.execute('SELECT id, mutualized, tp_separate FROM semesters WHERE code = ?', (sem_code,)).fetchone()
         if not srow:
             return error_response('Semestre introuvable', 404)
         target = 1 if (request.get_json() or {}).get('mutualized') else 0
         sid = srow['id']
-
-        def _delete_session(cs_id):
-            db.execute('DELETE FROM weekly_hours WHERE course_session_id = ?', (cs_id,))
-            db.execute('DELETE FROM course_sessions WHERE id = ?', (cs_id,))
+        tp_separate = 1 if (srow['tp_separate'] is None or srow['tp_separate']) else 0
 
         courses = db.execute('SELECT id FROM courses WHERE semester_id = ?', (sid,)).fetchall()
         for c in courses:
-            for tt in ('CM', 'TD'):
-                rows = {r['formation_type']: r for r in db.execute(
-                    'SELECT * FROM course_sessions WHERE course_id = ? AND teaching_type = ?',
-                    (c['id'], tt)).fetchall()}
-                if target:
-                    # → MUT : garder une seule session (MUT sinon FTP sinon ALT) en ft=2
-                    if 2 in rows:
-                        for ft in (0, 1):
-                            if ft in rows:
-                                _delete_session(rows[ft]['id'])
-                    elif 0 in rows:
-                        if 1 in rows:
-                            _delete_session(rows[1]['id'])
-                        db.execute('UPDATE course_sessions SET formation_type = 2 WHERE id = ?',
-                                   (rows[0]['id'],))
-                    elif 1 in rows:
-                        db.execute('UPDATE course_sessions SET formation_type = 2 WHERE id = ?',
-                                   (rows[1]['id'],))
-                else:
-                    # → non MUT : recopier la session MUT sur les faces FTP et ALT
-                    if 2 in rows:
-                        m = rows[2]
-                        if 0 in rows:
-                            _delete_session(m['id'])
-                        else:
-                            db.execute('UPDATE course_sessions SET formation_type = 0 WHERE id = ?',
-                                       (m['id'],))
-                        if 1 not in rows:
-                            db.execute('''
-                                INSERT INTO course_sessions
-                                    (course_id, teacher_id, formation_type, teaching_type,
-                                     nb_sessions, total_hours, slot_duration, room_name, promo,
-                                     sessions_per_week_max)
-                                VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
-                            ''', (m['course_id'], m['teacher_id'], tt, m['nb_sessions'],
-                                  m['total_hours'], m['slot_duration'], m['room_name'],
-                                  m['promo'], m['sessions_per_week_max']))
+            if target:
+                types = ('CM', 'TD') if tp_separate else ('CM', 'TD', 'TP')
+                _merge_sessions_to_mut(db, c['id'], types)
+            else:
+                _split_sessions_from_mut(db, c['id'], ('CM', 'TD', 'TP'))
         db.execute('UPDATE courses SET mutualized = ?, updated_at = CURRENT_TIMESTAMP WHERE semester_id = ?',
                    (target, sid))
         db.execute('UPDATE semesters SET mutualized = ? WHERE id = ?', (target, sid))
@@ -6915,6 +6944,39 @@ def set_semester_mutualized(sem_code):
         return jsonify({'semester': sem_code, 'mutualized': target, 'courses': len(courses)}), 200
     except Exception as e:
         return error_response(f'Error toggling mutualized semester: {str(e)}', 500)
+
+@app.route('/api/semesters/<sem_code>/tp-separate', methods=['PUT'])
+def set_semester_tp_separate(sem_code):
+    """Semestre mutualisé : TP FTP / ALT distincts ou communs. Body : {tp_separate: 0/1}.
+    • distincts (1) : les TP restent (ou redeviennent) des lignes FTP et ALT
+      séparées — utile pour une répartition calendaire différente par face ;
+    • communs (0) : les TP de chaque matière sont fusionnés en une ligne TP MUT
+      (face FTP conservée en cas de doublon)."""
+    try:
+        sem_code = (sem_code or '').upper()
+        db = get_db()
+        srow = db.execute('SELECT id, mutualized FROM semesters WHERE code = ?', (sem_code,)).fetchone()
+        if not srow:
+            return error_response('Semestre introuvable', 404)
+        target = 1 if (request.get_json() or {}).get('tp_separate') else 0
+        sid = srow['id']
+
+        courses = db.execute('SELECT id FROM courses WHERE semester_id = ?', (sid,)).fetchall()
+        # Restructuration des sessions TP uniquement si le semestre est mutualisé
+        if srow['mutualized']:
+            for c in courses:
+                if target:
+                    _split_sessions_from_mut(db, c['id'], ('TP',))
+                else:
+                    _merge_sessions_to_mut(db, c['id'], ('TP',))
+        db.execute('UPDATE semesters SET tp_separate = ? WHERE id = ?', (target, sid))
+        db.commit()
+        _audit('SEMESTER_TP_SEPARATE', ip=_client_ip(), user=session.get('user'),
+               semester=sem_code, tp_separate=target, courses=len(courses))
+        return jsonify({'semester': sem_code, 'tp_separate': target,
+                        'mutualized': int(srow['mutualized'] or 0), 'courses': len(courses)}), 200
+    except Exception as e:
+        return error_response(f'Error toggling TP separate: {str(e)}', 500)
 
 @app.route('/api/service/teacher/<int:teacher_id>', methods=['GET'])
 def get_teacher_service(teacher_id):
@@ -6939,13 +7001,13 @@ def get_teacher_service(teacher_id):
         ''', (teacher_id,))
         sessions = cursor.fetchall()
 
-        sg_map, mut_set = _load_semester_groups(db)
+        sg_map, mut_set, tpsep_set = _load_semester_groups(db)
 
         service_details = []
         total_hetd = 0
 
         for session in sessions:
-            mult = _group_multiplier(sg_map, mut_set, session['semester_code'], session['formation_type'], session['teaching_type'], session['tp_type'])
+            mult = _group_multiplier(sg_map, mut_set, tpsep_set, session['semester_code'], session['formation_type'], session['teaching_type'], session['tp_type'])
             effective_hours = (session['total_hours'] or 0) * mult
             hetd = calculate_hetd(session['teaching_type'], effective_hours)
             total_hetd += hetd
@@ -6987,7 +7049,7 @@ def get_all_service():
             ORDER BY t.name
         ''')
         rows = cursor.fetchall()
-        sg_map, mut_set = _load_semester_groups(db)
+        sg_map, mut_set, tpsep_set = _load_semester_groups(db)
 
         # Agréger par enseignant en multipliant par le nb de groupes
         agg = {}
@@ -6996,7 +7058,7 @@ def get_all_service():
             if tid not in agg:
                 agg[tid] = {'teacher_id': tid, 'teacher_name': r['teacher_name'],
                             'cm_hours': 0, 'td_hours': 0, 'tp_hours': 0, 'pt_hours': 0}
-            mult = _group_multiplier(sg_map, mut_set, r['semester_code'], r['formation_type'], r['teaching_type'], r['tp_type'])
+            mult = _group_multiplier(sg_map, mut_set, tpsep_set, r['semester_code'], r['formation_type'], r['teaching_type'], r['tp_type'])
             h = (r['total_hours'] or 0) * mult
             tt = r['teaching_type'].upper().replace(' ', '')
             if tt == 'CM':

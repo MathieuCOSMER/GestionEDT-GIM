@@ -1771,6 +1771,7 @@ async function loadPage(name, forceReload) {
             state.teachers = teachers;
             state.semesterGroups = sg.groups || [];
             state.mutSemesters = sg.mutualized || {};
+            state.tpSeparate = sg.tp_separate || {};
             // Heures hors GIM du connecté (personnelles : visibles par lui seul)
             state.myExternal = [];
             if (state.role === 'teacher') {
@@ -4825,6 +4826,12 @@ async function savePnGroup(firstId, ids) {
     }
 }
 
+// Semestre mutualisé avec TP communs à la promo ? (TP stockés en MUT, ft=2)
+function _semTpCommon(semesterId) {
+    const s = (state.semesters||[]).find(x => x.id === semesterId);
+    return !!(s && s.mutualized && !s.tp_separate);
+}
+
 // Remplit les listes Enseignant / Salle à partir des matières chargées
 function populateMatiereFilters() {
     const cs = state.courses || [];
@@ -4929,7 +4936,8 @@ function renderCourses() {
         // Cours mutualisé : CM et TD sont donnés en commun FTP+ALT → une seule cellule
         // fusionnée (colspan 2) au lieu de deux cellules FTP / ALT.
         return types.map((t, i) => {
-            const mutSpan = c.mutualized && showFtpCol && showAltCol && (t.label === 'CM' || t.label === 'TD');
+            const mutSpan = c.mutualized && showFtpCol && showAltCol
+                && (t.label === 'CM' || t.label === 'TD' || (t.label === 'TP' && _semTpCommon(c.semester_id)));
             let hoursCells;
             if (mutSpan) {
                 const h = t.ftp || t.alt, teacher = t.ftpT || t.altT;
@@ -5374,7 +5382,9 @@ async function openCourseModal(id = null) {
             onMutualizedChange();
 
             if (isMut) {
-                // CM/TD depuis MUT (formation_type=2), TP/PT depuis FTP (0)
+                // CM/TD depuis MUT (formation_type=2), TP/PT depuis FTP (0).
+                // TP communs à la promo (semestre mutualisé, tp_separate=0) : TP depuis MUT.
+                const tpCommon = _semTpCommon(c.semester_id);
                 try {
                     const thMut = await api('/courses/' + id + '/teaching-hours?formation_type=2' + svcQ('&'));
                     const thFtp = await api('/courses/' + id + '/teaching-hours?formation_type=0' + svcQ('&'));
@@ -5388,7 +5398,7 @@ async function openCourseModal(id = null) {
                         teachers[t] = info.teacher_id || '';
                     });
                     ['TP','PT'].forEach(t => {
-                        const info = thFtp[t] || {};
+                        const info = ((t === 'TP' && tpCommon) ? thMut[t] : thFtp[t]) || {};
                         document.getElementById(t.toLowerCase()+'-hours').value = info.hours || '';
                         document.getElementById(t.toLowerCase()+'-dur').value = info.slot_duration || '1.5';
                         document.getElementById(t.toLowerCase()+'-spw').value = info.sessions_per_week_max || '1';
@@ -5398,11 +5408,12 @@ async function openCourseModal(id = null) {
                     buildRoomSelects(rooms);
                     buildTeacherSelects(teachers);
                 } catch(e) { console.warn('Erreur chargement heures MUT:', e); }
-                // ALT TP/PT
+                // ALT TP/PT (TP communs : pas de face ALT pour les TP)
                 try {
                     const thAlt = await api('/courses/' + id + '/teaching-hours?formation_type=1' + svcQ('&'));
                     const rooms = {}, teachers = {};
                     ['TP','PT'].forEach(t => {
+                        if (t === 'TP' && tpCommon) return;
                         const info = thAlt[t] || {};
                         document.getElementById('alt-'+t.toLowerCase()+'-hours').value = info.hours || '';
                         document.getElementById('alt-'+t.toLowerCase()+'-dur').value = info.slot_duration || '1.5';
@@ -5503,14 +5514,16 @@ async function submitCourse(e) {
         }
 
         if (isMut) {
-            // CM/TD → MUT (formation_type=2)
-            const typesMut = { CM: panelFtp.CM, TD: panelFtp.TD, TP: {hours:0}, PT: {hours:0} };
+            // TP communs à la promo (semestre mutualisé, tp_separate=0) : TP → MUT aussi
+            const tpCommon = _semTpCommon(semId);
+            // CM/TD (+ TP communs) → MUT (formation_type=2)
+            const typesMut = { CM: panelFtp.CM, TD: panelFtp.TD, TP: tpCommon ? panelFtp.TP : {hours:0}, PT: {hours:0} };
             await api('/courses/' + courseId + '/teaching-hours?formation_type=2' + svcQ('&'), { method: 'PUT', body: JSON.stringify(typesMut) });
-            // FTP : uniquement TP/PT, effacer CM/TD
-            const typesFtpOnly = { CM: {hours:0}, TD: {hours:0}, TP: panelFtp.TP, PT: panelFtp.PT };
+            // FTP : uniquement TP/PT (TP seulement si distincts), effacer CM/TD
+            const typesFtpOnly = { CM: {hours:0}, TD: {hours:0}, TP: tpCommon ? {hours:0} : panelFtp.TP, PT: panelFtp.PT };
             await api('/courses/' + courseId + '/teaching-hours?formation_type=0' + svcQ('&'), { method: 'PUT', body: JSON.stringify(typesFtpOnly) });
-            // ALT : uniquement TP/PT, effacer CM/TD
-            const typesAltOnly = { CM: {hours:0}, TD: {hours:0}, TP: panelAlt.TP, PT: panelAlt.PT };
+            // ALT : uniquement TP/PT (TP seulement si distincts), effacer CM/TD
+            const typesAltOnly = { CM: {hours:0}, TD: {hours:0}, TP: tpCommon ? {hours:0} : panelAlt.TP, PT: panelAlt.PT };
             await api('/courses/' + courseId + '/teaching-hours?formation_type=1' + svcQ('&'), { method: 'PUT', body: JSON.stringify(typesAltOnly) });
         } else {
             // Classique : FTP + ALT séparés, effacer MUT
@@ -5940,8 +5953,11 @@ function _ttKey(tt) {
 function _pgMultiplier(semCode, ft, tt, tpType) {
     const k = _ttKey(tt);
     if (k === 'CM') return 1;                       // CM : toujours 1 groupe
-    // Semestre mutualisé : les groupes « Promo » (ft=2) s'appliquent à tout
-    const useFt = (state.mutSemesters||{})[semCode] ? 2 : ft;
+    // Semestre mutualisé : groupes « Promo » (ft=2) pour tout, SAUF les TP
+    // restés distincts FTP / ALT (tp_separate) → groupes de la face
+    let useFt = ft;
+    if ((state.mutSemesters||{})[semCode] && !(k === 'TP' && (state.tpSeparate||{})[semCode]))
+        useFt = 2;
     const g = (state.semesterGroups||[]).find(p => p.semester_code === semCode && p.formation_type === useFt);
     if (!g) return 1;
     // TP : le nb de groupes dépend du type de TP de la matière (TP12 / TP8)
@@ -6190,32 +6206,51 @@ function renderPromotionGroups(data) {
 
     const semCard = (sem) => {
         const isMut = !!(_semGroupsData.mutualized || {})[sem];
-        // Mutualisé : une seule colonne « Promo » (ft=2) ; sinon FTP / ALT
-        const cols = isMut ? [[2, 'Promo (FTP + ALT)']] : [[0, 'FTP'], [1, 'ALT']];
-        const row = (label, field, title) => `
+        const tpSep = (_semGroupsData.tp_separate || {})[sem] !== 0;   // défaut : distincts
+        const dash = '<span style="color:#d1d5db">—</span>';
+        // Colonnes : non mutualisé → FTP / ALT ; mutualisé → Promo (+ FTP / ALT si TP distincts)
+        let cols;             // [ft, label]
+        if (!isMut) cols = [[0, 'FTP'], [1, 'ALT']];
+        else if (tpSep) cols = [[2, 'Promo'], [0, 'FTP'], [1, 'ALT']];
+        else cols = [[2, 'Promo (FTP + ALT)']];
+        // fts autorisés par ligne : TD/PT → Promo si mutualisé ; TP → faces si TP distincts
+        const rowFts = (isTp) => {
+            if (!isMut) return [0, 1];
+            if (!tpSep) return [2];
+            return isTp ? [0, 1] : [2];
+        };
+        const row = (label, field, isTp, title) => `
             <tr style="border-top:1px solid #f3f4f6">
                 <td style="padding:5px 12px;text-align:center"${title ? ` title="${title}"` : ''}><strong>${label}</strong></td>
-                ${cols.map(([ft]) => td(inp(sem, ft, field))).join('')}
+                ${cols.map(([ft]) => td(rowFts(isTp).includes(ft) ? inp(sem, ft, field) : dash)).join('')}
             </tr>`;
         return `
         <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;min-width:250px">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;flex-wrap:wrap">
                 <strong style="color:#4f46e5;font-size:1.02rem">${sem}</strong>
-                <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;cursor:pointer"
-                       title="Semestre mutualisé : FTP et ALT suivent les cours ensemble. Toutes les matières du semestre passent en MUT et les groupes sont définis pour la promo entière.">
-                    <input type="checkbox" ${isMut ? 'checked' : ''} onchange="toggleSemesterMut('${sem}', this)">
-                    Semestre mutualisé
-                </label>
+                <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;cursor:pointer"
+                           title="Semestre mutualisé : FTP et ALT suivent les cours ensemble. Toutes les matières du semestre passent en MUT et les groupes sont définis pour la promo entière.">
+                        <input type="checkbox" ${isMut ? 'checked' : ''} onchange="toggleSemesterMut('${sem}', this)">
+                        Semestre mutualisé
+                    </label>
+                    ${isMut ? `
+                    <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;cursor:pointer;color:#6b7280"
+                           title="Distincts : les TP gardent des lignes FTP et ALT séparées (répartition calendaire propre à chaque face). Décoché : une seule ligne TP MUT par matière, TP communs à la promo.">
+                        <input type="checkbox" ${tpSep ? 'checked' : ''} onchange="toggleSemesterTpSep('${sem}', this)">
+                        TP FTP / ALT distincts
+                    </label>` : ''}
+                </div>
             </div>
             <table style="border-collapse:collapse;text-align:center;margin:0 auto">
                 <thead style="background:#f3f4f6">
                     <tr><th style="padding:6px 12px"></th>${cols.map(([,label]) => `<th style="padding:6px 12px;text-align:center">${label}</th>`).join('')}</tr>
                 </thead>
                 <tbody>
-                    ${row('TD', 'td_groups')}
-                    ${row('TP12', 'tp_groups', 'Matières en TP à 12 étudiants')}
-                    ${row('TP8', 'tp8_groups', 'Matières en TP à 8 étudiants (défini dans la fiche matière)')}
-                    ${row('PT', 'pt_groups', 'Projet tutoré')}
+                    ${row('TD', 'td_groups', false)}
+                    ${row('TP12', 'tp_groups', true, 'Matières en TP à 12 étudiants')}
+                    ${row('TP8', 'tp8_groups', true, 'Matières en TP à 8 étudiants (défini dans la fiche matière)')}
+                    ${row('PT', 'pt_groups', false, 'Projet tutoré')}
                 </tbody>
             </table>
         </div>`;
@@ -6262,9 +6297,10 @@ async function savePromotionGroups() {
 
 async function toggleSemesterMut(sem, checkbox) {
     const target = checkbox.checked;
+    const tpSep = (_semGroupsData.tp_separate || {})[sem] !== 0;
     const msg = target
-        ? `Passer le semestre ${sem} en MUTUALISÉ ?\n\nToutes les matières de ${sem} passent en MUT : leurs CM/TD FTP et ALT sont fusionnés en sessions communes (les heures de la face FTP sont conservées en cas de doublon). Les groupes seront définis pour la promo entière.`
-        : `Repasser le semestre ${sem} en NON mutualisé ?\n\nToutes les matières de ${sem} repassent en non-MUT : leurs CM/TD communs sont recopiés sur les deux faces FTP et ALT.`;
+        ? `Passer le semestre ${sem} en MUTUALISÉ ?\n\nToutes les matières de ${sem} passent en MUT : leurs CM/TD FTP et ALT sont fusionnés en sessions communes${tpSep ? '' : ', ainsi que leurs TP (TP communs à la promo)'} — les heures de la face FTP sont conservées en cas de doublon. Les groupes seront définis pour la promo entière.`
+        : `Repasser le semestre ${sem} en NON mutualisé ?\n\nToutes les matières de ${sem} repassent en non-MUT : leurs CM/TD (et TP communs éventuels) sont recopiés sur les deux faces FTP et ALT.`;
     if (!confirm(msg)) { checkbox.checked = !target; return; }
     try {
         // Enregistrer d'abord les nb de groupes saisis (la grille va changer de colonnes)
@@ -6274,6 +6310,25 @@ async function toggleSemesterMut(sem, checkbox) {
         (_semGroupsData.mutualized = _semGroupsData.mutualized || {})[sem] = r.mutualized;
         renderPromotionGroups();
         toast(`${sem} ${r.mutualized ? 'mutualisé' : 'non mutualisé'} — ${r.courses} matière(s) mise(s) à jour`);
+    } catch(e) {
+        checkbox.checked = !target;
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+async function toggleSemesterTpSep(sem, checkbox) {
+    const target = checkbox.checked;   // coché = TP distincts FTP / ALT
+    const msg = target
+        ? `Rendre les TP de ${sem} DISTINCTS FTP / ALT ?\n\nLes lignes TP MUT de chaque matière sont recopiées sur les deux faces FTP et ALT (répartition calendaire propre à chaque face). Les groupes TP12 / TP8 se définissent alors par face.`
+        : `Rendre les TP de ${sem} COMMUNS à la promo ?\n\nLes TP FTP et ALT de chaque matière sont fusionnés en une seule ligne TP MUT (heures de la face FTP conservées en cas de doublon). Une seule ligne TP dans la répartition calendaire.`;
+    if (!confirm(msg)) { checkbox.checked = !target; return; }
+    try {
+        await savePromotionGroups();
+        const r = await api('/semesters/' + sem + '/tp-separate' + _grpQ(),
+            { method: 'PUT', body: JSON.stringify({ tp_separate: target ? 1 : 0 }) });
+        (_semGroupsData.tp_separate = _semGroupsData.tp_separate || {})[sem] = r.tp_separate;
+        renderPromotionGroups();
+        toast(`TP de ${sem} ${r.tp_separate ? 'distincts FTP / ALT' : 'communs à la promo'}`);
     } catch(e) {
         checkbox.checked = !target;
         toast('Erreur : ' + e.message, 'error');
