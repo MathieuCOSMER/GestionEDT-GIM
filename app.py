@@ -1244,6 +1244,11 @@ def _apply_migrations(db):
                     VALUES (?, ?, ?, ?, ?, ?)
                 ''', (sem, r['formation_type'], r['td_groups'], r['tp_groups'],
                       r['tp8_groups'], r['pt_groups']))
+    # Nombre de groupes d'apprentis (ALT) dans un TP mutualisé (TP communs) :
+    # les apprentis occupent les DERNIERS groupes de la promo. Défini sur la
+    # ligne « Promo » (formation_type=2) de chaque semestre.
+    if 'alt_groups' not in [r[1] for r in db.execute("PRAGMA table_info(semester_groups)").fetchall()]:
+        db.execute("ALTER TABLE semester_groups ADD COLUMN alt_groups INTEGER NOT NULL DEFAULT 1")
     # Compléter les lignes manquantes (semestres × faces) avec les défauts
     for _sem in ('S1', 'S2', 'S3', 'S4', 'S5', 'S6'):
         for _ft in (0, 1, 2):
@@ -1259,6 +1264,38 @@ def _apply_migrations(db):
     # pour la répartition calendaire) ou TP communs à la promo (0, ligne TP MUT)
     if 'tp_separate' not in [r[1] for r in db.execute("PRAGMA table_info(semesters)").fetchall()]:
         db.execute("ALTER TABLE semesters ADD COLUMN tp_separate INTEGER NOT NULL DEFAULT 1")
+
+    # Placement des TP par groupe : chaque groupe (TP12_1, TP12_2, …) a son propre
+    # planning hebdomadaire dans la répartition calendaire. On ajoute group_index à
+    # weekly_hours (1 = données existantes) et on élargit la clé d'unicité à
+    # (session, semaine, groupe). SQLite ne sait pas modifier une contrainte UNIQUE
+    # en place → reconstruction de la table.
+    if 'group_index' not in [r[1] for r in db.execute("PRAGMA table_info(weekly_hours)").fetchall()]:
+        db.execute('DROP TABLE IF EXISTS weekly_hours_new')  # au cas où un essai précédent a échoué
+        db.execute('''
+            CREATE TABLE weekly_hours_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_session_id INTEGER NOT NULL,
+                week_number INTEGER NOT NULL,
+                semester_week INTEGER,
+                hours REAL DEFAULT 0,
+                group_index INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (course_session_id) REFERENCES course_sessions(id) ON DELETE CASCADE,
+                UNIQUE(course_session_id, week_number, group_index)
+            )
+        ''')
+        # Recopie (groupe 1), en ignorant d'éventuelles lignes orphelines
+        db.execute('''
+            INSERT INTO weekly_hours_new
+                (id, course_session_id, week_number, semester_week, hours, group_index, created_at)
+            SELECT id, course_session_id, week_number, semester_week, hours, 1, created_at
+            FROM weekly_hours
+            WHERE course_session_id IN (SELECT id FROM course_sessions)
+        ''')
+        db.execute('DROP TABLE weekly_hours')
+        db.execute('ALTER TABLE weekly_hours_new RENAME TO weekly_hours')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_weekly_hours_session ON weekly_hours(course_session_id)')
 
     # Heures HETD effectuées dans un autre département (onglet Mon Compte).
     # Saisies par l'enseignant lui-même et visibles par lui seul, sauf lignes
@@ -6421,7 +6458,7 @@ def get_weekly_distribution(course_id):
             SELECT cs.teaching_type, wh.week_number, wh.hours
             FROM course_sessions cs
             JOIN weekly_hours wh ON wh.course_session_id = cs.id
-            WHERE cs.course_id = ? AND cs.formation_type = ?
+            WHERE cs.course_id = ? AND cs.formation_type = ? AND wh.group_index = 1
             ORDER BY cs.teaching_type, wh.week_number
         ''', (course_id, formation_type))
         rows = cursor.fetchall()
@@ -6459,13 +6496,15 @@ def update_weekly_distribution(course_id):
             if not session:
                 continue
             session_id = session['id']
-            cursor.execute('DELETE FROM weekly_hours WHERE course_session_id = ?', (session_id,))
+            # Groupe 1 uniquement : préserve le placement par groupe des TP
+            # (groupes 2..N édités dans la répartition calendaire).
+            cursor.execute('DELETE FROM weekly_hours WHERE course_session_id = ? AND group_index = 1', (session_id,))
             for week_str, hours in week_data.items():
                 h = float(hours or 0)
                 if h > 0:
                     cursor.execute('''
-                        INSERT INTO weekly_hours (course_session_id, week_number, hours)
-                        VALUES (?, ?, ?)
+                        INSERT INTO weekly_hours (course_session_id, week_number, hours, group_index)
+                        VALUES (?, ?, ?, 1)
                     ''', (session_id, int(week_str), h))
 
         db.commit()
@@ -6747,21 +6786,23 @@ def upsert_weekly_hours(session_id, week_number):
     try:
         data = request.get_json() or {}
         hours = float(data.get('hours', 0))
+        group_index = int(data.get('group_index', 1) or 1)
         db = get_db()
         cursor = db.cursor()
         if hours > 0:
             cursor.execute('''
-                INSERT OR REPLACE INTO weekly_hours (course_session_id, week_number, hours)
-                VALUES (?, ?, ?)
-            ''', (session_id, week_number, hours))
+                INSERT OR REPLACE INTO weekly_hours (course_session_id, week_number, hours, group_index)
+                VALUES (?, ?, ?, ?)
+            ''', (session_id, week_number, hours, group_index))
         else:
             cursor.execute(
-                'DELETE FROM weekly_hours WHERE course_session_id = ? AND week_number = ?',
-                (session_id, week_number)
+                'DELETE FROM weekly_hours WHERE course_session_id = ? AND week_number = ? AND group_index = ?',
+                (session_id, week_number, group_index)
             )
             hours = 0
         db.commit()
-        return jsonify({'session_id': session_id, 'week_number': week_number, 'hours': hours}), 200
+        return jsonify({'session_id': session_id, 'week_number': week_number,
+                        'group_index': group_index, 'hours': hours}), 200
     except Exception as e:
         return error_response(f'Error upserting weekly hours: {str(e)}', 500)
 
@@ -6785,11 +6826,12 @@ def calculate_hetd(teaching_type, total_hours):
     return total_hours * coefficient
 
 def _load_semester_groups(db):
-    """Retourne ({(semestre, face): {td,tp,tp8,pt}}, {sem mutualisés}, {sem à TP distincts})."""
-    cur = db.execute('SELECT semester_code, formation_type, td_groups, tp_groups, tp8_groups, pt_groups FROM semester_groups')
+    """Retourne ({(semestre, face): {td,tp,tp8,pt,alt}}, {sem mutualisés}, {sem à TP distincts})."""
+    cur = db.execute('SELECT semester_code, formation_type, td_groups, tp_groups, tp8_groups, pt_groups, alt_groups FROM semester_groups')
     sg = {(r['semester_code'], r['formation_type']): {
         'TD': r['td_groups'], 'TP': r['tp_groups'],
-        'TP8': r['tp8_groups'], 'PT': r['pt_groups']
+        'TP8': r['tp8_groups'], 'PT': r['pt_groups'],
+        'ALT': r['alt_groups'] if r['alt_groups'] is not None else 1,
     } for r in cur.fetchall()}
     mut, tpsep = set(), set()
     for r in db.execute('SELECT code, mutualized, tp_separate FROM semesters').fetchall():
@@ -6824,7 +6866,7 @@ def get_semester_groups():
     try:
         db = get_db()
         cur = db.execute('''
-            SELECT semester_code, formation_type, td_groups, tp_groups, tp8_groups, pt_groups
+            SELECT semester_code, formation_type, td_groups, tp_groups, tp8_groups, pt_groups, alt_groups
             FROM semester_groups
             ORDER BY semester_code, formation_type
         ''')
@@ -6855,15 +6897,17 @@ def update_semester_groups():
             tp = max(1, int(entry.get('tp_groups', 1)))
             tp8 = max(1, int(entry.get('tp8_groups', entry.get('tp_groups', 1))))
             pt = max(1, int(entry.get('pt_groups', 1)))
+            alt = max(1, int(entry.get('alt_groups', 1)))   # nb de groupes apprentis (dernier(s) groupe(s))
             db.execute('''
-                INSERT INTO semester_groups (semester_code, formation_type, td_groups, tp_groups, tp8_groups, pt_groups)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO semester_groups (semester_code, formation_type, td_groups, tp_groups, tp8_groups, pt_groups, alt_groups)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(semester_code, formation_type) DO UPDATE SET
                     td_groups = excluded.td_groups,
                     tp_groups = excluded.tp_groups,
                     tp8_groups = excluded.tp8_groups,
-                    pt_groups = excluded.pt_groups
-            ''', (sem, ft, td, tp, tp8, pt))
+                    pt_groups = excluded.pt_groups,
+                    alt_groups = excluded.alt_groups
+            ''', (sem, ft, td, tp, tp8, pt, alt))
         db.commit()
         return jsonify({'success': True}), 200
     except Exception as e:
@@ -7603,7 +7647,7 @@ def get_repartition():
                        cs.total_hours, cs.nb_sessions, cs.slot_duration,
                        cs.room_name,
                        t.name AS teacher_name,
-                       wh.week_number, wh.semester_week, wh.hours
+                       wh.week_number, wh.semester_week, wh.hours, wh.group_index
                 FROM course_sessions cs
                 JOIN courses c ON cs.course_id = c.id
                 JOIN semesters s ON c.semester_id = s.id
@@ -7624,7 +7668,7 @@ def get_repartition():
                        cs.total_hours, cs.nb_sessions, cs.slot_duration,
                        cs.room_name,
                        t.name AS teacher_name,
-                       wh.week_number, wh.semester_week, wh.hours
+                       wh.week_number, wh.semester_week, wh.hours, wh.group_index
                 FROM course_sessions cs
                 JOIN courses c ON cs.course_id = c.id
                 JOIN semesters s ON c.semester_id = s.id
@@ -7637,12 +7681,27 @@ def get_repartition():
             ''')
         raw = cursor.fetchall()
 
-        # Pivot : regrouper par session
+        # Nb de groupes par (semestre, face, type) : les TP se scindent en une ligne
+        # par groupe dans la répartition calendaire.
+        sg_map, mut_set, tpsep_set = _load_semester_groups(db)
+
+        # Pivot : regrouper par session, en conservant les heures par groupe
         sessions = {}
         order = []
         for r in raw:
             sid = r['session_id']
             if sid not in sessions:
+                tt = r['teaching_type'] or ''
+                n_groups = 1
+                if tt.upper().replace(' ', '').startswith('TP'):
+                    try:
+                        n_groups = int(_group_multiplier(
+                            sg_map, mut_set, tpsep_set, r['semester_code'],
+                            r['formation_type'], tt, r['tp_type']) or 1)
+                    except Exception:
+                        n_groups = 1
+                    if n_groups < 1:
+                        n_groups = 1
                 sessions[sid] = {
                     'session_id': sid,
                     'course_code': r['course_code'] or '',
@@ -7656,15 +7715,55 @@ def get_repartition():
                     'slot_duration': r['slot_duration'] or 1.5,
                     'teacher': r['teacher_name'] or '',
                     'room': r['room_name'] or '',
-                    'by_week': {},
+                    'n_groups': n_groups,
+                    'by_group': {},   # {group_index: {week: hours}}
                 }
                 order.append(sid)
             if r['week_number'] is not None and (r['hours'] or 0) > 0:
-                sessions[sid]['by_week'][r['week_number']] = r['hours'] or 0
+                g = r['group_index'] or 1
+                sessions[sid]['by_group'].setdefault(g, {})[r['week_number']] = r['hours'] or 0
+
+        # Une ligne par session (CM/TD/PT) ou une ligne par groupe (TP à plusieurs groupes)
+        _BASE = ('session_id', 'course_code', 'course_name', 'semester', 'type',
+                 'tp_type', 'formation', 'total_hours', 'nb_sessions', 'slot_duration',
+                 'teacher', 'room')
+        out_rows = []
+        for sid in order:
+            s = sessions[sid]
+            base = {k: s[k] for k in _BASE}
+            n = s['n_groups']
+            if n <= 1:
+                # Fusionne tous les groupes éventuels sur une seule ligne
+                merged = {}
+                for gw in s['by_group'].values():
+                    for w, h in gw.items():
+                        merged[w] = merged.get(w, 0) + h
+                out_rows.append({**base, 'group_index': 1, 'n_groups': 1, 'by_week': merged,
+                                 'alt_group': False, 'group_label': ''})
+            else:
+                # TP mutualisé à TP communs : les apprentis (ALT) occupent les
+                # DERNIERS groupes (nb = alt_groups de la promo).
+                sem = s['semester']
+                is_common_mut = (sem in mut_set) and (sem not in tpsep_set)
+                k_alt = 0
+                if is_common_mut:
+                    k_alt = int((sg_map.get((sem, 2)) or {}).get('ALT', 1) or 0)
+                    k_alt = max(0, min(k_alt, n))
+                n_ftp = n - k_alt
+                for g in range(1, n + 1):
+                    is_alt = g > n_ftp
+                    if is_alt:
+                        rank = g - n_ftp
+                        label = 'ALT' if k_alt == 1 else f'ALT {rank}'
+                    else:
+                        label = f'gr.{g}'
+                    out_rows.append({**base, 'group_index': g, 'n_groups': n,
+                                     'by_week': dict(s['by_group'].get(g, {})),
+                                     'alt_group': is_alt, 'group_label': label})
 
         return jsonify({
             'weeks': weeks,
-            'rows': [sessions[sid] for sid in order],
+            'rows': out_rows,
             'special_weeks': special_weeks,
         }), 200
     except Exception as e:
@@ -7787,7 +7886,7 @@ def export_repartition_excel():
                    cs.total_hours, cs.nb_sessions, cs.slot_duration,
                    cs.room_name,
                    t.name AS teacher_name,
-                   wh.week_number, wh.hours
+                   wh.week_number, wh.hours, wh.group_index
             FROM course_sessions cs
             JOIN courses c ON cs.course_id = c.id
             JOIN semesters s ON c.semester_id = s.id
@@ -7800,12 +7899,26 @@ def export_repartition_excel():
         ''')
         raw = cursor.fetchall()
 
-        # Pivoter par session
+        # Nb de groupes (TP scindés en une ligne par groupe, comme à l'écran)
+        sg_map, mut_set, tpsep_set = _load_semester_groups(db)
+
+        # Pivoter par session, en conservant les heures par groupe
         sessions = {}
         order = []
         for r in raw:
             sid = r['session_id']
             if sid not in sessions:
+                tt = r['teaching_type'] or ''
+                n_groups = 1
+                if tt.upper().replace(' ', '').startswith('TP'):
+                    try:
+                        n_groups = int(_group_multiplier(
+                            sg_map, mut_set, tpsep_set, r['semester_code'],
+                            r['formation_type'], tt, r['tp_type']) or 1)
+                    except Exception:
+                        n_groups = 1
+                    if n_groups < 1:
+                        n_groups = 1
                 sessions[sid] = {
                     'session_id': sid,
                     'course_code': r['course_code'] or '',
@@ -7819,11 +7932,46 @@ def export_repartition_excel():
                     'total_hours': r['total_hours'] or 0,
                     'teacher': r['teacher_name'] or '',
                     'room': r['room_name'] or '',
-                    'by_week': {},
+                    'n_groups': n_groups,
+                    'by_group': {},   # {group_index: {week: hours}}
                 }
                 order.append(sid)
             if r['week_number'] is not None and (r['hours'] or 0) > 0:
-                sessions[sid]['by_week'][r['week_number']] = r['hours']
+                g = r['group_index'] or 1
+                sessions[sid]['by_group'].setdefault(g, {})[r['week_number']] = r['hours']
+
+        # Développe une ligne par groupe (TP à plusieurs groupes), sinon une ligne
+        expanded = []
+        for sid in order:
+            s = sessions[sid]
+            n = s['n_groups']
+            common = {k: s[k] for k in ('session_id', 'course_code', 'course_name',
+                                        'semester', 'year_group', 'type', 'formation',
+                                        'formation_type', 'total_hours', 'teacher', 'room')}
+            if n <= 1:
+                merged = {}
+                for gw in s['by_group'].values():
+                    for w, h in gw.items():
+                        merged[w] = merged.get(w, 0) + h
+                expanded.append({**common, 'type_disp': s['type_disp'],
+                                 'group_index': 1, 'n_groups': 1, 'by_week': merged})
+            else:
+                sem = s['semester']
+                is_common_mut = (sem in mut_set) and (sem not in tpsep_set)
+                k_alt = 0
+                if is_common_mut:
+                    k_alt = int((sg_map.get((sem, 2)) or {}).get('ALT', 1) or 0)
+                    k_alt = max(0, min(k_alt, n))
+                n_ftp = n - k_alt
+                for gi in range(1, n + 1):
+                    if gi > n_ftp:
+                        rank = gi - n_ftp
+                        lbl = f"{s['type_disp']} ALT" if k_alt == 1 else f"{s['type_disp']} ALT {rank}"
+                    else:
+                        lbl = f"{s['type_disp']} (gr.{gi})"
+                    expanded.append({**common, 'type_disp': lbl,
+                                     'group_index': gi, 'n_groups': n,
+                                     'by_week': dict(s['by_group'].get(gi, {}))})
 
         # Styles
         thin = Side(style='thin', color='374151')
@@ -7868,8 +8016,8 @@ def export_repartition_excel():
 
         for yg, sheet_name, sem_codes in year_groups:
             # Filtrer les sessions pour cette année + selon l'affichage (semestre/formation/enseignant)
-            year_sessions = [sessions[sid] for sid in order
-                             if sessions[sid]['semester'] in sem_codes and session_included(sessions[sid])]
+            year_sessions = [s for s in expanded
+                             if s['semester'] in sem_codes and session_included(s)]
             if not year_sessions:
                 continue  # onglet non créé s'il n'y a rien à afficher
 
@@ -8166,8 +8314,8 @@ def export_repartition_excel():
         cursor.execute('SELECT name, email, phone, structure, corps_code, status FROM teachers ORDER BY name')
         teachers_list = cursor.fetchall()
         # Ne garder que les enseignants présents dans l'affichage filtré
-        incl_names = {(sessions[sid]['teacher'] or '').strip()
-                      for sid in order if session_included(sessions[sid])}
+        incl_names = {(s['teacher'] or '').strip()
+                      for s in expanded if session_included(s)}
         incl_names.discard('')
         teachers_list = [t for t in teachers_list if t['name'] in incl_names]
         for r_idx, t in enumerate(teachers_list, 2):
@@ -8202,8 +8350,7 @@ def export_repartition_excel():
 
         # Grouper les sessions (filtrées selon l'affichage) par enseignant
         by_teacher = {}
-        for sid in order:
-            s = sessions[sid]
+        for s in expanded:
             if not session_included(s):
                 continue
             tname = (s['teacher'] or '').strip()

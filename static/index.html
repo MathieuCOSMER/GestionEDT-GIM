@@ -124,19 +124,28 @@
         .repartition-layout { display: flex; position: relative; width: 100vw; left: 50%; transform: translateX(-50%); gap: 0; }
         .repartition-layout #repartition-table { flex: 1; min-width: 0; }
         .repartition-wrap { overflow-x: auto; max-height: 80vh; overflow-y: auto; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
-        .repartition-wrap table { border-collapse: collapse; background: #fff; border: 2px solid #374151; font-size: .7rem; width: 100%; }
+        /* border-collapse: separate (et non collapse) : indispensable pour que le
+           fond des lignes d'en-tête sticky reste OPAQUE au scroll (avec collapse,
+           Chrome laisse le calendrier transparaître derrière l'en-tête figé). */
+        .repartition-wrap table { border-collapse: separate; border-spacing: 0; background: #fff; border: 2px solid #374151; font-size: .7rem; width: 100%; }
         /* Décalage sticky vertical piloté par --htop (posé par JS sur chaque <tr> d'en-tête),
            ce qui reste correct quel que soit le nombre de lignes récapitulatives. */
-        .repartition-wrap thead th { position: sticky; top: var(--htop, 0); z-index: 2; background: #f9fafb; border-bottom: 1px solid #374151; }
+        .repartition-wrap thead th { position: sticky; top: var(--htop, 0); z-index: 4; background: #f9fafb; border-bottom: 1px solid #374151; }
         .repartition-wrap thead tr.hrow-weeks th { border-bottom: 3px solid #000; box-shadow: inset 0 -3px 0 #000; }
+        /* Nom du groupe TP compté, à côté du libellé promo (FTP1 (ALT)) */
+        .promo-grp { font-weight: 400; font-size: .72rem; opacity: .85; }
         .th-promo-ftp { background: #e0f2fe !important; color: #0369a1; font-size: .8rem; font-weight: 700; height: 26px; line-height: 26px; padding: 0 3px; }
         .th-promo-alt { background: #fff7ed !important; color: #9a3412; font-size: .8rem; font-weight: 700; height: 26px; line-height: 26px; padding: 0 3px; }
         .th-teacher-total { background: #f3e8ff !important; color: #6b21a8; font-size: .8rem; font-weight: 700; height: 26px; line-height: 26px; padding: 0 3px; }
         .th-room-total { background: #ccfbf1 !important; color: #0f766e; font-size: .8rem; font-weight: 700; height: 26px; line-height: 26px; padding: 0 3px; }
         .repartition-wrap td.s-col, .repartition-wrap th.s-col { position: sticky; z-index: 1; background: #fff; border-right: 2px solid #374151; text-align: center; padding: 1px 3px; }
-        .repartition-wrap thead th.s-col { background: #f9fafb; z-index: 3; }
+        .repartition-wrap thead th.s-col { background: #f9fafb; z-index: 6; }
         /* Bordures générales cellules de données */
         .repartition-wrap td { border-bottom: 1px solid #374151; border-left: 1px solid #374151; }
+        /* Étiquette de groupe TP (TP12 gr.1) sous le badge de type */
+        .grp-tag { display: block; font-size: .58rem; font-weight: 700; color: #6b7280; line-height: 1; margin-top: 1px; }
+        /* Groupe d'apprentis (ALT) d'un TP mutualisé : mis en évidence */
+        .grp-tag-alt { color: #9a3412; background: #fff7ed; border-radius: 3px; padding: 0 3px; }
         .cell-hours { text-align: center; font-weight: 600; color: #111; padding: 1px 1px; line-height: 1.2; }
         .cell-empty { text-align: center; color: #bbb; padding: 1px 1px; line-height: 1.2; }
         .col-week { text-align: center; min-width: 28px; font-size: .75rem; border-left: 1px solid #374151; color: #111; border-bottom: 1px solid #374151; }
@@ -6206,7 +6215,7 @@ function renderPromotionGroups(data) {
     const ay = grpAcademicYear() ? ' (' + grpAcademicYear() + ')' : '';
 
     const get = (sem, ft) => (_semGroupsData.groups || []).find(r => r.semester_code === sem && r.formation_type === ft)
-        || { td_groups: 1, tp_groups: 1, tp8_groups: 1, pt_groups: 1 };
+        || { td_groups: 1, tp_groups: 1, tp8_groups: 1, pt_groups: 1, alt_groups: 1 };
     const inp = (sem, ft, field) => {
         const v = get(sem, ft)[field];
         return `<input type="number" min="1" step="1" value="${v != null ? v : 1}" data-sem="${sem}" data-ft="${ft}" data-field="${field}" style="width:56px;padding:3px 6px;text-align:center">`;
@@ -6248,6 +6257,14 @@ function renderPromotionGroups(data) {
                            title="Distincts : les TP gardent des lignes FTP et ALT séparées (répartition calendaire propre à chaque face). Décoché : une seule ligne TP MUT par matière, TP communs à la promo.">
                         <input type="checkbox" ${tpSep ? 'checked' : ''} onchange="toggleSemesterTpSep('${sem}', this)">
                         TP FTP / ALT distincts
+                    </label>` : ''}
+                    ${isMut && !tpSep ? `
+                    <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;color:#9a3412"
+                           title="Nombre de groupes d'apprentis (ALT) dans les TP communs : ils occupent toujours les DERNIERS groupes de la promo.">
+                        Groupes apprentis (derniers) :
+                        <input type="number" min="1" step="1" value="${get(sem, 2).alt_groups != null ? get(sem, 2).alt_groups : 1}"
+                               data-sem="${sem}" data-ft="2" data-field="alt_groups"
+                               style="width:44px;padding:3px 6px;text-align:center">
                     </label>` : ''}
                 </div>
             </div>
@@ -6946,11 +6963,21 @@ async function loadRepartition() {
             company_alt:  uniq(sems.flatMap(s => datas[s].special_weeks.company_alt || [])),
         };
 
-        // promoRows : tous les semestres du promoSet, dédupliqués par session (totaux promo)
-        const seen = new Set();
+        // promoRows : une entrée par session (totaux promo). Les TP scindés en groupes
+        // partagent un session_id → on agrège au GROUPE LE PLUS CHARGÉ par semaine
+        // (un étudiant n'est que dans un groupe), sans multiplier la charge.
+        const seenPromo = new Map();
         const promoRows = [];
         promoSet.forEach(s => datas[s].rows.forEach(r => {
-            if (!seen.has(r.session_id)) { seen.add(r.session_id); promoRows.push(r); }
+            let pr = seenPromo.get(r.session_id);
+            if (!pr) {
+                pr = { session_id: r.session_id, formation: r.formation, semester: r.semester, by_week: {} };
+                seenPromo.set(r.session_id, pr);
+                promoRows.push(pr);
+            }
+            Object.entries(r.by_week).forEach(([w, h]) => {
+                pr.by_week[w] = Math.max(pr.by_week[w] || 0, h);
+            });
         }));
 
         _repartitionData = { weeks, rows, special_weeks, specialBySem, promoRows, selected: sems };
@@ -7160,6 +7187,41 @@ function populateRepartitionFilters(rows) {
     }
 }
 
+// Nom du groupe TP dont le taux horaire est compté pour une promo (formation + année).
+// Comptage promo = groupe le plus chargé de chaque TP scindé ; on renvoie le libellé
+// du groupe retenu pour le TP le plus volumineux de la promo (celui « affiché »).
+function promoCountedGroup(form, yg, rows) {
+    const bySession = {};
+    (rows || []).forEach(r => {
+        if ((r.type || '').toUpperCase() !== 'TP' || !(r.n_groups > 1)) return;
+        const ryg = Math.ceil((parseInt(String(r.semester).replace(/\D/g, '')) || 0) / 2);
+        if (ryg !== yg) return;
+        const ok = form === 'FTP' ? (r.formation === 'FTP' || r.formation === 'MUT')
+                 : form === 'ALT' ? (r.formation === 'ALT' || r.formation === 'MUT') : false;
+        if (!ok) return;
+        const placed = Object.values(r.by_week).reduce((s, v) => s + v, 0);
+        if (placed <= 0) return;
+        const cur = bySession[r.session_id];
+        if (!cur || placed > cur.placed) {
+            bySession[r.session_id] = { placed, label: r.group_label || ('gr.' + (r.group_index || 1)) };
+        }
+    });
+    let best = null;
+    Object.values(bySession).forEach(s => { if (!best || s.placed > best.placed) best = s; });
+    return best ? best.label : '';
+}
+
+// Met à jour le libellé « FTP1 (groupe) » d'une ligne promo (édition live).
+function refreshPromoGroupLabel(promoKey) {
+    if (!_repartitionData) return;
+    const th = document.querySelector(`tr[data-promo="${promoKey}"] > th.s-col`);
+    if (!th) return;
+    const form = promoKey.startsWith('ALT') ? 'ALT' : 'FTP';
+    const yg = parseInt(promoKey.replace(/\D/g, '')) || 0;
+    const lbl = promoCountedGroup(form, yg, _repartitionData.rows);
+    th.innerHTML = `${esc(promoKey)}${lbl ? ` <span class="promo-grp">(${esc(lbl)})</span>` : ''}`;
+}
+
 function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
     const el = document.getElementById('repartition-table');
     const formFilter = document.getElementById('filter-formation-repartition').value; // '', 'ftp', 'alt'
@@ -7292,16 +7354,23 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
 
     function buildDataRow(r, formCls, formCell) {
         const typeKey = (r.type || '').toUpperCase();
-        const badge = `<span class="badge ${typeColors[typeKey] || 'badge-cm'}">${esc(typeDisp(r))}</span>`;
+        const grp = r.group_index || 1;
+        // TP scindé en groupes : étiquette sous le badge (gr.N, ou ALT pour les
+        // groupes d'apprentis d'un TP mutualisé — toujours les derniers groupes).
+        const grpLabel = r.group_label || ('gr.' + grp);
+        const grpTag = (r.n_groups > 1)
+            ? `<span class="grp-tag${r.alt_group ? ' grp-tag-alt' : ''}">${esc(grpLabel)}</span>` : '';
+        const badge = `<span class="badge ${typeColors[typeKey] || 'badge-cm'}">${esc(typeDisp(r))}</span>${grpTag}`;
         const placed = weeks.reduce((s, w) => s + (r.by_week[w] || 0), 0);
         const remaining = r.total_hours - placed;
         const sid = r.session_id;
+        const rowKey = sid + '_' + grp;   // identité de ligne (session + groupe)
         const slot = r.slot_duration || 1.5;
         const cells = weeks.map((w, i) => {
             const h = r.by_week[w];
             const cls = weekDataCls(w, formCls, r.semester) + sepCls(i);
-            return h ? `<td class="cell-hours ${cls}" data-sid="${sid}" data-week="${w}">${h}</td>`
-                     : `<td class="cell-empty ${cls}" data-sid="${sid}" data-week="${w}">·</td>`;
+            return h ? `<td class="cell-hours ${cls}" data-sid="${sid}" data-week="${w}" data-group="${grp}">${h}</td>`
+                     : `<td class="cell-empty ${cls}" data-sid="${sid}" data-week="${w}" data-group="${grp}">·</td>`;
         }).join('');
         const formTag = formCls === 'row-ftp' ? 'FTP' : formCls === 'row-alt' ? 'ALT' : formCls === 'row-mut' ? 'MUT' : '';
         const totalCls = remaining !== 0 ? ' col-total-bad' : '';
@@ -7310,13 +7379,13 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
         const formColTd = formCell
             ? `<td class="s-col form-col form-${formCell.kind}" rowspan="${formCell.span}" style="left:0;z-index:2">${formCell.label}</td>`
             : '';
-        return `<tr class="row-data ${formCls}" data-sid="${sid}" data-formation="${formTag}" data-teacher="${esc(r.teacher)}" data-slot="${slot}" data-total-hours="${r.total_hours}">
+        return `<tr class="row-data ${formCls}" data-sid="${sid}" data-group="${grp}" data-formation="${formTag}" data-teacher="${esc(r.teacher)}" data-slot="${slot}" data-total-hours="${r.total_hours}">
             ${formColTd}
             ${sCol(fixedCols[0], badge)}
             ${sCol(fixedCols[1], esc(r.teacher))}
             ${sCol(fixedCols[2], esc(r.room || ''))}
             <td class="col-module s-col" style="left:${moduleFixedLeft}px">${r.total_hours > 0 ? r.total_hours + 'h' : ''}</td>
-            <td class="col-total s-col${totalCls}" style="left:${totalFixedLeft}px" data-row-total="${sid}">${totalTxt}</td>
+            <td class="col-total s-col${totalCls}" style="left:${totalFixedLeft}px" data-row-total="${rowKey}">${totalTxt}</td>
             ${cells}
         </tr>`;
     }
@@ -7380,9 +7449,9 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
     }));
     const fmtH = h => h > 0 ? h : '';
 
-    const promoHeaderRow = (key, cls, byWeek, colorFn) =>
+    const promoHeaderRow = (key, cls, byWeek, colorFn, grpLbl) =>
         `<tr data-promo="${key}">
-            <th class="s-col ${cls}" colspan="${fixedSpan}" style="left:0">${key}</th>
+            <th class="s-col ${cls}" colspan="${fixedSpan}" style="left:0">${key}${grpLbl ? ` <span class="promo-grp">(${esc(grpLbl)})</span>` : ''}</th>
             ${weeks.map((w, i) => {
                 const h = byWeek[w];
                 const bg = colorFn ? colorFn(h) : null;
@@ -7507,7 +7576,8 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
         const p = promoData[k];
         const cls = p.form === 'FTP' ? 'th-promo-ftp' : 'th-promo-alt';
         const colorFn = p.form === 'FTP' ? ftpHeatBg : altHeatBg;
-        return promoHeaderRow(k, cls, p.byWeek, colorFn);
+        const grpLbl = promoCountedGroup(p.form, p.yg, rows);
+        return promoHeaderRow(k, cls, p.byWeek, colorFn, grpLbl);
     });
     [
         teacherHeaderRow,
@@ -7546,6 +7616,7 @@ function onRepartitionCellClick(e) {
 
     const sid = parseInt(td.dataset.sid);
     const week = parseInt(td.dataset.week);
+    const group = parseInt(td.dataset.group) || 1;
     const tr = td.closest('tr');
     const slot = parseFloat(tr.dataset.slot) || 1.5;
     const currentVal = parseFloat(td.textContent) || 0;
@@ -7573,14 +7644,14 @@ function onRepartitionCellClick(e) {
         const cur = parseFloat(valSpan.textContent) || 0;
         const nv = Math.round((cur + slot) * 100) / 100;
         valSpan.textContent = nv;
-        updateRepartitionCell(sid, week, nv, td);
+        updateRepartitionCell(sid, week, group, nv, td);
     });
     btnDown.addEventListener('click', ev => {
         ev.stopPropagation();
         const cur = parseFloat(valSpan.textContent) || 0;
         const nv = Math.max(0, Math.round((cur - slot) * 100) / 100);
         valSpan.textContent = nv || '·';
-        updateRepartitionCell(sid, week, nv, td);
+        updateRepartitionCell(sid, week, group, nv, td);
     });
 
     // Fermer le widget si on clique ailleurs
@@ -7595,11 +7666,11 @@ function onRepartitionCellClick(e) {
     setTimeout(() => document.addEventListener('click', closeWidget, true), 0);
 }
 
-async function updateRepartitionCell(sid, week, newHours, td) {
+async function updateRepartitionCell(sid, week, group, newHours, td) {
     try {
         await api(`/weekly-hours/${sid}/${week}` + svcQ(), {
             method: 'PUT',
-            body: JSON.stringify({ hours: newHours }),
+            body: JSON.stringify({ hours: newHours, group_index: group }),
         });
     } catch(err) {
         toast('Erreur sauvegarde : ' + err.message, 'error');
@@ -7608,15 +7679,22 @@ async function updateRepartitionCell(sid, week, newHours, td) {
 
     // Mettre à jour _repartitionData
     if (_repartitionData) {
-        const row = _repartitionData.rows.find(r => r.session_id === sid);
+        // Toutes les lignes de la session (groupes de TP) partagent le même session_id
+        const groupRows = _repartitionData.rows.filter(r => r.session_id === sid);
+        const row = groupRows.find(r => (r.group_index || 1) === group) || groupRows[0];
         if (row) {
             const oldH = row.by_week[week] || 0;
-            const delta = newHours - oldH;
+            const delta = newHours - oldH;                    // variation réelle (enseignant/salle)
+            // Max du groupe le plus chargé AVANT modif (comptage promo)
+            const oldMax = groupRows.reduce((m, r) => Math.max(m, r.by_week[week] || 0), 0);
             if (newHours > 0) row.by_week[week] = newHours;
             else delete row.by_week[week];
+            const newMax = groupRows.reduce((m, r) => Math.max(m, r.by_week[week] || 0), 0);
+            const promoDelta = newMax - oldMax;               // seul le groupe max compte pour la promo
 
-            // Mettre à jour le total restant
-            const totalTd = document.querySelector(`td[data-row-total="${sid}"]`);
+            // Total restant de CETTE ligne de groupe
+            const rowKey = sid + '_' + group;
+            const totalTd = document.querySelector(`td[data-row-total="${rowKey}"]`);
             if (totalTd) {
                 const placed = Object.values(row.by_week).reduce((s, v) => s + v, 0);
                 const remaining = row.total_hours - placed;
@@ -7625,20 +7703,23 @@ async function updateRepartitionCell(sid, week, newHours, td) {
                 else totalTd.classList.remove('col-total-bad');
             }
 
-            // Mettre à jour les totaux promo en-tête
+            // Mettre à jour les totaux promo en-tête (comptage = groupe max)
             const tr = td.closest('tr');
             const formation = tr ? tr.dataset.formation : '';
-            if (formation && delta !== 0) {
-                // Promo concernée = formation + année (year_group) ; MUT compte pour FTP et ALT
-                const yg = Math.ceil((parseInt(String(row.semester).replace(/\D/g, '')) || 0) / 2);
-                const promoKeys = formation === 'MUT' ? [`FTP${yg}`, `ALT${yg}`] : [`${formation}${yg}`];
+            // Promo concernée = formation + année (year_group) ; MUT compte pour FTP et ALT
+            const yg = Math.ceil((parseInt(String(row.semester).replace(/\D/g, '')) || 0) / 2);
+            const promoKeys = formation === 'MUT' ? [`FTP${yg}`, `ALT${yg}`]
+                            : formation ? [`${formation}${yg}`] : [];
+            // Le libellé « FTP1 (groupe) » dépend des heures placées → toujours rafraîchir
+            promoKeys.forEach(refreshPromoGroupLabel);
+            if (formation && promoDelta !== 0) {
                 promoKeys.forEach(promoKey => {
                     const promoRow = document.querySelector(`tr[data-promo="${promoKey}"]`);
                     if (promoRow) {
                         const th = promoRow.querySelector(`th[data-promo-week="${week}"]`);
                         if (th) {
                             const curTotal = parseFloat(th.textContent) || 0;
-                            const newTotal = curTotal + delta;
+                            const newTotal = curTotal + promoDelta;
                             th.textContent = newTotal > 0 ? newTotal : '';
                             const colorFn = promoKey.startsWith('FTP') ? ftpHeatBg : altHeatBg;
                             const bg = colorFn(newTotal);
@@ -7647,17 +7728,17 @@ async function updateRepartitionCell(sid, week, newHours, td) {
                         }
                     }
                 });
-                // Aussi mettre à jour promoRows si elles existent
+                // promoRows : une entrée par session, agrégée au groupe max
                 if (_repartitionData.promoRows) {
                     const promoRow2 = _repartitionData.promoRows.find(r => r.session_id === sid);
                     if (promoRow2) {
-                        if (newHours > 0) promoRow2.by_week[week] = newHours;
+                        if (newMax > 0) promoRow2.by_week[week] = newMax;
                         else delete promoRow2.by_week[week];
                     }
                 }
             }
 
-            // Mettre à jour la ligne « h/sem. » de l'enseignant si elle est affichée
+            // Ligne « h/sem. » de l'enseignant : il assure chaque groupe → variation réelle
             const teacherSel = document.getElementById('filter-teacher-repartition');
             const tf = teacherSel ? teacherSel.value : '';
             if (tf && row.teacher === tf && delta !== 0) {
@@ -7671,7 +7752,7 @@ async function updateRepartitionCell(sid, week, newHours, td) {
                 }
             }
 
-            // Mettre à jour la ligne « h/sem. » de la salle si elle est affichée
+            // Ligne « h/sem. » de la salle : occupation réelle par groupe → variation réelle
             const roomSel = document.getElementById('filter-room-repartition');
             const rf = roomSel ? roomSel.value : '';
             if (rf && row.room === rf && delta !== 0) {
