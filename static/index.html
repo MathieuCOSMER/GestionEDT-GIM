@@ -6963,22 +6963,25 @@ async function loadRepartition() {
             company_alt:  uniq(sems.flatMap(s => datas[s].special_weeks.company_alt || [])),
         };
 
-        // promoRows : une entrée par session (totaux promo). Les TP scindés en groupes
-        // partagent un session_id → on agrège au GROUPE LE PLUS CHARGÉ par semaine
-        // (un étudiant n'est que dans un groupe), sans multiplier la charge.
-        const seenPromo = new Map();
+        // promoRows : une entrée par session avec sa contribution aux taux FTP et ALT
+        // (CM+TD+TP). Mutualisé : CM/TD comptent pour les deux ; TP → côté FTP = groupes
+        // FTP, côté ALT = groupe(s) apprenti(s). Un étudiant n'étant que dans un groupe,
+        // on prend le groupe le plus chargé de chaque côté (pas de multiplication).
+        const seenPromo = new Set();
         const promoRows = [];
-        promoSet.forEach(s => datas[s].rows.forEach(r => {
-            let pr = seenPromo.get(r.session_id);
-            if (!pr) {
-                pr = { session_id: r.session_id, formation: r.formation, semester: r.semester, by_week: {} };
-                seenPromo.set(r.session_id, pr);
-                promoRows.push(pr);
-            }
-            Object.entries(r.by_week).forEach(([w, h]) => {
-                pr.by_week[w] = Math.max(pr.by_week[w] || 0, h);
+        promoSet.forEach(s => {
+            const bySid = {};
+            datas[s].rows.forEach(r => { (bySid[r.session_id] = bySid[r.session_id] || []).push(r); });
+            Object.values(bySid).forEach(groupRows => {
+                const sid = groupRows[0].session_id;
+                if (seenPromo.has(sid)) return;
+                seenPromo.add(sid);
+                const contrib = sessionPromoContrib(groupRows);
+                promoRows.push({ session_id: sid, formation: groupRows[0].formation,
+                                 semester: groupRows[0].semester,
+                                 ftpByWeek: contrib.ftp, altByWeek: contrib.alt });
             });
-        }));
+        });
 
         _repartitionData = { weeks, rows, special_weeks, specialBySem, promoRows, selected: sems };
         renderRepartition(_repartitionData); // repeuple aussi les filtres Enseignant/Salle
@@ -7187,18 +7190,66 @@ function populateRepartitionFilters(rows) {
     }
 }
 
-// Nom du groupe TP dont le taux horaire est compté pour une promo (formation + année).
-// Comptage promo = groupe le plus chargé de chaque TP scindé ; on renvoie le libellé
+// Contribution d'une session au taux horaire des promos FTP / ALT (CM+TD+TP).
+// - CM/TD/PT : FTP→FTP, ALT→ALT, MUT (mutualisé) → les DEUX (tronc commun).
+// - TP mutualisé commun (groupes apprentis présents) : côté FTP = groupes non-apprentis,
+//   côté ALT = groupes apprentis ; on prend le groupe le plus chargé de chaque côté par semaine
+//   (un étudiant n'est que dans un groupe).
+// - TP séparé (non mutualisé) : selon la formation, le groupe le plus chargé par semaine.
+function sessionPromoContrib(groupRows) {
+    const first = groupRows[0];
+    const form = first.formation;
+    const isTP = (first.type || '').toUpperCase() === 'TP' && first.n_groups > 1;
+    const ftp = {}, alt = {};
+    const addMax = (target, subset) => subset.forEach(r =>
+        Object.entries(r.by_week).forEach(([w, h]) => { if (h > 0) target[w] = Math.max(target[w] || 0, h); }));
+    if (isTP && groupRows.some(r => r.alt_group)) {
+        addMax(ftp, groupRows.filter(r => !r.alt_group));   // groupes FTP
+        addMax(alt, groupRows.filter(r => r.alt_group));    // groupes apprentis
+    } else {
+        if (form === 'FTP' || form === 'MUT') addMax(ftp, groupRows);
+        if (form === 'ALT' || form === 'MUT') addMax(alt, groupRows);
+    }
+    return { ftp, alt };
+}
+
+// Recalcule et réaffiche la cellule « taux horaire » d'une promo pour une semaine.
+function recomputePromoCell(promoKey, week) {
+    if (!_repartitionData || !_repartitionData.promoRows) return;
+    const form = promoKey.startsWith('ALT') ? 'ALT' : 'FTP';
+    const yg = parseInt(promoKey.replace(/\D/g, '')) || 0;
+    let total = 0;
+    _repartitionData.promoRows.forEach(pr => {
+        if (Math.ceil((parseInt(String(pr.semester).replace(/\D/g, '')) || 0) / 2) !== yg) return;
+        const bw = form === 'FTP' ? pr.ftpByWeek : pr.altByWeek;
+        total += (bw && bw[week]) || 0;
+    });
+    total = Math.round(total * 100) / 100;
+    const th = document.querySelector(`tr[data-promo="${promoKey}"] th[data-promo-week="${week}"]`);
+    if (!th) return;
+    th.textContent = total > 0 ? total : '';
+    const colorFn = form === 'FTP' ? ftpHeatBg : altHeatBg;
+    const bg = colorFn(total);
+    if (bg) th.setAttribute('style', `background:${bg} !important;color:#111`);
+    else th.removeAttribute('style');
+}
+
+// Nom du groupe TP dont le taux horaire est compté pour une promo (formation + année) :
+// côté FTP = groupe FTP le plus chargé ; côté ALT = groupe apprenti. On renvoie le libellé
 // du groupe retenu pour le TP le plus volumineux de la promo (celui « affiché »).
 function promoCountedGroup(form, yg, rows) {
+    const altSessions = new Set();
+    (rows || []).forEach(r => { if (r.alt_group) altSessions.add(r.session_id); });
     const bySession = {};
     (rows || []).forEach(r => {
         if ((r.type || '').toUpperCase() !== 'TP' || !(r.n_groups > 1)) return;
         const ryg = Math.ceil((parseInt(String(r.semester).replace(/\D/g, '')) || 0) / 2);
         if (ryg !== yg) return;
-        const ok = form === 'FTP' ? (r.formation === 'FTP' || r.formation === 'MUT')
-                 : form === 'ALT' ? (r.formation === 'ALT' || r.formation === 'MUT') : false;
-        if (!ok) return;
+        // Côté (FTP/ALT) alimenté par CETTE ligne de groupe
+        let side;
+        if (altSessions.has(r.session_id)) side = r.alt_group ? 'ALT' : 'FTP';
+        else side = r.formation === 'ALT' ? 'ALT' : r.formation === 'FTP' ? 'FTP' : 'BOTH';
+        if (!(side === form || side === 'BOTH')) return;
         const placed = Object.values(r.by_week).reduce((s, v) => s + v, 0);
         if (placed <= 0) return;
         const cur = bySession[r.session_id];
@@ -7430,12 +7481,13 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
     promoSource.forEach(r => {
         const yg = ygOf(r.semester);
         if (!yg) return;
+        // Contributions pré-calculées par côté (ftpByWeek / altByWeek). Repli sur
+        // l'ancien schéma by_week/formation si jamais elles manquent.
+        const fbw = r.ftpByWeek || (r.formation !== 'ALT' ? r.by_week : null) || {};
+        const abw = r.altByWeek || (r.formation !== 'FTP' ? r.by_week : null) || {};
         weeks.forEach(w => {
-            const h = r.by_week[w] || 0;
-            if (!h) return;
-            if (r.formation === 'FTP') ensurePromo('FTP', yg).byWeek[w] += h;
-            else if (r.formation === 'ALT') ensurePromo('ALT', yg).byWeek[w] += h;
-            else if (r.formation === 'MUT') { ensurePromo('FTP', yg).byWeek[w] += h; ensurePromo('ALT', yg).byWeek[w] += h; }
+            if (fbw[w]) ensurePromo('FTP', yg).byWeek[w] += fbw[w];
+            if (abw[w]) ensurePromo('ALT', yg).byWeek[w] += abw[w];
         });
     });
     // Ordre d'affichage : FTP1, ALT1, FTP2, ALT2, FTP3, ALT3 (uniquement les promos présentes)
@@ -7685,12 +7737,8 @@ async function updateRepartitionCell(sid, week, group, newHours, td) {
         if (row) {
             const oldH = row.by_week[week] || 0;
             const delta = newHours - oldH;                    // variation réelle (enseignant/salle)
-            // Max du groupe le plus chargé AVANT modif (comptage promo)
-            const oldMax = groupRows.reduce((m, r) => Math.max(m, r.by_week[week] || 0), 0);
             if (newHours > 0) row.by_week[week] = newHours;
             else delete row.by_week[week];
-            const newMax = groupRows.reduce((m, r) => Math.max(m, r.by_week[week] || 0), 0);
-            const promoDelta = newMax - oldMax;               // seul le groupe max compte pour la promo
 
             // Total restant de CETTE ligne de groupe
             const rowKey = sid + '_' + group;
@@ -7703,40 +7751,15 @@ async function updateRepartitionCell(sid, week, group, newHours, td) {
                 else totalTd.classList.remove('col-total-bad');
             }
 
-            // Mettre à jour les totaux promo en-tête (comptage = groupe max)
-            const tr = td.closest('tr');
-            const formation = tr ? tr.dataset.formation : '';
-            // Promo concernée = formation + année (year_group) ; MUT compte pour FTP et ALT
+            // Recalcule la contribution promo de la session (CM+TD+TP, côtés FTP/ALT)
+            // puis réaffiche les cellules « taux horaire » de la semaine éditée.
             const yg = Math.ceil((parseInt(String(row.semester).replace(/\D/g, '')) || 0) / 2);
-            const promoKeys = formation === 'MUT' ? [`FTP${yg}`, `ALT${yg}`]
-                            : formation ? [`${formation}${yg}`] : [];
-            // Le libellé « FTP1 (groupe) » dépend des heures placées → toujours rafraîchir
-            promoKeys.forEach(refreshPromoGroupLabel);
-            if (formation && promoDelta !== 0) {
-                promoKeys.forEach(promoKey => {
-                    const promoRow = document.querySelector(`tr[data-promo="${promoKey}"]`);
-                    if (promoRow) {
-                        const th = promoRow.querySelector(`th[data-promo-week="${week}"]`);
-                        if (th) {
-                            const curTotal = parseFloat(th.textContent) || 0;
-                            const newTotal = curTotal + promoDelta;
-                            th.textContent = newTotal > 0 ? newTotal : '';
-                            const colorFn = promoKey.startsWith('FTP') ? ftpHeatBg : altHeatBg;
-                            const bg = colorFn(newTotal);
-                            if (bg) th.setAttribute('style', `background:${bg} !important;color:#111`);
-                            else th.removeAttribute('style');
-                        }
-                    }
-                });
-                // promoRows : une entrée par session, agrégée au groupe max
-                if (_repartitionData.promoRows) {
-                    const promoRow2 = _repartitionData.promoRows.find(r => r.session_id === sid);
-                    if (promoRow2) {
-                        if (newMax > 0) promoRow2.by_week[week] = newMax;
-                        else delete promoRow2.by_week[week];
-                    }
-                }
+            if (_repartitionData.promoRows) {
+                const contrib = sessionPromoContrib(groupRows);
+                const pr = _repartitionData.promoRows.find(x => x.session_id === sid);
+                if (pr) { pr.ftpByWeek = contrib.ftp; pr.altByWeek = contrib.alt; }
             }
+            [`FTP${yg}`, `ALT${yg}`].forEach(pk => { recomputePromoCell(pk, week); refreshPromoGroupLabel(pk); });
 
             // Ligne « h/sem. » de l'enseignant : il assure chaque groupe → variation réelle
             const teacherSel = document.getElementById('filter-teacher-repartition');
