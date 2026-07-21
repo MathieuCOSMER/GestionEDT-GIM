@@ -7412,8 +7412,10 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
         const grpTag = (r.n_groups > 1)
             ? `<span class="grp-tag${r.alt_group ? ' grp-tag-alt' : ''}">${esc(grpLabel)}</span>` : '';
         const badge = `<span class="badge ${typeColors[typeKey] || 'badge-cm'}">${esc(typeDisp(r))}</span>${grpTag}`;
-        const placed = weeks.reduce((s, w) => s + (r.by_week[w] || 0), 0);
-        const remaining = r.total_hours - placed;
+        // Reste = total à placer − heures placées sur TOUTES les semaines (pas
+        // seulement celles affichées : le filtre Impair/Pair ne doit pas fausser le reste).
+        const placed = Object.values(r.by_week).reduce((s, v) => s + v, 0);
+        const remaining = Math.round((r.total_hours - placed) * 100) / 100;
         const sid = r.session_id;
         const rowKey = sid + '_' + grp;   // identité de ligne (session + groupe)
         const slot = r.slot_duration || 1.5;
@@ -7719,17 +7721,11 @@ function onRepartitionCellClick(e) {
 }
 
 async function updateRepartitionCell(sid, week, group, newHours, td) {
-    try {
-        await api(`/weekly-hours/${sid}/${week}` + svcQ(), {
-            method: 'PUT',
-            body: JSON.stringify({ hours: newHours, group_index: group }),
-        });
-    } catch(err) {
-        toast('Erreur sauvegarde : ' + err.message, 'error');
-        return;
-    }
-
-    // Mettre à jour _repartitionData
+    // On met à jour l'état local ET l'affichage de façon SYNCHRONE d'abord, puis on
+    // persiste en arrière-plan. Sinon, avec des clics rapides, les réponses async
+    // pouvaient arriver dans le désordre et laisser la colonne « Reste » (et les
+    // totaux promo) sur une valeur périmée.
+    let revert = null;
     if (_repartitionData) {
         // Toutes les lignes de la session (groupes de TP) partagent le même session_id
         const groupRows = _repartitionData.rows.filter(r => r.session_id === sid);
@@ -7739,15 +7735,20 @@ async function updateRepartitionCell(sid, week, group, newHours, td) {
             const delta = newHours - oldH;                    // variation réelle (enseignant/salle)
             if (newHours > 0) row.by_week[week] = newHours;
             else delete row.by_week[week];
+            revert = () => {
+                if (oldH > 0) row.by_week[week] = oldH; else delete row.by_week[week];
+                renderRepartition(_repartitionData);
+            };
 
-            // Total restant de CETTE ligne de groupe
+            // Total restant de CETTE ligne de groupe (sur TOUTES les semaines, pas
+            // seulement celles affichées ; arrondi pour éviter le bruit flottant).
             const rowKey = sid + '_' + group;
             const totalTd = document.querySelector(`td[data-row-total="${rowKey}"]`);
             if (totalTd) {
                 const placed = Object.values(row.by_week).reduce((s, v) => s + v, 0);
-                const remaining = row.total_hours - placed;
+                const remaining = Math.round((row.total_hours - placed) * 100) / 100;
                 totalTd.textContent = row.total_hours > 0 ? remaining + 'h' : '';
-                if (remaining !== 0) totalTd.classList.add('col-total-bad');
+                if (Math.abs(remaining) > 0.001) totalTd.classList.add('col-total-bad');
                 else totalTd.classList.remove('col-total-bad');
             }
 
@@ -7768,7 +7769,7 @@ async function updateRepartitionCell(sid, week, group, newHours, td) {
                 const tRow = document.querySelector('tr[data-teacher-total]');
                 const th = tRow && tRow.querySelector(`th[data-teacher-week="${week}"]`);
                 if (th) {
-                    const newTotal = (parseFloat(th.textContent) || 0) + delta;
+                    const newTotal = Math.round(((parseFloat(th.textContent) || 0) + delta) * 100) / 100;
                     th.textContent = newTotal > 0 ? newTotal : '';
                     if (newTotal > 20) th.setAttribute('style', 'background:#fca5a5 !important;color:#111');
                     else th.removeAttribute('style');
@@ -7782,11 +7783,22 @@ async function updateRepartitionCell(sid, week, group, newHours, td) {
                 const rRow = document.querySelector('tr[data-room-total]');
                 const th = rRow && rRow.querySelector(`th[data-room-week="${week}"]`);
                 if (th) {
-                    const newTotal = (parseFloat(th.textContent) || 0) + delta;
+                    const newTotal = Math.round(((parseFloat(th.textContent) || 0) + delta) * 100) / 100;
                     th.textContent = newTotal > 0 ? newTotal : '';
                 }
             }
         }
+    }
+
+    // Persistance en arrière-plan ; on annule l'affichage en cas d'échec réseau.
+    try {
+        await api(`/weekly-hours/${sid}/${week}` + svcQ(), {
+            method: 'PUT',
+            body: JSON.stringify({ hours: newHours, group_index: group }),
+        });
+    } catch(err) {
+        if (revert) revert();
+        toast('Erreur sauvegarde : ' + err.message, 'error');
     }
 }
 
