@@ -5848,7 +5848,7 @@ function renderSessions() {
             <td>${esc(s.course_name||'')}</td>
             <td>${esc(s.teacher_name||'')}</td>
             <td>${formationLabel(s.formation_type)}</td>
-            <td><span class="badge badge-${(s.teaching_type||'cm').toLowerCase()}">${esc(s.teaching_type||'')}</span></td>
+            <td><span class="badge badge-${(s.teaching_type||'cm').toLowerCase()}">${esc(_ttDisplay(s))}</span></td>
             <td>${s.nb_sessions||0}</td>
             <td>${s.total_hours||0}h</td>
             <td>${s.slot_duration||0}h</td>
@@ -6964,6 +6964,13 @@ function filterRepartition() {
     if (_repartitionData) renderRepartition(_repartitionData);
 }
 
+// Libellé d'un type d'enseignement : les TP s'affichent en TP12 / TP8 (taille des groupes)
+function typeDisp(r) {
+    const t = (r.type || '').toUpperCase();
+    if (t === 'TP') return (r.tp_type || '').toUpperCase() === 'TP8' ? 'TP8' : 'TP12';
+    return r.type || '';
+}
+
 // ===== Sous-onglets Répartition : annuelle (tous) / journalière (admin) =====
 let _repTab = 'annuelle';
 let _repJourData = null;   // { weeks, rows } de la promo choisie
@@ -7018,6 +7025,15 @@ async function loadRepJour() {
 }
 
 // Tableau des cours à placer pour la semaine, l'année et la cohorte choisies
+// Colonne de tri de la répartition journalière (clic sur un en-tête pour trier)
+let _repJourSort = { key: 'default', dir: 1 };
+
+function sortRepJour(key) {
+    if (_repJourSort.key === key) _repJourSort.dir = -_repJourSort.dir;
+    else _repJourSort = { key, dir: 1 };
+    renderRepJour();
+}
+
 function renderRepJour() {
     const el = document.getElementById('repj-content');
     if (!_repJourData) { el.innerHTML = '<div class="empty">Aucune donnée.</div>'; return; }
@@ -7030,9 +7046,27 @@ function renderRepJour() {
         el.innerHTML = '<div class="empty">Aucun cours à placer en semaine ' + w + ' pour la cohorte ' + esc(cohorte) + '.</div>';
         return;
     }
-    list.sort((a, b) => (a.semester || '').localeCompare(b.semester || '')
+    // Ordre par défaut : semestre → code → formation
+    const defaultCmp = (a, b) => (a.semester || '').localeCompare(b.semester || '')
         || (a.course_code || '').localeCompare(b.course_code || '')
-        || (a.formation || '').localeCompare(b.formation || ''));
+        || (a.formation || '').localeCompare(b.formation || '');
+    // Clés de tri par colonne ; on retombe toujours sur l'ordre par défaut à égalité
+    const keyFns = {
+        semester:  r => r.semester || '',
+        code:      r => r.course_code || '',
+        name:      r => r.course_name || '',
+        type:      r => typeDisp(r),
+        formation: r => r.formation || '',
+        teacher:   r => r.teacher || '',
+        room:      r => r.room || '',
+    };
+    const kf = keyFns[_repJourSort.key];
+    if (kf) {
+        list.sort((a, b) => (String(kf(a)).localeCompare(String(kf(b)), 'fr',
+            { numeric: true, sensitivity: 'base' }) * _repJourSort.dir) || defaultCmp(a, b));
+    } else {
+        list.sort(defaultCmp);
+    }
     const typeColors = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' };
     const formColor = { FTP: '#0369a1', ALT: '#9a3412', MUT: '#7c3aed' };
     // Total d'heures de la cohorte (les cours mutualisés en font partie)
@@ -7044,7 +7078,7 @@ function renderRepJour() {
         const slot = r.slot_duration || 1.5;
         const n = Math.round((h / slot) * 100) / 100;
         const seances = `${n} × ${slot}h`;
-        const badge = `<span class="badge ${typeColors[(r.type || '').toUpperCase()] || 'badge-cm'}">${esc(r.type || '')}</span>`;
+        const badge = `<span class="badge ${typeColors[(r.type || '').toUpperCase()] || 'badge-cm'}">${esc(typeDisp(r))}</span>`;
         return `<tr>
             <td style="text-align:center">${esc(r.semester || '')}</td>
             <td><strong>${esc(r.course_code || '')}</strong></td>
@@ -7057,6 +7091,10 @@ function renderRepJour() {
             <td style="text-align:center;color:#6b7280">${seances}</td>
         </tr>`;
     }).join('');
+    // Flèche de tri sur la colonne active
+    const arrow = k => _repJourSort.key === k ? (_repJourSort.dir > 0 ? ' ▲' : ' ▼') : '';
+    const th = (k, label, style) =>
+        `<th style="${style};cursor:pointer;user-select:none" onclick="sortRepJour('${k}')" title="Trier par ${esc(label)}">${esc(label)}${arrow(k)}</th>`;
     el.innerHTML = `
         <div style="display:flex;gap:18px;margin-bottom:10px;font-size:.9rem">
             <span><strong style="color:${formColor[cohorte]}">${esc(cohorte)}</strong> :
@@ -7066,13 +7104,13 @@ function renderRepJour() {
         <div class="overflow-x">
         <table style="width:auto;min-width:820px">
             <thead><tr>
-                <th style="width:52px;text-align:center">Sem.</th>
-                <th style="width:80px">Code</th>
-                <th>Matière</th>
-                <th style="width:56px;text-align:center">Type</th>
-                <th style="width:56px;text-align:center">Formation</th>
-                <th style="width:150px">Enseignant</th>
-                <th style="width:70px;text-align:center">Salle</th>
+                ${th('semester', 'Sem.', 'width:52px;text-align:center')}
+                ${th('code', 'Code', 'width:80px')}
+                ${th('name', 'Matière', '')}
+                ${th('type', 'Type', 'width:56px;text-align:center')}
+                ${th('formation', 'Formation', 'width:56px;text-align:center')}
+                ${th('teacher', 'Enseignant', 'width:150px')}
+                ${th('room', 'Salle', 'width:70px;text-align:center')}
                 <th style="width:64px;text-align:center">Heures</th>
                 <th style="width:90px;text-align:center">Séances</th>
             </tr></thead>
@@ -7254,7 +7292,7 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
 
     function buildDataRow(r, formCls, formCell) {
         const typeKey = (r.type || '').toUpperCase();
-        const badge = `<span class="badge ${typeColors[typeKey] || 'badge-cm'}">${esc(r.type || '')}</span>`;
+        const badge = `<span class="badge ${typeColors[typeKey] || 'badge-cm'}">${esc(typeDisp(r))}</span>`;
         const placed = weeks.reduce((s, w) => s + (r.by_week[w] || 0), 0);
         const remaining = r.total_hours - placed;
         const sid = r.session_id;

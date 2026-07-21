@@ -6767,6 +6767,12 @@ def upsert_weekly_hours(session_id, week_number):
 
 # ======================= SERVICE CALCULATION =======================
 
+def _tp_type_label(teaching_type, tp_type):
+    """Libellé de type affiché : TP → TP12 / TP8 selon la taille de groupe de la matière."""
+    if (teaching_type or '').upper() == 'TP':
+        return 'TP8' if str(tp_type or '').upper().replace(' ', '') == 'TP8' else 'TP12'
+    return teaching_type or ''
+
 def calculate_hetd(teaching_type, total_hours):
     """Calculate HETD based on teaching type"""
     coefficients = {
@@ -7591,6 +7597,7 @@ def get_repartition():
             cursor.execute('''
                 SELECT cs.id AS session_id,
                        c.code AS course_code, c.name AS course_name,
+                       c.tp_type,
                        s.code AS semester_code,
                        cs.teaching_type, cs.formation_type,
                        cs.total_hours, cs.nb_sessions, cs.slot_duration,
@@ -7611,6 +7618,7 @@ def get_repartition():
             cursor.execute('''
                 SELECT cs.id AS session_id,
                        c.code AS course_code, c.name AS course_name,
+                       c.tp_type,
                        s.code AS semester_code,
                        cs.teaching_type, cs.formation_type,
                        cs.total_hours, cs.nb_sessions, cs.slot_duration,
@@ -7641,6 +7649,7 @@ def get_repartition():
                     'course_name': r['course_name'] or '',
                     'semester': r['semester_code'] or '',
                     'type': r['teaching_type'] or '',
+                    'tp_type': r['tp_type'] or 'TP12',
                     'formation': {0: 'FTP', 1: 'ALT', 2: 'MUT', 3: 'OTHER'}.get(r['formation_type'], str(r['formation_type'] or '')),
                     'total_hours': r['total_hours'] or 0,
                     'nb_sessions': r['nb_sessions'] or 0,
@@ -7772,6 +7781,7 @@ def export_repartition_excel():
         cursor.execute('''
             SELECT cs.id AS session_id,
                    c.code AS course_code, c.name AS course_name,
+                   c.tp_type,
                    s.code AS semester_code, s.year_group,
                    cs.teaching_type, cs.formation_type,
                    cs.total_hours, cs.nb_sessions, cs.slot_duration,
@@ -7803,6 +7813,7 @@ def export_repartition_excel():
                     'semester': r['semester_code'] or '',
                     'year_group': r['year_group'],
                     'type': r['teaching_type'] or '',
+                    'type_disp': _tp_type_label(r['teaching_type'], r['tp_type']),
                     'formation': {0: 'FTP', 1: 'ALT', 2: 'MUT'}.get(r['formation_type'], '?'),
                     'formation_type': r['formation_type'],
                     'total_hours': r['total_hours'] or 0,
@@ -8060,7 +8071,7 @@ def export_repartition_excel():
                         # Colonne d'appoint cachée : formation par ligne (pour les SUMIF)
                         ws.cell(row=row, column=COL_FORMKEY, value=form).font = font_data
 
-                        c = ws.cell(row=row, column=COL_TYPE, value=s['type'])
+                        c = ws.cell(row=row, column=COL_TYPE, value=s.get('type_disp') or s['type'])
                         c.font = font_data
                         c.alignment = align_center
                         c.border = border_all
@@ -8316,7 +8327,7 @@ def export_repartition_excel():
                         sp_co = sc.get(f'company_alt_y{yg_s}', set())
                         ws.cell(row=row, column=TF_FORM).fill = form_fill
                         ws.cell(row=row, column=TF_FORMKEY, value=form).font = font_data
-                        ws.cell(row=row, column=TF_TYPE, value=s['type']).font = font_data
+                        ws.cell(row=row, column=TF_TYPE, value=s.get('type_disp') or s['type']).font = font_data
                         ws.cell(row=row, column=TF_SALLE, value=s['room']).font = font_data
                         ws.cell(row=row, column=TF_TOTAL, value=s['total_hours'] or None).font = font_data
                         rc = ws.cell(row=row, column=TF_RESTE,
