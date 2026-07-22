@@ -936,6 +936,13 @@
                 <button type="button" class="sem-btn active" data-sem="S5" onclick="toggleSemester('S5',this)">S5</button>
                 <button type="button" class="sem-btn active" data-sem="S6" onclick="toggleSemester('S6',this)">S6</button>
             </div>
+            <label style="margin-left:12px">Type :</label>
+            <div id="type-toggle" class="sem-toggle">
+                <button type="button" class="sem-btn active" data-type="CM" onclick="toggleCourseType('CM',this)">CM</button>
+                <button type="button" class="sem-btn active" data-type="TD" onclick="toggleCourseType('TD',this)">TD</button>
+                <button type="button" class="sem-btn active" data-type="TP" onclick="toggleCourseType('TP',this)">TP</button>
+                <button type="button" class="sem-btn active" data-type="PT" onclick="toggleCourseType('PT',this)">PT</button>
+            </div>
             <label style="margin-left:12px">Formation :</label>
             <select id="filter-formation-repartition" onchange="filterRepartition()">
                 <option value="">FTP + ALT</option>
@@ -6414,6 +6421,17 @@ function toggleSemester(code, btn) {
     loadRepartition();
 }
 
+// Filtre d'affichage par type de cours (CM/TD/TP/PT). Purement client (pas de
+// rechargement) : masque les lignes des types désélectionnés dans le corps.
+let _selectedTypes = ['CM', 'TD', 'TP', 'PT'];
+function toggleCourseType(code, btn) {
+    const i = _selectedTypes.indexOf(code);
+    if (i >= 0) _selectedTypes.splice(i, 1);
+    else _selectedTypes.push(code);
+    btn.classList.toggle('active');
+    filterRepartition();
+}
+
 // Dégradé rouge→vert→rouge selon cible/limites (scope module pour réutilisation)
 function heatBg(h, TGT, MIN, MAX) {
     if (!h) return null;
@@ -7321,6 +7339,9 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
         if (teacherFilter && r.teacher !== teacherFilter) return; // filtre enseignant
         if (roomFilter && r.room !== roomFilter) return;          // filtre salle
         if (matFilter && !((r.course_code + ' ' + (r.course_name || '')).toLowerCase().includes(matFilter))) return; // filtre matière
+        // Filtre type (CM/TD/TP/PT) : ne masque que les types connus désélectionnés
+        const rtype = (r.type || '').toUpperCase();
+        if (['CM', 'TD', 'TP', 'PT'].includes(rtype) && !_selectedTypes.includes(rtype)) return;
         const key = r.course_code + '|' + r.semester;
         if (!byCode[key]) {
             byCode[key] = { code: r.course_code, name: r.course_name, sem: r.semester, ftp: [], alt: [], mut: [] };
