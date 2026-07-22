@@ -1518,7 +1518,18 @@ async function api(endpoint, opts = {}) {
         ...opts
     });
     if (r.status === 401) { showLogin(); throw new Error('Session expirée — reconnectez-vous'); }
-    if (!r.ok) throw new Error(await r.text());
+    if (!r.ok) {
+        const body = await r.text();
+        let msg = null;
+        try { msg = JSON.parse(body).error; } catch (e) { /* pas du JSON API */ }
+        if (!msg) {
+            // Page d'erreur HTML de la passerelle/hébergeur → message court avec le code
+            msg = r.status >= 500
+                ? `Serveur indisponible (erreur ${r.status}). Réessayez dans un instant.`
+                : `Erreur ${r.status}${r.statusText ? ' ' + r.statusText : ''}`;
+        }
+        throw new Error(msg);
+    }
     return r.json();
 }
 
