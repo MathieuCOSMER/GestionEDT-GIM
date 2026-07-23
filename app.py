@@ -7747,7 +7747,10 @@ def get_repartition():
                 # TP mutualisé à TP communs : les apprentis (ALT) occupent les
                 # DERNIERS groupes (nb = alt_groups de la promo).
                 sem = s['semester']
-                is_common_mut = (sem in mut_set) and (sem not in tpsep_set)
+                # Uniquement les matières réellement mutualisées (session MUT) ont des
+                # groupes d'apprentis. Les SAE (face FTP ou ALT) gardent tous leurs
+                # groupes dans LEUR cohorte — pas de dernier groupe « ALT ».
+                is_common_mut = (sem in mut_set) and (sem not in tpsep_set) and (s['formation'] == 'MUT')
                 k_alt = 0
                 if is_common_mut:
                     k_alt = int((sg_map.get((sem, 2)) or {}).get('ALT', 1) or 0)
@@ -7984,7 +7987,10 @@ def export_repartition_excel():
                                  'group_index': 1, 'n_groups': 1, 'by_week': merged})
             else:
                 sem = s['semester']
-                is_common_mut = (sem in mut_set) and (sem not in tpsep_set)
+                # Uniquement les matières réellement mutualisées (session MUT) ont des
+                # groupes d'apprentis. Les SAE (face FTP ou ALT) gardent tous leurs
+                # groupes dans LEUR cohorte — pas de dernier groupe « ALT ».
+                is_common_mut = (sem in mut_set) and (sem not in tpsep_set) and (s['formation'] == 'MUT')
                 k_alt = 0
                 if is_common_mut:
                     k_alt = int((sg_map.get((sem, 2)) or {}).get('ALT', 1) or 0)
