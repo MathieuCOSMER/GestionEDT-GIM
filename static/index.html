@@ -1513,24 +1513,45 @@ async function api(endpoint, opts = {}) {
         toast('Lecture seule', 'error');
         throw new Error('Lecture seule');
     }
-    const r = await fetch('/api' + endpoint, {
-        headers: { 'Content-Type': 'application/json' },
-        ...opts
-    });
-    if (r.status === 401) { showLogin(); throw new Error('Session expirée — reconnectez-vous'); }
-    if (!r.ok) {
-        const body = await r.text();
-        let msg = null;
-        try { msg = JSON.parse(body).error; } catch (e) { /* pas du JSON API */ }
-        if (!msg) {
-            // Page d'erreur HTML de la passerelle/hébergeur → message court avec le code
-            msg = r.status >= 500
-                ? `Serveur indisponible (erreur ${r.status}). Réessayez dans un instant.`
-                : `Erreur ${r.status}${r.statusText ? ' ' + r.statusText : ''}`;
+    // Nouvelle tentative automatique sur les erreurs transitoires (5xx passerelle,
+    // ex. 504-loadbalancer, ou coupure réseau) — uniquement pour les requêtes
+    // idempotentes. On NE réessaie PAS un POST (création) pour éviter les doublons.
+    const idempotent = ['GET', 'HEAD', 'PUT', 'DELETE'].includes(method);
+    const maxAttempts = idempotent ? 3 : 1;
+    const sleep = ms => new Promise(res => setTimeout(res, ms));
+    let netErr = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        let r;
+        try {
+            r = await fetch('/api' + endpoint, {
+                headers: { 'Content-Type': 'application/json' },
+                ...opts
+            });
+        } catch (e) {                                   // coupure réseau
+            netErr = e;
+            if (attempt < maxAttempts) { await sleep(400 * attempt); continue; }
+            throw new Error('Réseau indisponible. Vérifiez la connexion et réessayez.');
         }
-        throw new Error(msg);
+        if (r.status === 401) { showLogin(); throw new Error('Session expirée — reconnectez-vous'); }
+        if (r.status >= 500 && attempt < maxAttempts) { // 5xx transitoire → on retente
+            await sleep(400 * attempt);
+            continue;
+        }
+        if (!r.ok) {
+            const body = await r.text();
+            let msg = null;
+            try { msg = JSON.parse(body).error; } catch (e) { /* pas du JSON API */ }
+            if (!msg) {
+                // Page d'erreur HTML de la passerelle/hébergeur → message court avec le code
+                msg = r.status >= 500
+                    ? `Serveur indisponible (erreur ${r.status}). Réessayez dans un instant.`
+                    : `Erreur ${r.status}${r.statusText ? ' ' + r.statusText : ''}`;
+            }
+            throw new Error(msg);
+        }
+        return r.json();
     }
-    return r.json();
+    throw netErr || new Error('Échec de la requête après plusieurs tentatives');
 }
 
 // ===== AUTHENTIFICATION =====
