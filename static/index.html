@@ -1554,6 +1554,22 @@ async function api(endpoint, opts = {}) {
     throw netErr || new Error('Échec de la requête après plusieurs tentatives');
 }
 
+// Exécute des tâches async avec une concurrence limitée : évite d'envoyer une
+// rafale de requêtes d'un coup (le serveur n'a qu'un seul worker → une rafale
+// bloque les sauvegardes concurrentes). Conserve l'ordre des résultats.
+async function mapLimit(items, limit, fn) {
+    const results = new Array(items.length);
+    let next = 0;
+    async function worker() {
+        while (next < items.length) {
+            const idx = next++;
+            results[idx] = await fn(items[idx], idx);
+        }
+    }
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+    return results;
+}
+
 // ===== AUTHENTIFICATION =====
 function showLogin() {
     document.getElementById('login-overlay').style.display = 'flex';
@@ -6981,9 +6997,11 @@ async function loadRepartition() {
             if (p && !promoSet.includes(p)) promoSet.push(p);
         });
         const datas = {};
-        await Promise.all(promoSet.map(async s => {
+        // Concurrence plafonnée (2) : ménage le worker unique et laisse une
+        // sauvegarde s'intercaler entre deux lots au lieu d'attendre toute la rafale.
+        await mapLimit(promoSet, 2, async s => {
             datas[s] = await api('/repartition?semester=' + encodeURIComponent(s) + svcQ('&'));
-        }));
+        });
         const [wc, calRaw, catCodes] = await Promise.all([
             api('/week-comments' + svcQ()), api('/special-calendar' + svcQ()),
             api('/category-codes' + svcQ())
