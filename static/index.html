@@ -7069,6 +7069,18 @@ function typeDisp(r) {
     return r.type || '';
 }
 
+// Libellé de type pour la répartition journalière : les TP portent leur numéro de
+// groupe (TP12_1, TP8_2…). Numéro local à la cohorte, déduit du group_label
+// ('gr.3'→3, 'ALT'→1, 'ALT 2'→2), sinon l'index de groupe.
+function typeLabelJour(r) {
+    const base = typeDisp(r);
+    if ((r.type || '').toUpperCase() !== 'TP') return base;
+    const lbl = r.group_label || '';
+    const m = lbl.match(/(\d+)/);
+    const num = m ? m[1] : (/alt/i.test(lbl) ? '1' : String(r.group_index || 1));
+    return base + '_' + num;
+}
+
 // ===== Sous-onglets Répartition : annuelle (tous) / journalière (admin) =====
 let _repTab = 'annuelle';
 let _repJourData = null;   // { weeks, rows } de la promo choisie
@@ -7137,9 +7149,18 @@ function renderRepJour() {
     if (!_repJourData) { el.innerHTML = '<div class="empty">Aucune donnée.</div>'; return; }
     const w = parseInt(document.getElementById('repj-week').value);
     const cohorte = document.getElementById('repj-cohorte').value;   // 'FTP' ou 'ALT'
-    // Les cours mutualisés (MUT) concernent les deux cohortes
-    const list = _repJourData.rows.filter(r => (r.by_week && r.by_week[w]) > 0
-        && (r.formation === cohorte || r.formation === 'MUT'));
+    // Cohorte : formation de la face, ou MUT. Pour un TP mutualisé scindé, on ne garde
+    // que les groupes du côté demandé (FTP = groupes non-apprentis, ALT = apprentis).
+    const inCohorte = r => {
+        if (r.formation === cohorte) return true;
+        if (r.formation === 'MUT') {
+            if ((r.type || '').toUpperCase() === 'TP' && r.n_groups > 1)
+                return cohorte === 'ALT' ? !!r.alt_group : !r.alt_group;
+            return true;   // CM/TD/PT mutualisés : communs aux deux cohortes
+        }
+        return false;
+    };
+    const list = _repJourData.rows.filter(r => (r.by_week && r.by_week[w]) > 0 && inCohorte(r));
     if (!list.length) {
         el.innerHTML = '<div class="empty">Aucun cours à placer en semaine ' + w + ' pour la cohorte ' + esc(cohorte) + '.</div>';
         return;
@@ -7153,7 +7174,7 @@ function renderRepJour() {
         semester:  r => r.semester || '',
         code:      r => r.course_code || '',
         name:      r => r.course_name || '',
-        type:      r => typeDisp(r),
+        type:      r => typeLabelJour(r),
         formation: r => r.formation || '',
         teacher:   r => r.teacher || '',
         room:      r => r.room || '',
@@ -7171,12 +7192,18 @@ function renderRepJour() {
     const tot = { FTP: 0, ALT: 0, MUT: 0 };
     list.forEach(r => { tot[r.formation] = (tot[r.formation] || 0) + r.by_week[w]; });
     const fmt = x => Math.round(x * 100) / 100;
+    // Nb de groupes à compter pour les créneaux : les TP sont déjà éclatés en une
+    // ligne par groupe (→ 1) ; les autres types (TD/PT, CM=1) comptent leurs groupes.
+    const groupsFor = r => (r.type || '').toUpperCase() === 'TP' ? 1 : (r.group_count || 1);
+    const creneaux = r => fmt((r.by_week[w] / (r.slot_duration || 1.5)) * groupsFor(r));
+    const totalCreneaux = list.reduce((s, r) => s + creneaux(r), 0);
     const rowsHtml = list.map(r => {
         const h = r.by_week[w];
         const slot = r.slot_duration || 1.5;
-        const n = Math.round((h / slot) * 100) / 100;
-        const seances = `${n} × ${slot}h`;
-        const badge = `<span class="badge ${typeColors[(r.type || '').toUpperCase()] || 'badge-cm'}">${esc(typeDisp(r))}</span>`;
+        const g = groupsFor(r);
+        const n = creneaux(r);
+        const seances = `${n} × ${slot}h` + (g > 1 ? ` <span style="color:#9a3412;font-weight:600">(${g} gr.)</span>` : '');
+        const badge = `<span class="badge ${typeColors[(r.type || '').toUpperCase()] || 'badge-cm'}">${esc(typeLabelJour(r))}</span>`;
         return `<tr>
             <td style="text-align:center">${esc(r.semester || '')}</td>
             <td><strong>${esc(r.course_code || '')}</strong></td>
@@ -7197,7 +7224,7 @@ function renderRepJour() {
         <div style="display:flex;gap:18px;margin-bottom:10px;font-size:.9rem">
             <span><strong style="color:${formColor[cohorte]}">${esc(cohorte)}</strong> :
                 ${fmt((tot[cohorte] || 0) + tot.MUT)}h${tot.MUT ? ` (dont ${fmt(tot.MUT)}h MUT)` : ''}</span>
-            <span style="color:#6b7280">${list.length} créneau(x) à placer</span>
+            <span style="color:#6b7280">${fmt(totalCreneaux)} créneau(x) à placer</span>
         </div>
         <div class="overflow-x">
         <table style="width:auto;min-width:820px">

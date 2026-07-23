@@ -7692,16 +7692,18 @@ def get_repartition():
             sid = r['session_id']
             if sid not in sessions:
                 tt = r['teaching_type'] or ''
-                n_groups = 1
-                if tt.upper().replace(' ', '').startswith('TP'):
-                    try:
-                        n_groups = int(_group_multiplier(
-                            sg_map, mut_set, tpsep_set, r['semester_code'],
-                            r['formation_type'], tt, r['tp_type']) or 1)
-                    except Exception:
-                        n_groups = 1
-                    if n_groups < 1:
-                        n_groups = 1
+                # Nb de groupes pour ce type (CM=1, TD, TP12/TP8, PT) selon semestre/face.
+                # Sert au comptage des créneaux (répartition journalière) et, pour les TP,
+                # à scinder la session en une ligne par groupe.
+                try:
+                    group_count = int(_group_multiplier(
+                        sg_map, mut_set, tpsep_set, r['semester_code'],
+                        r['formation_type'], tt, r['tp_type']) or 1)
+                except Exception:
+                    group_count = 1
+                if group_count < 1:
+                    group_count = 1
+                n_groups = group_count if tt.upper().replace(' ', '').startswith('TP') else 1
                 sessions[sid] = {
                     'session_id': sid,
                     'course_code': r['course_code'] or '',
@@ -7716,6 +7718,7 @@ def get_repartition():
                     'teacher': r['teacher_name'] or '',
                     'room': r['room_name'] or '',
                     'n_groups': n_groups,
+                    'group_count': group_count,
                     'by_group': {},   # {group_index: {week: hours}}
                 }
                 order.append(sid)
@@ -7726,7 +7729,7 @@ def get_repartition():
         # Une ligne par session (CM/TD/PT) ou une ligne par groupe (TP à plusieurs groupes)
         _BASE = ('session_id', 'course_code', 'course_name', 'semester', 'type',
                  'tp_type', 'formation', 'total_hours', 'nb_sessions', 'slot_duration',
-                 'teacher', 'room')
+                 'teacher', 'room', 'group_count')
         out_rows = []
         for sid in order:
             s = sessions[sid]
