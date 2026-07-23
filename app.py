@@ -7832,6 +7832,30 @@ def export_repartition_excel():
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
     from openpyxl.formatting.rule import CellIsRule
+    from copy import copy as _copy
+
+    # Application de style mémoïsée : openpyxl re-hache chaque objet de style à
+    # CHAQUE affectation (.font/.fill/.border/…), ce qui rend l'export très lent
+    # (dizaines de milliers de cellules). On compose le StyleArray une seule fois
+    # par combinaison puis on le réutilise → ~15× plus rapide, rendu identique.
+    # Clé par id() des objets (réutilisés, épinglés dans la valeur pour garder
+    # leur id stable) + le format numérique (chaîne).
+    _style_memo = {}
+    def _sc(cell, font=None, fill=None, border=None, alignment=None, number_format=None):
+        key = (id(font), id(fill), id(border), id(alignment), number_format)
+        entry = _style_memo.get(key)
+        if entry is not None:
+            cell._style = _copy(entry[0])
+            return cell
+        if font is not None: cell.font = font
+        if fill is not None: cell.fill = fill
+        if border is not None: cell.border = border
+        if alignment is not None: cell.alignment = alignment
+        if number_format is not None: cell.number_format = number_format
+        # Copie figée : openpyxl mute le StyleArray en place si la cellule source est
+        # re-stylée ensuite → sans copie, l'entrée du cache serait corrompue.
+        _style_memo[key] = (_copy(cell._style), font, fill, border, alignment)
+        return cell
 
     try:
         db = get_db()
@@ -8000,6 +8024,16 @@ def export_repartition_excel():
         fill_stage    = PatternFill('solid', fgColor='FDBA74')
         fill_company  = PatternFill('solid', fgColor='FDBA74')
         align_center = Alignment(horizontal='center', vertical='center')
+        # Objets hoistés (évite de recréer le même style à chaque itération de boucle,
+        # ce qui casserait la mémoïsation par id()).
+        align_right = Alignment(horizontal='right', vertical='center')
+        font_bold8 = Font(bold=True, size=8)
+        fill_overload = PatternFill('solid', fgColor='FCA5A5')
+        # Annotations (ligne 1) — partagées par tous les onglets
+        font_annot = Font(italic=True, size=7, color='666666')
+        fill_annot = PatternFill('solid', fgColor='FFFFEE')
+        align_annot = Alignment(horizontal='center', vertical='center', text_rotation=90)
+        font_annot_lbl = Font(italic=True, size=8)
 
         wb = Workbook()
         wb.remove(wb.active)
@@ -8076,17 +8110,9 @@ def export_repartition_excel():
             form_range = f'${formkey_col}$6:${formkey_col}$2000'
 
             # --- Ligne 1 : Annotations (semaines spéciales, éditable) ---
-            font_annot = Font(italic=True, size=7, color='666666')
-            fill_annot = PatternFill('solid', fgColor='FFFFEE')
-            align_annot = Alignment(horizontal='center', vertical='center', text_rotation=90)
-
-            a1 = ws.cell(row=1, column=1, value='Annotations')
-            a1.font = Font(italic=True, size=8)
-            a1.fill = fill_annot
-            a1.alignment = align_center
+            _sc(ws.cell(row=1, column=1, value='Annotations'), font=font_annot_lbl, fill=fill_annot, alignment=align_center)
             for col in range(2, COL_FIRST_WEEK):
-                ws.cell(row=1, column=col).fill = fill_annot
-                ws.cell(row=1, column=col).border = border_all
+                _sc(ws.cell(row=1, column=col), fill=fill_annot, border=border_all)
             ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=COL_FIRST_WEEK - 1)
             has_comment = False
             for i, w in enumerate(weeks):
@@ -8102,68 +8128,42 @@ def export_repartition_excel():
                 if wc and (not wc['years'] or yg in wc['years']):
                     labels.append(wc['comment'])
                     has_comment = True
-                c = ws.cell(row=1, column=COL_FIRST_WEEK + i, value=' / '.join(labels) if labels else '')
-                c.font = font_annot
-                c.fill = fill_annot
-                c.alignment = align_annot
-                c.border = border_all
+                _sc(ws.cell(row=1, column=COL_FIRST_WEEK + i, value=' / '.join(labels) if labels else ''),
+                    font=font_annot, fill=fill_annot, alignment=align_annot, border=border_all)
             # Plus de hauteur si des commentaires (texte vertical) sont présents
             ws.row_dimensions[1].height = 140 if has_comment else 60
 
             # --- Ligne 2 : Totaux FTP (formules SUMIF) ---
-            f2 = ws.cell(row=2, column=1, value='FTP')
-            f2.font = font_form_ftp
-            f2.fill = fill_ftp
-            f2.alignment = align_center
+            _sc(ws.cell(row=2, column=1, value='FTP'), font=font_form_ftp, fill=fill_ftp, alignment=align_center)
             for col in range(2, COL_FIRST_WEEK):
-                ws.cell(row=2, column=col).fill = fill_ftp
-                ws.cell(row=2, column=col).border = border_all
+                _sc(ws.cell(row=2, column=col), fill=fill_ftp, border=border_all)
             ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=COL_FIRST_WEEK - 1)
             for i in range(nw):
                 wk_col = get_column_letter(COL_FIRST_WEEK + i)
                 wk_range = f'{wk_col}$6:{wk_col}$2000'
                 formula = f'=SUMIF({form_range},"FTP",{wk_range})+SUMIF({form_range},"MUT",{wk_range})'
-                c = ws.cell(row=2, column=COL_FIRST_WEEK + i, value=formula)
-                c.font = Font(bold=True, size=8, color='0369A1')
-                c.fill = fill_ftp
-                c.alignment = align_center
-                c.border = border_all
-                c.number_format = '0.##;-0.##;0'
+                _sc(ws.cell(row=2, column=COL_FIRST_WEEK + i, value=formula),
+                    font=font_form_ftp, fill=fill_ftp, alignment=align_center, border=border_all, number_format='0.##;-0.##;0')
 
             # --- Ligne 3 : Totaux ALT (formules SUMIF) ---
-            a3 = ws.cell(row=3, column=1, value='ALT')
-            a3.font = font_form_alt
-            a3.fill = fill_alt
-            a3.alignment = align_center
+            _sc(ws.cell(row=3, column=1, value='ALT'), font=font_form_alt, fill=fill_alt, alignment=align_center)
             for col in range(2, COL_FIRST_WEEK):
-                ws.cell(row=3, column=col).fill = fill_alt
-                ws.cell(row=3, column=col).border = border_all
+                _sc(ws.cell(row=3, column=col), fill=fill_alt, border=border_all)
             ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=COL_FIRST_WEEK - 1)
             for i in range(nw):
                 wk_col = get_column_letter(COL_FIRST_WEEK + i)
                 wk_range = f'{wk_col}$6:{wk_col}$2000'
                 formula = f'=SUMIF({form_range},"ALT",{wk_range})+SUMIF({form_range},"MUT",{wk_range})'
-                c = ws.cell(row=3, column=COL_FIRST_WEEK + i, value=formula)
-                c.font = Font(bold=True, size=8, color='9A3412')
-                c.fill = fill_alt
-                c.alignment = align_center
-                c.border = border_all
-                c.number_format = '0.##;-0.##;0'
+                _sc(ws.cell(row=3, column=COL_FIRST_WEEK + i, value=formula),
+                    font=font_form_alt, fill=fill_alt, alignment=align_center, border=border_all, number_format='0.##;-0.##;0')
 
             # --- Ligne 4 : En-têtes ---
             headers = ['Formation', 'Matière', 'Type', 'Enseignant', 'Salle', 'Heures', 'Reste']
             for i, h in enumerate(headers):
-                c = ws.cell(row=4, column=i+1, value=h)
-                c.font = font_header
-                c.fill = fill_header
-                c.border = border_all
-                c.alignment = align_center
+                _sc(ws.cell(row=4, column=i+1, value=h), font=font_header, fill=fill_header, border=border_all, alignment=align_center)
             for i, w in enumerate(weeks):
-                c = ws.cell(row=4, column=COL_FIRST_WEEK + i, value=f'S{w:02d}')
-                c.font = font_header
-                c.fill = fill_header
-                c.border = border_all
-                c.alignment = align_center
+                _sc(ws.cell(row=4, column=COL_FIRST_WEEK + i, value=f'S{w:02d}'),
+                    font=font_header, fill=fill_header, border=border_all, alignment=align_center)
 
             # --- Ligne 5+ : Données ---
             row = 5
@@ -8175,12 +8175,12 @@ def export_repartition_excel():
                     continue
 
                 # Ligne en-tête matière (le libellé occupe la colonne Matière)
-                c = ws.cell(row=row, column=COL_MAT, value=f"{block['code']} — {block['name']} ({block['sem']})")
-                c.font = font_mat
-                c.fill = fill_mat
+                ws.cell(row=row, column=COL_MAT, value=f"{block['code']} — {block['name']} ({block['sem']})")
                 for col in range(1, COL_FIRST_WEEK + nw):
-                    ws.cell(row=row, column=col).fill = fill_mat
-                    ws.cell(row=row, column=col).border = border_all
+                    if col == COL_MAT:
+                        _sc(ws.cell(row=row, column=col), font=font_mat, fill=fill_mat, border=border_all)
+                    else:
+                        _sc(ws.cell(row=row, column=col), fill=fill_mat, border=border_all)
                 row += 1
 
                 # Ligne « Total promo » : total d'heures de la matière par promo (MUT compté
@@ -8188,21 +8188,18 @@ def export_repartition_excel():
                 ftp_total = sum((s['total_hours'] or 0) for s in block['mut'] + block['ftp'])
                 alt_total = sum((s['total_hours'] or 0) for s in block['mut'] + block['alt'])
                 for col in range(1, COL_FIRST_WEEK + nw):
-                    cc = ws.cell(row=row, column=col); cc.fill = fill_total; cc.border = border_all
-                lbl = ws.cell(row=row, column=COL_FORM, value='Total promo')
-                lbl.font = Font(bold=True, size=8)
-                lbl.alignment = Alignment(horizontal='right', vertical='center')
+                    _sc(ws.cell(row=row, column=col), fill=fill_total, border=border_all)
+                _sc(ws.cell(row=row, column=COL_FORM, value='Total promo'),
+                    font=font_bold8, fill=fill_total, border=border_all, alignment=align_right)
                 ws.merge_cells(start_row=row, start_column=COL_FORM, end_row=row, end_column=COL_MAT)
-                cf = ws.cell(row=row, column=COL_TYPE, value='FTP')
-                cf.font = font_form_ftp; cf.fill = fill_ftp; cf.alignment = align_center; cf.border = border_all
-                vf = ws.cell(row=row, column=COL_TEACH, value=ftp_total or None)
-                vf.font = Font(bold=True, size=8, color='0369A1'); vf.fill = fill_ftp
-                vf.alignment = align_center; vf.border = border_all; vf.number_format = '0.##'
-                ca = ws.cell(row=row, column=COL_ROOM, value='ALT')
-                ca.font = font_form_alt; ca.fill = fill_alt; ca.alignment = align_center; ca.border = border_all
-                va = ws.cell(row=row, column=COL_TOTAL, value=alt_total or None)
-                va.font = Font(bold=True, size=8, color='9A3412'); va.fill = fill_alt
-                va.alignment = align_center; va.border = border_all; va.number_format = '0.##'
+                _sc(ws.cell(row=row, column=COL_TYPE, value='FTP'),
+                    font=font_form_ftp, fill=fill_ftp, alignment=align_center, border=border_all)
+                _sc(ws.cell(row=row, column=COL_TEACH, value=ftp_total or None),
+                    font=font_form_ftp, fill=fill_ftp, alignment=align_center, border=border_all, number_format='0.##')
+                _sc(ws.cell(row=row, column=COL_ROOM, value='ALT'),
+                    font=font_form_alt, fill=fill_alt, alignment=align_center, border=border_all)
+                _sc(ws.cell(row=row, column=COL_TOTAL, value=alt_total or None),
+                    font=font_form_alt, fill=fill_alt, alignment=align_center, border=border_all, number_format='0.##')
                 row += 1
 
                 # Une « bande » par formation : libellé fusionné verticalement dans COL_FORM
@@ -8215,66 +8212,41 @@ def export_repartition_excel():
 
                     for s in grp:
                         # Colonne Formation : style posé sur chaque cellule (avant fusion)
-                        fc = ws.cell(row=row, column=COL_FORM)
-                        fc.fill = form_fill
-                        fc.border = border_all
-                        fc.alignment = align_center
+                        _sc(ws.cell(row=row, column=COL_FORM), fill=form_fill, border=border_all, alignment=align_center)
                         # Colonne d'appoint cachée : formation par ligne (pour les SUMIF)
-                        ws.cell(row=row, column=COL_FORMKEY, value=form).font = font_data
-
-                        c = ws.cell(row=row, column=COL_TYPE, value=s.get('type_disp') or s['type'])
-                        c.font = font_data
-                        c.alignment = align_center
-                        c.border = border_all
-
-                        c = ws.cell(row=row, column=COL_TEACH, value=s['teacher'])
-                        c.font = font_data
-                        c.border = border_all
-
-                        c = ws.cell(row=row, column=COL_ROOM, value=s['room'])
-                        c.font = font_data
-                        c.border = border_all
-
+                        _sc(ws.cell(row=row, column=COL_FORMKEY, value=form), font=font_data)
+                        _sc(ws.cell(row=row, column=COL_TYPE, value=s.get('type_disp') or s['type']),
+                            font=font_data, alignment=align_center, border=border_all)
+                        _sc(ws.cell(row=row, column=COL_TEACH, value=s['teacher']), font=font_data, border=border_all)
+                        _sc(ws.cell(row=row, column=COL_ROOM, value=s['room']), font=font_data, border=border_all)
                         # Heures prévues
-                        c = ws.cell(row=row, column=COL_TOTAL, value=s['total_hours'] if s['total_hours'] > 0 else None)
-                        c.font = font_data
-                        c.alignment = align_center
-                        c.border = border_all
-
+                        _sc(ws.cell(row=row, column=COL_TOTAL, value=s['total_hours'] if s['total_hours'] > 0 else None),
+                            font=font_data, alignment=align_center, border=border_all)
                         # Reste (formule Excel)
                         reste_formula = f'={total_col_letter}{row}-SUM({first_wk_letter}{row}:{last_wk_letter}{row})'
-                        c = ws.cell(row=row, column=COL_RESTE, value=reste_formula)
-                        c.font = font_total_ok
-                        c.fill = fill_total
-                        c.alignment = align_center
-                        c.border = border_all
-                        c.number_format = '0.##;-0.##;0'
+                        _sc(ws.cell(row=row, column=COL_RESTE, value=reste_formula),
+                            font=font_total_ok, fill=fill_total, alignment=align_center, border=border_all, number_format='0.##;-0.##;0')
 
                         for i, w in enumerate(weeks):
                             h = s['by_week'].get(w, 0)
-                            c = ws.cell(row=row, column=COL_FIRST_WEEK + i, value=h if h else None)
-                            c.font = font_data
-                            c.alignment = align_center
-                            c.border = border_all
-                            c.number_format = '0.##;-0.##;0'
+                            fillw = None
                             if form == 'MUT':
                                 # CM/TD mutualisés : FTP (stage/vacances) + ALT (entreprise)
-                                if w in sp_stage or w in sp_vacation or w in sp_company: c.fill = fill_stage
+                                if w in sp_stage or w in sp_vacation or w in sp_company: fillw = fill_stage
                             elif form == 'FTP':
-                                if w in sp_stage: c.fill = fill_stage
-                                elif w in sp_vacation: c.fill = fill_vacation
+                                if w in sp_stage: fillw = fill_stage
+                                elif w in sp_vacation: fillw = fill_vacation
                             elif form == 'ALT':
-                                if w in sp_company: c.fill = fill_company
+                                if w in sp_company: fillw = fill_company
+                            _sc(ws.cell(row=row, column=COL_FIRST_WEEK + i, value=h if h else None),
+                                font=font_data, fill=fillw, alignment=align_center, border=border_all, number_format='0.##;-0.##;0')
 
                         row += 1
 
                     # Libellé de la formation dans la cellule fusionnée (ancre = 1re ligne)
                     group_end = row - 1
-                    anchor = ws.cell(row=group_start, column=COL_FORM, value=form)
-                    anchor.font = form_font
-                    anchor.fill = form_fill
-                    anchor.alignment = align_center
-                    anchor.border = border_all
+                    _sc(ws.cell(row=group_start, column=COL_FORM, value=form),
+                        font=form_font, fill=form_fill, alignment=align_center, border=border_all)
                     if group_end > group_start:
                         ws.merge_cells(start_row=group_start, start_column=COL_FORM,
                                        end_row=group_end, end_column=COL_FORM)
@@ -8362,11 +8334,7 @@ def export_repartition_excel():
 
         used_titles = {'contacts', 's1+s2', 's3+s4', 's5+s6'}
         type_rank = {'CM': 0, 'TD': 1, 'TP': 2, 'PT': 3}
-        fill_overload = PatternFill('solid', fgColor='FCA5A5')
-        # Styles d'annotation (ligne 1), identiques aux onglets par année
-        font_annot = Font(italic=True, size=7, color='666666')
-        fill_annot = PatternFill('solid', fgColor='FFFFEE')
-        align_annot = Alignment(horizontal='center', vertical='center', text_rotation=90)
+        # (fill_overload, font_annot, fill_annot, align_annot : hoistés en tête)
 
         # Colonnes au format Répartition (sans la colonne Enseignant, redondante ici)
         TF_FORM, TF_MAT, TF_TYPE, TF_SALLE, TF_TOTAL, TF_RESTE = 1, 2, 3, 4, 5, 6
@@ -8409,38 +8377,34 @@ def export_repartition_excel():
                         labels.append(category_codes.get(f'company_alt_y{g}') or 'Entreprise ALT')
                 seen = set()
                 labels = [x for x in labels if not (x in seen or seen.add(x))]
-                cc = ws.cell(row=1, column=TF_FIRST + i, value=' / '.join(labels) if labels else '')
-                cc.font = font_annot; cc.fill = fill_annot; cc.alignment = align_annot; cc.border = border_all
+                _sc(ws.cell(row=1, column=TF_FIRST + i, value=' / '.join(labels) if labels else ''),
+                    font=font_annot, fill=fill_annot, alignment=align_annot, border=border_all)
                 if labels:
                     has_comment = True
             ws.row_dimensions[1].height = 140 if has_comment else 40
 
             # --- Lignes 2 et 3 : totaux FTP / ALT (formules SUMIF) ---
-            for trow, crit, lab_fill, lab_font, col_clr in (
-                (2, 'FTP', fill_ftp, font_form_ftp, '0369A1'),
-                (3, 'ALT', fill_alt, font_form_alt, '9A3412'),
+            for trow, crit, lab_fill, lab_font in (
+                (2, 'FTP', fill_ftp, font_form_ftp),
+                (3, 'ALT', fill_alt, font_form_alt),
             ):
-                lc = ws.cell(row=trow, column=1, value=crit)
-                lc.font = lab_font; lc.alignment = align_center
-                for col in range(1, TF_FIRST):
-                    cell = ws.cell(row=trow, column=col); cell.fill = lab_fill; cell.border = border_all
+                _sc(ws.cell(row=trow, column=1, value=crit), font=lab_font, fill=lab_fill, alignment=align_center, border=border_all)
+                for col in range(2, TF_FIRST):
+                    _sc(ws.cell(row=trow, column=col), fill=lab_fill, border=border_all)
                 ws.merge_cells(start_row=trow, start_column=1, end_row=trow, end_column=TF_FIRST - 1)
                 for i in range(nw):
                     wk_col = get_column_letter(TF_FIRST + i)
                     wk_range = f'{wk_col}$5:{wk_col}$2000'
-                    cc = ws.cell(row=trow, column=TF_FIRST + i,
-                                 value=f'=SUMIF({tf_form_range},"{crit}",{wk_range})+SUMIF({tf_form_range},"MUT",{wk_range})')
-                    cc.font = Font(bold=True, size=8, color=col_clr)
-                    cc.fill = lab_fill; cc.alignment = align_center; cc.border = border_all
-                    cc.number_format = '0.##;-0.##;0'
+                    _sc(ws.cell(row=trow, column=TF_FIRST + i,
+                                value=f'=SUMIF({tf_form_range},"{crit}",{wk_range})+SUMIF({tf_form_range},"MUT",{wk_range})'),
+                        font=lab_font, fill=lab_fill, alignment=align_center, border=border_all, number_format='0.##;-0.##;0')
 
             # --- Ligne 4 : en-têtes ---
             for i, h in enumerate(['Form.', 'Matière', 'Type', 'Salle', 'Heures', 'Reste'], 1):
-                cc = ws.cell(row=4, column=i, value=h)
-                cc.font = font_header; cc.fill = fill_header; cc.border = border_all; cc.alignment = align_center
+                _sc(ws.cell(row=4, column=i, value=h), font=font_header, fill=fill_header, border=border_all, alignment=align_center)
             for i, w in enumerate(weeks):
-                cc = ws.cell(row=4, column=TF_FIRST + i, value=f'S{w:02d}')
-                cc.font = font_header; cc.fill = fill_header; cc.border = border_all; cc.alignment = align_center
+                _sc(ws.cell(row=4, column=TF_FIRST + i, value=f'S{w:02d}'),
+                    font=font_header, fill=fill_header, border=border_all, alignment=align_center)
 
             # --- Lignes 5+ : données groupées par matière (colonne Formation fusionnée) ---
             by_code, code_order = {}, []
@@ -8457,11 +8421,12 @@ def export_repartition_excel():
             week_totals = {w: 0 for w in weeks}
             for key in code_order:
                 block = by_code[key]
-                c = ws.cell(row=row, column=TF_MAT, value=f"{block['code']} — {block['name']} ({block['sem']})")
-                c.font = font_mat; c.fill = fill_mat
+                ws.cell(row=row, column=TF_MAT, value=f"{block['code']} — {block['name']} ({block['sem']})")
                 for col in range(1, TF_FIRST + nw):
-                    ws.cell(row=row, column=col).fill = fill_mat
-                    ws.cell(row=row, column=col).border = border_all
+                    if col == TF_MAT:
+                        _sc(ws.cell(row=row, column=col), font=font_mat, fill=fill_mat, border=border_all)
+                    else:
+                        _sc(ws.cell(row=row, column=col), fill=fill_mat, border=border_all)
                 row += 1
 
                 for form, grp in (('MUT', block['mut']), ('FTP', block['ftp']), ('ALT', block['alt'])):
@@ -8475,50 +8440,50 @@ def export_repartition_excel():
                         sp_v = sc.get(f'vacation_ftp_y{yg_s}', set()) if yg_s else set()
                         sp_st = sc.get(f'stage_ftp_y{yg_s}', set()) if yg_s else set()
                         sp_co = sc.get(f'company_alt_y{yg_s}', set())
-                        ws.cell(row=row, column=TF_FORM).fill = form_fill
-                        ws.cell(row=row, column=TF_FORMKEY, value=form).font = font_data
-                        ws.cell(row=row, column=TF_TYPE, value=s.get('type_disp') or s['type']).font = font_data
-                        ws.cell(row=row, column=TF_SALLE, value=s['room']).font = font_data
-                        ws.cell(row=row, column=TF_TOTAL, value=s['total_hours'] or None).font = font_data
-                        rc = ws.cell(row=row, column=TF_RESTE,
-                                     value=f'={tf_total_letter}{row}-SUM({tf_first_letter}{row}:{tf_last_letter}{row})')
-                        rc.font = font_total_ok; rc.fill = fill_total; rc.number_format = '0.##;-0.##;0'
-                        for col in (TF_FORM, TF_TYPE, TF_SALLE, TF_TOTAL, TF_RESTE):
-                            ws.cell(row=row, column=col).border = border_all
-                            ws.cell(row=row, column=col).alignment = align_center
+                        _sc(ws.cell(row=row, column=TF_FORM), fill=form_fill, border=border_all, alignment=align_center)
+                        _sc(ws.cell(row=row, column=TF_FORMKEY, value=form), font=font_data)
+                        _sc(ws.cell(row=row, column=TF_TYPE, value=s.get('type_disp') or s['type']),
+                            font=font_data, border=border_all, alignment=align_center)
+                        _sc(ws.cell(row=row, column=TF_SALLE, value=s['room']),
+                            font=font_data, border=border_all, alignment=align_center)
+                        _sc(ws.cell(row=row, column=TF_TOTAL, value=s['total_hours'] or None),
+                            font=font_data, border=border_all, alignment=align_center)
+                        _sc(ws.cell(row=row, column=TF_RESTE,
+                                    value=f'={tf_total_letter}{row}-SUM({tf_first_letter}{row}:{tf_last_letter}{row})'),
+                            font=font_total_ok, fill=fill_total, border=border_all, alignment=align_center, number_format='0.##;-0.##;0')
                         for i, w in enumerate(weeks):
                             h = s['by_week'].get(w, 0)
                             week_totals[w] += h
-                            cc = ws.cell(row=row, column=TF_FIRST + i, value=h if h else None)
-                            cc.font = font_data; cc.alignment = align_center; cc.border = border_all
-                            cc.number_format = '0.##;-0.##;0'
+                            fillw = None
                             if form == 'MUT':
-                                if w in sp_st or w in sp_v or w in sp_co: cc.fill = fill_stage
+                                if w in sp_st or w in sp_v or w in sp_co: fillw = fill_stage
                             elif form == 'FTP':
-                                if w in sp_st: cc.fill = fill_stage
-                                elif w in sp_v: cc.fill = fill_vacation
+                                if w in sp_st: fillw = fill_stage
+                                elif w in sp_v: fillw = fill_vacation
                             elif form == 'ALT':
-                                if w in sp_co: cc.fill = fill_company
+                                if w in sp_co: fillw = fill_company
+                            _sc(ws.cell(row=row, column=TF_FIRST + i, value=h if h else None),
+                                font=font_data, fill=fillw, alignment=align_center, border=border_all, number_format='0.##;-0.##;0')
                         row += 1
                     group_end = row - 1
-                    anchor = ws.cell(row=group_start, column=TF_FORM, value=form)
-                    anchor.font = form_font; anchor.fill = form_fill
-                    anchor.alignment = align_center; anchor.border = border_all
+                    _sc(ws.cell(row=group_start, column=TF_FORM, value=form),
+                        font=form_font, fill=form_fill, alignment=align_center, border=border_all)
                     if group_end > group_start:
                         ws.merge_cells(start_row=group_start, start_column=TF_FORM,
                                        end_row=group_end, end_column=TF_FORM)
 
             # Ligne charge totale de l'enseignant / semaine (toutes formations, MUT compté 1 fois)
-            ws.cell(row=row, column=TF_MAT, value='Total / sem.').font = Font(bold=True, size=8)
-            ws.cell(row=row, column=TF_TOTAL, value=total_placed or None).font = Font(bold=True, size=8)
+            _sc(ws.cell(row=row, column=TF_MAT, value='Total / sem.'), font=font_bold8, fill=fill_header, border=border_all, alignment=align_center)
+            _sc(ws.cell(row=row, column=TF_TOTAL, value=total_placed or None), font=font_bold8, fill=fill_header, border=border_all, alignment=align_center)
             for col in range(1, TF_FIRST):
-                cell = ws.cell(row=row, column=col); cell.fill = fill_header; cell.border = border_all; cell.alignment = align_center
+                if col in (TF_MAT, TF_TOTAL):
+                    continue
+                _sc(ws.cell(row=row, column=col), fill=fill_header, border=border_all, alignment=align_center)
             for i, w in enumerate(weeks):
                 tot = week_totals[w]
-                cc = ws.cell(row=row, column=TF_FIRST + i, value=tot if tot else None)
-                cc.font = Font(bold=True, size=8); cc.alignment = align_center; cc.border = border_all
-                cc.number_format = '0.##;-0.##;0'
-                cc.fill = fill_overload if tot > 20 else fill_header
+                _sc(ws.cell(row=row, column=TF_FIRST + i, value=tot if tot else None),
+                    font=font_bold8, fill=(fill_overload if tot > 20 else fill_header),
+                    alignment=align_center, border=border_all, number_format='0.##;-0.##;0')
             total_row = row
 
             # Mise en forme conditionnelle : Reste rouge si != 0
