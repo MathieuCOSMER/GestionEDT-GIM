@@ -7207,6 +7207,10 @@ function typeLabelJour(r) {
 // ===== Sous-onglets Répartition : annuelle (tous) / journalière (admin) =====
 let _repTab = 'annuelle';
 let _repJourData = null;   // { weeks, rows } de la promo choisie
+// Promo mutualisée sur TOUTE l'année (les deux semestres) : FTP et ALT suivent
+// les mêmes cours, la distinction de cohorte n'a plus lieu d'être.
+let _repJourMut = false;
+let _repJourCohortePref = 'FTP';   // cohorte choisie, restaurée hors promo mutualisée
 
 function showRepTab(tab) {
     _repTab = tab;
@@ -7229,6 +7233,21 @@ function _isoWeekNow() {
     return Math.ceil(((t - y0) / 86400000 + 1) / 7);
 }
 
+// Sélecteur de cohorte : « Promo (FTP + ALT) » si l'année est mutualisée,
+// sinon le choix FTP / ALT habituel (la préférence est conservée).
+function _syncRepJourCohorte() {
+    const sel = document.getElementById('repj-cohorte');
+    if (!sel) return;
+    const mode = _repJourMut ? 'mut' : 'split';
+    if (sel.dataset.mode === mode) return;
+    if (sel.dataset.mode === 'split') _repJourCohortePref = sel.value || _repJourCohortePref;
+    sel.innerHTML = _repJourMut
+        ? '<option value="ALL">Promo (FTP + ALT)</option>'
+        : '<option value="FTP">FTP</option><option value="ALT">ALT</option>';
+    if (!_repJourMut) sel.value = _repJourCohortePref;
+    sel.dataset.mode = mode;
+}
+
 // Charge les répartitions des deux semestres de l'année choisie
 async function loadRepJour() {
     const el = document.getElementById('repj-content');
@@ -7237,7 +7256,15 @@ async function loadRepJour() {
     const sems = ['S' + (yg * 2 - 1), 'S' + (yg * 2)];
     try {
         state.config = await api('/config' + svcQ());
-        const datas = await Promise.all(sems.map(s => api('/repartition?semester=' + encodeURIComponent(s) + svcQ('&'))));
+        const [sg, ...datas] = await Promise.all([
+            api('/semester-groups' + svcQ()),
+            ...sems.map(s => api('/repartition?semester=' + encodeURIComponent(s) + svcQ('&')))
+        ]);
+        state.mutSemesters = sg.mutualized || {};
+        state.tpSeparate = sg.tp_separate || {};
+        // Mutualisée à l'année = les DEUX semestres de l'année le sont
+        _repJourMut = sems.every(sc => !!state.mutSemesters[sc]);
+        _syncRepJourCohorte();
         const anchor = (state.config && state.config.academic_start_week) || 36;
         const mw = maxWeek();
         const skey = w => (w >= anchor ? w - anchor : w - anchor + mw);
@@ -7271,10 +7298,15 @@ function renderRepJour() {
     const el = document.getElementById('repj-content');
     if (!_repJourData) { el.innerHTML = '<div class="empty">Aucune donnée.</div>'; return; }
     const w = parseInt(document.getElementById('repj-week').value);
-    const cohorte = document.getElementById('repj-cohorte').value;   // 'FTP' ou 'ALT'
+    const cohorte = document.getElementById('repj-cohorte').value;   // 'FTP', 'ALT' ou 'ALL'
     // Cohorte : formation de la face, ou MUT. Pour un TP mutualisé scindé, on ne garde
     // que les groupes du côté demandé (FTP = groupes non-apprentis, ALT = apprentis).
+    // Semestre mutualisé : FTP et ALT suivent les mêmes cours — on affiche tout
+    // (y compris les faces FTP/ALT restantes et tous les groupes de TP), sans
+    // distinction de cohorte. Les semestres non mutualisés gardent le filtre.
+    const mutSems = state.mutSemesters || {};
     const inCohorte = r => {
+        if (cohorte === 'ALL' || mutSems[r.semester]) return true;
         if (r.formation === cohorte) return true;
         if (r.formation === 'MUT') {
             if ((r.type || '').toUpperCase() === 'TP' && r.n_groups > 1)
@@ -7285,7 +7317,8 @@ function renderRepJour() {
     };
     const list = _repJourData.rows.filter(r => (r.by_week && r.by_week[w]) > 0 && inCohorte(r));
     if (!list.length) {
-        el.innerHTML = '<div class="empty">Aucun cours à placer en semaine ' + w + ' pour la cohorte ' + esc(cohorte) + '.</div>';
+        el.innerHTML = '<div class="empty">Aucun cours à placer en semaine ' + w +
+            (cohorte === 'ALL' ? '.' : ' pour la cohorte ' + esc(cohorte) + '.') + '</div>';
         return;
     }
     // Ordre par défaut : semestre → code → formation
@@ -7310,8 +7343,8 @@ function renderRepJour() {
         list.sort(defaultCmp);
     }
     const typeColors = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' };
-    const formColor = { FTP: '#0369a1', ALT: '#9a3412', MUT: '#7c3aed' };
-    // Total d'heures de la cohorte (les cours mutualisés en font partie)
+    const formColor = { FTP: '#0369a1', ALT: '#9a3412', MUT: '#7c3aed', ALL: '#7c3aed' };
+    // Détail des heures affichées par formation (sert au libellé du total)
     const tot = { FTP: 0, ALT: 0, MUT: 0 };
     list.forEach(r => { tot[r.formation] = (tot[r.formation] || 0) + r.by_week[w]; });
     const fmt = x => Math.round(x * 100) / 100;
@@ -7339,14 +7372,20 @@ function renderRepJour() {
             <td style="text-align:center;color:#6b7280">${seances}</td>
         </tr>`;
     }).join('');
+    // Total = somme des lignes réellement affichées (un semestre mutualisé y
+    // ajoute les faces FTP et ALT), détaillée par formation dès qu'il y en a plusieurs.
+    const cohorteLabel = cohorte === 'ALL' ? 'Promo (FTP + ALT)' : cohorte;
+    const totCohorte = list.reduce((acc, r) => acc + r.by_week[w], 0);
+    const totParts = Object.keys(tot).filter(k => tot[k]).map(k => `${fmt(tot[k])}h ${k}`);
+    const totDetail = totParts.length > 1 ? ` (dont ${totParts.join(', ')})` : '';
     // Flèche de tri sur la colonne active
     const arrow = k => _repJourSort.key === k ? (_repJourSort.dir > 0 ? ' ▲' : ' ▼') : '';
     const th = (k, label, style) =>
         `<th style="${style};cursor:pointer;user-select:none" onclick="sortRepJour('${k}')" title="Trier par ${esc(label)}">${esc(label)}${arrow(k)}</th>`;
     el.innerHTML = `
         <div style="display:flex;gap:18px;margin-bottom:10px;font-size:.9rem">
-            <span><strong style="color:${formColor[cohorte]}">${esc(cohorte)}</strong> :
-                ${fmt((tot[cohorte] || 0) + tot.MUT)}h${tot.MUT ? ` (dont ${fmt(tot.MUT)}h MUT)` : ''}</span>
+            <span><strong style="color:${formColor[cohorte]}">${esc(cohorteLabel)}</strong> :
+                ${fmt(totCohorte)}h${totDetail}</span>
             <span style="color:#6b7280">${fmt(totalCreneaux)} créneau(x) à placer</span>
         </div>
         <div class="overflow-x">
