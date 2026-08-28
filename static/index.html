@@ -397,7 +397,8 @@
     <button type="button" id="svc-tab-repartition-enseignant" class="subtab" onclick="showPage('repartition-enseignant')">Bilan Global</button>
     <button type="button" id="svc-tab-repartition" class="subtab" onclick="showPage('repartition')">Répartition Calendaire</button>
     <button type="button" id="svc-tab-matieres" class="subtab" onclick="showPage('matieres')">Matières</button>
-    <button type="button" id="svc-tab-contraintes" class="subtab" onclick="showPage('contraintes')">Contraintes</button>
+    <button type="button" id="svc-tab-contraintes" class="subtab" onclick="showPage('contraintes')">Contraintes Enseignant</button>
+    <button type="button" id="svc-tab-contraintes-matiere" class="subtab" onclick="showPage('contraintes-matiere')">Contraintes Matière</button>
     <span class="svc-year">Année :
         <select id="service-year-select" onchange="switchServiceYear()"
                 style="padding:4px 10px;border-radius:6px;border:1px solid #c7d2fe;background:#eef2ff;color:#4f46e5;font-weight:700;font-size:.88rem;cursor:pointer">
@@ -490,6 +491,27 @@
         <h1 id="contraintes-title">Contraintes d'emploi du temps</h1>
     </div>
     <div id="contraintes-content"><div class="spinner">Chargement…</div></div>
+</div>
+
+<!-- ===== CONTRAINTES PAR MATIÈRE ===== -->
+<div class="page" id="page-contraintes-matiere">
+    <div class="toolbar">
+        <h1 id="contraintes-matiere-title">Contraintes par matière</h1>
+        <div class="filters">
+            <label>Semestres :</label>
+            <div id="mc-sem-toggle" class="sem-toggle">
+                <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleMcSemester('S1',this)">S1</button>
+                <button type="button" class="sem-btn active" data-sem="S2" onclick="toggleMcSemester('S2',this)">S2</button>
+                <button type="button" class="sem-btn active" data-sem="S3" onclick="toggleMcSemester('S3',this)">S3</button>
+                <button type="button" class="sem-btn active" data-sem="S4" onclick="toggleMcSemester('S4',this)">S4</button>
+                <button type="button" class="sem-btn active" data-sem="S5" onclick="toggleMcSemester('S5',this)">S5</button>
+                <button type="button" class="sem-btn active" data-sem="S6" onclick="toggleMcSemester('S6',this)">S6</button>
+            </div>
+            <input type="text" id="mc-search" placeholder="Rechercher une matière…"
+                   oninput="renderCourseConstraints()" style="margin-left:12px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+        </div>
+    </div>
+    <div id="contraintes-matiere-content"><div class="spinner">Chargement…</div></div>
 </div>
 
 <!-- ===== MON COMPTE (enseignant connecté) ===== -->
@@ -1762,10 +1784,12 @@ function toast(msg, type = 'success') {
 }
 
 // ===== NAVIGATION =====
-// Onglet « Service enseignant » : regroupe Bilan Global, Répartition Calendaire
-// et Contraintes en sous-onglets, avec sa propre année de consultation
-// (_serviceYear, passée en ?year= aux API de ces trois vues uniquement).
-const _servicePages = ['repartition-enseignant', 'repartition', 'matieres', 'contraintes'];
+// Onglet « Service enseignant » : regroupe Bilan Global, Répartition Calendaire,
+// Matières et les contraintes (Enseignant / Matière) en sous-onglets, avec sa
+// propre année de consultation (_serviceYear, passée en ?year= aux API de ces
+// vues uniquement).
+const _servicePages = ['repartition-enseignant', 'repartition', 'matieres', 'contraintes',
+                       'contraintes-matiere'];
 let _serviceTab = 'repartition';   // dernier sous-onglet Service visité
 let _serviceYear = '';             // année affichée dans Service enseignant
 
@@ -1818,6 +1842,7 @@ async function loadPage(name, forceReload) {
         }
         else if (name === 'journal') { await loadJournal(); }
         else if (name === 'contraintes') { await loadConstraints(); }
+        else if (name === 'contraintes-matiere') { await loadCourseConstraints(); }
         else if (name === 'programme') {
             await loadProgramme();
             if (_progTab === 'contenu') await showProgTab('contenu');
@@ -2490,6 +2515,104 @@ function renderConstraintsAdmin(list) {
             <td style="white-space:nowrap;color:#6b7280;font-size:.8rem">${esc(c.updated_at || '')}</td>
         </tr>`).join('') +
         `</tbody></table>`;
+}
+
+// ===== CONTRAINTES PAR MATIÈRE =====
+// Texte libre par matière (salle imposée, ordre des séances, période…).
+// L'admin renseigne toutes les matières ; l'enseignant, celles où il intervient
+// (mêmes règles que le contenu pédagogique : contrôle côté serveur).
+let _mcSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
+
+function toggleMcSemester(code, btn) {
+    if (_mcSemesters.has(code)) _mcSemesters.delete(code);
+    else _mcSemesters.add(code);
+    btn.classList.toggle('active');
+    renderCourseConstraints();
+}
+
+async function loadCourseConstraints() {
+    const el = document.getElementById('contraintes-matiere-content');
+    el.innerHTML = '<div class="spinner">Chargement…</div>';
+    try {
+        // Toujours recharger : le cache peut venir d'une autre année
+        state.courses = await api('/courses' + svcQ());
+        renderCourseConstraints();
+    } catch (e) {
+        el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
+    }
+}
+
+function renderCourseConstraints() {
+    const el = document.getElementById('contraintes-matiere-content');
+    let list = (state.courses || []).filter(canEditCourseContent);
+    if (!list.length) {
+        el.innerHTML = '<div class="empty">Aucune matière modifiable pour votre compte.</div>';
+        return;
+    }
+    if (!_mcSemesters.size) {
+        el.innerHTML = '<div class="empty">Sélectionnez au moins un semestre.</div>';
+        return;
+    }
+    const q = ((document.getElementById('mc-search') || {}).value || '').trim().toLowerCase();
+    list = list.filter(c => _mcSemesters.has(c.semester_code));
+    if (q) list = list.filter(c => ((c.code || '') + ' ' + (c.name || '')).toLowerCase().includes(q));
+    if (!list.length) { el.innerHTML = '<div class="empty">Aucune matière pour cette sélection.</div>'; return; }
+    list.sort((a, b) => (_SEM_ORDER.indexOf(a.semester_code) - _SEM_ORDER.indexOf(b.semester_code))
+                        || (a.code || '').localeCompare(b.code || ''));
+    const bySem = {};
+    list.forEach(c => { (bySem[c.semester_code] = bySem[c.semester_code] || []).push(c); });
+    let html = `<p style="color:#6b7280;margin:0 0 4px">Indiquez les contraintes propres à chaque
+        matière (salle spécifique, ordre des séances, période imposée…).</p>`;
+    _SEM_ORDER.forEach(sem => {
+        const rows = bySem[sem];
+        if (!rows || !rows.length) return;
+        html += `<h2 style="margin:18px 0 8px;color:#4f46e5">${esc(sem)}</h2>`;
+        html += `<table class="pn-table"><thead><tr>
+            <th style="width:22%">Matière</th>
+            <th>Contraintes de la matière</th>
+        </tr></thead><tbody>`;
+        rows.forEach(c => {
+            const teachers = c.teacher_names ? `<br><small style="color:#6b7280">${esc(c.teacher_names)}</small>` : '';
+            html += `<tr>
+                <td class="pn-mat"><strong>${esc(c.code || '')}</strong><br>${esc(c.name || '')}${teachers}</td>
+                <td>
+                    <textarea id="mc-ta-${c.id}" rows="4"
+                        placeholder="Ex : TP en salle B12 uniquement ; CM avant les TP ; à placer avant la semaine 45…">${esc(c.constraints || '')}</textarea>
+                    <div style="margin-top:6px;text-align:right">
+                        <button class="btn btn-primary btn-sm" onclick="saveCourseConstraints(${c.id})">Enregistrer</button>
+                    </div>
+                </td>
+            </tr>`;
+        });
+        html += `</tbody></table>`;
+    });
+    el.innerHTML = html;
+}
+
+// Enregistre les contraintes d'une matière (année affichée dans Service enseignant)
+async function saveCourseConstraints(id) {
+    const ta = document.getElementById('mc-ta-' + id);
+    if (!ta) return;
+    const constraints = ta.value;
+    try {
+        // Appel direct : la garde client de api() bloque les écritures côté
+        // enseignant, or l'intervenant est autorisé ici (vérifié côté serveur).
+        const r = await fetch('/api/courses/' + id + '/constraints' + svcQ(), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ constraints })
+        });
+        if (!r.ok) {
+            let msg = "Échec de l'enregistrement";
+            try { msg = JSON.parse(await r.text()).error || msg; } catch (_) {}
+            throw new Error(msg);
+        }
+        const c = (state.courses || []).find(x => x.id === id);
+        if (c) c.constraints = constraints.trim();
+        toast('Contraintes enregistrées');
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
 }
 
 // ===== PROMOTIONS (admin) =====

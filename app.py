@@ -999,6 +999,12 @@ def _apply_migrations(db):
         db.execute('ALTER TABLE courses ADD COLUMN content_pn TEXT')
     except sqlite3.OperationalError:
         pass
+    # Contraintes d'emploi du temps propres à la matière (texte libre,
+    # éditable par l'admin ou un enseignant intervenant)
+    try:
+        db.execute('ALTER TABLE courses ADD COLUMN constraints TEXT')
+    except sqlite3.OperationalError:
+        pass
     # Contraintes d'emploi du temps saisies par les enseignants (texte + fichier joint)
     db.execute('''
         CREATE TABLE IF NOT EXISTS teacher_constraints (
@@ -1543,8 +1549,8 @@ def error_response(message, status_code=400):
 # ======================= AUTHENTIFICATION (routes + garde) =======================
 
 import re as _re
-# Reconnaît /api/courses/<id>/content (autorisé aux intervenants en écriture)
-_COURSE_CONTENT_RE = _re.compile(r'^/api/courses/\d+/content$')
+# Reconnaît /api/courses/<id>/content et /constraints (autorisés aux intervenants en écriture)
+_COURSE_CONTENT_RE = _re.compile(r'^/api/courses/\d+/(content|constraints)$')
 # Reconnaît /api/constraints/me[...] (l'enseignant gère SES propres contraintes)
 _CONSTRAINTS_SELF_RE = _re.compile(r'^/api/constraints/me(/file)?$')
 # Reconnaît la saisie de notes par sous-matière (onglet Saisie Notes) : ouverte
@@ -6062,7 +6068,7 @@ def get_courses():
         cursor.execute('''
             SELECT c.id, c.code, c.name, c.semester_id, c.course_type,
                    c.start_week, c.end_week, c.default_weeks, c.mutualized, c.tp_type,
-                   c.content, c.content_pn, c.created_at, c.updated_at,
+                   c.content, c.content_pn, c.constraints, c.created_at, c.updated_at,
                    s.code as semester_code,
                    GROUP_CONCAT(DISTINCT t.name) as teacher_names,
                    COALESCE(SUM(CASE WHEN cs.teaching_type='CM' AND cs.formation_type IN (0,2)
@@ -6136,7 +6142,7 @@ def get_courses():
             LEFT JOIN teachers t ON cs.teacher_id = t.id
             GROUP BY c.id, c.code, c.name, c.semester_id, c.course_type,
                      c.start_week, c.end_week, c.default_weeks, c.mutualized, c.tp_type,
-                     c.content, c.content_pn, c.created_at, c.updated_at, s.code
+                     c.content, c.content_pn, c.constraints, c.created_at, c.updated_at, s.code
             ORDER BY s.code, c.code
         ''')
         courses = rows_to_list(cursor.fetchall())
@@ -6274,6 +6280,34 @@ def update_course_content(course_id):
         return jsonify({'id': course_id, 'content': content or '', 'content_pn': content_pn or ''}), 200
     except Exception as e:
         return error_response(f'Error updating course content: {str(e)}', 500)
+
+@app.route('/api/courses/<int:course_id>/constraints', methods=['PUT'])
+def update_course_constraints(course_id):
+    """Met à jour les contraintes d'emploi du temps propres à une matière.
+    Texte libre éditable par l'admin ou un enseignant intervenant."""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute('SELECT id FROM courses WHERE id = ?', (course_id,))
+        if not cursor.fetchone():
+            return error_response('Course not found', 404)
+
+        if session.get('role') != 'admin':
+            if not teacher_intervenes_in_course(course_id, session.get('teacher_name')):
+                return error_response("Vous n'intervenez pas dans cette matière", 403)
+
+        value = (request.get_json() or {}).get('constraints')
+        value = value.strip() or None if isinstance(value, str) else None
+        cursor.execute(
+            'UPDATE courses SET constraints = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            (value, course_id)
+        )
+        db.commit()
+        _audit('COURSE_CONSTRAINTS_SAVE', ip=_client_ip(), user=session.get('user'),
+               course=course_id)
+        return jsonify({'id': course_id, 'constraints': value or ''}), 200
+    except Exception as e:
+        return error_response(f'Error updating course constraints: {str(e)}', 500)
 
 @app.route('/api/courses/<int:course_id>', methods=['PUT'])
 def update_course(course_id):
