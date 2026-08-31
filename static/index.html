@@ -92,6 +92,15 @@
         .types-table input { width: 100%; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 5px; font-size: .88rem; }
         .types-table .col-h { width: 90px; }
         .types-table .col-h input { width: 76px; text-align: right; }
+        .types-table .teach-cell { display: flex; align-items: center; gap: 4px; }
+        .types-table .teach-cell select { flex: 1; min-width: 0; }
+        .grp-btn { padding: 3px 7px; line-height: 1; white-space: nowrap; }
+        .grp-btn.on { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+        .grp-row > td { background: #f8f7ff; border-top: 1px solid #e5e7eb; padding: 8px 10px !important; }
+        .grp-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+        .grp-grid label { font-size: .78rem; color: #4b5563; display: flex; flex-direction: column; gap: 2px; }
+        .grp-grid select { padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 5px; font-size: .82rem; max-width: 210px; }
+        .grp-hint { font-size: .75rem; color: #6b7280; margin-bottom: 6px; }
         .weekly-table { margin-top: 4px; border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; }
         .weekly-table th { background: #f3f4f6; font-size: .78rem; padding: 5px 8px; }
         .weekly-table td { border-top: 1px solid #f3f4f6; padding: 3px 6px; font-size: .82rem; }
@@ -1364,7 +1373,7 @@
                 </div>
                 <div class="form-group">
                     <label>Type de TP</label>
-                    <select id="course-tp-type" title="Taille des groupes de TP : détermine le nombre de groupes utilisé pour le calcul du service (Bilan global)">
+                    <select id="course-tp-type" onchange="refreshGroupTeachers()" title="Taille des groupes de TP : détermine le nombre de groupes utilisé pour le calcul du service (Bilan global)">
                         <option value="TP12">TP12 (groupes de 12)</option>
                         <option value="TP8">TP8 (groupes de 8)</option>
                     </select>
@@ -1438,19 +1447,22 @@
                         <td class="col-h"><input type="number" id="td-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="td-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5" onchange="syncHoursStep(this)"></td>
                         <td><select id="td-room"></select></td>
-                        <td><select id="td-teacher"></select></td></tr>
+                        <td><div class="teach-cell"><select id="td-teacher"></select><button type="button" class="btn btn-secondary btn-sm grp-btn" id="td-grp-btn" title="Enseignant par groupe" onclick="toggleGroupTeachers('','td')">👥</button></div></td></tr>
+                    <tr class="grp-row" id="td-grp-row" style="display:none"><td colspan="6" id="td-grp-cell"></td></tr>
                     <tr><td><span class="badge badge-tp">TP</span></td>
                         <td class="col-h"><input type="number" id="tp-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="tp-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5" onchange="syncHoursStep(this)"></td>
                         <td class="col-h"><input type="number" id="tp-spw" min="1" step="1" placeholder="1" value="1"></td>
                         <td><select id="tp-room"></select></td>
-                        <td><select id="tp-teacher"></select></td></tr>
+                        <td><div class="teach-cell"><select id="tp-teacher"></select><button type="button" class="btn btn-secondary btn-sm grp-btn" id="tp-grp-btn" title="Enseignant par groupe" onclick="toggleGroupTeachers('','tp')">👥</button></div></td></tr>
+                    <tr class="grp-row" id="tp-grp-row" style="display:none"><td colspan="6" id="tp-grp-cell"></td></tr>
                     <tr><td><span class="badge badge-pt">PT</span></td>
                         <td class="col-h"><input type="number" id="pt-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="pt-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5" onchange="syncHoursStep(this)"></td>
                         <td class="col-h"><input type="number" id="pt-spw" min="1" step="1" placeholder="1" value="1"></td>
                         <td><select id="pt-room"></select></td>
-                        <td><select id="pt-teacher"></select></td></tr>
+                        <td><div class="teach-cell"><select id="pt-teacher"></select><button type="button" class="btn btn-secondary btn-sm grp-btn" id="pt-grp-btn" title="Enseignant par groupe" onclick="toggleGroupTeachers('','pt')">👥</button></div></td></tr>
+                    <tr class="grp-row" id="pt-grp-row" style="display:none"><td colspan="6" id="pt-grp-cell"></td></tr>
                 </tbody>
             </table>
             </div>
@@ -1473,19 +1485,22 @@
                         <td class="col-h"><input type="number" id="alt-td-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="alt-td-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5" onchange="syncHoursStep(this)"></td>
                         <td><select id="alt-td-room"></select></td>
-                        <td><select id="alt-td-teacher"></select></td></tr>
+                        <td><div class="teach-cell"><select id="alt-td-teacher"></select><button type="button" class="btn btn-secondary btn-sm grp-btn" id="alt-td-grp-btn" title="Enseignant par groupe" onclick="toggleGroupTeachers('alt-','td')">👥</button></div></td></tr>
+                    <tr class="grp-row" id="alt-td-grp-row" style="display:none"><td colspan="6" id="alt-td-grp-cell"></td></tr>
                     <tr><td><span class="badge badge-tp">TP</span></td>
                         <td class="col-h"><input type="number" id="alt-tp-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="alt-tp-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5" onchange="syncHoursStep(this)"></td>
                         <td class="col-h"><input type="number" id="alt-tp-spw" min="1" step="1" placeholder="1" value="1"></td>
                         <td><select id="alt-tp-room"></select></td>
-                        <td><select id="alt-tp-teacher"></select></td></tr>
+                        <td><div class="teach-cell"><select id="alt-tp-teacher"></select><button type="button" class="btn btn-secondary btn-sm grp-btn" id="alt-tp-grp-btn" title="Enseignant par groupe" onclick="toggleGroupTeachers('alt-','tp')">👥</button></div></td></tr>
+                    <tr class="grp-row" id="alt-tp-grp-row" style="display:none"><td colspan="6" id="alt-tp-grp-cell"></td></tr>
                     <tr><td><span class="badge badge-pt">PT</span></td>
                         <td class="col-h"><input type="number" id="alt-pt-hours" min="0" step="0.5" placeholder="0"></td>
                         <td class="col-h"><input type="number" id="alt-pt-dur" min="0.5" step="0.5" placeholder="1.5" value="1.5" onchange="syncHoursStep(this)"></td>
                         <td class="col-h"><input type="number" id="alt-pt-spw" min="1" step="1" placeholder="1" value="1"></td>
                         <td><select id="alt-pt-room"></select></td>
-                        <td><select id="alt-pt-teacher"></select></td></tr>
+                        <td><div class="teach-cell"><select id="alt-pt-teacher"></select><button type="button" class="btn btn-secondary btn-sm grp-btn" id="alt-pt-grp-btn" title="Enseignant par groupe" onclick="toggleGroupTeachers('alt-','pt')">👥</button></div></td></tr>
+                    <tr class="grp-row" id="alt-pt-grp-row" style="display:none"><td colspan="6" id="alt-pt-grp-cell"></td></tr>
                 </tbody>
             </table>
             </div>
@@ -5031,6 +5046,8 @@ function populateMatiereFilters() {
     cs.forEach(c => {
         tKeys.forEach(k => { if (c[k]) teachers.push(c[k]); });
         rKeys.forEach(k => { if (c[k]) rooms.push(c[k]); });
+        // Enseignants n'assurant qu'un groupe de TD / TP / PT
+        Object.values(c.group_teachers || {}).forEach(list => teachers.push(...list));
     });
     populateOptionFilter('filter-teacher-matieres', 'Tous', teachers);
     populateOptionFilter('filter-room-matieres', 'Toutes', rooms);
@@ -5060,22 +5077,33 @@ function renderCourses() {
     const fmtH = x => Math.round(x * 100) / 100;
 
     // Ne garde une face (FTP/ALT) d'un type que si elle passe les filtres formation/enseignant/salle
-    const filterTypes = c => [
+    const filterTypes = c => {
+        // Enseignants n'assurant que certains groupes (en plus de celui de la ligne)
+        const gt = c.group_teachers || {};
+        return [
         { label: 'CM', ftp: c.cm_hours, ftpT: c.cm_teacher, ftpR: c.cm_room, alt: c.alt_cm_hours, altT: c.alt_cm_teacher, altR: c.alt_cm_room },
         { label: 'TD', ftp: c.td_hours, ftpT: c.td_teacher, ftpR: c.td_room, alt: c.alt_td_hours, altT: c.alt_td_teacher, altR: c.alt_td_room },
         { label: 'TP', disp: c.tp_type === 'TP8' ? 'TP8' : 'TP12', ftp: c.tp_hours, ftpT: c.tp_teacher, ftpR: c.tp_room, alt: c.alt_tp_hours, altT: c.alt_tp_teacher, altR: c.alt_tp_room },
         { label: 'PT', ftp: c.pt_hours, ftpT: c.pt_teacher, ftpR: c.pt_room, alt: c.alt_pt_hours, altT: c.alt_pt_teacher, altR: c.alt_pt_room },
     ].map(t => {
-        const keepFtp = showFtpCol && t.ftp && (!teacherFilter || t.ftpT === teacherFilter) && (!roomFilter || t.ftpR === roomFilter);
-        const keepAlt = showAltCol && t.alt && (!teacherFilter || t.altT === teacherFilter) && (!roomFilter || t.altR === roomFilter);
+        const k = t.label.toLowerCase();
+        const ftpX = gt[k] || [], altX = gt['alt_' + k] || [];
+        const matchT = (main, xs) => !teacherFilter || main === teacherFilter || xs.includes(teacherFilter);
+        const keepFtp = showFtpCol && t.ftp && matchT(t.ftpT, ftpX) && (!roomFilter || t.ftpR === roomFilter);
+        const keepAlt = showAltCol && t.alt && matchT(t.altT, altX) && (!roomFilter || t.altR === roomFilter);
         return { label: t.label, disp: t.disp,
-                 ftp: keepFtp ? t.ftp : 0, ftpT: keepFtp ? t.ftpT : null, ftpR: keepFtp ? t.ftpR : null,
-                 alt: keepAlt ? t.alt : 0, altT: keepAlt ? t.altT : null, altR: keepAlt ? t.altR : null };
+                 ftp: keepFtp ? t.ftp : 0, ftpT: keepFtp ? t.ftpT : null, ftpR: keepFtp ? t.ftpR : null, ftpX: keepFtp ? ftpX : [],
+                 alt: keepAlt ? t.alt : 0, altT: keepAlt ? t.altT : null, altR: keepAlt ? t.altR : null, altX: keepAlt ? altX : [] };
     }).filter(t => t.ftp || t.alt);
+    };
 
-    function hCell(h, teacher) {
+    function hCell(h, teacher, extra) {
         if (!h) return '<td class="empty" style="text-align:center;color:#bbb">—</td>';
-        return `<td style="text-align:center">${h}h${teacher ? `<br><small style="color:#6b7280">${esc(teacher)}</small>` : ''}</td>`;
+        const others = (extra || []).filter(x => x && x !== teacher);
+        const names = teacher
+            ? esc(teacher) + (others.length ? ' <span style="color:#7c3aed" title="Enseignants d\'autres groupes">+ ' + others.map(esc).join(', ') + '</span>' : '')
+            : (others.length ? '<span style="color:#7c3aed">' + others.map(esc).join(', ') + '</span>' : '');
+        return `<td style="text-align:center">${h}h${names ? `<br><small style="color:#6b7280">${names}</small>` : ''}</td>`;
     }
     function salleCell(t) {
         const rs = [];
@@ -5131,11 +5159,14 @@ function renderCourses() {
             let hoursCells;
             if (mutSpan) {
                 const h = t.ftp || t.alt, teacher = t.ftpT || t.altT;
+                const others = [...(t.ftpX || []), ...(t.altX || [])].filter(x => x && x !== teacher);
+                const names = (teacher ? esc(teacher) : '')
+                    + (others.length ? `${teacher ? ' ' : ''}<span style="color:#7c3aed" title="Enseignants d'autres groupes">+ ${others.map(esc).join(', ')}</span>` : '');
                 hoursCells = h
-                    ? `<td colspan="2" style="text-align:center" title="Mutualisé FTP + ALT">${h}h${teacher ? `<br><small style="color:#6b7280">${esc(teacher)}</small>` : ''}</td>`
+                    ? `<td colspan="2" style="text-align:center" title="Mutualisé FTP + ALT">${h}h${names ? `<br><small style="color:#6b7280">${names}</small>` : ''}</td>`
                     : '<td colspan="2" class="empty" style="text-align:center;color:#bbb">—</td>';
             } else {
-                hoursCells = (showFtpCol ? hCell(t.ftp, t.ftpT) : '') + (showAltCol ? hCell(t.alt, t.altT) : '');
+                hoursCells = (showFtpCol ? hCell(t.ftp, t.ftpT, t.ftpX) : '') + (showAltCol ? hCell(t.alt, t.altT, t.altX) : '');
             }
             return `<tr${i === 0 ? ' class="course-sep"' : ''}>
                 ${i === 0 ? `
@@ -5353,6 +5384,121 @@ function buildRoomSelects(selectedValues = {}, prefix = '') {
     });
 }
 
+// ===== ENSEIGNANT PAR GROUPE (TD / TP / PT d'une matière) =====
+// Chaque groupe de TD / TP / PT peut être confié à un enseignant différent.
+// Groupe laissé vide = enseignant de la ligne (select « Enseignant »).
+// Store : { '': {TD: {2: 5}}, 'alt-': {…} } — clé = n° de groupe, valeur = teacher_id
+const GRP_ICON = '👥';
+let _courseGroupTeachers = { '': {}, 'alt-': {} };
+
+function _normGroupTeachers(o) {
+    const out = {};
+    Object.keys(o || {}).forEach(k => { const v = parseInt(o[k]); if (v) out[parseInt(k)] = v; });
+    return out;
+}
+
+// Face (formation_type) sur laquelle le type sera enregistré : c'est elle qui
+// détermine le nombre de groupes (mêmes règles que le Bilan global).
+function _grpFormationType(prefix, tl) {
+    const t = tl.toUpperCase();
+    if (!document.getElementById('course-mutualized').checked) return prefix === 'alt-' ? 1 : 0;
+    if (t === 'CM' || t === 'TD') return 2;                      // CM/TD communs FTP+ALT
+    const semId = parseInt(document.getElementById('course-semester').value) || null;
+    if (t === 'TP' && _semTpCommon(semId, document.getElementById('course-type').value)) return 2;
+    return prefix === 'alt-' ? 1 : 0;
+}
+
+function _grpCount(prefix, tl) {
+    const semId = parseInt(document.getElementById('course-semester').value) || null;
+    const sem = (state.semesters || []).find(x => x.id === semId);
+    if (!sem) return 1;
+    return _pgMultiplier(sem.code, _grpFormationType(prefix, tl), tl.toUpperCase(),
+                         document.getElementById('course-tp-type').value) || 1;
+}
+
+// Libellés des groupes : gr.1, gr.2… et, pour des TP communs à la promo,
+// les DERNIERS groupes sont ceux des apprentis (ALT).
+function _grpLabels(prefix, tl, n) {
+    const semId = parseInt(document.getElementById('course-semester').value) || null;
+    const sem = (state.semesters || []).find(x => x.id === semId);
+    let kAlt = 0;
+    if (tl.toUpperCase() === 'TP' && sem && _grpFormationType(prefix, tl) === 2) {
+        const g = (state.semesterGroups || []).find(x => x.semester_code === sem.code && x.formation_type === 2);
+        kAlt = Math.max(0, Math.min(parseInt((g || {}).alt_groups) || 0, n));
+    }
+    const nFtp = n - kAlt;
+    const out = [];
+    for (let i = 1; i <= n; i++)
+        out.push(i > nFtp ? (kAlt === 1 ? 'ALT' : 'ALT ' + (i - nFtp)) : 'gr.' + i);
+    return out;
+}
+
+function renderGroupTeachers(prefix, tl) {
+    const cell = document.getElementById(prefix + tl + '-grp-cell');
+    if (!cell) return;
+    const T = tl.toUpperCase();
+    const n = _grpCount(prefix, tl);
+    const store = _courseGroupTeachers[prefix][T] || {};
+    const main = document.getElementById(prefix + tl + '-teacher');
+    const mainName = (main && main.value ? (main.options[main.selectedIndex] || {}).text : '') || 'aucun enseignant';
+    const opts = sel => `<option value="">↳ ${esc(mainName)}</option>` +
+        (state.teachers || []).map(x =>
+            `<option value="${x.id}"${String(sel) === String(x.id) ? ' selected' : ''}>${esc(x.name)}</option>`).join('');
+    cell.innerHTML =
+        `<div class="grp-hint">Enseignant de chaque groupe — laisser « ${esc(mainName)} » pour celui de la ligne ${T}.</div>
+         <div class="grp-grid">` +
+        _grpLabels(prefix, tl, n).map((lab, i) =>
+            `<label>${esc(lab)}<select onchange="setGroupTeacher('${prefix}','${tl}',${i + 1},this.value)">${opts(store[i + 1])}</select></label>`
+        ).join('') + '</div>';
+}
+
+function setGroupTeacher(prefix, tl, g, val) {
+    const T = tl.toUpperCase();
+    const store = _courseGroupTeachers[prefix][T] || (_courseGroupTeachers[prefix][T] = {});
+    const id = parseInt(val) || 0;
+    if (id) store[g] = id; else delete store[g];
+    updateGroupBtn(prefix, tl);
+}
+
+// Bouton « groupes » : masqué si le type n'a qu'un seul groupe, mis en avant
+// quand des groupes ont un enseignant propre.
+function updateGroupBtn(prefix, tl) {
+    const btn = document.getElementById(prefix + tl + '-grp-btn');
+    if (!btn) return;
+    const n = _grpCount(prefix, tl);
+    const nb = Object.keys(_courseGroupTeachers[prefix][tl.toUpperCase()] || {}).length;
+    btn.style.display = n > 1 ? '' : 'none';
+    btn.classList.toggle('on', nb > 0);
+    btn.textContent = nb > 0 ? GRP_ICON + ' ' + nb : GRP_ICON;
+    btn.title = n + ' groupes — un enseignant par groupe';
+    if (n <= 1) document.getElementById(prefix + tl + '-grp-row').style.display = 'none';
+}
+
+function toggleGroupTeachers(prefix, tl) {
+    const row = document.getElementById(prefix + tl + '-grp-row');
+    const show = row.style.display === 'none';
+    if (show) renderGroupTeachers(prefix, tl);
+    row.style.display = show ? '' : 'none';
+}
+
+// Réévalue boutons et panneaux ouverts (changement de semestre, de type de TP,
+// de mutualisation ou d'enseignant de ligne).
+function refreshGroupTeachers() {
+    ['', 'alt-'].forEach(p => ['td', 'tp', 'pt'].forEach(tl => {
+        updateGroupBtn(p, tl);
+        const row = document.getElementById(p + tl + '-grp-row');
+        if (row && row.style.display !== 'none') renderGroupTeachers(p, tl);
+    }));
+}
+
+function resetGroupTeachers() {
+    _courseGroupTeachers = { '': {}, 'alt-': {} };
+    ['', 'alt-'].forEach(p => ['td', 'tp', 'pt'].forEach(tl => {
+        const row = document.getElementById(p + tl + '-grp-row');
+        if (row) row.style.display = 'none';
+    }));
+}
+
 function buildTeacherSelects(selectedValues = {}, prefix = '') {
     const none = '<option value="">— Aucun enseignant —</option>';
     const opts = none + state.teachers.map(t =>
@@ -5364,6 +5510,8 @@ function buildTeacherSelects(selectedValues = {}, prefix = '') {
         sel.innerHTML = opts;
         const v = selectedValues[t.toUpperCase()];
         if (v) sel.value = v;
+        // Le panneau « par groupe » affiche cet enseignant comme valeur par défaut
+        if (t !== 'cm') sel.onchange = refreshGroupTeachers;
     });
 }
 
@@ -5379,6 +5527,7 @@ function copyFormation(from, to) {
         if (t !== 'td') document.getElementById(pT+t+'-spw').value = document.getElementById(pF+t+'-spw').value;
         document.getElementById(pT+t+'-room').value    = document.getElementById(pF+t+'-room').value;
         document.getElementById(pT+t+'-teacher').value = document.getElementById(pF+t+'-teacher').value;
+        _courseGroupTeachers[pT][t.toUpperCase()] = { ..._courseGroupTeachers[pF][t.toUpperCase()] };
     });
     toast('Réglages ' + from.toUpperCase() + ' copiés vers ' + to.toUpperCase());
 }
@@ -5404,10 +5553,13 @@ function onMutualizedChange() {
         document.querySelectorAll('#modal-course .tab-btn').forEach((b,i) => b.classList.toggle('active', i===0));
     }
     updateMutualizedLabels(mut);
+    refreshGroupTeachers();
 }
 
 function onCourseSemesterChange() {
     const semId = parseInt(document.getElementById('course-semester').value) || null;
+    // Le nb de groupes de TD/TP/PT dépend du semestre : réévaluer dans tous les cas
+    refreshGroupTeachers();
     if (!semId) return;
     const sem = state.semesters.find(s => s.id === semId);
     if (sem && (sem.code === 'S5' || sem.code === 'S6')) {
@@ -5416,6 +5568,7 @@ function onCourseSemesterChange() {
     }
     // Réappliquer les dates par défaut si la case est cochée (semaines liées au semestre)
     if (document.getElementById('course-default-weeks').checked) applyDefaultWeeks();
+    refreshGroupTeachers();
 }
 
 function semesterDefaultWeeks() {
@@ -5455,6 +5608,8 @@ function updateMutualizedLabels(mut) {
     const altTdTr = document.getElementById('alt-td-hours').closest('tr');
     altCmTr.style.display = mut ? 'none' : '';
     altTdTr.style.display = mut ? 'none' : '';
+    const altTdGrp = document.getElementById('alt-td-grp-row');
+    if (mut && altTdGrp) altTdGrp.style.display = 'none';
     document.getElementById('mut-label-ftp').style.display = mut ? '' : 'none';
     document.getElementById('mut-label-alt').style.display = mut ? '' : 'none';
 }
@@ -5507,6 +5662,13 @@ async function openCourseModal(id = null) {
     state.rooms = await api('/rooms' + svcQ());
     state.teachers = await api('/teachers' + svcQ());
     state.config = await api('/config' + svcQ());
+    // Groupes par semestre : nombre de groupes de TD / TP / PT du panneau « par groupe »
+    try {
+        const sg = await api('/semester-groups' + svcQ());
+        state.semesterGroups = sg.groups || [];
+        state.mutSemesters   = sg.mutualized || {};
+        state.tpSeparate     = sg.tp_separate || {};
+    } catch (e) { console.warn('Erreur chargement groupes par semestre:', e); }
     const cfg = state.config;
     buildWeekSelects(cfg.academic_start_week, cfg.academic_end_week);
 
@@ -5538,6 +5700,7 @@ async function openCourseModal(id = null) {
     document.getElementById('course-end-week').disabled = false;
     document.getElementById('course-default-weeks').checked = false;
     document.getElementById('course-mutualized').checked = false;
+    resetGroupTeachers();
     // Reset FTP tab visible
     document.getElementById('course-hours-ftp').style.display = '';
     document.getElementById('course-hours-alt').style.display = 'none';
@@ -5586,6 +5749,7 @@ async function openCourseModal(id = null) {
                         if (t !== 'TD') document.getElementById(t.toLowerCase()+'-spw').value = info.sessions_per_week_max || '1';
                         rooms[t] = info.room || '';
                         teachers[t] = info.teacher_id || '';
+                        _courseGroupTeachers[''][t] = _normGroupTeachers(info.group_teachers);
                     });
                     ['TP','PT'].forEach(t => {
                         const info = ((t === 'TP' && tpCommon) ? thMut[t] : thFtp[t]) || {};
@@ -5594,6 +5758,7 @@ async function openCourseModal(id = null) {
                         document.getElementById(t.toLowerCase()+'-spw').value = info.sessions_per_week_max || '1';
                         rooms[t] = info.room || '';
                         teachers[t] = info.teacher_id || '';
+                        _courseGroupTeachers[''][t] = _normGroupTeachers(info.group_teachers);
                     });
                     buildRoomSelects(rooms);
                     buildTeacherSelects(teachers);
@@ -5610,6 +5775,7 @@ async function openCourseModal(id = null) {
                         document.getElementById('alt-'+t.toLowerCase()+'-spw').value = info.sessions_per_week_max || '1';
                         rooms[t] = info.room || '';
                         teachers[t] = info.teacher_id || '';
+                        _courseGroupTeachers['alt-'][t] = _normGroupTeachers(info.group_teachers);
                     });
                     buildRoomSelects(rooms, 'alt-');
                     buildTeacherSelects(teachers, 'alt-');
@@ -5626,6 +5792,7 @@ async function openCourseModal(id = null) {
                         if (t !== 'TD') document.getElementById(t.toLowerCase()+'-spw').value = info.sessions_per_week_max || '1';
                         rooms[t] = info.room || '';
                         teachers[t] = info.teacher_id || '';
+                        _courseGroupTeachers[''][t] = _normGroupTeachers(info.group_teachers);
                     });
                     buildRoomSelects(rooms);
                     buildTeacherSelects(teachers);
@@ -5641,6 +5808,7 @@ async function openCourseModal(id = null) {
                         if (t !== 'TD') document.getElementById('alt-'+t.toLowerCase()+'-spw').value = info.sessions_per_week_max || '1';
                         rooms[t] = info.room || '';
                         teachers[t] = info.teacher_id || '';
+                        _courseGroupTeachers['alt-'][t] = _normGroupTeachers(info.group_teachers);
                     });
                     buildRoomSelects(rooms, 'alt-');
                     buildTeacherSelects(teachers, 'alt-');
@@ -5649,6 +5817,7 @@ async function openCourseModal(id = null) {
         }
     }
     initAllHoursSteps();
+    refreshGroupTeachers();
     openModal('modal-course');
 }
 
@@ -5671,6 +5840,7 @@ async function submitCourse(e) {
                 sessions_per_week_max: parseInt(document.getElementById(spwId).value) || 1,
                 room:                  document.getElementById(p+'-room').value,
                 teacher_id:            parseInt(document.getElementById(p+'-teacher').value) || null,
+                group_teachers:        _courseGroupTeachers[prefix][t] || {},
             };
         });
         return res;
@@ -6201,7 +6371,25 @@ function renderTeacherRepartition() {
 
     const mFilter = ((document.getElementById('filter-search-rep') || {}).value || '').trim().toLowerCase();
 
-    let sessions = (state.sessions||[]).filter(s => s.teacher_id);
+    // Un TD / TP peut être partagé : chaque groupe a son enseignant, celui de la
+    // session assurant les groupes restants. Une session partagée donne donc une
+    // ligne par enseignant concerné, pondérée par SON nombre de groupes.
+    const splitByTeacher = s => {
+        const mult = _pgMultiplier(s.semester_code, s.formation_type, s.teaching_type, s.tp_type) || 1;
+        if (!s.group_teachers) return s.teacher_id ? [{ ...s, _groups: mult }] : [];
+        const per = new Map();
+        for (let g = 1; g <= mult; g++) {
+            const o = s.group_teachers[String(g)];
+            const tid = o ? o.id : s.teacher_id;
+            if (!tid) continue;
+            const cur = per.get(tid) || { name: o ? o.name : (s.teacher_name || ''), n: 0 };
+            cur.n++;
+            per.set(tid, cur);
+        }
+        return [...per].map(([tid, v]) =>
+            ({ ...s, teacher_id: tid, teacher_name: v.name, _groups: v.n, _shared: true }));
+    };
+    let sessions = (state.sessions||[]).flatMap(splitByTeacher);
     if (tFilter) sessions = sessions.filter(s => String(s.teacher_id) === tFilter);
     if (yFilter) sessions = sessions.filter(s => String(s.year_group) === yFilter);
     if (fFilter) sessions = sessions.filter(s => String(s.formation_type) === fFilter);
@@ -6262,7 +6450,7 @@ function renderTeacherRepartition() {
         const courseGroups = [];
         data.sessions.forEach(s => {
             const brut = parseFloat(s.total_hours) || 0;
-            const mult = _pgMultiplier(s.semester_code, s.formation_type, s.teaching_type, s.tp_type);
+            const mult = s._groups;
             const pond = brut * mult;
             const coef = _HETD_COEFS[_ttKey(s.teaching_type)] || 1.0;
             const hetd = pond * coef;
@@ -6285,7 +6473,7 @@ function renderTeacherRepartition() {
                 <td>${formationLabel(s.formation_type)}</td>
                 <td><span class="badge badge-${_ttKey(s.teaching_type).toLowerCase()}">${esc(_ttDisplay(s))}</span></td>
                 <td style="text-align:right">${brut.toFixed(1)}h</td>
-                <td style="text-align:center">× ${mult}</td>
+                <td style="text-align:center"${s._shared ? ' title="Groupes assurés par cet enseignant (matière partagée entre plusieurs enseignants)"' : ''}>× ${mult}${s._shared ? ' <span style="color:#7c3aed">•</span>' : ''}</td>
                 <td style="text-align:right">${pond.toFixed(1)}h</td>
                 <td style="text-align:right">${coef.toFixed(2)}</td>
                 <td style="text-align:right;color:#4f46e5;font-weight:600">${hetd.toFixed(2)}</td>

@@ -1303,6 +1303,20 @@ def _apply_migrations(db):
         db.execute('ALTER TABLE weekly_hours_new RENAME TO weekly_hours')
         db.execute('CREATE INDEX IF NOT EXISTS idx_weekly_hours_session ON weekly_hours(course_session_id)')
 
+    # Enseignant par GROUPE de TD / TP / PT d'une session. L'enseignant de la
+    # session (course_sessions.teacher_id) reste le défaut ; cette table ne
+    # contient que les groupes confiés à quelqu'un d'autre.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS course_group_teachers (
+            course_session_id INTEGER NOT NULL,
+            group_index       INTEGER NOT NULL,
+            teacher_id        INTEGER,
+            PRIMARY KEY (course_session_id, group_index),
+            FOREIGN KEY (course_session_id) REFERENCES course_sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE
+        )
+    ''')
+
     # Heures HETD effectuées dans un autre département (onglet Mon Compte).
     # Saisies par l'enseignant lui-même et visibles par lui seul, sauf lignes
     # marquées publiques (is_public=1) : alors visibles AUSSI par l'admin
@@ -6146,12 +6160,27 @@ def get_courses():
             ORDER BY s.code, c.code
         ''')
         courses = rows_to_list(cursor.fetchall())
+        # Enseignants des groupes confiés à quelqu'un d'autre que l'enseignant
+        # de la ligne : affichés en complément dans l'onglet Matières.
+        # {course_id: {'td': ['MARTIN'], 'alt_tp': [...]}}
+        extra = {}
+        for r in db.execute('''
+                SELECT cs.course_id, cs.teaching_type, cs.formation_type, t.name
+                FROM course_group_teachers gt
+                JOIN course_sessions cs ON cs.id = gt.course_session_id
+                JOIN teachers t ON t.id = gt.teacher_id
+                ORDER BY t.name''').fetchall():
+            key = ('alt_' if r['formation_type'] == 1 else '') + (r['teaching_type'] or '').lower()
+            names = extra.setdefault(r['course_id'], {}).setdefault(key, [])
+            if r['name'] not in names:
+                names.append(r['name'])
         # Résolution dynamique des semaines pour les cours en "dates par défaut"
         cfg = get_year_config()
         refs = _matiere_referents(db)
         for c in courses:
             sw, ew = resolve_course_weeks(c, cfg)
             c['start_week'], c['end_week'] = sw, ew
+            c['group_teachers'] = extra.get(c['id'], {})
             # Référents au niveau matière : identiques pour toutes les
             # sous-matières d'un même groupe (clé _mat_base_key).
             c['referents'] = refs.get(_mat_base_key(c['code']), {})
@@ -6396,13 +6425,16 @@ def get_course_teaching_hours(course_id):
         if not cursor.fetchone():
             return error_response('Course not found', 404)
         cursor.execute('''
-            SELECT teaching_type, total_hours, slot_duration, room_name, teacher_id,
+            SELECT id, teaching_type, total_hours, slot_duration, room_name, teacher_id,
                    COALESCE(sessions_per_week_max, 1) as sessions_per_week_max
             FROM course_sessions
             WHERE course_id = ? AND formation_type = ?
         ''', (course_id, formation_type))
         rows = cursor.fetchall()
-        result = {t: {'hours': 0, 'slot_duration': 1.5, 'room': '', 'teacher_id': None, 'sessions_per_week_max': 1} for t in ['CM', 'TD', 'TP', 'PT']}
+        # Enseignants par groupe (TD / TP / PT confiés à plusieurs enseignants)
+        gt_map = _load_group_teachers(db, course_id)
+        result = {t: {'hours': 0, 'slot_duration': 1.5, 'room': '', 'teacher_id': None,
+                      'sessions_per_week_max': 1, 'group_teachers': {}} for t in ['CM', 'TD', 'TP', 'PT']}
         for r in rows:
             t = r['teaching_type']
             if t in result:
@@ -6412,6 +6444,7 @@ def get_course_teaching_hours(course_id):
                     'room': r['room_name'] or '',
                     'teacher_id': r['teacher_id'],
                     'sessions_per_week_max': r['sessions_per_week_max'] or 1,
+                    'group_teachers': {str(g): tid for g, tid in (gt_map.get(r['id']) or {}).items()},
                 }
         return jsonify(result), 200
     except Exception as e:
@@ -6457,10 +6490,33 @@ def update_course_teaching_hours(course_id):
                         sessions_per_week_max = excluded.sessions_per_week_max,
                         updated_at = CURRENT_TIMESTAMP
                 ''', (course_id, formation_type, ttype, hours, slot_dur, nb, room, teacher_id, spw))
+                # Enseignants par groupe : remplacement complet (absent = enseignant de la session)
+                row = cursor.execute('''
+                    SELECT id FROM course_sessions
+                    WHERE course_id = ? AND formation_type = ? AND teaching_type = ?
+                ''', (course_id, formation_type, ttype)).fetchone()
+                if row:
+                    cursor.execute('DELETE FROM course_group_teachers WHERE course_session_id = ?', (row['id'],))
+                    for gi, gt in (info.get('group_teachers') or {}).items():
+                        try:
+                            gi, gt = int(gi), int(gt or 0)
+                        except (TypeError, ValueError):
+                            continue
+                        if gi >= 1 and gt and gt != teacher_id:
+                            cursor.execute('''
+                                INSERT INTO course_group_teachers (course_session_id, group_index, teacher_id)
+                                VALUES (?, ?, ?)
+                            ''', (row['id'], gi, gt))
             else:
-                # Nettoyer les weekly_hours avant de supprimer la session
+                # Nettoyer les weekly_hours et les enseignants de groupe avant de supprimer la session
                 cursor.execute('''
                     DELETE FROM weekly_hours WHERE course_session_id IN (
+                        SELECT id FROM course_sessions
+                        WHERE course_id = ? AND teaching_type = ? AND formation_type = ?
+                    )
+                ''', (course_id, ttype, formation_type))
+                cursor.execute('''
+                    DELETE FROM course_group_teachers WHERE course_session_id IN (
                         SELECT id FROM course_sessions
                         WHERE course_id = ? AND teaching_type = ? AND formation_type = ?
                     )
@@ -6566,6 +6622,15 @@ def get_course_sessions():
                      CASE cs.teaching_type WHEN 'CM' THEN 0 WHEN 'TD' THEN 1 WHEN 'TP' THEN 2 WHEN 'PT' THEN 3 ELSE 4 END
         ''')
         sessions = rows_to_list(cursor.fetchall())
+        # Enseignants par groupe (TD / TP / PT partagés entre plusieurs enseignants)
+        gt_map = _load_group_teachers(db)
+        if gt_map:
+            names = {r['id']: r['name'] for r in cursor.execute('SELECT id, name FROM teachers').fetchall()}
+            for sess in sessions:
+                ov = gt_map.get(sess['id'])
+                if ov:
+                    sess['group_teachers'] = {str(g): {'id': tid, 'name': names.get(tid, '')}
+                                              for g, tid in ov.items()}
         return jsonify(sessions), 200
     except Exception as e:
         return error_response(f'Error fetching course sessions: {str(e)}', 500)
@@ -6893,6 +6958,30 @@ def _group_multiplier(sg_map, mut_set, tpsep_set, semester_code, formation_type,
         tt = 'TP8' if (tp_type or '').upper().replace(' ', '') == 'TP8' else 'TP'
     return groups.get(tt, 1)
 
+def _load_group_teachers(db, course_id=None):
+    """Enseignants par groupe : {course_session_id: {group_index: teacher_id}}.
+    Ne contient que les groupes explicitement confiés à un enseignant ; les
+    autres relèvent de l'enseignant de la session."""
+    if course_id is None:
+        cur = db.execute('SELECT course_session_id, group_index, teacher_id FROM course_group_teachers')
+    else:
+        cur = db.execute('''
+            SELECT gt.course_session_id, gt.group_index, gt.teacher_id
+            FROM course_group_teachers gt
+            JOIN course_sessions cs ON cs.id = gt.course_session_id
+            WHERE cs.course_id = ?
+        ''', (course_id,))
+    out = {}
+    for r in cur.fetchall():
+        if r['teacher_id']:
+            out.setdefault(r['course_session_id'], {})[r['group_index']] = r['teacher_id']
+    return out
+
+def _group_teacher_list(session_teacher_id, overrides, n_groups):
+    """Enseignant de chacun des groupes 1..n_groups (défaut : celui de la session)."""
+    ov = overrides or {}
+    return [ov.get(g, session_teacher_id) for g in range(1, max(1, n_groups) + 1)]
+
 @app.route('/api/semester-groups', methods=['GET'])
 def get_semester_groups():
     """Groupes par (semestre, face) + flags « semestre mutualisé ».
@@ -7084,31 +7173,38 @@ def get_teacher_service(teacher_id):
         if not teacher:
             return error_response('Teacher not found', 404)
 
+        # Toutes les sessions : l'enseignant peut n'avoir que certains groupes
+        # d'une session dont il n'est pas l'enseignant principal.
         cursor.execute('''
-            SELECT cs.id, c.code as course_code, cs.teaching_type, cs.total_hours,
+            SELECT cs.id, cs.teacher_id, c.code as course_code, cs.teaching_type, cs.total_hours,
                    cs.formation_type, s.code as semester_code, c.tp_type
             FROM course_sessions cs
             JOIN courses c ON cs.course_id = c.id
             JOIN semesters s ON c.semester_id = s.id
-            WHERE cs.teacher_id = ?
-        ''', (teacher_id,))
+        ''')
         sessions = cursor.fetchall()
 
         sg_map, mut_set, tpsep_set = _load_semester_groups(db)
+        gt_map = _load_group_teachers(db)
 
         service_details = []
         total_hetd = 0
 
         for session in sessions:
             mult = _group_multiplier(sg_map, mut_set, tpsep_set, session['semester_code'], session['formation_type'], session['teaching_type'], session['tp_type'])
-            effective_hours = (session['total_hours'] or 0) * mult
+            # Nb de groupes de cette session assurés par l'enseignant
+            groups = _group_teacher_list(session['teacher_id'], gt_map.get(session['id']), mult)
+            nb_groups = sum(1 for tid in groups if tid == teacher_id)
+            if not nb_groups:
+                continue
+            effective_hours = (session['total_hours'] or 0) * nb_groups
             hetd = calculate_hetd(session['teaching_type'], effective_hours)
             total_hetd += hetd
             service_details.append({
                 'course_code': session['course_code'],
                 'teaching_type': session['teaching_type'],
                 'total_hours': session['total_hours'],
-                'nb_groups': mult,
+                'nb_groups': nb_groups,
                 'effective_hours': effective_hours,
                 'hetd': hetd
             })
@@ -7132,36 +7228,39 @@ def get_all_service():
         cursor = db.cursor()
 
         cursor.execute('''
-            SELECT t.id AS teacher_id, t.name AS teacher_name,
+            SELECT cs.id AS session_id, cs.teacher_id,
                    cs.teaching_type, cs.total_hours,
                    cs.formation_type, s.code AS semester_code, c.tp_type
-            FROM teachers t
-            JOIN course_sessions cs ON cs.teacher_id = t.id
+            FROM course_sessions cs
             JOIN courses c ON cs.course_id = c.id
             JOIN semesters s ON c.semester_id = s.id
-            ORDER BY t.name
         ''')
         rows = cursor.fetchall()
         sg_map, mut_set, tpsep_set = _load_semester_groups(db)
+        gt_map = _load_group_teachers(db)
+        names = {r['id']: r['name'] for r in cursor.execute('SELECT id, name FROM teachers').fetchall()}
 
-        # Agréger par enseignant en multipliant par le nb de groupes
+        # Agréger par enseignant, groupe par groupe : chaque groupe de TD / TP / PT
+        # peut être confié à un enseignant différent de celui de la session.
         agg = {}
         for r in rows:
-            tid = r['teacher_id']
-            if tid not in agg:
-                agg[tid] = {'teacher_id': tid, 'teacher_name': r['teacher_name'],
-                            'cm_hours': 0, 'td_hours': 0, 'tp_hours': 0, 'pt_hours': 0}
             mult = _group_multiplier(sg_map, mut_set, tpsep_set, r['semester_code'], r['formation_type'], r['teaching_type'], r['tp_type'])
-            h = (r['total_hours'] or 0) * mult
             tt = r['teaching_type'].upper().replace(' ', '')
-            if tt == 'CM':
-                agg[tid]['cm_hours'] += h
-            elif tt == 'TD':
-                agg[tid]['td_hours'] += h
-            elif tt.startswith('TP'):
-                agg[tid]['tp_hours'] += h
-            elif tt == 'PT':
-                agg[tid]['pt_hours'] += h
+            h = r['total_hours'] or 0
+            for tid in _group_teacher_list(r['teacher_id'], gt_map.get(r['session_id']), mult):
+                if not tid or tid not in names:
+                    continue
+                if tid not in agg:
+                    agg[tid] = {'teacher_id': tid, 'teacher_name': names[tid],
+                                'cm_hours': 0, 'td_hours': 0, 'tp_hours': 0, 'pt_hours': 0}
+                if tt == 'CM':
+                    agg[tid]['cm_hours'] += h
+                elif tt == 'TD':
+                    agg[tid]['td_hours'] += h
+                elif tt.startswith('TP'):
+                    agg[tid]['tp_hours'] += h
+                elif tt == 'PT':
+                    agg[tid]['pt_hours'] += h
 
         services = []
         for s in agg.values():
@@ -7679,7 +7778,7 @@ def get_repartition():
                        s.code AS semester_code,
                        cs.teaching_type, cs.formation_type,
                        cs.total_hours, cs.nb_sessions, cs.slot_duration,
-                       cs.room_name,
+                       cs.room_name, cs.teacher_id,
                        t.name AS teacher_name,
                        wh.week_number, wh.semester_week, wh.hours, wh.group_index
                 FROM course_sessions cs
@@ -7700,7 +7799,7 @@ def get_repartition():
                        s.code AS semester_code,
                        cs.teaching_type, cs.formation_type,
                        cs.total_hours, cs.nb_sessions, cs.slot_duration,
-                       cs.room_name,
+                       cs.room_name, cs.teacher_id,
                        t.name AS teacher_name,
                        wh.week_number, wh.semester_week, wh.hours, wh.group_index
                 FROM course_sessions cs
@@ -7718,6 +7817,9 @@ def get_repartition():
         # Nb de groupes par (semestre, face, type) : les TP se scindent en une ligne
         # par groupe dans la répartition calendaire.
         sg_map, mut_set, tpsep_set = _load_semester_groups(db)
+        # Enseignants par groupe (un TD / TP peut être partagé entre enseignants)
+        gt_map = _load_group_teachers(db)
+        t_names = {r['id']: r['name'] for r in db.execute('SELECT id, name FROM teachers').fetchall()}
 
         # Pivot : regrouper par session, en conservant les heures par groupe
         sessions = {}
@@ -7750,6 +7852,7 @@ def get_repartition():
                     'nb_sessions': r['nb_sessions'] or 0,
                     'slot_duration': r['slot_duration'] or 1.5,
                     'teacher': r['teacher_name'] or '',
+                    'teacher_id': r['teacher_id'],
                     'room': r['room_name'] or '',
                     'n_groups': n_groups,
                     'group_count': group_count,
@@ -7769,13 +7872,22 @@ def get_repartition():
             s = sessions[sid]
             base = {k: s[k] for k in _BASE}
             n = s['n_groups']
+            # Enseignant de chaque groupe (défaut : celui de la session)
+            g_teachers = _group_teacher_list(s['teacher_id'], gt_map.get(sid), s['group_count'])
             if n <= 1:
-                # Fusionne tous les groupes éventuels sur une seule ligne
+                # Fusionne tous les groupes éventuels sur une seule ligne : la
+                # ligne porte alors tous les enseignants du type (ex. TD à 2 groupes)
                 merged = {}
                 for gw in s['by_group'].values():
                     for w, h in gw.items():
                         merged[w] = merged.get(w, 0) + h
-                out_rows.append({**base, 'group_index': 1, 'n_groups': 1, 'by_week': merged,
+                names = []
+                for tid in g_teachers:
+                    nm = t_names.get(tid)
+                    if nm and nm not in names:
+                        names.append(nm)
+                out_rows.append({**base, 'teacher': ' / '.join(names) or base['teacher'],
+                                 'group_index': 1, 'n_groups': 1, 'by_week': merged,
                                  'alt_group': False, 'group_label': ''})
             else:
                 # TP mutualisé à TP communs : les apprentis (ALT) occupent les
@@ -7797,7 +7909,9 @@ def get_repartition():
                         label = 'ALT' if k_alt == 1 else f'ALT {rank}'
                     else:
                         label = f'gr.{g}'
-                    out_rows.append({**base, 'group_index': g, 'n_groups': n,
+                    tid = g_teachers[g - 1] if g <= len(g_teachers) else None
+                    out_rows.append({**base, 'teacher': t_names.get(tid, base['teacher'] if tid else ''),
+                                     'group_index': g, 'n_groups': n,
                                      'by_week': dict(s['by_group'].get(g, {})),
                                      'alt_group': is_alt, 'group_label': label})
 
@@ -7948,7 +8062,7 @@ def export_repartition_excel():
                    s.code AS semester_code, s.year_group,
                    cs.teaching_type, cs.formation_type,
                    cs.total_hours, cs.nb_sessions, cs.slot_duration,
-                   cs.room_name,
+                   cs.room_name, cs.teacher_id,
                    t.name AS teacher_name,
                    wh.week_number, wh.hours, wh.group_index
             FROM course_sessions cs
@@ -7965,6 +8079,8 @@ def export_repartition_excel():
 
         # Nb de groupes (TP scindés en une ligne par groupe, comme à l'écran)
         sg_map, mut_set, tpsep_set = _load_semester_groups(db)
+        gt_map = _load_group_teachers(db)
+        t_names = {r['id']: r['name'] for r in db.execute('SELECT id, name FROM teachers').fetchall()}
 
         # Pivoter par session, en conservant les heures par groupe
         sessions = {}
@@ -7995,6 +8111,7 @@ def export_repartition_excel():
                     'formation_type': r['formation_type'],
                     'total_hours': r['total_hours'] or 0,
                     'teacher': r['teacher_name'] or '',
+                    'teacher_id': r['teacher_id'],
                     'room': r['room_name'] or '',
                     'n_groups': n_groups,
                     'by_group': {},   # {group_index: {week: hours}}
@@ -8012,6 +8129,7 @@ def export_repartition_excel():
             common = {k: s[k] for k in ('session_id', 'course_code', 'course_name',
                                         'semester', 'year_group', 'type', 'formation',
                                         'formation_type', 'total_hours', 'teacher', 'room')}
+            g_teachers = _group_teacher_list(s['teacher_id'], gt_map.get(sid), n)
             if n <= 1:
                 merged = {}
                 for gw in s['by_group'].values():
@@ -8036,7 +8154,9 @@ def export_repartition_excel():
                         lbl = f"{s['type_disp']} ALT" if k_alt == 1 else f"{s['type_disp']} ALT {rank}"
                     else:
                         lbl = f"{s['type_disp']} (gr.{gi})"
+                    tid = g_teachers[gi - 1] if gi <= len(g_teachers) else None
                     expanded.append({**common, 'type_disp': lbl,
+                                     'teacher': t_names.get(tid, common['teacher'] if tid else ''),
                                      'group_index': gi, 'n_groups': n,
                                      'by_week': dict(s['by_group'].get(gi, {}))})
 
