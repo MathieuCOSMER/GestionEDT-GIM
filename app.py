@@ -630,12 +630,24 @@ def close_db(exception):
 # Stockée à part car une promotion suit ses étudiants/résultats d'année en année.
 _PROMOTIONS_DB = os.environ.get('EDT_PROMOTIONS_DB') or os.path.join(_DB_DIR, 'promotions.db')
 _STUDENT_STATUSES = ['Actif', 'RED', 'Abandon']
+# Statuts que l'admin peut poser à la main dans l'effectif. « RED » en est exclu :
+# il découle de la décision de jury (RED sur un ajourné) et est posé par le
+# flux jury lui-même — le proposer ici ferait doublon et pourrait le désynchroniser.
+_STUDENT_STATUS_CHOICES = ['Actif', 'Abandon']
 _PROMO_SEMESTERS = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6']
 # Profil d'entrée de l'étudiant (valeurs autorisées ; '' = non renseigné)
 _STUDENT_BAC = ['SI2D', 'GEN', 'PRO', 'STL', 'Autre']
 _STUDENT_CURSUS = ['EI', 'RE', 'PB', 'PP']            # École d'ingé / Reprise d'étude / PostBac / PostPrépa
 _STUDENT_RECRUT = ['PS', 'EC', 'ADIUT']               # ParcourSup / eCandidat / ADIUT (étrangers)
 _STUDENT_PROFILE = {'bac': _STUDENT_BAC, 'cursus': _STUDENT_CURSUS, 'recrutement': _STUDENT_RECRUT}
+# Signification des codes, rappelée au-dessus du tableau d'effectif (onglet Promotions).
+# Les codes BAC sont des séries de bac, lisibles telles quelles : pas de libellé.
+_STUDENT_PROFILE_LABELS = {
+    'cursus': {'EI': "École d'ingénieur", 'RE': "Reprise d'études",
+               'PB': 'Post-Bac', 'PP': 'Post-Prépa'},
+    'recrutement': {'PS': 'ParcourSup', 'EC': 'eCandidat',
+                    'ADIUT': 'ADIUT (candidats étrangers)'},
+}
 
 def _open_promotions_db():
     db = sqlite3.connect(_PROMOTIONS_DB, timeout=10)
@@ -2721,7 +2733,8 @@ def _promotion_payload(db, pid):
         sub_counts[f]['total'] = sum(sub_counts[f][st] for st in _STUDENT_STATUSES)
     return {'promotion': dict(promo), 'students': students, 'counts': counts,
             'sub_counts': sub_counts, 'subcohorts': list(_SUBCOHORTS),
-            'total': len(students), 'statuses': _STUDENT_STATUSES, 'semesters': _PROMO_SEMESTERS}
+            'total': len(students), 'statuses': _STUDENT_STATUSES,
+            'status_choices': _STUDENT_STATUS_CHOICES, 'semesters': _PROMO_SEMESTERS}
 
 @app.route('/api/promotions', methods=['GET'])
 def list_promotions():
@@ -2898,7 +2911,7 @@ def add_promotion_student(pid):
     if not (nom or prenom or numero):
         return error_response('Renseignez au moins un nom ou un numéro', 400)
     statut = (data.get('statut') or 'Actif').strip()
-    if statut not in _STUDENT_STATUSES:
+    if statut not in _STUDENT_STATUS_CHOICES:
         statut = 'Actif'
     sem = (data.get('abandon_semestre') or '').strip()
     if statut != 'Abandon' or sem not in _PROMO_SEMESTERS:
@@ -2934,7 +2947,7 @@ def update_promotion_student(pid, sid):
     new_statut = None
     if 'statut' in data:
         st = (data.get('statut') or 'Actif').strip()
-        if st in _STUDENT_STATUSES:
+        if st in _STUDENT_STATUS_CHOICES:
             new_statut = st
             fields.append('statut=?'); params.append(st)
     # Semestre d'abandon : effacé si le statut n'est plus « Abandon »
@@ -3047,8 +3060,10 @@ def _year_effectif_payload(pdb, pid, year):
     return {'promotion': dict(promo), 'year': year, 'students': students,
             'sub_counts': sub_counts, 'subcohorts': list(_SUBCOHORTS),
             'total': len(students), 'statuses': _STUDENT_STATUSES,
+            'status_choices': _STUDENT_STATUS_CHOICES,
             'semesters': _PROMO_SEMESTERS, 'years': [1, 2, 3],
-            'profile_options': {k: list(v) for k, v in _STUDENT_PROFILE.items()}}
+            'profile_options': {k: list(v) for k, v in _STUDENT_PROFILE.items()},
+            'profile_labels': {k: dict(v) for k, v in _STUDENT_PROFILE_LABELS.items()}}
 
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>', methods=['GET'])
 def get_year_effectif(pid, year):
@@ -3061,6 +3076,94 @@ def get_year_effectif(pid, year):
     if not payload:
         return error_response('Promotion introuvable', 404)
     return jsonify(payload)
+
+@app.route('/api/promotions/<int:pid>/effectif/<int:year>/export', methods=['GET'])
+def export_year_effectif(pid, year):
+    """Export Excel de l'effectif d'une année : un onglet par sous-cohorte
+    (FTP / ALT), mêmes colonnes qu'à l'écran + rappel des codes de profil."""
+    err = _require_promo_read()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    payload = _year_effectif_payload(get_promotions_db(), pid, year)
+    if not payload:
+        return error_response('Promotion introuvable', 404)
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    thin = Side(style='thin', color='D1D5DB')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    f_title = Font(bold=True, size=13, color='4F46E5')
+    f_sub = Font(size=10, color='6B7280')
+    f_head = Font(bold=True, size=10, color='374151')
+    f_legend = Font(size=9, color='6B7280')
+    fill_head = PatternFill('solid', fgColor='EEF2FF')
+    center = Alignment(horizontal='center', vertical='center')
+
+    promo_name = payload['promotion'].get('name') or f'promo {pid}'
+    cols = [('#', 5), ('Nom', 22), ('Prénom', 18), ('N° Apogée', 14), ('Naissance', 13),
+            ('BAC', 9), ('Cursus', 9), ('Recrut.', 10), ('Statut', 11),
+            ('Sem. abandon', 13), ('Cohorte', 9), ('Remarques', 26)]
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    for formation in payload['subcohorts']:
+        studs = [s for s in payload['students'] if (s.get('formation') or 'FTP') == formation]
+        ws = wb.create_sheet(formation)
+        ws.cell(1, 1, f'{promo_name} — effectif année {year} — {formation}').font = f_title
+        counts = (payload['sub_counts'] or {}).get(formation, {})
+        ws.cell(2, 1, ' · '.join(f'{st} : {counts.get(st, 0)}' for st in payload['statuses'])
+                + f" · Total : {counts.get('total', len(studs))}").font = f_sub
+
+        for i, (label, width) in enumerate(cols, start=1):
+            c = ws.cell(4, i, label)
+            c.font, c.fill, c.border, c.alignment = f_head, fill_head, border, center
+            ws.column_dimensions[get_column_letter(i)].width = width
+
+        row = 5
+        for n, s in enumerate(studs, start=1):
+            notes = []
+            if s.get('entrant') and year > 1:
+                notes.append(f'entré directement en année {year}')
+            if s.get('manual') == 'add':
+                notes.append('ajouté manuellement')
+            values = [n, s.get('nom') or '', s.get('prenom') or '', s.get('numero') or '',
+                      s.get('naissance') or '', s.get('bac') or '', s.get('cursus') or '',
+                      s.get('recrutement') or '', s.get('statut') or '',
+                      s.get('abandon_semestre') or '', formation, ' ; '.join(notes)]
+            for i, v in enumerate(values, start=1):
+                c = ws.cell(row, i, v)
+                c.border = border
+                if i == 1 or 6 <= i <= 11:
+                    c.alignment = center
+            row += 1
+        if not studs:
+            ws.cell(row, 2, 'Aucun étudiant dans cette sous-cohorte pour cette année.').font = f_sub
+            row += 1
+
+        # Rappel des codes de profil (mêmes libellés que la légende à l'écran)
+        row += 1
+        for field, labels in _STUDENT_PROFILE_LABELS.items():
+            head = 'Recrut.' if field == 'recrutement' else field.capitalize()
+            codes = [c for c in _STUDENT_PROFILE.get(field, []) if c in labels]
+            ws.cell(row, 1, f"{head} : " + ' · '.join(f'{c} = {labels[c]}' for c in codes)).font = f_legend
+            row += 1
+
+        ws.freeze_panes = ws.cell(row=5, column=1)
+        ws.auto_filter.ref = f'A4:{get_column_letter(len(cols))}{max(4, 4 + len(studs))}'
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    safe = re.sub(r'[^A-Za-z0-9_-]+', '_', promo_name).strip('_') or f'promo{pid}'
+    _audit('PROMO_EFFECTIF_EXPORT', ip=_client_ip(), user=session.get('user'),
+           promo=pid, year=year, total=payload['total'])
+    return send_file(bio, as_attachment=True,
+                     download_name=f'Effectif_{safe}_annee{year}.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 @app.route('/api/promotions/<int:pid>/tuteurs/<int:year>', methods=['GET'])
 def get_year_tuteurs(pid, year):
@@ -3162,7 +3265,7 @@ def add_year_student(pid, year):
         if not (nom or prenom or numero):
             return error_response('Renseignez au moins un nom ou un numéro', 400)
         statut = (data.get('statut') or 'Actif').strip()
-        if statut not in _STUDENT_STATUSES:
+        if statut not in _STUDENT_STATUS_CHOICES:
             statut = 'Actif'
         formation = (data.get('formation') or '').strip().upper()
         if formation not in _SUBCOHORTS:

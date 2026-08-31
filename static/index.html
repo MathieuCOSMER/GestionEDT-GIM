@@ -558,8 +558,12 @@
                 <select id="eff-year-select" onchange="onEffYearChange()"></select>
                 <span id="eff-year-hint" style="color:#6b7280;font-size:.85rem"></span>
             </div>
-            <button class="btn btn-secondary btn-sm" id="eff-report-btn" onclick="reportEffectifYear()" disabled
-                title="Réinitialiser l'effectif de cette année sur le report automatique du jury (efface les ajustements manuels)">↺ Reporter depuis le jury</button>
+            <div style="display:flex;gap:6px">
+                <button class="btn btn-secondary btn-sm" id="eff-export-btn" onclick="exportEffectifExcel()" disabled
+                    title="Télécharger l'effectif de cette année au format Excel (un onglet par sous-cohorte)">⤓ Exporter en Excel</button>
+                <button class="btn btn-secondary btn-sm" id="eff-report-btn" onclick="reportEffectifYear()" disabled
+                    title="Réinitialiser l'effectif de cette année sur le report automatique du jury (efface les ajustements manuels)">↺ Reporter depuis le jury</button>
+            </div>
         </div>
         <div id="promo-content"><div class="empty">Créez une promotion ou sélectionnez-en une pour gérer son effectif.</div></div>
     </div>
@@ -1125,8 +1129,9 @@
         <div class="form-group"><label>N° Apogée</label><input id="student-numero"></div>
         <div class="form-group"><label>Date de naissance</label><input id="student-naissance" placeholder="jj/mm/aaaa"></div>
         <div class="form-group"><label>Statut</label>
-            <select id="student-statut" onchange="toggleAddStudentSem()">
-                <option>Actif</option><option>RED</option><option>Abandon</option>
+            <select id="student-statut" onchange="toggleAddStudentSem()"
+                    title="« RED » n'est pas proposé : il découle de la décision de jury">
+                <option>Actif</option><option>Abandon</option>
             </select>
         </div>
         <div class="form-group" id="student-sem-group" style="display:none"><label>Semestre d'abandon</label>
@@ -3552,9 +3557,15 @@ async function loadPromotions() {
 }
 
 function _togglePromoButtons(on) {
-    ['promo-delete-btn', 'eff-report-btn'].forEach(id => {
+    ['promo-delete-btn', 'eff-report-btn', 'eff-export-btn'].forEach(id => {
         const b = document.getElementById(id); if (b) b.disabled = !on;
     });
+}
+
+// Export Excel de l'effectif affiché (promotion + année en cours)
+function exportEffectifExcel() {
+    if (!_promoId) { toast('Sélectionnez une promotion.', 'error'); return; }
+    window.location.href = `/api/promotions/${_promoId}/effectif/${_effYear}/export`;
 }
 
 async function onPromoChange() {
@@ -3778,7 +3789,12 @@ function renderPromoEffectif() {
     const el = document.getElementById('promo-content');
     if (!d) { el.innerHTML = '<div class="empty">Sélectionnez une promotion.</div>'; return; }
     const y = d.year;
-    const optList = st => d.statuses.map(s => `<option ${s === st ? 'selected' : ''}>${s}</option>`).join('');
+    // Statuts proposés à la saisie : « RED » n'y figure pas, il découle de la
+    // décision de jury (tableau des redoublants plus bas). Un étudiant déjà RED
+    // garde son statut affiché, en option non sélectionnable.
+    const stChoices = d.status_choices || d.statuses;
+    const optList = st => (stChoices.includes(st) ? stChoices : [st, ...stChoices]).map(s =>
+        `<option ${s === st ? 'selected' : ''}${stChoices.includes(s) ? '' : ' disabled'}>${s}</option>`).join('');
     // Semestres de l'année affichée uniquement : abandonner dans S(2y-1)/S(2y) garde
     // l'étudiant visible dans l'année en cours et ne le retire que des années suivantes.
     const yearSems = ['S' + (2 * y - 1), 'S' + (2 * y)];
@@ -3789,12 +3805,34 @@ function renderPromoEffectif() {
     const tag = (txt, bg, title) => `<span title="${title || ''}" style="display:inline-block;padding:1px 6px;border-radius:6px;font-size:.66rem;font-weight:700;background:${bg};margin-left:6px">${txt}</span>`;
     // Profil d'entrée (BAC / cursus / recrutement) : listes déroulantes
     const profOpts = d.profile_options || { bac: [], cursus: [], recrutement: [] };
+    // Signification des codes (Cursus / Recrutement) : rappelée en légende au-dessus
+    // de chaque tableau et en infobulle sur chaque liste.
+    const profLabels = d.profile_labels || {};
+    const profLabel = (field, code) => (profLabels[field] || {})[code] || '';
     const profSelect = (s, field) => {
         const cur = s[field] || '';
         const opts = ['<option value="">—</option>'].concat(
-            (profOpts[field] || []).map(o => `<option${o === cur ? ' selected' : ''}>${esc(o)}</option>`)).join('');
-        return `<select onchange="changeStudentField(${s.id}, '${field}', this.value)"
+            (profOpts[field] || []).map(o => {
+                const lab = profLabel(field, o);
+                return `<option${o === cur ? ' selected' : ''}${lab ? ` title="${esc(lab)}"` : ''}>${esc(o)}</option>`;
+            })).join('');
+        const curLab = profLabel(field, cur);
+        return `<select onchange="changeStudentField(${s.id}, '${field}', this.value)"${curLab ? ` title="${esc(curLab)}"` : ''}
             style="padding:3px 4px;border:1px solid #d1d5db;border-radius:4px;font-size:.8rem">${opts}</select>`;
+    };
+    // Légende : un code = son libellé, pour les colonnes qui en ont un
+    const profLegend = () => {
+        const parts = Object.keys(profLabels).map(field => {
+            const codes = (profOpts[field] || []).filter(o => profLabel(field, o));
+            if (!codes.length) return '';
+            const head = field === 'recrutement' ? 'Recrut.' : field.charAt(0).toUpperCase() + field.slice(1);
+            return `<span><span style="color:#6b7280">${head} :</span> ` + codes.map(o =>
+                `<span style="white-space:nowrap"><strong>${esc(o)}</strong> = ${esc(profLabel(field, o))}</span>`
+            ).join('<span style="color:#d1d5db"> · </span>') + '</span>';
+        }).filter(Boolean);
+        if (!parts.length) return '';
+        return `<div style="font-size:.78rem;color:#4b5563;background:#f9fafb;border:1px solid #e5e7eb;
+            border-radius:8px;padding:7px 12px;margin:8px 0 4px;display:flex;flex-wrap:wrap;gap:4px 20px">${parts.join('')}</div>`;
     };
     // Bascule FTP↔ALT à partir de l'année affichée (années antérieures conservées)
     const cohorteToggle = s => {
@@ -3842,11 +3880,11 @@ function renderPromoEffectif() {
             <td>${profSelect(s, 'bac')}</td>
             <td>${profSelect(s, 'cursus')}</td>
             <td>${profSelect(s, 'recrutement')}</td>
-            <td style="white-space:nowrap"><select onchange="changeStudentStatus(${s.id}, this.value)"
+            <td style="white-space:nowrap"><select onchange="changeStudentStatus(${s.id}, this.value)"${s.statut === 'RED' ? ' title="Statut issu de la décision de jury — se traite dans le tableau des redoublants, plus bas"' : ''}
                 style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${_statutColor(s.statut)}">${optList(s.statut)}</select>${semSelect(s)}</td>
             <td style="white-space:nowrap">${cohorteToggle(s)} <button class="btn btn-secondary btn-sm" title="Retirer de l'effectif de l'année ${y}${y === 1 ? ' (et des années suivantes)' : ''} — ne supprime pas ses notes" onclick="removeStudentYear(${s.id})">🗑</button></td>
         </tr>`).join('');
-        return header + `<div style="margin-bottom:8px">${badges}</div>
+        return header + `<div style="margin-bottom:8px">${badges}</div>` + profLegend() + `
             <div style="overflow:auto;max-height:45vh;border:1px solid #e5e7eb;border-radius:8px">
                 <table class="pn-table" style="table-layout:auto;width:100%">
                     <thead><tr><th style="width:40px">#</th><th>Nom</th><th>Prénom</th><th>N° Apogée</th><th>Naissance</th>
