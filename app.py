@@ -7984,12 +7984,16 @@ def get_repartition():
                 for gw in s['by_group'].values():
                     for w, h in gw.items():
                         merged[w] = merged.get(w, 0) + h
+                # `teachers` : un élément PAR GROUPE (doublons compris) — c'est lui
+                # qui permet de pondérer la charge d'un enseignant par le nombre de
+                # groupes qu'il assure. `teacher` reste le libellé affiché.
+                per_group = [t_names.get(tid, '') for tid in g_teachers]
                 names = []
-                for tid in g_teachers:
-                    nm = t_names.get(tid)
+                for nm in per_group:
                     if nm and nm not in names:
                         names.append(nm)
                 out_rows.append({**base, 'teacher': ' / '.join(names) or base['teacher'],
+                                 'teachers': per_group,
                                  'group_index': 1, 'n_groups': 1, 'by_week': merged,
                                  'alt_group': False, 'group_label': ''})
             else:
@@ -8013,7 +8017,8 @@ def get_repartition():
                     else:
                         label = f'gr.{g}'
                     tid = g_teachers[g - 1] if g <= len(g_teachers) else None
-                    out_rows.append({**base, 'teacher': t_names.get(tid, base['teacher'] if tid else ''),
+                    nm = t_names.get(tid, base['teacher'] if tid else '')
+                    out_rows.append({**base, 'teacher': nm, 'teachers': [nm],
                                      'group_index': g, 'n_groups': n,
                                      'by_week': dict(s['by_group'].get(g, {})),
                                      'alt_group': is_alt, 'group_label': label})
@@ -8033,22 +8038,70 @@ def checks_repartition():
         db = get_db()
         cursor = db.cursor()
 
-        # 1. Charge enseignants par semaine
+        # 1. Charge enseignants par semaine.
+        #    Un enseignant assure une séance PAR GROUPE : les heures d'un TD à
+        #    2 groupes comptent double pour qui prend les deux. Les TP ont déjà
+        #    une ligne de placement par groupe (weekly_hours.group_index) ; les
+        #    CM/TD/PT n'en ont qu'une, valable pour chacun de leurs groupes.
+        #    Chaque groupe peut par ailleurs revenir à un autre enseignant
+        #    (course_group_teachers) que celui de la session.
+        sg_map, mut_set, tpsep_set = _load_semester_groups(db)
+        gt_map = _load_group_teachers(db)
+        t_names = {r['id']: r['name'] for r in db.execute('SELECT id, name FROM teachers').fetchall()}
+
         cursor.execute('''
-            SELECT t.id AS teacher_id, t.name AS teacher_name,
-                   wh.week_number,
-                   SUM(wh.hours) AS total_hours,
-                   GROUP_CONCAT(DISTINCT c.code || ' ' || cs.teaching_type) AS courses
+            SELECT cs.id AS session_id, cs.teacher_id, cs.teaching_type, cs.formation_type,
+                   c.code AS course_code, c.tp_type, sem.code AS semester_code,
+                   wh.week_number, wh.hours, wh.group_index
             FROM weekly_hours wh
             JOIN course_sessions cs ON wh.course_session_id = cs.id
             JOIN courses c ON cs.course_id = c.id
-            JOIN teachers t ON cs.teacher_id = t.id
+            JOIN semesters sem ON c.semester_id = sem.id
             WHERE wh.hours > 0
-            GROUP BY t.id, wh.week_number
-            HAVING SUM(wh.hours) > 20
-            ORDER BY t.name, wh.week_number
         ''')
-        teacher_load = [dict(r) for r in cursor.fetchall()]
+        # {session_id: {group_index: {semaine: heures}}} + description de la session
+        by_session, meta = {}, {}
+        for r in cursor.fetchall():
+            sid = r['session_id']
+            if sid not in meta:
+                meta[sid] = r
+            by_session.setdefault(sid, {}).setdefault(r['group_index'] or 1, {})[r['week_number']] = r['hours']
+
+        load = {}   # (teacher_id, semaine) -> {'hours': x, 'courses': set()}
+        for sid, groups in by_session.items():
+            r = meta[sid]
+            tt = (r['teaching_type'] or '').upper().replace(' ', '')
+            try:
+                n = max(1, int(_group_multiplier(sg_map, mut_set, tpsep_set, r['semester_code'],
+                                                 r['formation_type'], tt, r['tp_type']) or 1))
+            except Exception:
+                n = 1
+            g_teachers = _group_teacher_list(r['teacher_id'], gt_map.get(sid), n)
+            label = f"{r['course_code']} {r['teaching_type']}"
+            if tt.startswith('TP') and n > 1:
+                # Une ligne de placement par groupe : chaque groupe compte pour lui-même
+                contrib = [(g_teachers[g - 1] if g <= len(g_teachers) else None, wk)
+                           for g, wk in groups.items()]
+            else:
+                # Placement unique, rejoué à l'identique pour chacun des n groupes
+                merged = {}
+                for wk in groups.values():
+                    for w, h in wk.items():
+                        merged[w] = merged.get(w, 0) + h
+                contrib = [(tid, merged) for tid in g_teachers]
+            for tid, wk in contrib:
+                if not tid or tid not in t_names:
+                    continue
+                for w, h in wk.items():
+                    e = load.setdefault((tid, w), {'hours': 0, 'courses': set()})
+                    e['hours'] += h
+                    e['courses'].add(label)
+
+        teacher_load = sorted(
+            ({'teacher_id': tid, 'teacher_name': t_names[tid], 'week_number': w,
+              'total_hours': round(e['hours'], 2), 'courses': ', '.join(sorted(e['courses']))}
+             for (tid, w), e in load.items() if e['hours'] > 20),
+            key=lambda x: (x['teacher_name'], x['week_number']))
 
         # 2. Conflits salles : semaines où une salle est utilisée par plus de 2 matières
         #    - STD (salles standard, pool générique) : exclue du contrôle

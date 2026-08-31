@@ -7412,6 +7412,18 @@ function filterRepartition() {
     if (_repartitionData) renderRepartition(_repartitionData);
 }
 
+// Enseignants d'une ligne, UN PAR GROUPE (doublons compris) : une ligne de TD à
+// 2 groupes en contient 2. Sert au filtre et à la pondération de la charge.
+// Repli sur le libellé affiché pour les données d'avant l'ajout du champ.
+function rowTeachers(r) {
+    if (Array.isArray(r.teachers)) return r.teachers;
+    return r.teacher ? [r.teacher] : [];
+}
+// Nombre de groupes de cette ligne assurés par `who` (0 s'il n'y intervient pas)
+function rowTeacherGroups(r, who) {
+    return rowTeachers(r).filter(n => n === who).length;
+}
+
 // Libellé d'un type d'enseignement : les TP s'affichent en TP12 / TP8 (taille des groupes)
 function typeDisp(r) {
     const t = (r.type || '').toUpperCase();
@@ -7649,12 +7661,12 @@ function populateRepartitionFilters(rows) {
     const tSel = document.getElementById('filter-teacher-repartition');
     const rSel = document.getElementById('filter-room-repartition');
     // Valeurs courantes, ignorées si elles ont disparu des lignes affichées
-    const curT = tSel && rows.some(r => r.teacher === tSel.value) ? tSel.value : '';
+    const curT = tSel && rows.some(r => rowTeacherGroups(r, tSel.value)) ? tSel.value : '';
     const curR = rSel && rows.some(r => r.room === rSel.value) ? rSel.value : '';
     populateOptionFilter('filter-teacher-repartition', 'Tous',
-        rows.filter(r => !curR || r.room === curR).map(r => r.teacher));
+        rows.filter(r => !curR || r.room === curR).flatMap(rowTeachers));
     populateOptionFilter('filter-room-repartition',    'Toutes',
-        rows.filter(r => !curT || r.teacher === curT).map(r => r.room));
+        rows.filter(r => !curT || rowTeacherGroups(r, curT)).map(r => r.room));
     // Enseignant connecté : sa fiche est présélectionnée.
     // Vacataire : verrouillé sur son nom ; titulaire : présélectionné mais modifiable.
     if (state.role === 'teacher' && state.teacherName) {
@@ -7800,7 +7812,7 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
     // Grouper les lignes par matière puis par formation
     const byCode = {}, codeOrder = [];
     rows.forEach(r => {
-        if (teacherFilter && r.teacher !== teacherFilter) return; // filtre enseignant
+        if (teacherFilter && !rowTeacherGroups(r, teacherFilter)) return; // filtre enseignant
         if (roomFilter && r.room !== roomFilter) return;          // filtre salle
         if (matFilter && !((r.course_code + ' ' + (r.course_name || '')).toLowerCase().includes(matFilter))) return; // filtre matière
         // Filtre type (CM/TD/TP/PT) : ne masque que les types connus désélectionnés
@@ -7999,14 +8011,18 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
             }).join('')}
         </tr>`;
 
-    // Ligne « heures / semaine » de l'enseignant filtré (somme de ses séances affichées)
+    // Ligne « heures / semaine » de l'enseignant filtré. Une séance est assurée
+    // UNE FOIS PAR GROUPE : un TD à 2 groupes tenu par le même enseignant compte
+    // double. Les TP ayant déjà une ligne par groupe, leur facteur vaut 1.
+    // (La ligne « promo » plus haut ne multiplie pas : un étudiant ne suit qu'un groupe.)
     let teacherHeaderRow = '';
     if (teacherFilter) {
         const tByWeek = {};
         weeks.forEach(w => { tByWeek[w] = 0; });
         rows.forEach(r => {
-            if (r.teacher !== teacherFilter) return;
-            weeks.forEach(w => { tByWeek[w] += (r.by_week[w] || 0); });
+            const k = rowTeacherGroups(r, teacherFilter);
+            if (!k) return;
+            weeks.forEach(w => { tByWeek[w] += (r.by_week[w] || 0) * k; });
         });
         const tTotal = weeks.reduce((s, w) => s + tByWeek[w], 0);
         teacherHeaderRow = `<tr data-teacher-total="1">
@@ -8247,14 +8263,16 @@ async function updateRepartitionCell(sid, week, group, newHours, td) {
             }
             [`FTP${yg}`, `ALT${yg}`].forEach(pk => { recomputePromoCell(pk, week); refreshPromoGroupLabel(pk); });
 
-            // Ligne « h/sem. » de l'enseignant : il assure chaque groupe → variation réelle
+            // Ligne « h/sem. » de l'enseignant : il assure chaque groupe → la
+            // variation est multipliée par le nombre de groupes qu'il prend sur la ligne
             const teacherSel = document.getElementById('filter-teacher-repartition');
             const tf = teacherSel ? teacherSel.value : '';
-            if (tf && row.teacher === tf && delta !== 0) {
+            const tGroups = tf ? rowTeacherGroups(row, tf) : 0;
+            if (tGroups && delta !== 0) {
                 const tRow = document.querySelector('tr[data-teacher-total]');
                 const th = tRow && tRow.querySelector(`th[data-teacher-week="${week}"]`);
                 if (th) {
-                    const newTotal = Math.round(((parseFloat(th.textContent) || 0) + delta) * 100) / 100;
+                    const newTotal = Math.round(((parseFloat(th.textContent) || 0) + delta * tGroups) * 100) / 100;
                     th.textContent = newTotal > 0 ? newTotal : '';
                     if (newTotal > 20) th.setAttribute('style', 'background:#fca5a5 !important;color:#111');
                     else th.removeAttribute('style');
