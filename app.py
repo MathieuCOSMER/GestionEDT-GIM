@@ -636,7 +636,7 @@ _STUDENT_STATUSES = ['Actif', 'RED', 'Césure', 'Abandon']
 _STUDENT_STATUS_CHOICES = ['Actif', 'Césure', 'Abandon']
 _PROMO_SEMESTERS = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6']
 # Profil d'entrée de l'étudiant (valeurs autorisées ; '' = non renseigné)
-_STUDENT_BAC = ['SI2D', 'GEN', 'PRO', 'STL', 'Autre']
+_STUDENT_BAC = ['STI2D', 'GEN', 'PRO', 'STL', 'Autre']
 _STUDENT_CURSUS = ['EI', 'RE', 'PB', 'PP']            # École d'ingé / Reprise d'étude / PostBac / PostPrépa
 _STUDENT_RECRUT = ['PS', 'EC', 'ADIUT']               # ParcourSup / eCandidat / ADIUT (étrangers)
 _STUDENT_PROFILE = {'bac': _STUDENT_BAC, 'cursus': _STUDENT_CURSUS, 'recrutement': _STUDENT_RECRUT}
@@ -824,6 +824,10 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
         )
     ''')
+    # Le bac technologique s'écrit STI2D : reprise des fiches saisies avec
+    # l'ancien code SI2D, qui n'est plus une valeur autorisée.
+    db.execute("UPDATE promotion_students SET bac='STI2D' WHERE bac='SI2D'")
+
     # Année de césure (1..3) : l'étudiant s'absente cette année-là et reprend
     # l'année SUIVANTE dans la cohorte d'après. NULL = pas de césure.
     if 'cesure_year' not in [r[1] for r in db.execute("PRAGMA table_info(promotion_students)").fetchall()]:
