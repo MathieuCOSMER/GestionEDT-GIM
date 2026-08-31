@@ -573,7 +573,7 @@
                 <label>Année de la cohorte :</label>
                 <select id="tut-year-select" onchange="onTutYearChange()"></select>
                 <span style="color:#6b7280;font-size:.85rem">
-                    Tuteur universitaire et tuteur entreprise par étudiant.
+                    Tuteur universitaire (enseignants titulaires) et tuteur entreprise par étudiant.
                     ALT : la saisie vaut aussi pour les années suivantes sauf changement ;
                     FTP : saisie par stage (2ᵉ et 3ᵉ année).
                 </span>
@@ -3683,12 +3683,17 @@ async function loadTuteurs() {
         `<option value="${y}" ${y === _tutYear ? 'selected' : ''}>${_effYearLabel(y)}</option>`).join('');
     el.innerHTML = '<div class="spinner">Chargement…</div>';
     try {
-        // Liste des enseignants de l'année active pour le tuteur universitaire
+        // Liste des enseignants de l'année active pour le tuteur universitaire :
+        // seuls les TITULAIRES peuvent être tuteur universitaire (statut vide =
+        // titulaire, comme ailleurs dans l'appli). Un tuteur déjà enregistré qui
+        // n'est plus dans la liste reste conservé par univOptions().
         const [teachers, data] = await Promise.all([
             api('/teachers'), api(`/promotions/${_promoId}/tuteurs/${_tutYear}`)
         ]);
         _tutData = data;
-        _tutData.teachers = teachers.map(t => t.name).sort((a, b) => a.localeCompare(b));
+        _tutData.teachers = teachers
+            .filter(t => (t.status || 'Titulaire') === 'Titulaire')
+            .map(t => t.name).sort((a, b) => a.localeCompare(b));
         renderTuteurs();
     } catch (e) {
         el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
