@@ -629,11 +629,11 @@ def close_db(exception):
 # ===== Base des PROMOTIONS (cohorte sur 3 ans, indépendante de l'année) =====
 # Stockée à part car une promotion suit ses étudiants/résultats d'année en année.
 _PROMOTIONS_DB = os.environ.get('EDT_PROMOTIONS_DB') or os.path.join(_DB_DIR, 'promotions.db')
-_STUDENT_STATUSES = ['Actif', 'RED', 'Abandon']
+_STUDENT_STATUSES = ['Actif', 'RED', 'Césure', 'Abandon']
 # Statuts que l'admin peut poser à la main dans l'effectif. « RED » en est exclu :
 # il découle de la décision de jury (RED sur un ajourné) et est posé par le
 # flux jury lui-même — le proposer ici ferait doublon et pourrait le désynchroniser.
-_STUDENT_STATUS_CHOICES = ['Actif', 'Abandon']
+_STUDENT_STATUS_CHOICES = ['Actif', 'Césure', 'Abandon']
 _PROMO_SEMESTERS = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6']
 # Profil d'entrée de l'étudiant (valeurs autorisées ; '' = non renseigné)
 _STUDENT_BAC = ['SI2D', 'GEN', 'PRO', 'STL', 'Autre']
@@ -824,6 +824,50 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
         )
     ''')
+    # Année de césure (1..3) : l'étudiant s'absente cette année-là et reprend
+    # l'année SUIVANTE dans la cohorte d'après. NULL = pas de césure.
+    if 'cesure_year' not in [r[1] for r in db.execute("PRAGMA table_info(promotion_students)").fetchall()]:
+        db.execute('ALTER TABLE promotion_students ADD COLUMN cesure_year INTEGER')
+
+    # Fiche d'origine d'un étudiant transféré d'une cohorte à l'autre (césure ou
+    # redoublement). Le parcours reste ainsi continu : le jury et les bulletins de
+    # la promo d'accueil lisent les notes de la fiche d'origine pour les années
+    # ANTÉRIEURES à son entrée, sans les recopier (une seule source de vérité).
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS student_origin (
+            student_id          INTEGER PRIMARY KEY,   -- fiche dans la promo d'accueil
+            origin_student_id   INTEGER NOT NULL,
+            origin_promotion_id INTEGER NOT NULL,
+            reason              TEXT,                  -- 'CESURE' / 'RED'
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE,
+            FOREIGN KEY (origin_student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
+    # Reprise des bascules de redoublants déjà enregistrées, en ignorant les
+    # lignes dont une des deux fiches a disparu (sinon la clé étrangère refuse).
+    db.execute('''
+        INSERT OR IGNORE INTO student_origin (student_id, origin_student_id, origin_promotion_id, reason)
+        SELECT t.target_student_id, t.student_id, t.promotion_id, 'RED'
+        FROM promotion_red_transfer t
+        WHERE t.target_student_id IS NOT NULL
+          AND EXISTS (SELECT 1 FROM promotion_students WHERE id = t.target_student_id)
+          AND EXISTS (SELECT 1 FROM promotion_students WHERE id = t.student_id)
+    ''')
+
+    # Transfert de césure : la fiche créée dans la cohorte suivante et la
+    # sous-cohorte choisie à la reprise (un FTP peut revenir en ALT).
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS promotion_cesure_transfer (
+            promotion_id      INTEGER NOT NULL,
+            student_id        INTEGER NOT NULL,
+            formation         TEXT NOT NULL,           -- 'FTP' / 'ALT' à la reprise
+            target_student_id INTEGER,
+            PRIMARY KEY (promotion_id, student_id),
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
+
     # Saisie des notes PAR SOUS-MATIÈRE (onglet Saisie Notes, enseignants).
     # La note matière (student_marks) = moyenne pondérée des sous-notes,
     # recalculée automatiquement quand toutes les sous-notes comptées sont là.
@@ -2956,6 +3000,20 @@ def update_promotion_student(pid, sid):
     elif 'abandon_semestre' in data:
         sem = (data.get('abandon_semestre') or '').strip()
         fields.append('abandon_semestre=?'); params.append(sem if sem in _PROMO_SEMESTERS else None)
+    # Année de césure : effacée si le statut n'est plus « Césure ». Repasser un
+    # étudiant en césure à un autre statut annule aussi sa reprise dans la
+    # cohorte suivante (la fiche créée là-bas est supprimée).
+    if new_statut is not None and new_statut != 'Césure':
+        fields.append('cesure_year=?'); params.append(None)
+        prev = db.execute('SELECT formation, target_student_id FROM promotion_cesure_transfer '
+                          'WHERE promotion_id=? AND student_id=?', (pid, sid)).fetchone()
+        _revert_cesure_transfer(db, pid, sid, prev)
+    elif 'cesure_year' in data:
+        try:
+            cy = int(data.get('cesure_year') or 0)
+        except (TypeError, ValueError):
+            cy = 0
+        fields.append('cesure_year=?'); params.append(cy if cy in (1, 2, 3) else None)
     if fields:
         params += [sid, pid]
         db.execute(f'UPDATE promotion_students SET {", ".join(fields)} WHERE id=? AND promotion_id=?', params)
@@ -3035,21 +3093,35 @@ def _year_effectif_payload(pdb, pid, year):
     if not promo:
         return None
     roster = _year_rosters(pdb, pid).get(year, set())
+    # Les étudiants en césure CETTE année sont hors effectif (ni notes ni jury,
+    # _year_rosters les exclut) mais restent affichés, grisés, pour ne pas oublier
+    # de les réinscrire dans la cohorte suivante.
+    cesure_ids = {r['id'] for r in pdb.execute(
+        'SELECT id FROM promotion_students WHERE promotion_id=? AND cesure_year=?', (pid, year))}
+    # Étudiants venus d'une autre cohorte (redoublement, reprise après césure) :
+    # dans leur promotion d'accueil ils repartent « Actif », rien ne les
+    # distinguerait sinon d'un entrant ordinaire — surtout en 1re année.
+    origins = {r['student_id']: {'promo': r['promo'], 'reason': r['reason']}
+               for r in pdb.execute('''SELECT o.student_id, o.reason, p.name AS promo
+                                       FROM student_origin o
+                                       JOIN promotions p ON p.id = o.origin_promotion_id''')}
     overrides = {r['student_id']: r['action'] for r in pdb.execute(
         'SELECT student_id, action FROM promotion_year_override WHERE promotion_id=? AND year=?',
         (pid, year))}
     fm = _year_formation_map(pdb, pid, year)          # sous-cohorte propre à cette année
     students = []
     for r in pdb.execute('''SELECT id, numero, nom, prenom, naissance, statut, abandon_semestre,
-                                   formation, entry_year, bac, cursus, recrutement
+                                   formation, entry_year, cesure_year, bac, cursus, recrutement
                             FROM promotion_students
                             WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''',
                          (pid,)):
-        if r['id'] in roster:
+        if r['id'] in roster or r['id'] in cesure_ids:
             d = dict(r)
             d['formation'] = fm.get(r['id'], d.get('formation') or 'FTP')
             d['entrant'] = (r['entry_year'] or 1) == year
             d['manual'] = overrides.get(r['id'])
+            d['cesure'] = r['id'] in cesure_ids
+            d['origin'] = origins.get(r['id'])
             students.append(d)
     sub_counts = {f: {st: 0 for st in _STUDENT_STATUSES} for f in _SUBCOHORTS}
     for s in students:
@@ -3057,6 +3129,9 @@ def _year_effectif_payload(pdb, pid, year):
         sub_counts[f][s['statut']] = sub_counts[f].get(s['statut'], 0) + 1
     for f in _SUBCOHORTS:
         sub_counts[f]['total'] = sum(sub_counts[f][st] for st in _STUDENT_STATUSES)
+        sub_counts[f]['origin'] = sum(1 for s in students
+                                      if s.get('origin')
+                                      and (s.get('formation') or 'FTP') == f)
     return {'promotion': dict(promo), 'year': year, 'students': students,
             'sub_counts': sub_counts, 'subcohorts': list(_SUBCOHORTS),
             'total': len(students), 'statuses': _STUDENT_STATUSES,
@@ -3534,6 +3609,11 @@ def decide_red_student(pid, sid):
                             VALUES(?,?,?,?,?,'Actif',?,?)''',
                          (target_id, s['numero'], s['nom'], s['prenom'], s['naissance'], decision, year))
         target_student_id = cur.lastrowid
+        # Parcours continu : la nouvelle fiche pointe vers celle d'origine, dont
+        # le jury/les bulletins reprendront les années antérieures (_marks_rows)
+        db.execute('''INSERT OR REPLACE INTO student_origin
+                          (student_id, origin_student_id, origin_promotion_id, reason)
+                      VALUES(?,?,?,'RED')''', (target_student_id, sid, pid))
         db.execute("UPDATE promotion_students SET statut='RED' WHERE id=?", (sid,))
     db.execute('''INSERT OR REPLACE INTO promotion_red_transfer(promotion_id, student_id, decision, target_student_id)
                   VALUES(?,?,?,?)''', (pid, sid, decision, target_student_id))
@@ -3541,6 +3621,94 @@ def decide_red_student(pid, sid):
     _audit('RED_DECIDE', ip=_client_ip(), user=session.get('user'),
            promo=pid, student=sid, decision=decision, year=year)
     return jsonify(_red_payload(db, pid))
+
+# ---- Césure : une année entière d'absence, reprise dans la cohorte suivante ----
+# Un étudiant en césure sur l'année N sort de l'effectif de N (et des suivantes) de
+# sa promotion, puis reprend l'année N dans la cohorte start_year+1. Il peut changer
+# de sous-cohorte au retour (un FTP peut revenir en ALT). Ses années déjà validées
+# le suivent via student_origin, sans recopie des notes.
+
+def _cesure_payload(pdb, pid):
+    promo = pdb.execute('SELECT * FROM promotions WHERE id=?', (pid,)).fetchone()
+    if not promo:
+        return None
+    target_id, target_name = _red_target_promo(pdb, pid)
+    transfers = {r['student_id']: r['formation'] for r in pdb.execute(
+        'SELECT student_id, formation FROM promotion_cesure_transfer WHERE promotion_id=?', (pid,))}
+    rows = []
+    for r in pdb.execute("""SELECT id, numero, nom, prenom, formation, cesure_year
+                            FROM promotion_students
+                            WHERE promotion_id=? AND statut='Césure'
+                            ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE""", (pid,)):
+        rows.append({'student_id': r['id'], 'numero': r['numero'], 'nom': r['nom'],
+                     'prenom': r['prenom'], 'formation': r['formation'] or 'FTP',
+                     'year': r['cesure_year'], 'decision': transfers.get(r['id'])})
+    return {'target_promo_id': target_id, 'target_promo_name': target_name,
+            'target_exists': target_id is not None, 'students': rows}
+
+@app.route('/api/promotions/<int:pid>/cesure', methods=['GET'])
+def get_cesure_students(pid):
+    err = _require_promo_read()
+    if err:
+        return err
+    payload = _cesure_payload(get_promotions_db(), pid)
+    if not payload:
+        return error_response('Promotion introuvable', 404)
+    return jsonify(payload)
+
+def _revert_cesure_transfer(db, pid, sid, prev):
+    """Annule une reprise de césure : supprime la fiche créée dans la cohorte
+    suivante (student_origin suit en cascade) et la ligne de transfert."""
+    if not prev:
+        return
+    if prev['target_student_id']:
+        db.execute('DELETE FROM promotion_students WHERE id=?', (prev['target_student_id'],))
+    db.execute('DELETE FROM promotion_cesure_transfer WHERE promotion_id=? AND student_id=?',
+               (pid, sid))
+
+@app.route('/api/promotions/<int:pid>/cesure/<int:sid>', methods=['POST'])
+def decide_cesure(pid, sid):
+    """Réinscrit un étudiant en césure dans la cohorte suivante, sur la
+    sous-cohorte choisie (FTP/ALT). Body {formation}; vide = annule la reprise."""
+    err = _require_admin()
+    if err:
+        return err
+    db = get_promotions_db()
+    s = db.execute("""SELECT * FROM promotion_students
+                      WHERE id=? AND promotion_id=? AND statut='Césure'""", (sid, pid)).fetchone()
+    if not s:
+        return error_response("Cet étudiant n'est pas en césure", 400)
+    year = s['cesure_year']
+    if not year:
+        return error_response("Renseignez d'abord l'année de césure", 400)
+    formation = ((request.get_json() or {}).get('formation') or '').strip().upper()
+    prev = db.execute('SELECT formation, target_student_id FROM promotion_cesure_transfer '
+                      'WHERE promotion_id=? AND student_id=?', (pid, sid)).fetchone()
+    _revert_cesure_transfer(db, pid, sid, prev)
+    if formation in ('', 'NONE'):
+        db.commit()
+        return jsonify(_cesure_payload(db, pid))
+    if formation not in _SUBCOHORTS:
+        return error_response('Sous-cohorte invalide', 400)
+    target_id = _ensure_target_promo(db, pid)     # crée la cohorte suivante si absente
+    if not target_id:
+        return error_response('Promotion cible introuvable', 400)
+    # Il reprend l'année de sa césure : entry_year = année de césure
+    cur = db.execute("""INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance,
+                                                       statut, formation, entry_year)
+                        VALUES(?,?,?,?,?,'Actif',?,?)""",
+                     (target_id, s['numero'], s['nom'], s['prenom'], s['naissance'], formation, year))
+    target_student_id = cur.lastrowid
+    db.execute("""INSERT OR REPLACE INTO student_origin
+                      (student_id, origin_student_id, origin_promotion_id, reason)
+                  VALUES(?,?,?,'CESURE')""", (target_student_id, sid, pid))
+    db.execute("""INSERT OR REPLACE INTO promotion_cesure_transfer
+                      (promotion_id, student_id, formation, target_student_id)
+                  VALUES(?,?,?,?)""", (pid, sid, formation, target_student_id))
+    db.commit()
+    _audit('CESURE_DECIDE', ip=_client_ip(), user=session.get('user'),
+           promo=pid, student=sid, formation=formation, year=year)
+    return jsonify(_cesure_payload(db, pid))
 
 # ---- Notes d'une promotion pour un semestre (matières/compétences = référence) ----
 
@@ -3575,13 +3743,53 @@ def _code_by_kind(components, kind):
             return c.get('code')
     return None
 
+def _origin_links(pdb, pid):
+    """{student_id: (origin_student_id, origin_promotion_id, entry_year)} pour les
+    étudiants de `pid` venus d'une autre cohorte (césure ou redoublement)."""
+    out = {}
+    for r in pdb.execute("""SELECT s.id, s.entry_year, o.origin_student_id, o.origin_promotion_id
+                            FROM promotion_students s
+                            JOIN student_origin o ON o.student_id = s.id
+                            WHERE s.promotion_id = ?""", (pid,)):
+        out[r['id']] = (r['origin_student_id'], r['origin_promotion_id'], r['entry_year'] or 1)
+    return out
+
+def _marks_rows(pdb, pid, semester):
+    """Notes d'un semestre pour une promotion, sous forme de dicts
+    {student_id, matiere_code, note, mention}.
+
+    Un étudiant transféré d'une cohorte à l'autre (césure, redoublement) reprend
+    les notes de sa fiche d'origine pour les semestres des années ANTÉRIEURES à
+    son entrée : son parcours reste continu (bulletin complet, compensation et
+    AJAC possibles) sans recopier la donnée — la fiche d'origine reste la seule
+    source de vérité. Ses propres notes priment si elles existent."""
+    rows = [{'student_id': r['student_id'], 'matiere_code': r['matiere_code'],
+             'note': r['note'], 'mention': r['mention']}
+            for r in pdb.execute("""SELECT student_id, matiere_code, note, mention
+                                    FROM student_marks
+                                    WHERE promotion_id=? AND semester=? AND note IS NOT NULL""",
+                                 (pid, semester))]
+    links = _origin_links(pdb, pid)
+    if not links:
+        return rows
+    year = (int(semester[1:]) + 1) // 2
+    deja = {r['student_id'] for r in rows}
+    for sid, (osid, opid, entry) in links.items():
+        if year >= entry or sid in deja:
+            continue
+        for r in pdb.execute("""SELECT matiere_code, note, mention FROM student_marks
+                                WHERE promotion_id=? AND semester=? AND student_id=?
+                                  AND note IS NOT NULL""", (opid, semester, osid)):
+            rows.append({'student_id': sid, 'matiere_code': r['matiere_code'],
+                         'note': r['note'], 'mention': r['mention']})
+    return rows
+
 def _semester_competence_averages(pdb, pid, semester, competences, components=None):
     """Moyennes de compétences {student_id: {ci: avg}} pour un semestre donné.
     Le malus d'assiduité (heures saisies sur la matière de type PEN) est retranché
     de la moyenne de chaque UE, conformément au règlement (IUT de Toulon)."""
     marks = {}
-    for r in pdb.execute('''SELECT student_id, matiere_code, note FROM student_marks
-                            WHERE promotion_id=? AND semester=? AND note IS NOT NULL''', (pid, semester)):
+    for r in _marks_rows(pdb, pid, semester):
         marks[f"{r['student_id']}_{r['matiere_code']}"] = r['note']
     students = [r['id'] for r in pdb.execute(
         'SELECT id FROM promotion_students WHERE promotion_id=?', (pid,))]
@@ -3618,9 +3826,9 @@ def _year_competence_averages(pdb, pid, s_odd, s_even, ref_all):
         bcode = _code_by_kind(comps_d.get('components', []), 'BONUS')
         if not bcode:
             continue
-        for r in pdb.execute('''SELECT student_id, note FROM student_marks
-                                WHERE promotion_id=? AND semester=? AND matiere_code=? AND note IS NOT NULL''',
-                             (pid, sem, bcode)):
+        for r in _marks_rows(pdb, pid, sem):
+            if r['matiere_code'] != bcode:
+                continue
             sid = str(r['student_id'])
             bonus_note[sid] = max(bonus_note.get(sid, 0.0), r['note'])
     out = {}
@@ -4285,13 +4493,14 @@ def _year_rosters(pdb, pid, comp=None):
     Des ajustements manuels (promotion_year_override) retirent ('remove') ou réintègrent
     ('add') un étudiant sur une année. Retourne {1:set, 2:set, 3:set}."""
     meta = {}
-    for r in pdb.execute('''SELECT id, statut, abandon_semestre, entry_year
+    for r in pdb.execute('''SELECT id, statut, abandon_semestre, entry_year, cesure_year
                             FROM promotion_students WHERE promotion_id=?''', (pid,)):
         meta[r['id']] = {
             'statut': r['statut'],
             # Année d'abandon connue seulement si un semestre est renseigné ; sinon None
             # (l'étudiant reste visible partout tant que le semestre n'est pas précisé).
             'abandon_year': _sem_year(r['abandon_semestre']) if r['abandon_semestre'] else None,
+            'cesure_year': r['cesure_year'],
             'entry': r['entry_year'] or 1}
     removes = {1: set(), 2: set(), 3: set()}
     adds = {1: set(), 2: set(), 3: set()}
@@ -4307,8 +4516,16 @@ def _year_rosters(pdb, pid, comp=None):
 
     def left_before(sid, year):
         m = meta.get(sid)
-        return bool(m and m['statut'] in _STUDENT_LEFT_STATUSES
-                    and m['abandon_year'] is not None and m['abandon_year'] < year)
+        if not m:
+            return False
+        # Abandon : sorti APRÈS l'année d'arrêt (il reste visible sur celle-ci)
+        if (m['statut'] in _STUDENT_LEFT_STATUSES
+                and m['abandon_year'] is not None and m['abandon_year'] < year):
+            return True
+        # Césure : absent DÈS son année de césure, et des suivantes — il reprend
+        # l'année d'après dans la cohorte suivante. L'onglet Effectifs le réaffiche
+        # (grisé) sur son année de césure, mais il sort des notes et du jury.
+        return bool(m['cesure_year'] is not None and year >= m['cesure_year'])
 
     rosters = {}
     for y in (1, 2, 3):
@@ -4319,6 +4536,9 @@ def _year_rosters(pdb, pid, comp=None):
             survivors = {sid for sid in rosters[y - 1]
                          if sid not in failed_at[y - 1] and not left_before(sid, y)}
             base = survivors | entrants
+        # Filtre appliqué à TOUTE la base, y compris l'année 1 et les entrants
+        # directs : une césure posée sur leur année d'entrée doit les en sortir.
+        base = {sid for sid in base if not left_before(sid, y)}
         rosters[y] = (base - removes[y]) | (adds[y] & set(meta.keys()))
     return rosters
 
@@ -4489,8 +4709,7 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     # → masquées de la grille de notes.
     components = _visible_note_components(ref.get('components', []), competences)
     marks = {}
-    for r in pdb.execute('''SELECT student_id, matiere_code, note, mention FROM student_marks
-                            WHERE promotion_id=? AND semester=? AND note IS NOT NULL''', (pid, semester)):
+    for r in _marks_rows(pdb, pid, semester):
         marks[f"{r['student_id']}_{r['matiere_code']}"] = r['mention'] if r['mention'] else r['note']
     averages = _semester_competence_averages(pdb, pid, semester, competences, components)
     sem_num = int(semester[1:])
@@ -4744,9 +4963,7 @@ def _saisie_payload(pdb, pid, semester, formation, teacher_name=None):
             marks[f"{r['student_id']}_{r['code']}"] = r['mention'] if r['mention'] else r['note']
     keys = {grp['key'] for grp in out_groups}
     official = {}   # note matière actuelle (Bulletins) — affichée à côté de la moyenne calculée
-    for r in pdb.execute('''SELECT student_id, matiere_code, note, mention FROM student_marks
-                            WHERE promotion_id=? AND semester=? AND note IS NOT NULL''',
-                         (pid, semester)):
+    for r in _marks_rows(pdb, pid, semester):
         if r['student_id'] in sids and r['matiere_code'] in keys:
             official[f"{r['student_id']}_{r['matiere_code']}"] = r['mention'] if r['mention'] else r['note']
     return {**base, 'available': True, 'groups': out_groups, 'students': students,
@@ -5207,8 +5424,7 @@ def export_promotion_notes(pid, semester):
         '''SELECT id, numero, nom, prenom, naissance FROM promotion_students
            WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,)).fetchall()
     marks = {}
-    for r in pdb.execute('''SELECT student_id, matiere_code, note, mention FROM student_marks
-                            WHERE promotion_id=? AND semester=? AND note IS NOT NULL''', (pid, semester)):
+    for r in _marks_rows(pdb, pid, semester):
         marks[(r['student_id'], r['matiere_code'])] = r['mention'] if r['mention'] else r['note']
 
     formation = (promo['formation'] or '').upper()

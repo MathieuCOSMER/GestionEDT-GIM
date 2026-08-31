@@ -2642,6 +2642,7 @@ let _promoData = null;
 let _promoId = null;
 let _effData = null;      // effectif de l'année sélectionnée (onglet Effectifs)
 let _effYear = 1;         // année d'étude affichée (1..3)
+let _cesData = null;      // étudiants en césure de la promotion (sous-onglet Effectifs)
 let _redData = null;      // redoublants (RED) de la promotion + décisions
 
 let _promoCoeffSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
@@ -3623,7 +3624,7 @@ function _promoProgrammeSelector() {
 
 function _statutColor(s) {
     return s === 'Actif' ? '#dcfce7' : (s === 'Abandon' ? '#fee2e2'
-        : (s === 'RED' ? '#fef3c7' : '#e5e7eb'));
+        : (s === 'RED' ? '#fef3c7' : (s === 'Césure' ? '#e0e7ff' : '#e5e7eb')));
 }
 
 function _effYearLabel(y) {
@@ -3637,7 +3638,7 @@ async function loadEffectif() {
     const el = document.getElementById('promo-content');
     const sel = document.getElementById('eff-year-select');
     if (!_promoId) {
-        _effData = null; _redData = null;
+        _effData = null; _redData = null; _cesData = null;
         if (sel) sel.innerHTML = '';
         el.innerHTML = '<div class="empty">Sélectionnez une promotion.</div>';
         return;
@@ -3646,10 +3647,11 @@ async function loadEffectif() {
         `<option value="${y}" ${y === _effYear ? 'selected' : ''}>${_effYearLabel(y)}</option>`).join('');
     el.innerHTML = '<div class="spinner">Chargement…</div>';
     try {
-        const [eff, red] = await Promise.all([
+        const [eff, red, ces] = await Promise.all([
             api(`/promotions/${_promoId}/effectif/${_effYear}`),
-            api(`/promotions/${_promoId}/red`)]);
-        _effData = eff; _redData = red;
+            api(`/promotions/${_promoId}/red`),
+            api(`/promotions/${_promoId}/cesure`)]);
+        _effData = eff; _redData = red; _cesData = ces;
     } catch (e) { toast('Erreur : ' + e.message, 'error'); el.innerHTML = '<div class="empty">Erreur de chargement.</div>'; return; }
     renderPromoEffectif();
 }
@@ -3807,6 +3809,13 @@ function renderPromoEffectif() {
         `<select onchange="changeAbandonSemestre(${s.id}, this.value)"
             style="margin-left:6px;padding:3px;border:1px solid #d1d5db;border-radius:4px">
             <option value="">— sem. —</option>${yearSems.map(se => `<option ${se === s.abandon_semestre ? 'selected' : ''}>${se}</option>`).join('')}</select>`;
+    // Césure : l'année d'absence. Par défaut celle affichée — il reprendra cette
+    // même année dans la cohorte suivante.
+    const cesSelect = s => s.statut !== 'Césure' ? '' :
+        `<select onchange="changeCesureYear(${s.id}, this.value)" title="Année d'absence"
+            style="margin-left:6px;padding:3px;border:1px solid #d1d5db;border-radius:4px">
+            <option value="">— année —</option>${[1, 2, 3].map(yy =>
+                `<option value="${yy}" ${yy === s.cesure_year ? 'selected' : ''}>Année ${yy}</option>`).join('')}</select>`;
     const tag = (txt, bg, title) => `<span title="${title || ''}" style="display:inline-block;padding:1px 6px;border-radius:6px;font-size:.66rem;font-weight:700;background:${bg};margin-left:6px">${txt}</span>`;
     // Profil d'entrée (BAC / cursus / recrutement) : listes déroulantes
     const profOpts = d.profile_options || { bac: [], cursus: [], recrutement: [] };
@@ -3866,7 +3875,9 @@ function renderPromoEffectif() {
         const studs = d.students.filter(s => (s.formation || 'FTP') === formation);
         const badges = d.statuses.map(st =>
             `<span style="display:inline-block;padding:3px 10px;border-radius:12px;margin-right:8px;font-size:.8rem;background:${_statutColor(st)}">${st} : <strong>${sc[st] || 0}</strong></span>`).join('') +
-            `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:.8rem;background:#e0e7ff">Total : <strong>${sc.total || studs.length}</strong></span>`;
+            `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:.8rem;background:#e0e7ff">Total : <strong>${sc.total || studs.length}</strong></span>`
+            + (sc.origin ? `<span title="Étudiants venus d'une autre cohorte : redoublants et reprises après césure. Leur statut est « Actif » — ils recommencent une année ici, ils n'y sont pas ajournés."
+                style="display:inline-block;padding:3px 10px;border-radius:12px;margin-left:8px;font-size:.8rem;background:#ddd6fe">dont redoublants / césure : <strong>${sc.origin}</strong></span>` : '');
         const header = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:16px 0 8px">
             <h3 style="margin:0;color:#374151">${label}</h3>
             <button class="btn btn-secondary btn-sm" onclick="openPromoImport('${formation}')">Importer un effectif</button>
@@ -3876,9 +3887,13 @@ function renderPromoEffectif() {
             return header + `<div style="margin-bottom:8px">${badges}</div>
                 <div class="empty" style="margin-bottom:6px">Aucun étudiant dans cette sous-cohorte pour l'année ${y}. Importez un effectif ou ajoutez un étudiant.</div>`;
         }
-        const rows = studs.map((s, i) => `<tr>
+        const rows = studs.map((s, i) => `<tr${s.cesure ? ' style="opacity:.55" title="En césure cette année — hors effectif, hors notes et hors jury"' : ''}>
             <td style="color:#9ca3af">${i + 1}</td>
-            <td><strong>${esc(s.nom || '')}</strong>${(s.entrant && y > 1) ? tag('entrant', '#ddd6fe', 'Entré directement en année ' + y + ' (redoublant)') : ''}${s.manual === 'add' ? tag('ajouté', '#dbeafe', 'Ajouté manuellement à cette année') : ''}${redBadge(s)}</td>
+            <td><strong>${esc(s.nom || '')}</strong>${
+                s.origin ? tag(s.origin.reason === 'CESURE' ? 'reprise césure' : 'redoublant', '#ddd6fe',
+                    (s.origin.reason === 'CESURE' ? 'Reprise après césure — venu de la promotion ' : 'Redoublant — venu de la promotion ') + s.origin.promo)
+                : ((s.entrant && y > 1) ? tag('entrant', '#ddd6fe', 'Entré directement en année ' + y + ' (redoublant)') : '')}${s.manual === 'add' ? tag('ajouté', '#dbeafe', 'Ajouté manuellement à cette année') : ''}${redBadge(s)}${
+                s.cesure ? tag('césure', '#e0e7ff', 'En césure sur cette année — il reprendra cette même année dans la cohorte suivante') : ''}</td>
             <td>${esc(s.prenom || '')}</td>
             <td>${esc(s.numero || '')}</td>
             <td>${esc(s.naissance || '')}</td>
@@ -3886,7 +3901,7 @@ function renderPromoEffectif() {
             <td>${profSelect(s, 'cursus')}</td>
             <td>${profSelect(s, 'recrutement')}</td>
             <td style="white-space:nowrap"><select onchange="changeStudentStatus(${s.id}, this.value)"${s.statut === 'RED' ? ' title="Statut issu de la décision de jury — se traite dans le tableau des redoublants, plus bas"' : ''}
-                style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${_statutColor(s.statut)}">${optList(s.statut)}</select>${semSelect(s)}</td>
+                style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${_statutColor(s.statut)}">${optList(s.statut)}</select>${semSelect(s)}${cesSelect(s)}</td>
             <td style="white-space:nowrap">${cohorteToggle(s)} <button class="btn btn-secondary btn-sm" title="Retirer de l'effectif de l'année ${y}${y === 1 ? ' (et des années suivantes)' : ''} — ne supprime pas ses notes" onclick="removeStudentYear(${s.id})">🗑</button></td>
         </tr>`).join('');
         return header + `<div style="margin-bottom:8px">${badges}</div>` + profLegend() + `
@@ -3906,6 +3921,7 @@ function renderPromoEffectif() {
         + `<div style="font-size:.82rem;color:#6b7280;margin-bottom:10px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px">
             Effectif de l'<strong>année ${y}</strong>. Il se compose automatiquement à partir du jury (les ajournés <strong>AJ/RED</strong> et les départs sont retirés des années suivantes) et reste ajustable à la main (+ Étudiant, retrait 🗑, ou import). Le retrait n'enlève l'étudiant que de l'effectif — ses notes sont conservées.</div>`
         + (d.subcohorts || ['FTP', 'ALT']).map(section).join('')
+        + _renderCesureSection()
         + _renderRedSection();
     applyPromoReadOnly();
 }
@@ -3949,6 +3965,62 @@ function _renderRedSection() {
         ${body}</div>`;
 }
 
+// Année de césure d'un étudiant (année d'absence, qu'il reprendra dans la cohorte suivante)
+async function changeCesureYear(sid, year) {
+    try {
+        await api(`/promotions/${_promoId}/students/${sid}`,
+            { method: 'PUT', body: JSON.stringify({ cesure_year: parseInt(year) || null }) });
+        loadEffectif();
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// Étudiants en césure : réinscription dans la cohorte suivante, sur la
+// sous-cohorte choisie (il peut passer de FTP à ALT au retour).
+function _renderCesureSection() {
+    const r = _cesData;
+    if (!r) return '';
+    const target = esc(r.target_promo_name || '—');
+    const dopt = (val, label, cur) =>
+        `<option value="${val}"${cur === val ? ' selected' : ''}>${label}</option>`;
+    let body;
+    if (!r.students.length) {
+        body = `<div class="empty" style="margin:6px 0">Aucun étudiant en césure — passez son statut à « Césure » dans le tableau ci-dessus et indiquez l'année d'absence.</div>`;
+    } else {
+        const rows = r.students.map((s, i) => `<tr>
+            <td style="color:#9ca3af">${i + 1}</td>
+            <td><strong>${esc(s.nom || '')}</strong></td>
+            <td>${esc(s.prenom || '')}</td>
+            <td>${esc(s.numero || '')}</td>
+            <td>${esc(s.formation || 'FTP')}</td>
+            <td style="text-align:center">${s.year || '<span style="color:#b45309">à préciser</span>'}</td>
+            <td><select onchange="decideCesure(${s.student_id}, this.value)"${s.year ? '' : ' disabled'}
+                style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${s.decision ? '#dbeafe' : '#fff'}">
+                ${dopt('', '— à décider —', s.decision || '')}
+                ${dopt('FTP', `Reprise ${target} · FTP`, s.decision)}
+                ${dopt('ALT', `Reprise ${target} · ALT`, s.decision)}
+            </select></td>
+        </tr>`).join('');
+        body = `<div style="overflow:auto;max-height:40vh;border:1px solid #e5e7eb;border-radius:8px">
+            <table class="pn-table" style="table-layout:auto;width:100%">
+                <thead><tr><th style="width:40px">#</th><th>Nom</th><th>Prénom</th><th>N° Apogée</th><th>Sous-cohorte</th><th>Année de césure</th><th style="width:260px">Reprise</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table></div>`;
+    }
+    const warn = !r.target_exists ? `<span style="color:#b45309;font-size:.8rem;margin-left:8px">Promo cible « ${target} » inexistante — elle sera créée automatiquement à la 1re réinscription.</span>` : '';
+    return `<div style="margin-top:24px;border-top:2px solid #e5e7eb;padding-top:14px">
+        <h3 style="margin:0 0 4px;color:#374151">Césure → ${target}${warn}</h3>
+        <div style="font-size:.82rem;color:#6b7280;margin-bottom:8px">Un étudiant en césure s'absente une année entière : il sort de l'effectif, des notes et du jury de cette année-là, puis <strong>reprend cette même année</strong> dans la cohorte suivante (<strong>${target}</strong>). Il peut revenir en <strong>FTP</strong> ou en <strong>ALT</strong>. Ses années déjà validées le suivent — ses notes ne sont pas recopiées.</div>
+        ${body}</div>`;
+}
+
+async function decideCesure(sid, formation) {
+    try {
+        await api(`/promotions/${_promoId}/cesure/${sid}`, { method: 'POST', body: JSON.stringify({ formation }) });
+        await loadEffectif();
+        toast(formation ? 'Reprise enregistrée' : 'Reprise annulée');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); loadEffectif(); }
+}
+
 async function decideRed(sid, decision) {
     try {
         await api(`/promotions/${_promoId}/red/${sid}/decide`, { method: 'POST', body: JSON.stringify({ decision }) });
@@ -3958,8 +4030,10 @@ async function decideRed(sid, decision) {
 }
 
 async function changeStudentStatus(sid, statut) {
+    // Césure : l'année affichée est celle de l'absence (modifiable ensuite)
+    const body = statut === 'Césure' ? { statut, cesure_year: _effYear } : { statut };
     try {
-        await api(`/promotions/${_promoId}/students/${sid}`, { method: 'PUT', body: JSON.stringify({ statut }) });
+        await api(`/promotions/${_promoId}/students/${sid}`, { method: 'PUT', body: JSON.stringify(body) });
         loadEffectif();
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
