@@ -4039,7 +4039,11 @@ function renderPromoEffectif() {
                 s.origin ? tag(s.origin.reason === 'CESURE' ? 'reprise césure' : 'redoublant', '#ddd6fe',
                     (s.origin.reason === 'CESURE' ? 'Reprise après césure — venu de la promotion ' : 'Redoublant — venu de la promotion ') + s.origin.promo)
                 : ((s.entrant && y > 1) ? tag('entrant', '#ddd6fe', 'Entré directement en année ' + y + ' (redoublant)') : '')}${s.manual === 'add' ? tag('ajouté', '#dbeafe', 'Ajouté manuellement à cette année') : ''}${redBadge(s)}${
-                s.cesure ? tag('césure', '#e0e7ff', 'En césure sur cette année — il reprendra cette même année dans la cohorte suivante') : ''}</td>
+                s.cesure ? tag('césure', '#e0e7ff', 'En césure sur cette année — il reprendra cette même année dans la cohorte suivante') : ''}${
+                s.mobility ? tag('MI ' + s.mobility.semester, '#cffafe',
+                    'Mobilité internationale en ' + s.mobility.semester
+                    + (s.mobility.etablissement ? ' — ' + s.mobility.etablissement : '')
+                    + ' : UE validées par équivalence') : ''}</td>
             <td>${esc(s.prenom || '')}</td>
             <td>${esc(s.numero || '')}</td>
             <td>${esc(s.naissance || '')}</td>
@@ -4047,6 +4051,7 @@ function renderPromoEffectif() {
             <td>${profSelect(s, 'bac')}</td>
             <td>${profSelect(s, 'cursus')}</td>
             <td>${profSelect(s, 'recrutement')}</td>
+            <td style="white-space:nowrap">${miCell(s)}</td>
             <td style="white-space:nowrap"><select onchange="changeStudentStatus(${s.id}, this.value)"${s.statut === 'RED' ? ' title="Statut issu de la décision de jury — se traite dans le tableau des redoublants, plus bas"' : ''}
                 style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${_statutColor(s.statut)}">${optList(s.statut)}</select>${semSelect(s)}${cesSelect(s)}</td>
             <td style="white-space:nowrap">${cohorteToggle(s)} <button class="btn btn-secondary btn-sm" title="Retirer de l'effectif de l'année ${y}${y === 1 ? ' (et des années suivantes)' : ''} — ne supprime pas ses notes" onclick="removeStudentYear(${s.id})">🗑</button></td>
@@ -4059,6 +4064,7 @@ function renderPromoEffectif() {
                         <th title="BAC obtenu (STI2D, GEN, PRO, STL, Autre)">BAC</th>
                         <th title="Cursus antérieur — ING: École d'ingé, REP: reprise d'étude, BAC: PostBac, PP: PostPrépa, BTS: post-BTS">Cursus</th>
                         <th title="Recrutement — PS: ParcourSup, EC: eCandidat, ADIUT: étrangers">Recrut.</th>
+                        <th title="Mobilité internationale : semestre effectué dans un établissement partenaire. Ses UE sont validées par équivalence, sans note.">MI</th>
                         <th style="width:210px">Statut</th><th style="width:130px">Cohorte / retrait</th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
@@ -4076,6 +4082,37 @@ function renderPromoEffectif() {
 
 // Renvoi vers l'onglet Redoublants : les Effectifs signalent ce qui reste à traiter
 // mais la décision se prend au même endroit que le reste du circuit.
+// ===== Mobilité internationale (MI) =====
+// Un semestre effectué dans un établissement partenaire (CÉGEP de Montréal…) :
+// ses UE sont validées PAR ÉQUIVALENCE, sans note. L'étudiant reste dans
+// l'effectif de son année ; la moyenne annuelle ne retient que l'autre semestre.
+function miCell(s) {
+    const sems = (_effData && _effData.year_semesters) || [];
+    const mi = s.mobility || null;
+    const opts = ['<option value="">—</option>'].concat(sems.map(sm =>
+        `<option value="${sm}"${mi && mi.semester === sm ? ' selected' : ''}>${sm}</option>`)).join('');
+    const sel = `<select onchange="setMobility(${s.id}, this.value)"
+        title="Semestre effectué en mobilité internationale — ses UE sont validées par équivalence"
+        style="padding:2px 4px;border:1px solid #d1d5db;border-radius:4px;font-size:.78rem;background:${mi ? '#cffafe' : '#fff'}">${opts}</select>`;
+    if (!mi) return sel;
+    return sel + `<br><input value="${esc(mi.etablissement || '')}" placeholder="établissement"
+        onchange="setMobility(${s.id}, '${mi.semester}', this.value)"
+        title="Établissement d'accueil" style="width:120px;margin-top:2px;font-size:.72rem;padding:2px 4px">`;
+}
+
+async function setMobility(sid, semester, etablissement) {
+    if (etablissement === undefined) {     // changement de semestre : on garde l'établissement
+        const st = ((_effData || {}).students || []).find(x => x.id === sid);
+        etablissement = (st && st.mobility && st.mobility.etablissement) || '';
+    }
+    try {
+        _effData = await api(`/promotions/${_promoId}/students/${sid}/mobility`,
+            { method: 'PUT', body: JSON.stringify({ year: _effYear, semester, etablissement }) });
+        renderPromoEffectif();
+        toast(semester ? `Mobilité internationale en ${semester}` : 'Mobilité retirée');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
 function _renderRedLink() {
     const r = _redData;
     if (!r || !r.students || !r.students.length) return '';
@@ -5185,15 +5222,22 @@ function renderNotesGrid() {
                 prevCell(g, null);
         }).join('') : '';
         const prevSemCells = cg.prevSem ? prevSems.map(g => prevCell(g, '#818cf8')).join('') : '';
+        const mi = (d.mobility || {})[s.id];      // semestre en mobilité internationale
         const avgCells = cg.ue ? comps.map((c, ci) => {
+            if (mi !== undefined) return _miUeCell(mi, ci);
             const st = _ueStatus(avg[ci], ya[ci]);
             // ↺ : redoublant dont cette UE garde la note du passage précédent (meilleure des deux)
             const rk = (d.red_kept || {})[s.id + '_' + ci];
             return `<td class="nz-avg" data-sid="${s.id}" data-ci="${ci}" title="${_UE_TITLE[st]}${rk === undefined ? '' : ' — note conservée du passage précédent (redoublant : meilleure des deux)'}" style="text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}">${_fmtAvg(avg[ci])}${rk === undefined ? '' : ' <span style="font-size:.7rem;color:#7c3aed">↺</span>'}</td>`;
         }).join('') : '';
-        const cells = cg.notes ? mats.map((m, mi) => {
+        const cells = cg.notes ? mats.map((m, mi2) => {
             const v = d.marks[s.id + '_' + m.code];
-            const bl = mi === 0 ? ';border-left:4px solid #6b7280' : '';
+            const bl = mi2 === 0 ? ';border-left:4px solid #6b7280' : '';
+            // Semestre en mobilité : aucune note de matière n'est saisie ici
+            if (mi !== undefined) {
+                return `<td title="Semestre effectué en mobilité internationale${mi ? ' — ' + esc(mi) : ''} : UE validées par équivalence, pas de note de matière"
+                    style="padding:2px;text-align:center;background:#f9fafb;color:#d1d5db${bl}">—</td>`;
+            }
             // Matière en mode « calculée » : la note vient de la saisie enseignante
             // et est refaite à chaque enregistrement — elle n'est pas éditable ici.
             if (_noteSource(d, m.code) === 'saisie') {
@@ -5216,7 +5260,7 @@ function renderNotesGrid() {
                 value="${v === undefined || v === null ? '' : v}"${special ? ' oninput="onNotesSpecialInput(this)"' : ''}${isPen ? ' readonly onclick="openPenaltyEditor(this)" title="Cliquez pour saisir les heures d\'absence ou directement le malus"' : ''}
                 style="width:43px;padding:2px 1px;text-align:center;font-size:.9rem;border:1px solid #d1d5db;border-radius:4px${isPen ? ';cursor:pointer;background:#fff' : ''}">${calc}${gapTag}</td>`;
         }).join('') : '';
-        return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || ''))}" style="max-width:155px;font-size:.78rem;padding:2px 4px"><div style="display:flex;align-items:center;gap:4px"><button onclick="deleteStudentNotes(${s.id})" title="Supprimer les notes de cet étudiant pour ce semestre" style="border:none;background:none;cursor:pointer;color:#b91c1c;font-size:.78rem;padding:0;line-height:1;flex:0 0 auto">🗑</button><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</span></div></td>${prevYearCells}${bilanCells}${prevSemCells}${avgCells}${cells}</tr>`;
+        return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || '')) + (mi === undefined ? '' : ' — mobilité internationale' + (mi ? ' : ' + esc(mi) : ''))}" style="max-width:155px;font-size:.78rem;padding:2px 4px"><div style="display:flex;align-items:center;gap:4px"><button onclick="deleteStudentNotes(${s.id})" title="Supprimer les notes de cet étudiant pour ce semestre" style="border:none;background:none;cursor:pointer;color:#b91c1c;font-size:.78rem;padding:0;line-height:1;flex:0 0 auto">🗑</button><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}${mi === undefined ? '' : ' <span style="font-size:.62rem;font-weight:700;color:#0e7490">MI</span>'}</span></div></td>${prevYearCells}${bilanCells}${prevSemCells}${avgCells}${cells}</tr>`;
     }).join('');
     const fbox = (key, lbl, show) => show ? `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">
         <input type="checkbox" ${cg[key] ? 'checked' : ''} onchange="toggleNotesColGroup('${key}', this.checked)">${lbl}</label>` : '';
@@ -5335,6 +5379,7 @@ function refreshStudentAverages(sid) {
     const sem = _liveSemAverages(d, sid);
     const { year, gim } = _liveYearAverages(d, sid, sem);
     document.querySelectorAll(`#notes-content td.nz-avg[data-sid="${sid}"]`).forEach(td => {
+        if (td.classList.contains('nz-mi')) return;     // UE validée par équivalence
         const ci = +td.dataset.ci;
         const rk = (d.red_kept || {})[sid + '_' + ci];
         const st = _ueStatus(sem[ci], year[ci]);
@@ -5468,6 +5513,13 @@ function _ueStatus(semAvg, annual) {
     if (annual !== undefined && annual !== null && annual >= 10) return 'comp';
     return 'ko';
 }
+// Cellule d'UE d'un semestre effectué en mobilité internationale : validée par
+// équivalence, donc pas de note — le fond reste celui d'une UE acquise.
+function _miUeCell(etab, ci) {
+    return `<td class="nz-avg nz-mi" data-ci="${ci}" title="UE validée par équivalence — semestre en mobilité internationale${etab ? ' : ' + esc(etab) : ''}"
+        style="text-align:center;font-weight:700;font-size:.8rem;background:#cffafe;color:#0e7490${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}">MI</td>`;
+}
+
 function _yearUeStatus(annual) {
     if (annual === undefined || annual === null) return 'none';
     return annual >= 10 ? 'ok' : 'ko';
@@ -5581,8 +5633,12 @@ function renderJuryGrid() {
             } else {
                 codeCell = `<td title="${v.code ? _JURY_CODE_TITLE[v.code] : 'Non évaluée'}" style="text-align:center;font-weight:700;font-size:.62rem;${v.code ? _JURY_CODE_STYLE[v.code] : 'color:#9ca3af'}">${v.code || '—'}</td>`;
             }
-            return `<td style="text-align:center;font-size:.82rem;color:#6b7280${bl}">${_fmtAvg(v.odd)}</td>` +
-                `<td style="text-align:center;font-size:.82rem;color:#6b7280">${_fmtAvg(v.even)}</td>` +
+            // MI : semestre effectué en mobilité internationale, UE validée par équivalence
+            const miS = (d.mobility || {})[s.id] || {};
+            const semCell = (val, sem, extra) => (miS[sem] !== undefined)
+                ? `<td title="UE validée par équivalence — mobilité internationale${miS[sem] ? ' : ' + esc(miS[sem]) : ''}" style="text-align:center;font-size:.72rem;font-weight:700;background:#cffafe;color:#0e7490${extra}">MI</td>`
+                : `<td style="text-align:center;font-size:.82rem;color:#6b7280${extra}">${_fmtAvg(val)}</td>`;
+            return semCell(v.odd, d.semesters[0], bl) + semCell(v.even, d.semesters[1], '') +
                 `<td style="text-align:center;font-weight:700;font-size:.88rem;${aStl}">${_fmtAvg(v.annual)}</td>` + codeCell;
         }).join('');
         const gimCell = `<td style="text-align:center;font-weight:700;font-size:.88rem;background:#f0fdf4;color:#166534;border-left:3px solid #22c55e">${_fmtAvg(row.gim)}</td>`;

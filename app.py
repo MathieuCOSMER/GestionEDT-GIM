@@ -913,6 +913,22 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE
         )
     ''')
+    # Mobilité sortante : semestre effectué dans un établissement partenaire
+    # (CÉGEP de Montréal…). Les UE du semestre sont validées PAR ÉQUIVALENCE :
+    # aucune note n'y est saisie, et la moyenne annuelle ne retient que l'autre
+    # semestre. L'étudiant reste dans l'effectif de son année.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS student_mobility (
+            promotion_id  INTEGER NOT NULL,
+            student_id    INTEGER NOT NULL,
+            semester      TEXT NOT NULL,
+            etablissement TEXT,
+            updated_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (promotion_id, student_id, semester),
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
     # Origine OFFICIELLE de la note matière, par matière × face (voir
     # _matiere_sources) : 'saisie' = calculée depuis les sous-notes (onglet
     # Saisie Notes), 'import' = importée / saisie à la main dans Bulletins.
@@ -3168,7 +3184,15 @@ def _year_effectif_payload(pdb, pid, year):
         sub_counts[f]['origin'] = sum(1 for s in students
                                       if s.get('origin')
                                       and (s.get('formation') or 'FTP') == f)
+    # Mobilité internationale (MI) : semestre de l'année effectué ailleurs
+    s_odd, s_even = f'S{year * 2 - 1}', f'S{year * 2}'
+    mob = _mobility_map(pdb, pid)
+    for st in students:
+        v = mob.get(st['id']) or {}
+        sem = next((sm for sm in (s_odd, s_even) if sm in v), None)
+        st['mobility'] = {'semester': sem, 'etablissement': v.get(sem, '')} if sem else None
     return {'promotion': dict(promo), 'year': year, 'students': students,
+            'year_semesters': [s_odd, s_even],
             'sub_counts': sub_counts, 'subcohorts': list(_SUBCOHORTS),
             'total': len(students), 'statuses': _STUDENT_STATUSES,
             'status_choices': _STUDENT_STATUS_CHOICES,
@@ -3847,6 +3871,52 @@ def _code_by_kind(components, kind):
             return c.get('code')
     return None
 
+def _mobility_map(pdb, pid, semester=None):
+    """{student_id: {semestre: établissement}} — semestres effectués en mobilité
+    sortante. Restreint à `semester` s'il est fourni."""
+    sql = 'SELECT student_id, semester, etablissement FROM student_mobility WHERE promotion_id=?'
+    args = [pid]
+    if semester:
+        sql += ' AND semester=?'
+        args.append(semester)
+    out = {}
+    for r in pdb.execute(sql, args):
+        out.setdefault(r['student_id'], {})[r['semester']] = r['etablissement'] or ''
+    return out
+
+@app.route('/api/promotions/<int:pid>/students/<int:sid>/mobility', methods=['PUT'])
+def set_student_mobility(pid, sid):
+    """Mobilité sortante d'un étudiant pour une ANNÉE : {year, semester, etablissement}.
+    `semester` vide efface la mobilité de cette année. Les UE du semestre concerné
+    sont ensuite validées par équivalence (aucune note à saisir)."""
+    err = _require_admin()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotion_students WHERE id=? AND promotion_id=?',
+                       (sid, pid)).fetchone():
+        return error_response('Étudiant introuvable', 404)
+    data = request.get_json() or {}
+    try:
+        year = int(data.get('year') or 0)
+    except (TypeError, ValueError):
+        year = 0
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    sem = (data.get('semester') or '').strip().upper()
+    annee = (f'S{year * 2 - 1}', f'S{year * 2}')
+    if sem and sem not in annee:
+        return error_response(f'Semestre invalide pour l\'année {year}', 400)
+    pdb.execute('DELETE FROM student_mobility WHERE promotion_id=? AND student_id=? AND semester IN (?,?)',
+                (pid, sid, annee[0], annee[1]))
+    if sem:
+        pdb.execute('''INSERT INTO student_mobility(promotion_id, student_id, semester, etablissement)
+                       VALUES(?,?,?,?)''', (pid, sid, sem, (data.get('etablissement') or '').strip()))
+    pdb.commit()
+    _audit('MOBILITY', ip=_client_ip(), user=session.get('user'),
+           promo=pid, student=sid, year=year, semester=sem or '-')
+    return jsonify(_year_effectif_payload(pdb, pid, year))
+
 def _origin_links(pdb, pid, reason=None):
     """{student_id: (origin_student_id, origin_promotion_id, entry_year)} pour les
     étudiants de `pid` venus d'une autre cohorte (césure ou redoublement).
@@ -3978,6 +4048,13 @@ def _semester_competence_averages(pdb, pid, semester, competences, components=No
                     row[str(ci)] = ov
                     if kept_out is not None:
                         kept_out[f'{sid}_{ci}'] = ov
+    # Mobilité internationale : semestre validé PAR ÉQUIVALENCE, sans note. Ses UE
+    # ne valent aucune moyenne, donc seul l'autre semestre entre dans l'annuelle.
+    for _sid in _mobility_map(pdb, pid, semester):
+        _row = averages.get(str(_sid))
+        if _row is not None:
+            for _ci in _row:
+                _row[_ci] = None
     return averages
 
 def _year_competence_averages(pdb, pid, s_odd, s_even, ref_all):
@@ -4754,7 +4831,12 @@ def _jury_payload(pdb, pid, year, formation=None):
         # red_eligible : candidat ajourné → le jury peut choisir AJ ou RED (menu déroulant)
         rows[sid] = {'ues': per_ue, 'gim': gim, 'decision': dec,
                      'red_eligible': dec in ('AJ', 'RED')}
+    mob = _mobility_map(pdb, pid)
     return {'year': year, 'semesters': [s_odd, s_even],
+            # {sid: {semestre: établissement}} limité aux 2 semestres de l'année
+            'mobility': {str(k): {sm: et for sm, et in v.items() if sm in (s_odd, s_even)}
+                         for k, v in mob.items()
+                         if any(sm in (s_odd, s_even) for sm in v)},
             'ues': [{'num': u, 'name': names_by_num.get(u, ''), 'terminal': u in terminal}
                     for u in ues],
             'students': students, 'rows': rows}
@@ -4949,6 +5031,10 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
             # 'saisie' = note calculée (lecture seule dans Bulletins) / 'import' =
             # note importée ou saisie à la main (le recalcul ne l'écrase pas)
             'note_sources': note_sources, 'computed': computed,
+            # Mobilité sortante : {sid: établissement} pour CE semestre — UE validées
+            # par équivalence, aucune note de matière à saisir
+            'mobility': {str(k): v.get(semester, '') for k, v in
+                         _mobility_map(pdb, pid, semester).items()},
             # UE dont la note vient du passage précédent d'un redoublant (meilleure des deux)
             'red_kept': red_kept,
             'students': students, 'marks': marks, 'averages': averages, 'previous': previous,
