@@ -549,6 +549,7 @@
         <button type="button" id="promo-subtab-saisie" class="subtab" onclick="showPromoTab('saisie')">Saisie Notes</button>
         <button type="button" id="promo-subtab-notes" class="subtab" onclick="showPromoTab('notes')">Bulletins</button>
         <button type="button" id="promo-subtab-jury" class="subtab" onclick="showPromoTab('jury')">Jury</button>
+        <button type="button" id="promo-subtab-redoublants" class="subtab" onclick="showPromoTab('redoublants')">Redoublants</button>
         <button type="button" id="promo-subtab-actions" class="subtab" onclick="showPromoTab('actions')">Actions</button>
     </div>
     <div id="promo-tab-effectif">
@@ -657,6 +658,9 @@
             <span style="background:#fef08a;color:#854d0e;padding:2px 10px;border-radius:4px">Stages FTP</span>
             <span style="background:#fed7aa;color:#9a3412;padding:2px 10px;border-radius:4px">Entreprise ALT</span>
         </div>
+    </div>
+    <div id="promo-tab-redoublants" style="display:none">
+        <div id="redoublants-content"><div class="empty">Choisissez une promotion.</div></div>
     </div>
     <div id="promo-tab-actions" style="display:none">
         <div style="padding:20px;display:flex;gap:12px;flex-wrap:wrap">
@@ -2695,7 +2699,7 @@ let _promoTab = 'effectif';
 const _promoTeacherTabs = ['effectif', 'saisie', 'notes', 'jury'];
 function applyPromoSubtabsForRole() {
     const teacherView = state.role === 'teacher';
-    ['effectif', 'tuteurs', 'groupes', 'calendrier', 'saisie', 'notes', 'jury', 'actions'].forEach(t => {
+    ['effectif', 'tuteurs', 'groupes', 'calendrier', 'saisie', 'notes', 'jury', 'redoublants', 'actions'].forEach(t => {
         const btn = document.getElementById('promo-subtab-' + t);
         if (btn) btn.style.display = (teacherView && !_promoTeacherTabs.includes(t)) ? 'none' : '';
     });
@@ -2704,7 +2708,7 @@ function applyPromoSubtabsForRole() {
 // Promotions et masque les boutons d'action (appelé après chaque rendu).
 function applyPromoReadOnly() {
     if (state.role !== 'teacher') return;
-    ['promo-content', 'tuteurs-content', 'notes-content', 'jury-content'].forEach(id => {
+    ['promo-content', 'tuteurs-content', 'notes-content', 'jury-content', 'redoublants-content'].forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
         el.querySelectorAll('input, select, textarea').forEach(i => i.disabled = true);
@@ -2720,7 +2724,7 @@ function showPromoTab(tab) {
     if (state.role === 'teacher' && !_promoTeacherTabs.includes(tab)) tab = 'effectif';
     _promoTab = tab;
     applyPromoSubtabsForRole();
-    ['effectif', 'tuteurs', 'groupes', 'calendrier', 'saisie', 'notes', 'jury', 'actions'].forEach(t => {
+    ['effectif', 'tuteurs', 'groupes', 'calendrier', 'saisie', 'notes', 'jury', 'redoublants', 'actions'].forEach(t => {
         document.getElementById('promo-subtab-' + t).classList.toggle('active', tab === t);
         document.getElementById('promo-tab-' + t).style.display = tab === t ? '' : 'none';
     });
@@ -2729,6 +2733,7 @@ function showPromoTab(tab) {
     else if (tab === 'saisie') loadSaisieGrid();
     else if (tab === 'notes') loadNotes();
     else if (tab === 'jury') loadJuryGrid();
+    else if (tab === 'redoublants') loadRedoublants();
     else if (tab === 'calendrier') loadCalendrier();
     else if (tab === 'groupes') loadPromoGroups();
 }
@@ -3637,6 +3642,7 @@ async function onPromoChange() {
     else if (_promoTab === 'saisie') loadSaisieGrid();
     else if (_promoTab === 'notes') loadNotesGrid();
     else if (_promoTab === 'jury') loadJuryGrid();
+    else if (_promoTab === 'redoublants') loadRedoublants();
     else if (_promoTab === 'calendrier') loadCalendrier();
     else if (_promoTab === 'groupes') loadPromoGroups();
 }
@@ -3964,50 +3970,23 @@ function renderPromoEffectif() {
             Effectif de l'<strong>année ${y}</strong>. Il se compose automatiquement à partir du jury (les ajournés <strong>AJ/RED</strong> et les départs sont retirés des années suivantes) et reste ajustable à la main (+ Étudiant, retrait 🗑, ou import). Le retrait n'enlève l'étudiant que de l'effectif — ses notes sont conservées.</div>`
         + (d.subcohorts || ['FTP', 'ALT']).map(section).join('')
         + _renderCesureSection()
-        + _renderRedSection();
+        + _renderRedLink();
     applyPromoReadOnly();
 }
 
-// Tableau des redoublants (RED) : bascule vers la promo cible (FTP/ALT) ou Abandon
-function _renderRedSection() {
+// Renvoi vers l'onglet Redoublants : les Effectifs signalent ce qui reste à traiter
+// mais la décision se prend au même endroit que le reste du circuit.
+function _renderRedLink() {
     const r = _redData;
-    if (!r) return '';
-    const target = esc(r.target_promo_name || '—');
-    const dopt = (val, label, cur) =>
-        `<option value="${val}"${cur === val ? ' selected' : ''}>${label}</option>`;
-    let body;
-    if (!r.students.length) {
-        body = `<div class="empty" style="margin:6px 0">Aucun étudiant redoublant (RED) — les décisions RED se posent dans l'onglet Jury.</div>`;
-    } else {
-        const rows = r.students.map((s, i) => `<tr>
-            <td style="color:#9ca3af">${i + 1}</td>
-            <td><strong>${esc(s.nom || '')}</strong></td>
-            <td>${esc(s.prenom || '')}</td>
-            <td>${esc(s.numero || '')}</td>
-            <td>${esc(s.formation || 'FTP')}</td>
-            <td style="text-align:center">${s.year}</td>
-            <td><select onchange="decideRed(${s.student_id}, this.value)"
-                style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${s.decision === 'ABANDON' ? '#fee2e2' : (s.decision ? '#dbeafe' : '#fff')}">
-                ${dopt('', '— à décider —', s.decision || '')}
-                ${dopt('FTP', `RED → ${target} · FTP`, s.decision)}
-                ${dopt('ALT', `RED → ${target} · ALT`, s.decision)}
-                ${dopt('ABANDON', 'Abandon', s.decision)}
-            </select></td>
-        </tr>`).join('');
-        body = `<div style="overflow:auto;max-height:40vh;border:1px solid #e5e7eb;border-radius:8px">
-            <table class="pn-table" style="table-layout:auto;width:100%">
-                <thead><tr><th style="width:40px">#</th><th>Nom</th><th>Prénom</th><th>N° Apogée</th><th>Sous-cohorte</th><th>Année RED</th><th style="width:260px">Décision</th></tr></thead>
-                <tbody>${rows}</tbody>
-            </table></div>`;
-    }
-    const warn = !r.target_exists ? `<span style="color:#b45309;font-size:.8rem;margin-left:8px">Promo cible « ${target} » inexistante — elle sera créée automatiquement à la 1re réinscription.</span>` : '';
-    return `<div style="margin-top:24px;border-top:2px solid #e5e7eb;padding-top:14px">
-        <h3 style="margin:0 0 4px;color:#374151">Redoublants (RED) → ${target}${warn}</h3>
-        <div style="font-size:.82rem;color:#6b7280;margin-bottom:8px">Un redoublant bascule dans la promotion dont la 1re année est un an après (<strong>${target}</strong>), à l'année qu'il redouble. Choisissez pour chacun : réinscription en <strong>FTP</strong> ou <strong>ALT</strong>, ou <strong>Abandon</strong>.</div>
-        ${body}</div>`;
+    if (!r || !r.students || !r.students.length) return '';
+    const todo = r.students.filter(x => !x.decision).length;
+    return `<div style="margin-top:24px;border-top:2px solid #e5e7eb;padding-top:14px;font-size:.86rem">
+        <strong>${r.students.length} redoublant(s)</strong> (décision de jury RED)${todo
+            ? ` — <strong style="color:#b45309">${todo} sans décision de réinscription</strong>` : ' — tous traités'}.
+        <button class="btn btn-secondary btn-sm" style="margin-left:10px" onclick="showPromoTab('redoublants')">Onglet Redoublants →</button>
+    </div>`;
 }
 
-// Année de césure d'un étudiant (année d'absence, qu'il reprendra dans la cohorte suivante)
 async function changeCesureYear(sid, year) {
     try {
         await api(`/promotions/${_promoId}/students/${sid}`,
@@ -4064,11 +4043,124 @@ async function decideCesure(sid, formation) {
 }
 
 async function decideRed(sid, decision) {
+    const refresh = () => (_promoTab === 'redoublants') ? loadRedoublants() : loadEffectif();
     try {
         await api(`/promotions/${_promoId}/red/${sid}/decide`, { method: 'POST', body: JSON.stringify({ decision }) });
-        await loadEffectif();
+        await refresh();
         toast(decision ? 'Décision enregistrée' : 'Décision effacée');
-    } catch (e) { toast('Erreur : ' + e.message, 'error'); loadEffectif(); }
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); refresh(); }
+}
+
+// ===== SOUS-ONGLET REDOUBLANTS =====
+// Tout le circuit au même endroit : les RED décidés par le jury DANS cette promotion
+// (à réinscrire dans la cohorte suivante ou à passer en abandon), et les redoublants
+// ACCUEILLIS ici, avec l'arbitrage de leurs notes. Le règlement des études impose de
+// retenir, pour chaque UE de semestre, la MEILLEURE des deux notes (passage précédent
+// / année refaite) : l'arbitrage est automatique, cet onglet le rend lisible.
+async function loadRedoublants() {
+    const el = document.getElementById('redoublants-content');
+    if (!el) return;
+    if (!_promoId) { el.innerHTML = '<div class="empty">Choisissez une promotion.</div>'; return; }
+    el.innerHTML = '<div class="spinner">Chargement…</div>';
+    try { _redData = await api(`/promotions/${_promoId}/red`); }
+    catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+        el.innerHTML = '<div class="empty">Erreur de chargement.</div>';
+        return;
+    }
+    renderRedoublants();
+}
+
+function renderRedoublants() {
+    const el = document.getElementById('redoublants-content');
+    const r = _redData;
+    if (!el) return;
+    if (!r) { el.innerHTML = '<div class="empty">Choisissez une promotion.</div>'; return; }
+    el.innerHTML = _redDecisionsSection(r) + _redIncomingSection(r);
+    applyPromoReadOnly();
+}
+
+// A. Les RED décidés par le jury dans cette promotion : où vont-ils ?
+function _redDecisionsSection(r) {
+    const target = esc(r.target_promo_name || '—');
+    const warn = !r.target_exists
+        ? `<span style="color:#b45309;font-size:.8rem;margin-left:8px">Cohorte « ${target} » inexistante — créée automatiquement à la 1re réinscription.</span>` : '';
+    const head = `<h3 style="margin:0 0 4px;color:#374151">Ajournés à réinscrire → ${target}${warn}</h3>
+        <div style="font-size:.82rem;color:#6b7280;margin-bottom:10px">Décision prise dans l'onglet <strong>Jury</strong> (AJ → RED).
+        Un redoublant bascule dans la cohorte dont la 1re année est un an après (<strong>${target}</strong>), à l'année qu'il refait.
+        Choisissez pour chacun : réinscription en <strong>FTP</strong> ou <strong>ALT</strong>, ou <strong>Abandon</strong>.</div>`;
+    if (!r.students || !r.students.length) {
+        return head + `<div class="empty" style="margin:6px 0">Aucun redoublant décidé dans cette promotion.</div>`;
+    }
+    const dopt = (val, label, cur) => `<option value="${val}"${cur === val ? ' selected' : ''}>${label}</option>`;
+    const ueChip = u => {
+        const st = u.code ? (_JURY_CODE_STYLE[u.code] || '') : 'background:#e5e7eb;color:#6b7280';
+        return `<span title="UE${u.num} — ${u.code ? _JURY_CODE_TITLE[u.code] : 'non évaluée'}"
+            style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:.68rem;font-weight:700;margin-right:3px;${st}">UE${u.num} ${_fmtAvg(u.avg)}</span>`;
+    };
+    const rows = r.students.map((s, i) => `<tr>
+        <td style="color:#9ca3af">${i + 1}</td>
+        <td><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}</td>
+        <td>${esc(s.numero || '')}</td>
+        <td style="text-align:center">${esc(s.formation || 'FTP')}</td>
+        <td style="text-align:center">${s.year}</td>
+        <td>${(s.ues || []).map(ueChip).join('')}</td>
+        <td><select onchange="decideRed(${s.student_id}, this.value)"
+            style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${s.decision === 'ABANDON' ? '#fee2e2' : (s.decision ? '#dbeafe' : '#fff')}">
+            ${dopt('', '— à décider —', s.decision || '')}
+            ${dopt('FTP', `RED → ${target} · FTP`, s.decision)}
+            ${dopt('ALT', `RED → ${target} · ALT`, s.decision)}
+            ${dopt('ABANDON', 'Abandon', s.decision)}
+        </select></td></tr>`).join('');
+    return head + `<div style="overflow:auto;max-height:42vh;border:1px solid #e5e7eb;border-radius:8px">
+        <table class="pn-table" style="table-layout:auto;width:100%">
+        <thead><tr><th style="width:36px">#</th><th>Étudiant</th><th>N° Apogée</th><th>Sous-cohorte</th>
+            <th>Année refaite</th><th>Résultat de l'année ajournée</th><th style="width:240px">Décision</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+}
+
+// B. Les redoublants accueillis ici : quelle note est retenue, UE par UE
+function _redIncomingSection(r) {
+    const head = `<div style="margin-top:26px;border-top:2px solid #e5e7eb;padding-top:14px">
+        <h3 style="margin:0 0 4px;color:#374151">Redoublants accueillis dans cette promotion</h3>
+        <div style="font-size:.82rem;color:#6b7280;margin-bottom:10px">Le règlement des études impose de retenir, pour
+        <strong>chaque UE de semestre</strong>, la <strong>meilleure des deux notes</strong> — celle du passage précédent
+        ou celle de l'année refaite. L'arbitrage est automatique et s'applique partout (Bulletins, moyennes annuelles, Jury) ;
+        ce tableau montre ce qui est retenu. Les notes de matières, elles, restent celles de l'année refaite.
+        Tant qu'un semestre refait n'a <strong>aucune note</strong>, rien n'est repris : l'étudiant n'a pas encore composé,
+        et aucune décision de jury n'est prise.</div>`;
+    if (!r.incoming || !r.incoming.length) {
+        return head + `<div class="empty" style="margin:6px 0">Aucun redoublant venu d'une cohorte précédente.</div></div>`;
+    }
+    const cards = r.incoming.map(st => {
+        const cols = st.semesters.map(x => `<th colspan="3" style="text-align:center;background:#ede9fe;color:#4c1d95;border-left:3px solid #8b5cf6">${esc(x.semester)}${x.started
+            ? '' : ' <span style="font-weight:400;font-size:.7rem;color:#6b7280">pas encore noté</span>'}</th>`).join('');
+        const sub = st.semesters.map(() =>
+            `<th style="text-align:center;font-size:.7rem;color:#6b7280;border-left:3px solid #8b5cf6">précédent</th>
+             <th style="text-align:center;font-size:.7rem;color:#6b7280">année refaite</th>
+             <th style="text-align:center;font-size:.7rem;color:#166534">retenue</th>`).join('');
+        const ues = (st.semesters[0] || { ues: [] }).ues;
+        const rows = ues.map((u, ui) => {
+            const cells = st.semesters.map(x => {
+                const v = x.ues[ui] || {};
+                const anc = v.source === 'ancienne';
+                return `<td style="text-align:center;color:#6b7280;border-left:3px solid #8b5cf6${anc ? ';font-weight:700;color:#7c3aed' : ''}">${_fmtAvg(v.old)}</td>
+                    <td style="text-align:center;color:#6b7280${v.source === 'nouvelle' ? ';font-weight:700;color:#374151' : ''}">${_fmtAvg(v.new)}</td>
+                    <td title="${anc ? 'Note conservée du passage précédent (meilleure des deux)' : 'Note de l\'année refaite'}"
+                        style="text-align:center;font-weight:700;background:${anc ? '#f5f3ff' : '#f0fdf4'};color:${anc ? '#5b21b6' : '#166534'}">${_fmtAvg(v.kept)}${anc ? ' ↺' : ''}</td>`;
+            }).join('');
+            return `<tr><td style="white-space:nowrap"><strong>UE${u.num || ui + 1}</strong> <span style="color:#6b7280;font-size:.8rem">${esc(u.name || '')}</span></td>${cells}</tr>`;
+        }).join('');
+        return `<div style="margin-bottom:18px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">
+            <div style="background:#faf5ff;padding:6px 12px;font-size:.86rem">
+                <strong>${esc(st.nom || '')} ${esc(st.prenom || '')}</strong>
+                <span style="color:#6b7280">· ${esc(st.numero || 'sans n°')} · ${esc(st.formation)}</span>
+                — refait l'<strong>année ${st.year}</strong>, venu de <strong>${esc(st.origin_promo)}</strong></div>
+            <div style="overflow:auto"><table class="pn-table" style="table-layout:auto;width:100%">
+                <thead><tr><th rowspan="2" style="vertical-align:bottom">UE</th>${cols}</tr><tr>${sub}</tr></thead>
+                <tbody>${rows}</tbody></table></div></div>`;
+    }).join('');
+    return head + cards + '</div>';
 }
 
 async function changeStudentStatus(sid, statut) {
@@ -4952,7 +5044,9 @@ function renderNotesGrid() {
         const prevSemCells = cg.prevSem ? prevSems.map(g => prevCell(g, '#818cf8')).join('') : '';
         const avgCells = cg.ue ? comps.map((c, ci) => {
             const st = _ueStatus(avg[ci], ya[ci]);
-            return `<td class="nz-avg" data-sid="${s.id}" data-ci="${ci}" title="${_UE_TITLE[st]}" style="text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}">${_fmtAvg(avg[ci])}</td>`;
+            // ↺ : redoublant dont cette UE garde la note du passage précédent (meilleure des deux)
+            const rk = (d.red_kept || {})[s.id + '_' + ci];
+            return `<td class="nz-avg" data-sid="${s.id}" data-ci="${ci}" title="${_UE_TITLE[st]}${rk === undefined ? '' : ' — note conservée du passage précédent (redoublant : meilleure des deux)'}" style="text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}">${_fmtAvg(avg[ci])}${rk === undefined ? '' : ' <span style="font-size:.7rem;color:#7c3aed">↺</span>'}</td>`;
         }).join('') : '';
         const cells = cg.notes ? mats.map((m, mi) => {
             const v = d.marks[s.id + '_' + m.code];

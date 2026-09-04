@@ -3555,12 +3555,79 @@ def _red_payload(pdb, pid):
         s = info.get(sid)
         if not s:
             continue
+        # Résultat de l'année ajournée, rappelé pour éclairer la décision
+        codes = comp['ue_codes'].get((year, str(sid))) or {}
+        avgs = (comp['year_avgs'].get(year) or {}).get(str(sid)) or {}
         rows.append({'student_id': sid, 'numero': s['numero'], 'nom': s['nom'],
                      'prenom': s['prenom'], 'formation': s['formation'] or 'FTP',
-                     'year': year, 'decision': transfers.get(sid)})
+                     'year': year, 'decision': transfers.get(sid),
+                     'ues': [{'num': u, 'code': codes.get(u), 'avg': avgs.get(u)}
+                             for u in (comp['ue_by_year'].get(year) or [])]})
     rows.sort(key=lambda r: ((r['formation'] or ''), (r['nom'] or '').lower(), (r['prenom'] or '').lower()))
     return {'target_promo_id': target_id, 'target_promo_name': target_name,
-            'target_exists': target_id is not None, 'students': rows}
+            'target_exists': target_id is not None, 'students': rows,
+            'promo_name': promo['name'],
+            # Redoublants venus d'une cohorte précédente et refaisant une année ici
+            'incoming': _red_incoming(pdb, pid)}
+
+def _red_incoming(pdb, pid):
+    """Redoublants ACCUEILLIS dans cette promotion (fiche créée depuis la cohorte
+    précédente). Pour chaque UE de chaque semestre de l'année refaite : la note du
+    passage précédent, celle de l'année refaite, et celle retenue (la meilleure)."""
+    links = _origin_links(pdb, pid, reason='RED')
+    if not links:
+        return []
+    info = {r['id']: r for r in pdb.execute(
+        """SELECT id, numero, nom, prenom, formation, entry_year FROM promotion_students
+           WHERE promotion_id=?""", (pid,))}
+    ref_all = _promo_coeffs(pdb, pid) or {}
+    nums = _jury_ue_numbers(ref_all)
+    promo_names = {r['id']: r['name'] for r in pdb.execute('SELECT id, name FROM promotions')}
+    new_cache, old_cache, out = {}, {}, []
+    for sid, (osid, opid, year) in links.items():
+        st = info.get(sid)
+        if not st:
+            continue
+        sems = []
+        for sem in (f'S{year * 2 - 1}', f'S{year * 2}'):
+            d = ref_all.get(sem) or {}
+            comps = d.get('competences', [])
+            if sem not in new_cache:
+                new_cache[sem] = _semester_competence_averages(
+                    pdb, pid, sem, comps, d.get('components', []), apply_red=False)
+            key = (opid, sem)
+            if key not in old_cache:
+                do = (_promo_coeffs(pdb, opid) or {}).get(sem) or {}
+                comps_o = do.get('competences', [])
+                raw = _semester_competence_averages(pdb, opid, sem, comps_o, do.get('components', []))
+                onames = [(c.get('name') or '').strip() for c in comps_o]
+                old_cache[key] = {s2: {onames[int(ci)]: v for ci, v in row.items()
+                                       if int(ci) < len(onames) and onames[int(ci)]}
+                                  for s2, row in raw.items()}
+            old_row = old_cache[key].get(str(osid)) or {}
+            new_row = new_cache[sem].get(str(sid)) or {}
+            started = sid in _graded_students(pdb, pid, sem)
+            ues = []
+            for ci, c in enumerate(comps):
+                nm = (c.get('name') or '').strip()
+                ov, nv = old_row.get(nm), new_row.get(str(ci))
+                if not started or (ov is None and nv is None):
+                    kept, src = (nv, 'nouvelle') if nv is not None else (None, None)
+                elif nv is None or (ov is not None and ov > nv):
+                    kept, src = ov, 'ancienne'
+                else:
+                    kept, src = nv, 'nouvelle'
+                ues.append({'num': nums.get(nm), 'name': nm, 'old': ov, 'new': nv,
+                            'kept': kept, 'source': src})
+            # `started` : le semestre refait est-il déjà noté ? Sinon aucune UE n'est
+            # arbitrée (l'étudiant n'a pas encore composé).
+            sems.append({'semester': sem, 'started': started, 'ues': ues})
+        out.append({'student_id': sid, 'numero': st['numero'], 'nom': st['nom'],
+                    'prenom': st['prenom'], 'formation': st['formation'] or 'FTP',
+                    'year': year, 'origin_promo': promo_names.get(opid) or '—',
+                    'semesters': sems})
+    out.sort(key=lambda r: ((r['nom'] or '').lower(), (r['prenom'] or '').lower()))
+    return out
 
 @app.route('/api/promotions/<int:pid>/red', methods=['GET'])
 def get_red_students(pid):
@@ -3770,14 +3837,20 @@ def _code_by_kind(components, kind):
             return c.get('code')
     return None
 
-def _origin_links(pdb, pid):
+def _origin_links(pdb, pid, reason=None):
     """{student_id: (origin_student_id, origin_promotion_id, entry_year)} pour les
-    étudiants de `pid` venus d'une autre cohorte (césure ou redoublement)."""
+    étudiants de `pid` venus d'une autre cohorte (césure ou redoublement).
+    `reason` ('RED' / 'CESURE') restreint au motif demandé."""
     out = {}
-    for r in pdb.execute("""SELECT s.id, s.entry_year, o.origin_student_id, o.origin_promotion_id
-                            FROM promotion_students s
-                            JOIN student_origin o ON o.student_id = s.id
-                            WHERE s.promotion_id = ?""", (pid,)):
+    sql = """SELECT s.id, s.entry_year, o.origin_student_id, o.origin_promotion_id
+             FROM promotion_students s
+             JOIN student_origin o ON o.student_id = s.id
+             WHERE s.promotion_id = ?"""
+    args = [pid]
+    if reason:
+        sql += ' AND o.reason = ?'
+        args.append(reason)
+    for r in pdb.execute(sql, args):
         out[r['id']] = (r['origin_student_id'], r['origin_promotion_id'], r['entry_year'] or 1)
     return out
 
@@ -3811,10 +3884,54 @@ def _marks_rows(pdb, pid, semester):
                          'note': r['note'], 'mention': r['mention']})
     return rows
 
-def _semester_competence_averages(pdb, pid, semester, competences, components=None):
+def _graded_students(pdb, pid, semester):
+    """Étudiants ayant au moins une note pour ce semestre dans cette promotion."""
+    return {r['student_id'] for r in pdb.execute(
+        """SELECT DISTINCT student_id FROM student_marks
+           WHERE promotion_id=? AND semester=? AND note IS NOT NULL""", (pid, semester))}
+
+def _red_previous_ue(pdb, pid, semester, year, depth):
+    """Moyennes d'UE du PRÉCÉDENT passage, pour les redoublants accueillis dans
+    `pid` qui refont l'année `year`. Retourne {student_id: {nom d'UE: moyenne}} —
+    l'appariement se fait par NOM d'UE, deux cohortes pouvant ne pas numéroter
+    leurs compétences dans le même ordre."""
+    links = {sid: v for sid, v in _origin_links(pdb, pid, reason='RED').items() if v[2] == year}
+    if not links:
+        return {}
+    # Tant que le semestre refait n'a AUCUNE note, il n'y a rien à comparer : reprendre
+    # les UE du passage précédent ferait apparaître les résultats de l'année ratée (et
+    # une décision de jury) avant même que l'étudiant ait composé.
+    links = {sid: v for sid, v in links.items() if sid in _graded_students(pdb, pid, semester)}
+    if not links:
+        return {}
+    by_origin, out = {}, {}
+    for sid, (osid, opid, _y) in links.items():
+        if opid not in by_origin:
+            d = (_promo_coeffs(pdb, opid) or {}).get(semester) or {}
+            comps = d.get('competences', [])
+            raw = _semester_competence_averages(pdb, opid, semester, comps,
+                                                d.get('components', []), _depth=depth + 1)
+            names = [(c.get('name') or '').strip() for c in comps]
+            by_origin[opid] = {osid2: {names[int(ci)]: v for ci, v in row.items()
+                                       if int(ci) < len(names) and names[int(ci)]}
+                               for osid2, row in raw.items()}
+        row = by_origin[opid].get(str(osid))
+        if row:
+            out[sid] = row
+    return out
+
+def _semester_competence_averages(pdb, pid, semester, competences, components=None,
+                                  _depth=0, kept_out=None, apply_red=True):
     """Moyennes de compétences {student_id: {ci: avg}} pour un semestre donné.
     Le malus d'assiduité (heures saisies sur la matière de type PEN) est retranché
-    de la moyenne de chaque UE, conformément au règlement (IUT de Toulon)."""
+    de la moyenne de chaque UE, conformément au règlement (IUT de Toulon).
+
+    Redoublant : pour chaque UE de l'année refaite, le règlement des études impose
+    de retenir la MEILLEURE des deux notes (passage précédent / année refaite).
+    L'arbitrage est fait ici, donc pour tous les consommateurs à la fois (bulletins,
+    moyennes annuelles, jury). `kept_out` reçoit {sid_ci: ancienne valeur} pour les
+    UE où l'ancienne l'emporte ; `apply_red=False` rend la note brute de l'année
+    refaite (l'onglet Redoublants montre les deux)."""
     marks = {}
     for r in _marks_rows(pdb, pid, semester):
         marks[f"{r['student_id']}_{r['matiere_code']}"] = r['note']
@@ -3835,6 +3952,22 @@ def _semester_competence_averages(pdb, pid, semester, competences, components=No
                     den += coeff
             row[str(ci)] = round(max(0.0, num / den - malus), 2) if den > 0 else None
         averages[str(sid)] = row
+    # `_depth` borne la remontée de cohorte en cohorte (redoublements successifs)
+    if apply_red and _depth < 3:
+        prev = _red_previous_ue(pdb, pid, semester, _sem_year(semester), _depth)
+        for sid, old in prev.items():
+            row = averages.get(str(sid))
+            if row is None:
+                continue
+            for ci, comp in enumerate(competences):
+                ov = old.get((comp.get('name') or '').strip())
+                if ov is None:
+                    continue
+                nv = row.get(str(ci))
+                if nv is None or ov > nv:
+                    row[str(ci)] = ov
+                    if kept_out is not None:
+                        kept_out[f'{sid}_{ci}'] = ov
     return averages
 
 def _year_competence_averages(pdb, pid, s_odd, s_even, ref_all):
@@ -4738,7 +4871,9 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     marks = {}
     for r in _marks_rows(pdb, pid, semester):
         marks[f"{r['student_id']}_{r['matiere_code']}"] = r['mention'] if r['mention'] else r['note']
-    averages = _semester_competence_averages(pdb, pid, semester, competences, components)
+    red_kept = {}
+    averages = _semester_competence_averages(pdb, pid, semester, competences, components,
+                                             kept_out=red_kept)
     sem_num = int(semester[1:])
     year = (sem_num + 1) // 2   # 1,1,2,2,3,3
     # Décisions de jury par année (ADM/ADMJ/AJAC/AJ/RED) — servent de « statut » dans la grille
@@ -4784,6 +4919,8 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
             # 'saisie' = note calculée (lecture seule dans Bulletins) / 'import' =
             # note importée ou saisie à la main (le recalcul ne l'écrase pas)
             'note_sources': note_sources, 'computed': computed,
+            # UE dont la note vient du passage précédent d'un redoublant (meilleure des deux)
+            'red_kept': red_kept,
             'students': students, 'marks': marks, 'averages': averages, 'previous': previous,
             'year_semesters': [s_odd, s_even], 'year_competences': year_competences,
             'year_averages': year_averages,
