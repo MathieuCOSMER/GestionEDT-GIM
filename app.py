@@ -636,15 +636,21 @@ _STUDENT_STATUSES = ['Actif', 'RED', 'Césure', 'Abandon']
 _STUDENT_STATUS_CHOICES = ['Actif', 'Césure', 'Abandon']
 _PROMO_SEMESTERS = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6']
 # Profil d'entrée de l'étudiant (valeurs autorisées ; '' = non renseigné)
+_STUDENT_SEXE = ['M', 'F']
 _STUDENT_BAC = ['STI2D', 'GEN', 'PRO', 'STL', 'Autre']
-_STUDENT_CURSUS = ['EI', 'RE', 'PB', 'PP']            # École d'ingé / Reprise d'étude / PostBac / PostPrépa
+_STUDENT_CURSUS = ['ING', 'REP', 'BAC', 'PP', 'BTS']  # École d'ingé / Reprise d'étude / PostBac / PostPrépa / BTS
+# Renommage des codes cursus (anciens -> nouveaux), rejoué au démarrage sur les
+# lignes déjà saisies pour qu'elles restent des valeurs autorisées.
+_STUDENT_CURSUS_RENAMES = {'EI': 'ING', 'RE': 'REP', 'PB': 'BAC', 'PrP': 'PP'}
 _STUDENT_RECRUT = ['PS', 'EC', 'ADIUT']               # ParcourSup / eCandidat / ADIUT (étrangers)
-_STUDENT_PROFILE = {'bac': _STUDENT_BAC, 'cursus': _STUDENT_CURSUS, 'recrutement': _STUDENT_RECRUT}
+_STUDENT_PROFILE = {'sexe': _STUDENT_SEXE, 'bac': _STUDENT_BAC,
+                    'cursus': _STUDENT_CURSUS, 'recrutement': _STUDENT_RECRUT}
 # Signification des codes, rappelée au-dessus du tableau d'effectif (onglet Promotions).
-# Les codes BAC sont des séries de bac, lisibles telles quelles : pas de libellé.
+# Les codes BAC (séries de bac) et Sexe (M/F) sont lisibles tels quels : pas de libellé.
 _STUDENT_PROFILE_LABELS = {
-    'cursus': {'EI': "École d'ingénieur", 'RE': "Reprise d'études",
-               'PB': 'Post-Bac', 'PP': 'Post-Prépa'},
+    'cursus': {'ING': "École d'ingénieur", 'REP': "Reprise d'études",
+               'BAC': 'Post-Bac', 'PP': 'Post-Prépa',
+               'BTS': 'Brevet de technicien supérieur'},
     'recrutement': {'PS': 'ParcourSup', 'EC': 'eCandidat',
                     'ADIUT': 'ADIUT (candidats étrangers)'},
 }
@@ -757,12 +763,15 @@ def _apply_promotions_migrations(db):
         db.execute("ALTER TABLE promotion_students ADD COLUMN entry_year INTEGER DEFAULT 1")
     except sqlite3.OperationalError:
         pass
-    # Profil d'entrée : BAC obtenu, cursus antérieur, méthode de recrutement.
-    for _col in ('bac', 'cursus', 'recrutement'):
+    # Profil d'entrée : sexe, BAC obtenu, cursus antérieur, méthode de recrutement.
+    for _col in ('sexe', 'bac', 'cursus', 'recrutement'):
         try:
             db.execute(f"ALTER TABLE promotion_students ADD COLUMN {_col} TEXT")
         except sqlite3.OperationalError:
             pass
+    # Codes cursus renommés : on remet les anciennes valeurs au nouveau format.
+    for _old, _new in _STUDENT_CURSUS_RENAMES.items():
+        db.execute("UPDATE promotion_students SET cursus=? WHERE cursus=?", (_new, _old))
     # Ajustements manuels de l'effectif d'une année (par-dessus le calcul auto) :
     # action='remove' (retiré de l'année) ou 'add' (réintégré / ajouté à l'année).
     db.execute('''
@@ -3138,7 +3147,7 @@ def _year_effectif_payload(pdb, pid, year):
     fm = _year_formation_map(pdb, pid, year)          # sous-cohorte propre à cette année
     students = []
     for r in pdb.execute('''SELECT id, numero, nom, prenom, naissance, statut, abandon_semestre,
-                                   formation, entry_year, cesure_year, bac, cursus, recrutement
+                                   formation, entry_year, cesure_year, sexe, bac, cursus, recrutement
                             FROM promotion_students
                             WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''',
                          (pid,)):
@@ -3207,7 +3216,7 @@ def export_year_effectif(pid, year):
 
     promo_name = payload['promotion'].get('name') or f'promo {pid}'
     cols = [('#', 5), ('Nom', 22), ('Prénom', 18), ('N° Apogée', 14), ('Naissance', 13),
-            ('BAC', 9), ('Cursus', 9), ('Recrut.', 10), ('Statut', 11),
+            ('Sexe', 6), ('BAC', 9), ('Cursus', 9), ('Recrut.', 10), ('Statut', 11),
             ('Sem. abandon', 13), ('Cohorte', 9), ('Remarques', 26)]
 
     wb = Workbook()
@@ -3233,13 +3242,14 @@ def export_year_effectif(pid, year):
             if s.get('manual') == 'add':
                 notes.append('ajouté manuellement')
             values = [n, s.get('nom') or '', s.get('prenom') or '', s.get('numero') or '',
-                      s.get('naissance') or '', s.get('bac') or '', s.get('cursus') or '',
+                      s.get('naissance') or '', s.get('sexe') or '',
+                      s.get('bac') or '', s.get('cursus') or '',
                       s.get('recrutement') or '', s.get('statut') or '',
                       s.get('abandon_semestre') or '', formation, ' ; '.join(notes)]
             for i, v in enumerate(values, start=1):
                 c = ws.cell(row, i, v)
                 c.border = border
-                if i == 1 or 6 <= i <= 11:
+                if i == 1 or 6 <= i <= 12:
                     c.alignment = center
             row += 1
         if not studs:

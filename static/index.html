@@ -3864,7 +3864,7 @@ function renderPromoEffectif() {
                 `<option value="${yy}" ${yy === s.cesure_year ? 'selected' : ''}>Année ${yy}</option>`).join('')}</select>`;
     const tag = (txt, bg, title) => `<span title="${title || ''}" style="display:inline-block;padding:1px 6px;border-radius:6px;font-size:.66rem;font-weight:700;background:${bg};margin-left:6px">${txt}</span>`;
     // Profil d'entrée (BAC / cursus / recrutement) : listes déroulantes
-    const profOpts = d.profile_options || { bac: [], cursus: [], recrutement: [] };
+    const profOpts = d.profile_options || { sexe: [], bac: [], cursus: [], recrutement: [] };
     // Signification des codes (Cursus / Recrutement) : rappelée en légende au-dessus
     // de chaque tableau et en infobulle sur chaque liste.
     const profLabels = d.profile_labels || {};
@@ -3943,6 +3943,7 @@ function renderPromoEffectif() {
             <td>${esc(s.prenom || '')}</td>
             <td>${esc(s.numero || '')}</td>
             <td>${esc(s.naissance || '')}</td>
+            <td>${profSelect(s, 'sexe')}</td>
             <td>${profSelect(s, 'bac')}</td>
             <td>${profSelect(s, 'cursus')}</td>
             <td>${profSelect(s, 'recrutement')}</td>
@@ -3954,8 +3955,9 @@ function renderPromoEffectif() {
             <div style="overflow:auto;max-height:45vh;border:1px solid #e5e7eb;border-radius:8px">
                 <table class="pn-table" style="table-layout:auto;width:100%">
                     <thead><tr><th style="width:40px">#</th><th>Nom</th><th>Prénom</th><th>N° Apogée</th><th>Naissance</th>
+                        <th title="Sexe de l'étudiant (M / F)">Sexe</th>
                         <th title="BAC obtenu (STI2D, GEN, PRO, STL, Autre)">BAC</th>
-                        <th title="Cursus antérieur — EI: École d'ingé, RE: reprise d'étude, PB: PostBac, PP: PostPrépa">Cursus</th>
+                        <th title="Cursus antérieur — ING: École d'ingé, REP: reprise d'étude, BAC: PostBac, PP: PostPrépa, BTS: post-BTS">Cursus</th>
                         <th title="Recrutement — PS: ParcourSup, EC: eCandidat, ADIUT: étrangers">Recrut.</th>
                         <th style="width:210px">Statut</th><th style="width:130px">Cohorte / retrait</th></tr></thead>
                     <tbody>${rows}</tbody>
