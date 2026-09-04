@@ -1174,16 +1174,58 @@
         <p style="color:#6b7280;font-size:.9rem;margin-top:0">
             Fichier <code>.xlsm</code>/<code>.xlsx</code> — format <strong>Apogée</strong> (colonnes de notes
             remplies) ou <strong>PV de jury</strong> (export des juris précédents), détecté automatiquement.
-            Les notes sont rattachées aux étudiants par <strong>n° Apogée</strong> et remplacent celles déjà
-            saisies pour ce semestre.
+            Les notes sont rattachées aux étudiants par <strong>n° Apogée</strong>. L'analyse indique ce que
+            l'import changerait — <strong>rien n'est écrit avant votre confirmation</strong>.
         </p>
         <div class="form-group">
             <label>Fichier *</label>
-            <input type="file" id="notes-import-file" accept=".xlsm,.xlsx">
+            <input type="file" id="notes-import-file" accept=".xlsm,.xlsx" onchange="resetNotesImportPreview()">
         </div>
+        <div class="form-group">
+            <label>Notes déjà présentes</label>
+            <label style="display:block;font-weight:400;font-size:.86rem;margin:2px 0">
+                <input type="radio" name="notes-import-mode" value="all" checked onchange="resetNotesImportPreview()">
+                Tout écraser <span style="color:#6b7280">— les matières concernées passent en « note importée » et ne sont plus recalculées</span></label>
+            <label style="display:block;font-weight:400;font-size:.86rem;margin:2px 0">
+                <input type="radio" name="notes-import-mode" value="keep_definitive" onchange="resetNotesImportPreview()">
+                Préserver les matières dont la saisie enseignante est <strong>définitive</strong></label>
+            <label style="display:block;font-weight:400;font-size:.86rem;margin:2px 0">
+                <input type="radio" name="notes-import-mode" value="fill_empty" onchange="resetNotesImportPreview()">
+                Ne remplir que les cases <strong>sans note</strong></label>
+        </div>
+        <div id="notes-import-preview" style="display:none;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px;margin-bottom:12px"></div>
         <div class="form-actions">
             <button type="button" class="btn btn-secondary" onclick="closeModal('modal-notes-import')">Annuler</button>
-            <button type="button" class="btn btn-primary" id="notes-import-submit" onclick="submitNotesImport()">Importer</button>
+            <button type="button" class="btn btn-secondary" id="notes-import-check" onclick="submitNotesImport(true)">🔎 Analyser le fichier</button>
+            <button type="button" class="btn btn-primary" id="notes-import-submit" onclick="submitNotesImport(false)" disabled>Importer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL PÉNALITÉ D'ASSIDUITÉ (colonne Pénalité des Bulletins) ===== -->
+<div class="modal-backdrop" id="modal-notes-pen">
+    <div class="modal" style="max-width:440px">
+        <h2>Pénalité d'assiduité</h2>
+        <p id="pen-who" style="color:#6b7280;font-size:.9rem;margin-top:0"></p>
+        <div class="form-group">
+            <label>Ce que vous saisissez</label>
+            <label style="display:block;font-weight:400;font-size:.88rem;margin:2px 0">
+                <input type="radio" name="pen-mode" value="hours" checked onchange="onPenaltyModeChange()">
+                le nombre d'<strong>heures d'absence</strong> injustifiée</label>
+            <label style="display:block;font-weight:400;font-size:.88rem;margin:2px 0">
+                <input type="radio" name="pen-mode" value="points" onchange="onPenaltyModeChange()">
+                directement le <strong>malus</strong>, en points</label>
+        </div>
+        <div class="form-group">
+            <label id="pen-label">Heures d'absence injustifiée</label>
+            <input type="text" inputmode="decimal" id="pen-value" oninput="renderPenaltyPreview()"
+                   onkeydown="if (event.key === 'Enter') applyPenalty()">
+        </div>
+        <div id="pen-preview" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px;font-size:.85rem;margin-bottom:12px"></div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-notes-pen')">Annuler</button>
+            <button type="button" class="btn btn-secondary" onclick="clearPenalty()">Effacer</button>
+            <button type="button" class="btn btn-primary" onclick="applyPenalty()">Valider</button>
         </div>
     </div>
 </div>
@@ -4239,9 +4281,12 @@ function renderSaisieGrid() {
     let h2 = '<tr>', h3 = '<tr>';
     d.groups.forEach(g => {
         const multi = g.subs.length > 1;
-        h1 += `<th colspan="${g.subs.length + (multi ? 1 : 0)}" style="background:#ede9fe;color:#4c1d95;text-align:center;font-size:.8rem;padding:4px 6px;border-left:4px solid #8b5cf6;border-bottom:2px solid #8b5cf6"
+        h1 += `<th colspan="${g.subs.length + 1}" style="background:#ede9fe;color:#4c1d95;text-align:center;font-size:.8rem;padding:4px 6px;border-left:4px solid #8b5cf6;border-bottom:2px solid #8b5cf6"
                    title="${esc(g.label)}${g.referent ? ' — référent : ' + esc(g.referent) : ''}">${esc(g.key)}<br>
-                   <span style="font-weight:400;font-size:.7rem">${g.referent ? 'réf. ' + esc(g.referent) : '<span style="color:#b91c1c">réf. à définir</span>'}</span></th>`;
+                   <span style="font-weight:400;font-size:.7rem">${g.referent ? 'réf. ' + esc(g.referent) : '<span style="color:#b91c1c">réf. à définir</span>'}</span><br>
+                   <span style="font-weight:400;font-size:.68rem">${g.source === 'saisie'
+                       ? '<span style="color:#166534" title="La moyenne pondérée est reportée dans la note matière (Bulletins)">→ note matière</span>'
+                       : '<span style="color:#b45309" title="La note matière (Bulletins) vient d\'un import ou d\'une saisie de l\'administration : cette moyenne n\'est PAS reportée tant que l\'admin ne rebascule pas la matière">⚠ note importée</span>'}</span></th>`;
         g.subs.forEach((s, i) => {
             const off = !s.counted;
             const defColor = s.definitive ? '#15803d' : '#b45309';
@@ -4261,16 +4306,13 @@ function renderSaisieGrid() {
                        <input type="checkbox" data-def="${esc(s.code)}" ${s.definitive ? 'checked' : ''} ${s.editable ? '' : 'disabled'}>
                        ${s.definitive ? '✓ définitif' : '⏳ prov.'}</label></th>`;
         });
-        if (multi) {
-            h2 += `<th style="text-align:center;font-size:.75rem;background:#f0fdf4;color:#166534;width:${CW}px" rowspan="2"
-                       title="Moyenne pondérée — reportée dans la note matière (Bulletins) quand toutes les sous-notes comptées sont saisies">Moy.<br>${esc(g.key)}</th>`;
-        }
+        h2 += `<th style="text-align:center;font-size:.75rem;background:#f0fdf4;color:#166534;width:${CW}px" rowspan="2"
+                   title="Note matière : moyenne pondérée des sous-notes dès qu'elles sont toutes saisies, sinon la note actuelle de Bulletins (📥 importée ou saisie par l'administration)">Moy.<br>${esc(g.key)}</th>`;
     });
     h1 += '</tr>'; h2 += '</tr>'; h3 += '</tr>';
     const rows = d.students.map(st => {
         let tr = `<tr><td class="nz-sticky" style="font-size:.82rem;white-space:nowrap">${esc(st.nom)} ${esc(st.prenom)}${st.statut && st.statut !== 'Actif' ? ` <span style="font-size:.68rem;color:#9ca3af">(${esc(st.statut)})</span>` : ''}</td>`;
         d.groups.forEach(g => {
-            const multi = g.subs.length > 1;
             g.subs.forEach((s, i) => {
                 const v = d.marks[`${st.id}_${s.code}`];
                 const vs = v === undefined ? '' : v;
@@ -4285,11 +4327,9 @@ function renderSaisieGrid() {
                     tr += `<td style="${bl}text-align:center;font-size:.82rem;color:#374151${s.counted ? '' : ';opacity:.45'}">${vs === '' ? '<span style="color:#d1d5db">—</span>' : esc(String(vs))}</td>`;
                 }
             });
-            if (multi) {
-                const off = d.official[`${st.id}_${g.key}`];
-                tr += `<td data-avg="${esc(g.key)}|${st.id}" style="text-align:center;font-size:.82rem;font-weight:600;background:#f0fdf4;color:#166534"
-                           title="${off !== undefined ? 'Note matière actuelle (Bulletins) : ' + esc(String(off)) : 'Pas encore de note matière'}">${_saisieAvgTxt(g, st.id)}</td>`;
-            }
+            const c = _saisieNoteCell(g, st.id);
+            tr += `<td data-avg="${esc(g.key)}|${st.id}" title="${esc(c.title)}"
+                       style="text-align:center;font-size:.82rem;font-weight:600;${c.style}">${c.html}</td>`;
         });
         return tr + '</tr>';
     }).join('');
@@ -4297,9 +4337,12 @@ function renderSaisieGrid() {
         <table class="notes-grid" style="border-collapse:collapse;font-size:.85rem">
         <thead>${h1}${h2}${h3}</thead><tbody>${rows}</tbody></table></div>
         <p style="font-size:.78rem;color:#6b7280;margin:8px 2px">Notes sur 20 (ou <strong>ABI</strong>).
-        🔒 = colonne d'un autre enseignant (lecture seule). La moyenne pondérée est reportée dans
-        la note matière (Bulletins) quand toutes les sous-notes comptées sont saisies ; elle reste
-        modifiable par l'admin.</p>`;
+        🔒 = colonne d'un autre enseignant (lecture seule). La colonne <strong>Moy.</strong> affiche la
+        <span style="color:#166534">moyenne pondérée</span> dès que toutes les sous-notes comptées sont saisies ;
+        sinon elle montre la note matière actuelle de Bulletins (<span style="color:#1e40af">📥 importée</span>
+        ou saisie par l'administration). La moyenne devient la note matière, <strong>sauf</strong> pour les
+        matières marquées <span style="color:#b45309">⚠ note importée</span> : leur note vient d'un import
+        ou d'une saisie de l'administration et n'est pas écrasée (l'écart est signalé dans les deux onglets).</p>`;
 }
 
 // Valeur courante d'une cellule (input éditable ou note chargée), pour la moyenne live
@@ -4320,18 +4363,55 @@ function _saisieWeight(g, s) {
     return isNaN(w) ? s.weight : w;
 }
 
-function _saisieAvgTxt(g, sid) {
+// Moyenne pondérée courante des sous-notes : le nombre, `null` si une note
+// manque encore (moyenne non calculable), `undefined` si aucune sous-matière ne
+// compte sur cette face.
+function _saisieAvgVal(g, sid) {
     let sw = 0, sum = 0;
     for (const s of g.subs) {
         if (!s.face_ok) continue;                    // pas de séance sur cette face
         const w = _saisieWeight(g, s);
         if (!(w > 0)) continue;                      // pondération 0 : exclue
         const v = _saisieCellVal(s.code, sid);
-        if (v === null) return '<span style="color:#d1d5db">…</span>';
+        if (v === null) return null;                 // saisie incomplète
         sw += w; sum += v * w;
     }
-    if (!sw) return '<span style="color:#d1d5db">—</span>';
-    return (Math.round(sum / sw * 100) / 100).toString();
+    return sw ? Math.round(sum / sw * 100) / 100 : undefined;
+}
+
+// Colonne « Moy. » d'une matière : la moyenne pondérée quand elle est calculable
+// ET qu'elle fait foi ; sinon la note matière actuelle de Bulletins (📥) — c'est
+// ce qui remplit la colonne après un import, avant toute saisie des enseignants.
+function _saisieNoteCell(g, sid) {
+    const off = ((_saisieData || {}).official || {})[sid + '_' + g.key];
+    const hasOff = off !== undefined && off !== null && off !== '';
+    const live = _saisieAvgVal(g, sid);
+    const GREEN = 'background:#f0fdf4;color:#166534';
+    const BLUE = 'background:#eff6ff;color:#1e40af';
+    const showOff = hasOff && (g.source !== 'saisie' || live === null || live === undefined);
+    if (showOff) {
+        const num = parseFloat(String(off).replace(',', '.'));
+        const gap = (typeof live === 'number') && !isNaN(num) && Math.abs(live - num) > 0.005;
+        return {
+            style: BLUE,
+            title: g.source === 'saisie'
+                ? `Note matière actuelle (Bulletins) : ${off} — la moyenne la remplacera dès que toutes les sous-notes seront saisies`
+                : `Note matière (Bulletins) : ${off} — importée ou saisie par l'administration, elle n'est pas remplacée par la moyenne`,
+            html: `📥 ${esc(String(off))}`
+                + (gap ? `<div style="font-size:.62rem;font-weight:400;color:#b45309;line-height:1.1">moy. ${live}</div>` : '')
+        };
+    }
+    if (live === undefined) return { style: GREEN, title: 'Aucune sous-matière comptée sur cette face', html: '<span style="color:#d1d5db">—</span>' };
+    if (live === null) return { style: GREEN, title: 'Moyenne incomplète — il manque au moins une sous-note', html: '<span style="color:#d1d5db">…</span>' };
+    return { style: GREEN, title: 'Moyenne pondérée des sous-notes — devient la note matière (Bulletins)', html: String(live) };
+}
+
+// Réécrit une cellule « Moy. » (contenu, couleur, info-bulle)
+function _saisieNoteApply(td, g, sid) {
+    const c = _saisieNoteCell(g, sid);
+    td.innerHTML = c.html;
+    td.title = c.title;
+    td.style.cssText = 'text-align:center;font-size:.82rem;font-weight:600;' + c.style;
 }
 
 function updateSaisieAvg(inp) {
@@ -4339,7 +4419,7 @@ function updateSaisieAvg(inp) {
     const sid = inp.dataset.note.split('|')[1];
     const g = _saisieData.groups.find(x => x.key === key);
     const td = document.querySelector(`[data-avg="${CSS.escape(key + '|' + sid)}"]`);
-    if (g && td) td.innerHTML = _saisieAvgTxt(g, sid);
+    if (g && td) _saisieNoteApply(td, g, sid);
 }
 
 // Un changement de pondération : rafraîchit toutes les moyennes du groupe
@@ -4348,7 +4428,7 @@ function renderSaisieDirty() {
     _saisieData.students.forEach(st => {
         _saisieData.groups.forEach(g => {
             const td = document.querySelector(`[data-avg="${CSS.escape(g.key + '|' + st.id)}"]`);
-            if (td) td.innerHTML = _saisieAvgTxt(g, st.id);
+            if (td) _saisieNoteApply(td, g, st.id);
         });
     });
 }
@@ -4446,32 +4526,145 @@ function openNotesImport() {
     const sem = document.getElementById('notes-sem-select').value;
     if (!pid || !sem) { toast('Choisissez une promotion et un semestre', 'error'); return; }
     document.getElementById('notes-import-file').value = '';
+    const m = document.querySelector('input[name="notes-import-mode"][value="all"]');
+    if (m) m.checked = true;
+    resetNotesImportPreview();
     openModal('modal-notes-import');
 }
 
-async function submitNotesImport() {
+// L'import n'est autorisé qu'après une analyse portant sur le fichier et le mode
+// actuellement choisis : changer l'un ou l'autre re-verrouille le bouton.
+function resetNotesImportPreview() {
+    const p = document.getElementById('notes-import-preview');
+    if (p) { p.style.display = 'none'; p.innerHTML = ''; }
+    const b = document.getElementById('notes-import-submit');
+    if (b) b.disabled = true;
+}
+
+function _notesImportMode() {
+    const r = document.querySelector('input[name="notes-import-mode"]:checked');
+    return r ? r.value : 'all';
+}
+
+function _notesImportReport(rep) {
+    const li = [];
+    li.push(`<li><strong>${rep.notes || 0}</strong> note(s) seraient écrites — ${rep.matieres_mappees || 0} matière(s) reconnue(s) dans le fichier</li>`);
+    li.push(`<li>${rep.etudiants_rapproches || 0} étudiant(s) rapproché(s)`
+        + (rep.etudiants_non_trouves ? `, <strong style="color:#b91c1c">${rep.etudiants_non_trouves} non trouvé(s)</strong> (n° Apogée absent de l'effectif)` : '') + '</li>');
+    if (rep.conflits_saisie)
+        li.push(`<li style="color:#92400e">⚠ <strong>${rep.conflits_saisie}</strong> note(s) portent sur une matière aujourd'hui <strong>calculée depuis la saisie enseignante</strong></li>`);
+    if (rep.ignorees_definitives)
+        li.push(`<li>${rep.ignorees_definitives} note(s) ignorée(s) — saisie enseignante définitive</li>`);
+    if (rep.ignorees_deja_notees)
+        li.push(`<li>${rep.ignorees_deja_notees} note(s) ignorée(s) — case déjà notée</li>`);
+    if ((rep.matieres_basculees || []).length)
+        li.push(`<li style="color:#92400e">Passeront en « note importée » (plus de recalcul automatique) : <strong>${rep.matieres_basculees.map(esc).join(', ')}</strong></li>`);
+    if (!rep.notes) li.push('<li style="color:#b91c1c">Rien à écrire avec ce mode.</li>');
+    return `<strong style="font-size:.85rem">Aperçu — rien n'a encore été écrit</strong>
+        <ul style="margin:6px 0 0;padding-left:18px;font-size:.82rem;line-height:1.5">${li.join('')}</ul>`;
+}
+
+async function submitNotesImport(preview) {
     const f = document.getElementById('notes-import-file').files[0];
     if (!f) { toast('Choisissez un fichier', 'error'); return; }
     const pid = document.getElementById('promo-select').value;
     const sem = document.getElementById('notes-sem-select').value;
     const sub = (document.getElementById('notes-sub-select') || {}).value || 'FTP';
-    const btn = document.getElementById('notes-import-submit');
-    btn.disabled = true; btn.textContent = 'Import en cours…';
+    const btn = document.getElementById(preview ? 'notes-import-check' : 'notes-import-submit');
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = preview ? 'Analyse…' : 'Import en cours…';
     try {
         const fd = new FormData(); fd.append('file', f); fd.append('formation', sub);
+        fd.append('mode', _notesImportMode());
+        if (preview) fd.append('preview', '1');
         const r = await fetch(`/api/promotions/${pid}/notes/${sem}/import`, { method: 'POST', body: fd });
         if (!r.ok) throw new Error(await r.text());
-        _notesData = await r.json();
+        const res = await r.json();
+        const rep = res.import_report || {};
+        if (preview) {
+            const p = document.getElementById('notes-import-preview');
+            p.style.display = 'block'; p.innerHTML = _notesImportReport(rep);
+            document.getElementById('notes-import-submit').disabled = false;
+            return;
+        }
+        _notesData = res;
         closeModal('modal-notes-import');
         renderNotesGrid();
-        const rep = _notesData.import_report || {};
         toast(`Import : ${rep.notes || 0} note(s), ${rep.etudiants_rapproches || 0} étudiant(s) rapproché(s)`
             + (rep.etudiants_non_trouves ? `, ${rep.etudiants_non_trouves} non trouvé(s)` : ''));
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
-    finally { btn.disabled = false; btn.textContent = 'Importer'; }
+    finally { btn.disabled = false; btn.textContent = label; }
 }
 
 function _fmtAvg(v) { return (v === null || v === undefined) ? '—' : Number(v).toFixed(2); }
+
+// ===== Origine officielle de la note matière (Bulletins) =====
+// Une matière a UNE source qui fait foi sur la sous-cohorte affichée :
+//   'saisie' = moyenne pondérée des sous-notes (onglet Saisie Notes), recalculée
+//              automatiquement, cellule en lecture seule ici ;
+//   'import' = note importée d'Apogée/PV ou saisie à la main, que le recalcul ne
+//              touche jamais — l'écart avec la moyenne calculée est signalé.
+function _noteSource(d, code) { return (d.note_sources || {})[code] || 'import'; }
+
+// La note affichée diffère-t-elle de la moyenne calculée depuis la saisie ?
+function _markDiffers(v, comp) {
+    if (comp === undefined || comp === null) return false;
+    if (v === undefined || v === null || v === '') return true;
+    if (typeof v === 'string' && isNaN(parseFloat(v.replace(',', '.')))) return true;   // mention (ABI)
+    return Math.abs(parseFloat(String(v).replace(',', '.')) - Number(comp)) > 0.005;
+}
+
+function _notesGap(d, code) {
+    let n = 0;
+    (d.students || []).forEach(s => {
+        if (_markDiffers(d.marks[s.id + '_' + code], (d.computed || {})[s.id + '_' + code])) n++;
+    });
+    return n;
+}
+
+// Bandeau des matières où une saisie enseignante existe : origine actuelle,
+// écarts, et bascule d'un clic (admin).
+function _notesSourceBar(d, mats) {
+    const list = mats.filter(m => (d.saisie_status || {})[m.code] || _noteSource(d, m.code) === 'saisie');
+    if (!list.length) return '';
+    const admin = state.role === 'admin';
+    const chips = list.map(m => {
+        const src = _noteSource(d, m.code);
+        const gap = src === 'saisie' ? 0 : _notesGap(d, m.code);
+        const style = src === 'saisie' ? 'background:#dcfce7;border-color:#86efac;color:#166534'
+            : (gap ? 'background:#fef3c7;border-color:#fcd34d;color:#92400e'
+                   : 'background:#eff6ff;border-color:#bfdbfe;color:#1e40af');
+        const txt = `${src === 'saisie' ? '🧮' : '📥'} ${esc(m.code)}${gap ? ' ⚠ ' + gap : ''}`;
+        const title = src === 'saisie'
+            ? `${esc(m.label)} — note calculée depuis la saisie enseignante` + (admin ? ' (cliquer pour la rendre modifiable ici)' : '')
+            : `${esc(m.label)} — note importée / saisie à la main` + (gap ? `, ${gap} écart(s) avec la saisie enseignante` : '') + (admin ? ' (cliquer pour utiliser la saisie enseignante)' : '');
+        const css = `${style};border-width:1px;border-style:solid;border-radius:999px;padding:2px 9px;font-size:.76rem;font-weight:600`;
+        return admin
+            ? `<button type="button" onclick="toggleNoteSource('${esc(m.code)}','${src === 'saisie' ? 'import' : 'saisie'}')" title="${title}" style="${css};cursor:pointer">${txt}</button>`
+            : `<span title="${title}" style="${css}">${txt}</span>`;
+    }).join('');
+    return `<div style="font-size:.78rem;color:#374151;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:#faf5ff;border:1px solid #e9d5ff;border-radius:8px;padding:6px 12px">
+        <strong>Origine des notes :</strong>${chips}
+        <span style="color:#6b7280">🧮 calculée depuis la saisie enseignante (lecture seule) · 📥 importée / saisie ici · ⚠ écart avec la saisie${admin ? ' — cliquez pour changer' : ''}</span>
+    </div>`;
+}
+
+// Bascule l'origine officielle d'une matière pour la sous-cohorte affichée.
+async function toggleNoteSource(code, src) {
+    const pid = document.getElementById('promo-select').value;
+    const sem = document.getElementById('notes-sem-select').value;
+    const sub = (document.getElementById('notes-sub-select') || {}).value || 'FTP';
+    const msg = src === 'saisie'
+        ? `${code} : la note deviendra la moyenne pondérée des sous-notes (onglet Saisie Notes) et sera remise à jour à chaque saisie.\n\nLes notes actuelles de cette colonne (import / saisie manuelle) seront remplacées dès qu'une moyenne complète est disponible.\n\nContinuer ?`
+        : `${code} : la note redevient libre — elle ne sera plus recalculée depuis la saisie enseignante et gardera sa valeur actuelle.\n\nContinuer ?`;
+    if (!confirm(msg)) return;
+    try {
+        _notesData = await api(`/promotions/${pid}/notes/${sem}/source`,
+            { method: 'PUT', body: JSON.stringify({ formation: sub, matiere_code: code, source: src }) });
+        renderNotesGrid();
+        toast(`${code} : note ${src === 'saisie' ? 'calculée depuis la saisie enseignante' : 'importée / saisie à la main'}`);
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
 
 // Acronyme court d'un intitulé de matière (référentiel GIM) pour les en-têtes
 const _MAT_ACRONYMS = {
@@ -4608,11 +4801,17 @@ function renderNotesGrid() {
         (cg.ue ? comps.map((c, ci) =>
             vth(`UE${_semNum}${_ueNum(d, c.name, ci)}`, '#ede9fe', (ci === 0 ? ';border-left:4px solid #8b5cf6' : '') + wext(cwUe), `${c.name} — moyenne du semestre ${d.semester}`, '#4c1d95')).join('') : '') +
         (cg.notes ? mats.map((m, mi) => {
-            // Indicateur de saisie enseignant (onglet Saisie Notes) : ⏳ provisoire / ✓ définitif
+            // Origine officielle de la note : 🧮 calculée depuis la saisie enseignante
+            // (lecture seule) · 📥 importée / saisie ici · ⚠ écart avec la saisie.
+            const src = _noteSource(d, m.code);
             const st = (d.saisie_status || {})[m.code];
-            const flag = st ? (st === 'definitif' ? ' ✓' : ' ⏳') : '';
-            const flagTitle = st ? ` — saisie enseignant ${st === 'definitif' ? 'définitive' : 'provisoire'}` : '';
-            return vth(m.code + ' · ' + (m.short_label || matAcronym(m.label)) + flag, _coeffKindColor(m.kind), mi === 0 ? ';border-left:4px solid #6b7280' : '', (m.apogee_code ? m.apogee_code + ' — ' : '') + m.label + flagTitle, '');
+            const gap = src === 'saisie' ? 0 : _notesGap(d, m.code);
+            const icon = src === 'saisie' ? ' 🧮' : (gap ? ' ⚠' : (st ? ' 📥' : ''));
+            const flag = (src === 'saisie' && st) ? (st === 'definitif' ? ' ✓' : ' ⏳') : '';
+            const origin = src === 'saisie'
+                ? ` — note calculée depuis la saisie enseignante (${st === 'definitif' ? 'définitive' : 'provisoire'}), non modifiable ici`
+                : (st ? ` — note importée / saisie à la main${gap ? ` ; ${gap} écart(s) avec la saisie enseignante` : ' ; une saisie enseignante existe'}` : '');
+            return vth(m.code + ' · ' + (m.short_label || matAcronym(m.label)) + icon + flag, _coeffKindColor(m.kind), mi === 0 ? ';border-left:4px solid #6b7280' : '', (m.apogee_code ? m.apogee_code + ' — ' : '') + m.label + origin, '');
         }).join('') : '') +
         `</tr>`;
     const statutBadge = st => (st && st !== 'Actif') ? ` <span style="font-size:.68rem;color:#9ca3af">(${esc(st)})</span>` : '';
@@ -4647,20 +4846,35 @@ function renderNotesGrid() {
         }).join('') : '';
         const cells = cg.notes ? mats.map((m, mi) => {
             const v = d.marks[s.id + '_' + m.code];
+            const bl = mi === 0 ? ';border-left:4px solid #6b7280' : '';
+            // Matière en mode « calculée » : la note vient de la saisie enseignante
+            // et est refaite à chaque enregistrement — elle n'est pas éditable ici.
+            if (_noteSource(d, m.code) === 'saisie') {
+                return `<td title="Moyenne pondérée des sous-notes (onglet Saisie Notes) — pour la modifier, basculez la matière en « note importée »"
+                    style="padding:2px;text-align:center;background:#f0fdf4;color:#166534;font-weight:600;font-size:.9rem${bl}">${v === undefined || v === null ? '—' : esc(String(v))}</td>`;
+            }
+            const comp = (d.computed || {})[s.id + '_' + m.code];
+            const gap = _markDiffers(v, comp);
             const special = m.kind === 'PEN' || m.kind === 'BONUS';
+            // Pénalité : la case n'accepte pas la frappe directe (heures ou malus ?),
+            // un clic ouvre l'éditeur qui accepte les deux et convertit.
+            const isPen = m.kind === 'PEN';
             const calc = special
                 ? `<div class="nz-calc" style="font-size:.7rem;font-weight:600;margin-top:1px;min-height:.85rem;color:${m.kind === 'PEN' ? '#b91c1c' : '#15803d'}">${_notesCalcText(m.kind, v)}</div>`
                 : '';
-            return `<td style="padding:1px;text-align:center${mi === 0 ? ';border-left:4px solid #6b7280' : ''}"><input type="text" inputmode="decimal" maxlength="5"
+            const gapTag = gap ? `<div style="font-size:.62rem;line-height:1.1;color:#b45309">≠ ${Number(comp).toFixed(2)}</div>` : '';
+            return `<td title="${gap ? 'Saisie enseignante : ' + Number(comp).toFixed(2) + ' — note affichée conservée (matière en « note importée »)' : ''}"
+                style="padding:1px;text-align:center${gap ? ';background:#fffbeb' : ''}${bl}"><input type="text" inputmode="decimal" maxlength="5"
                 class="nz-mark" data-sid="${s.id}" data-code="${esc(m.code)}" data-kind="${esc(m.kind || '')}"
-                value="${v === undefined || v === null ? '' : v}"${special ? ' oninput="onNotesSpecialInput(this)"' : ''}
-                style="width:43px;padding:2px 1px;text-align:center;font-size:.9rem;border:1px solid #d1d5db;border-radius:4px">${calc}</td>`;
+                value="${v === undefined || v === null ? '' : v}"${special ? ' oninput="onNotesSpecialInput(this)"' : ''}${isPen ? ' readonly onclick="openPenaltyEditor(this)" title="Cliquez pour saisir les heures d\'absence ou directement le malus"' : ''}
+                style="width:43px;padding:2px 1px;text-align:center;font-size:.9rem;border:1px solid #d1d5db;border-radius:4px${isPen ? ';cursor:pointer;background:#fff' : ''}">${calc}${gapTag}</td>`;
         }).join('') : '';
         return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || ''))}" style="max-width:155px;font-size:.78rem;padding:2px 4px"><div style="display:flex;align-items:center;gap:4px"><button onclick="deleteStudentNotes(${s.id})" title="Supprimer les notes de cet étudiant pour ce semestre" style="border:none;background:none;cursor:pointer;color:#b91c1c;font-size:.78rem;padding:0;line-height:1;flex:0 0 auto">🗑</button><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</span></div></td>${prevYearCells}${bilanCells}${prevSemCells}${avgCells}${cells}</tr>`;
     }).join('');
     const fbox = (key, lbl, show) => show ? `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">
         <input type="checkbox" ${cg[key] ? 'checked' : ''} onchange="toggleNotesColGroup('${key}', this.checked)">${lbl}</label>` : '';
     el.innerHTML = `
+        ${_notesSourceBar(d, mats)}
         <div style="font-size:.78rem;color:#374151;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:14px;align-items:center;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:6px 12px">
             <strong>Colonnes :</strong>
             ${fbox('prevYears', 'Rappel années précédentes', prevYears.length > 0)}
@@ -4671,7 +4885,8 @@ function renderNotesGrid() {
         </div>
         <div style="font-size:.8rem;color:#6b7280;margin-bottom:10px">Notes sur 20. Case vide = note absente (le coefficient correspondant est retiré du calcul).
             Colonne <strong>Pénalité</strong> = nombre d'<strong>heures</strong> d'absences injustifiées (le malus est calculé selon le barème IUT&nbsp;Toulon
-            et retranché de chaque UE du semestre). Colonne <strong>Bonus</strong> = meilleure note sport/art <strong>/20</strong>
+            et retranché de chaque UE du semestre) — <strong>cliquez sur une case</strong> pour saisir les heures
+            <em>ou</em> directement le malus en points. Colonne <strong>Bonus</strong> = meilleure note sport/art <strong>/20</strong>
             (bonification calculée, max&nbsp;0,5&nbsp;pt, ajoutée à la moyenne d'UE de l'<strong>année</strong>).
             Codes UE : <strong>UE${_semNum}y</strong> = moyenne du semestre, <strong>UEyN${_year}</strong> = moyenne annuelle (survolez pour le nom).
             Matières &amp; coefficients dans le sous-onglet <strong>Coefficients</strong>.</div>
@@ -4712,6 +4927,93 @@ function _notesCalcText(kind, raw) {
 function onNotesSpecialInput(inp) {
     const calc = inp.parentElement.querySelector('.nz-calc');
     if (calc) calc.textContent = _notesCalcText(inp.dataset.kind, inp.value);
+}
+
+// ===== Éditeur de pénalité d'assiduité (colonne PEN des Bulletins) =====
+// La valeur STOCKÉE reste un nombre d'heures d'absence injustifiée (le backend en
+// déduit le malus). L'éditeur accepte les deux entrées : les heures, ou le malus
+// voulu — converti en heures par l'inverse du barème, exact car linéaire par morceaux.
+let _penInput = null;
+let _penMode = 'hours';
+
+function notesPenaltyHours(p) {
+    if (!(p > 0)) return 0;
+    return p <= 0.5 ? 8 + p / 0.05 : 18 + (p - 0.5) / 0.1;
+}
+
+function openPenaltyEditor(inp) {
+    if (inp.disabled) return;
+    _penInput = inp;
+    _penMode = 'hours';
+    const st = ((_notesData || {}).students || []).find(s => String(s.id) === String(inp.dataset.sid)) || {};
+    document.getElementById('pen-who').textContent =
+        `${st.nom || ''} ${st.prenom || ''}`.trim() + ` — ${inp.dataset.code}`;
+    const r = document.querySelector('input[name="pen-mode"][value="hours"]');
+    if (r) r.checked = true;
+    document.getElementById('pen-label').textContent = "Heures d'absence injustifiée";
+    document.getElementById('pen-value').value = inp.value.trim();
+    renderPenaltyPreview();
+    openModal('modal-notes-pen');
+    setTimeout(() => document.getElementById('pen-value').focus(), 30);
+}
+
+// Valeur saisie : null = case vide, NaN = invalide
+function _penRaw() {
+    const raw = document.getElementById('pen-value').value.trim().replace(',', '.');
+    if (raw === '') return null;
+    const n = parseFloat(raw);
+    return (isNaN(n) || n < 0) ? NaN : n;
+}
+
+// Heures d'absence correspondant à la saisie, quel que soit le mode
+function _penHours() {
+    const v = _penRaw();
+    if (v === null || isNaN(v)) return v;
+    return _penMode === 'points' ? Math.round(notesPenaltyHours(v) * 100) / 100 : v;
+}
+
+function onPenaltyModeChange() {
+    const now = document.querySelector('input[name="pen-mode"]:checked').value;
+    const el = document.getElementById('pen-value');
+    const v = _penRaw();
+    if (v !== null && !isNaN(v) && now !== _penMode) {
+        // la valeur déjà saisie est convertie : on garde la même pénalité réelle
+        const h = _penMode === 'points' ? notesPenaltyHours(v) : v;
+        el.value = now === 'points' ? String(notesPenaltyPoints(h)) : String(Math.round(h * 100) / 100);
+    }
+    _penMode = now;
+    document.getElementById('pen-label').textContent = now === 'points'
+        ? 'Malus, en points retirés à chaque UE'
+        : "Heures d'absence injustifiée";
+    renderPenaltyPreview();
+}
+
+function renderPenaltyPreview() {
+    const box = document.getElementById('pen-preview');
+    const v = _penRaw();
+    if (v === null) { box.innerHTML = '<span style="color:#6b7280">Case vide : aucune pénalité pour cet étudiant.</span>'; return; }
+    if (isNaN(v)) { box.innerHTML = '<span style="color:#b91c1c">Valeur invalide (nombre positif attendu).</span>'; return; }
+    const h = _penHours();
+    const p = notesPenaltyPoints(h);
+    box.innerHTML = `<strong>${_fmtPts(h)} h</strong> d'absence injustifiée → malus de
+        <strong style="color:#b91c1c">−${_fmtPts(p)} pt</strong> sur chaque UE du semestre`
+        + (p === 0 ? ' <span style="color:#6b7280">(seuil de 8 h non atteint)</span>' : '')
+        + `<div style="color:#6b7280;font-size:.78rem;margin-top:4px">Barème : rien jusqu'à 8 h, puis 0,05 pt/h jusqu'à 18 h, puis 0,1 pt/h.
+           La case enregistre les <strong>heures</strong>.</div>`;
+}
+
+function clearPenalty() {
+    document.getElementById('pen-value').value = '';
+    applyPenalty();
+}
+
+function applyPenalty() {
+    if (!_penInput) return;
+    const v = _penRaw();
+    if (isNaN(v)) { toast('Valeur invalide', 'error'); return; }
+    _penInput.value = v === null ? '' : String(_penHours());
+    onNotesSpecialInput(_penInput);
+    closeModal('modal-notes-pen');
 }
 
 // ===== Validation des UE / statut année (règlement IUT Toulon, art. 16-17) =====
@@ -6819,6 +7121,9 @@ async function toggleSemesterMut(sem, checkbox) {
         const r = await api('/semesters/' + sem + '/mutualized' + _grpQ(),
             { method: 'PUT', body: JSON.stringify({ mutualized: target ? 1 : 0 }) });
         (_semGroupsData.mutualized = _semGroupsData.mutualized || {})[sem] = r.mutualized;
+        // Les fiches matière lisent ces flags (state.semesters) : resynchroniser
+        // quand l'onglet Groupes et l'onglet Matières visent la même année.
+        if (_grpQ() === svcQ()) state.semesters = await api('/semesters' + svcQ());
         renderPromotionGroups();
         toast(`${sem} ${r.mutualized ? 'mutualisé' : 'non mutualisé'} — ${r.courses} matière(s) mise(s) à jour`);
     } catch(e) {
@@ -6838,6 +7143,9 @@ async function toggleSemesterTpSep(sem, checkbox) {
         const r = await api('/semesters/' + sem + '/tp-separate' + _grpQ(),
             { method: 'PUT', body: JSON.stringify({ tp_separate: target ? 1 : 0 }) });
         (_semGroupsData.tp_separate = _semGroupsData.tp_separate || {})[sem] = r.tp_separate;
+        // Les fiches matière lisent ces flags (state.semesters) : resynchroniser
+        // quand l'onglet Groupes et l'onglet Matières visent la même année.
+        if (_grpQ() === svcQ()) state.semesters = await api('/semesters' + svcQ());
         renderPromotionGroups();
         toast(`TP de ${sem} ${r.tp_separate ? 'distincts FTP / ALT' : 'communs à la promo'}`);
     } catch(e) {

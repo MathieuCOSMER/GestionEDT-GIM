@@ -904,6 +904,29 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE
         )
     ''')
+    # Origine OFFICIELLE de la note matière, par matière × face (voir
+    # _matiere_sources) : 'saisie' = calculée depuis les sous-notes (onglet
+    # Saisie Notes), 'import' = importée / saisie à la main dans Bulletins.
+    # Une seule origine fait foi : l'autre valeur reste visible (l'écart est
+    # signalé dans la grille) mais n'écrase jamais la note officielle.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS matiere_note_source (
+            promotion_id INTEGER NOT NULL,
+            semester TEXT NOT NULL,
+            formation TEXT NOT NULL CHECK (formation IN ('FTP', 'ALT')),
+            matiere_code TEXT NOT NULL,
+            source TEXT NOT NULL CHECK (source IN ('saisie', 'import')),
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (promotion_id, semester, formation, matiere_code),
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE
+        )
+    ''')
+    # Provenance de la valeur réellement stockée ('import'/'manuel'/'saisie'),
+    # tracée pour l'audit et l'aperçu d'import. NULL = antérieur à la migration.
+    try:
+        db.execute("ALTER TABLE student_marks ADD COLUMN source TEXT")
+    except sqlite3.OperationalError:
+        pass
     db.commit()
     _merge_formation_promotions(db)
 
@@ -4722,6 +4745,12 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     # + effectif de l'année (report auto + ajustements) et sous-cohorte propre à l'année
     students, comp = _semester_roster(pdb, pid, semester, formation)
     dec = comp['decisions']
+    # Origine officielle de chaque note matière sur la face affichée + moyennes
+    # calculées depuis la saisie enseignante : quand les deux divergent, la grille
+    # signale l'écart au lieu de laisser l'une écraser l'autre en silence.
+    note_sources = _matiere_sources(pdb, pid, semester, formation) if formation in _SUBCOHORTS else {}
+    computed = {f'{sid}_{key}': v for (sid, key), v in
+                _computed_matiere_marks(pdb, pid, semester, None, students).items()}
     # Rappels : toutes les années précédentes (moyennes annuelles) puis le semestre antérieur.
     # kind ('year'/'semester') + year/sem servent au front pour grouper et coder les colonnes (UExy/UExNy).
     previous = []
@@ -4752,6 +4781,9 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
             # Statut de la saisie enseignant par matière (Saisie Notes) :
             # 'provisoire' / 'definitif' — indicateur affiché dans Bulletins
             'saisie_status': _saisie_status(pdb, pid, semester, formation),
+            # 'saisie' = note calculée (lecture seule dans Bulletins) / 'import' =
+            # note importée ou saisie à la main (le recalcul ne l'écrase pas)
+            'note_sources': note_sources, 'computed': computed,
             'students': students, 'marks': marks, 'averages': averages, 'previous': previous,
             'year_semesters': [s_odd, s_even], 'year_competences': year_competences,
             'year_averages': year_averages,
@@ -4785,6 +4817,12 @@ def save_promotion_notes(pid, semester):
         return error_response('Promotion introuvable', 404)
     valid_students = {r['id'] for r in pdb.execute(
         'SELECT id FROM promotion_students WHERE promotion_id=?', (pid,))}
+    # Une matière dont la note officielle est calculée depuis la saisie enseignante
+    # n'est pas modifiable ici (il faut la basculer en « importée » d'abord).
+    roster, _ = _semester_roster(pdb, pid, semester)
+    faces = {r['id']: (r['formation'] if r['formation'] in _SUBCOHORTS else 'FTP') for r in roster}
+    srcs = {f: _matiere_sources(pdb, pid, semester, f) for f in _SUBCOHORTS}
+    locked = 0
     for m in (request.get_json() or {}).get('marks') or []:
         try:
             sid = int(m.get('student_id'))
@@ -4792,6 +4830,9 @@ def save_promotion_notes(pid, semester):
             continue
         code = (m.get('matiere_code') or '').strip()
         if sid not in valid_students or not code:
+            continue
+        if srcs[faces.get(sid, 'FTP')].get(code) == 'saisie':
+            locked += 1
             continue
         note = m.get('note')
         if note in (None, ''):
@@ -4805,15 +4846,17 @@ def save_promotion_notes(pid, semester):
                 note_num, mention = float(note), None
             except (TypeError, ValueError):
                 continue
-        pdb.execute('''INSERT INTO student_marks(promotion_id, semester, student_id, matiere_code, note, mention)
-                       VALUES(?,?,?,?,?,?)
+        pdb.execute('''INSERT INTO student_marks(promotion_id, semester, student_id, matiere_code, note, mention, source)
+                       VALUES(?,?,?,?,?,?,'manuel')
                        ON CONFLICT(promotion_id, semester, student_id, matiere_code)
-                       DO UPDATE SET note=excluded.note, mention=excluded.mention''',
+                       DO UPDATE SET note=excluded.note, mention=excluded.mention, source='manuel' ''',
                     (pid, semester, sid, code, note_num, mention))
     pdb.commit()
     _reconcile_red_transfers(pdb, pid)   # une note peut faire passer un RED en ADM/AJAC → nettoyage
     formation = (request.args.get('formation') or '').strip().upper() or None
-    return jsonify(_promo_notes_payload(pdb, pid, semester, formation))
+    payload = _promo_notes_payload(pdb, pid, semester, formation)
+    payload['readonly_skipped'] = locked
+    return jsonify(payload)
 
 @app.route('/api/promotions/<int:pid>/notes/<semester>', methods=['DELETE'])
 def delete_promotion_notes(pid, semester):
@@ -4923,6 +4966,7 @@ def _saisie_payload(pdb, pid, semester, formation, teacher_name=None):
     ref = (_promo_coeffs(pdb, pid) or {}).get(semester) or {}
     components = _visible_note_components(ref.get('components', []), ref.get('competences', []))
     comp_by_code = {c.get('code'): c for c in components if c.get('code')}
+    srcs = _matiere_sources(pdb, pid, semester, formation)
     students, _ = _semester_roster(pdb, pid, semester, formation)
     meta = {r['code']: r for r in pdb.execute(
         '''SELECT code, weight, definitive FROM submatiere_meta
@@ -4955,6 +4999,9 @@ def _saisie_payload(pdb, pid, semester, formation, teacher_name=None):
         out_groups.append({'key': key,
                            'label': compo.get('short_label') or compo.get('label') or key,
                            'referent': referent,
+                           # 'saisie' = la moyenne alimente Bulletins ; 'import' =
+                           # la note matière vient d'un import / d'une saisie admin
+                           'source': srcs.get(key, 'import'),
                            'is_referent': teacher_name is None or is_ref,
                            'subs': subs})
     codes = {s['code'] for grp in out_groups for s in grp['subs']}
@@ -4973,33 +5020,66 @@ def _saisie_payload(pdb, pid, semester, formation, teacher_name=None):
     return {**base, 'available': True, 'groups': out_groups, 'students': students,
             'marks': marks, 'official': official}
 
-def _recompute_matiere_marks(pdb, pid, semester, keys):
-    """Reporte la moyenne pondérée des sous-notes dans la note matière
-    (student_marks, utilisée par Bulletins/Jury) pour les matières `keys` —
-    seulement quand TOUTES les sous-matières comptées (pondération > 0 sur la
-    face de l'étudiant) ont une note. La note reportée reste modifiable par
-    l'admin (écrasée au prochain enregistrement de saisie de la matière)."""
+def _saisie_keys_with_marks(pdb, pid, semester, formation):
+    """Matières (clés) dont au moins une sous-note a été saisie sur cette face."""
+    return {_mat_base_key(r['code']) for r in pdb.execute(
+        '''SELECT DISTINCT m.code FROM submatiere_marks m
+           JOIN promotion_students ps ON ps.id = m.student_id
+           WHERE m.promotion_id=? AND m.semester=? AND ps.formation=? AND m.note IS NOT NULL''',
+        (pid, semester, formation))}
+
+def _matiere_sources(pdb, pid, semester, formation):
+    """{code matière: 'saisie'|'import'} — origine OFFICIELLE de la note matière
+    sur cette face (matiere_note_source). Choix explicite de l'admin s'il existe,
+    sinon défaut : 'saisie' dès qu'une sous-note a été saisie, 'import' sinon.
+    Toute matière absente du dict est en 'import' (note libre dans Bulletins)."""
+    out = {k: 'saisie' for k in _saisie_keys_with_marks(pdb, pid, semester, formation)}
+    for r in pdb.execute('''SELECT matiere_code, source FROM matiere_note_source
+                            WHERE promotion_id=? AND semester=? AND formation=?''',
+                         (pid, semester, formation)):
+        out[r['matiere_code']] = r['source']
+    return out
+
+def _set_matiere_source(pdb, pid, semester, formation, code, source):
+    pdb.execute('''INSERT INTO matiere_note_source(promotion_id, semester, formation, matiere_code, source, updated_at)
+                   VALUES(?,?,?,?,?,CURRENT_TIMESTAMP)
+                   ON CONFLICT(promotion_id, semester, formation, matiere_code)
+                   DO UPDATE SET source=excluded.source, updated_at=CURRENT_TIMESTAMP''',
+                (pid, semester, formation, code, source))
+
+def _computed_matiere_marks(pdb, pid, semester, keys=None, students=None):
+    """{(student_id, clé matière): moyenne pondérée des sous-notes} — seulement
+    pour les matières dont TOUTES les sous-matières comptées (pondération > 0 sur
+    la face de l'étudiant) ont une note. Indépendant de l'origine officielle :
+    sert au report automatique ET à l'affichage de l'écart dans Bulletins.
+    `keys=None` = toutes les matières du semestre."""
+    if not pdb.execute('''SELECT 1 FROM submatiere_marks WHERE promotion_id=? AND semester=?
+                          AND note IS NOT NULL LIMIT 1''', (pid, semester)).fetchone():
+        return {}   # aucune saisie enseignante : rien à calculer (ni base année à ouvrir)
     year_label = _promo_semester_year(pdb, pid, semester)
     path = db_path_for_year(year_label) if year_label else None
-    if not keys or not (path and os.path.isfile(path)):
-        return
+    if not (path and os.path.isfile(path)):
+        return {}
     ydb = _open_connection(path)
     try:
         by_face = {f: _saisie_groups(ydb, semester, f) for f in _SUBCOHORTS}
     finally:
         ydb.close()
-    students, _ = _semester_roster(pdb, pid, semester)
+    if students is None:
+        students, _ = _semester_roster(pdb, pid, semester)
     weights = {(r['formation'], r['code']): r['weight'] for r in pdb.execute(
         '''SELECT formation, code, weight FROM submatiere_meta
            WHERE promotion_id=? AND semester=?''', (pid, semester))}
     notes = {(r['student_id'], r['code']): r['note'] for r in pdb.execute(
         '''SELECT student_id, code, note FROM submatiere_marks
            WHERE promotion_id=? AND semester=? AND note IS NOT NULL''', (pid, semester))}
+    out = {}
     for s in students:
         f = s['formation'] if s['formation'] in _SUBCOHORTS else 'FTP'
-        for key in keys:
+        groups = by_face[f]
+        for key in (groups.keys() if keys is None else keys):
             wsubs = []
-            for c in by_face[f].get(key) or []:
+            for c in groups.get(key) or []:
                 w = weights.get((f, c['code']))
                 w = 1.0 if w is None else w
                 if _saisie_counted(c, w):
@@ -5008,13 +5088,33 @@ def _recompute_matiere_marks(pdb, pid, semester, keys):
                 continue
             vals = [(notes.get((s['id'], code)), w) for code, w in wsubs]
             if any(n is None for n, _ in vals):
-                continue   # saisie incomplète : la note matière n'est pas touchée
-            avg = round(sum(n * w for n, w in vals) / sum(w for _, w in vals), 2)
-            pdb.execute('''INSERT INTO student_marks(promotion_id, semester, student_id, matiere_code, note, mention)
-                           VALUES(?,?,?,?,?,NULL)
-                           ON CONFLICT(promotion_id, semester, student_id, matiere_code)
-                           DO UPDATE SET note=excluded.note, mention=NULL''',
-                        (pid, semester, s['id'], key, avg))
+                continue   # saisie incomplète : pas de moyenne
+            out[(s['id'], key)] = round(sum(n * w for n, w in vals) / sum(w for _, w in vals), 2)
+    return out
+
+def _recompute_matiere_marks(pdb, pid, semester, keys):
+    """Reporte la moyenne pondérée des sous-notes dans la note matière
+    (student_marks, utilisée par Bulletins/Jury) — UNIQUEMENT pour les matières
+    dont l'origine officielle est la saisie sur la face de l'étudiant
+    (_matiere_sources). Une note importée ou corrigée à la main dans Bulletins
+    n'est donc jamais écrasée en silence : l'écart avec la moyenne calculée est
+    signalé dans la grille, et l'admin arbitre en basculant l'origine."""
+    if not keys:
+        return
+    students, _ = _semester_roster(pdb, pid, semester)
+    computed = _computed_matiere_marks(pdb, pid, semester, keys, students)
+    if not computed:
+        return
+    faces = {s['id']: (s['formation'] if s['formation'] in _SUBCOHORTS else 'FTP') for s in students}
+    srcs = {f: _matiere_sources(pdb, pid, semester, f) for f in _SUBCOHORTS}
+    for (sid, key), avg in computed.items():
+        if srcs[faces[sid]].get(key) != 'saisie':
+            continue   # note officielle importée/manuelle : on ne l'écrase pas
+        pdb.execute('''INSERT INTO student_marks(promotion_id, semester, student_id, matiere_code, note, mention, source)
+                       VALUES(?,?,?,?,?,NULL,'saisie')
+                       ON CONFLICT(promotion_id, semester, student_id, matiere_code)
+                       DO UPDATE SET note=excluded.note, mention=NULL, source='saisie' ''',
+                    (pid, semester, sid, key, avg))
     pdb.commit()
 
 def _saisie_status(pdb, pid, semester, formation):
@@ -5310,7 +5410,11 @@ def _parse_notes_file(path):
 def import_promotion_notes(pid, semester):
     """Importe les notes depuis un fichier Apogée OU un PV de jury (auto-détection).
     Les colonnes de notes sont mappées aux matières de la référence (par index SAÉ/Stage/PORT/RES) ;
-    les notes sont rattachées aux étudiants de l'effectif via le n° Apogée."""
+    les notes sont rattachées aux étudiants de l'effectif via le n° Apogée.
+
+    `preview=1` renvoie le rapport de ce que ferait l'import SANS rien écrire
+    (notamment le nombre de notes qui écraseraient une note calculée depuis la
+    saisie enseignante). `mode` = all | keep_definitive | fill_empty."""
     err = _require_admin()
     if err:
         return err
@@ -5365,39 +5469,116 @@ def import_promotion_notes(pid, semester):
     if not col2code:
         return error_response('Aucune correspondance matière (vérifiez la référence des coefficients)', 400)
 
-    # Index des étudiants de l'effectif par numéro
-    students_by_num = {}
-    for s in pdb.execute('SELECT id, numero FROM promotion_students WHERE promotion_id=?', (pid,)):
+    # Index des étudiants (n° Apogée -> id) et face de chacun : l'origine officielle
+    # d'une note matière (calculée / importée) se décide par matière × face.
+    students_by_num, faces = {}, {}
+    for s in pdb.execute('SELECT id, numero, formation FROM promotion_students WHERE promotion_id=?', (pid,)):
+        faces[s['id']] = s['formation'] if s['formation'] in _SUBCOHORTS else 'FTP'
         num = (s['numero'] or '').strip().lower()
         if num:
             students_by_num[num] = s['id']
-    notes_set = 0
-    matched = unmatched = 0
+
+    # Plan d'import : rien n'est écrit avant d'avoir confronté le fichier à
+    # l'existant. `mode` décide du sort des matières alimentées par la saisie :
+    #   all             : tout écraser (les matières touchées passent en « importée »)
+    #   keep_definitive : ne pas toucher aux matières dont la saisie est définitive
+    #   fill_empty      : ne remplir que les cases sans note
+    mode = (request.form.get('mode') or 'all').strip() or 'all'
+    if mode not in ('all', 'keep_definitive', 'fill_empty'):
+        return error_response("Mode d'import inconnu", 400)
+    srcs = {f: _matiere_sources(pdb, pid, semester, f) for f in _SUBCOHORTS}
+    defs = {f: _saisie_status(pdb, pid, semester, f) for f in _SUBCOHORTS}
+    filled = {(r['student_id'], r['matiere_code']) for r in _marks_rows(pdb, pid, semester)
+              if r['note'] is not None or r['mention']}
+    plan, switched = [], set()
+    matched = unmatched = conflits = skip_def = skip_filled = 0
     for row in rows:
         sid = students_by_num.get(row['numero'].lower())
         if not sid:
             unmatched += 1
             continue
         matched += 1
+        f = faces.get(sid, 'FTP')
         for note_col, val in row['notes'].items():
             code = col2code.get(note_col)
             if not code:
                 continue
-            note_num, mention = (0.0, 'ABI') if isinstance(val, str) else (val, None)
-            pdb.execute('''INSERT INTO student_marks(promotion_id, semester, student_id, matiere_code, note, mention)
-                           VALUES(?,?,?,?,?,?)
-                           ON CONFLICT(promotion_id, semester, student_id, matiere_code)
-                           DO UPDATE SET note=excluded.note, mention=excluded.mention''',
-                        (pid, semester, sid, code, note_num, mention))
-            notes_set += 1
+            calc = srcs[f].get(code) == 'saisie'   # note actuellement calculée
+            if calc:
+                conflits += 1
+            if mode == 'keep_definitive' and defs[f].get(code) == 'definitif':
+                skip_def += 1
+                continue
+            if mode == 'fill_empty' and (sid, code) in filled:
+                skip_filled += 1
+                continue
+            plan.append((sid, code, val))
+            if calc:
+                switched.add((f, code))
+    report = {'notes': len(plan), 'etudiants_rapproches': matched,
+              'etudiants_non_trouves': unmatched, 'matieres_mappees': len(col2code),
+              'mode': mode, 'conflits_saisie': conflits,
+              'ignorees_definitives': skip_def, 'ignorees_deja_notees': skip_filled,
+              'matieres_basculees': sorted({c for _, c in switched})}
+    if request.form.get('preview'):
+        return jsonify({'preview': True, 'import_report': report})   # aucune écriture
+
+    for sid, code, val in plan:
+        note_num, mention = (0.0, 'ABI') if isinstance(val, str) else (val, None)
+        pdb.execute('''INSERT INTO student_marks(promotion_id, semester, student_id, matiere_code, note, mention, source)
+                       VALUES(?,?,?,?,?,?,'import')
+                       ON CONFLICT(promotion_id, semester, student_id, matiere_code)
+                       DO UPDATE SET note=excluded.note, mention=excluded.mention, source='import' ''',
+                    (pid, semester, sid, code, note_num, mention))
+    # Une matière qui reçoit des notes importées cesse d'être alimentée par la
+    # saisie enseignante : sans cela le prochain recalcul écraserait l'import.
+    for f, code in switched:
+        _set_matiere_source(pdb, pid, semester, f, code, 'import')
     pdb.commit()
     _audit('NOTES_IMPORT', ip=_client_ip(), user=session.get('user'),
-           promo=pid, semester=semester, notes=notes_set)
+           promo=pid, semester=semester, notes=len(plan), mode=mode,
+           bascules=len(switched))
     formation = (request.form.get('formation') or '').strip().upper() or None
     payload = _promo_notes_payload(pdb, pid, semester, formation)
-    payload['import_report'] = {'notes': notes_set, 'etudiants_rapproches': matched,
-                                'etudiants_non_trouves': unmatched, 'matieres_mappees': len(col2code)}
+    payload['import_report'] = report
     return jsonify(payload)
+
+@app.route('/api/promotions/<int:pid>/notes/<semester>/source', methods=['PUT'])
+def set_promotion_note_source(pid, semester):
+    """Origine OFFICIELLE de la note d'une matière pour une face :
+    'saisie'  = moyenne pondérée des sous-notes (recalculée automatiquement,
+                note en lecture seule dans Bulletins) ;
+    'import'  = note importée / saisie à la main, que le recalcul ne touche plus.
+    Basculer vers 'saisie' reporte immédiatement les moyennes disponibles."""
+    err = _require_admin()
+    if err:
+        return err
+    if semester not in _PROMO_SEMESTERS:
+        return error_response('Semestre invalide', 400)
+    data = request.get_json() or {}
+    formation = (data.get('formation') or '').strip().upper()
+    if formation not in _SUBCOHORTS:
+        return error_response('Sous-cohorte invalide', 400)
+    source = (data.get('source') or '').strip()
+    if source not in ('saisie', 'import'):
+        return error_response('Origine invalide', 400)
+    code = (data.get('matiere_code') or '').strip()
+    if not code:
+        return error_response('Matière invalide', 400)
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    if source == 'saisie' and code not in _saisie_keys_with_marks(pdb, pid, semester, formation):
+        return error_response('Aucune note saisie par les enseignants sur cette matière : '
+                              'elle ne peut pas être calculée', 400)
+    _set_matiere_source(pdb, pid, semester, formation, code, source)
+    pdb.commit()
+    if source == 'saisie':
+        _recompute_matiere_marks(pdb, pid, semester, {code})
+        _reconcile_red_transfers(pdb, pid)
+    _audit('NOTE_SOURCE', ip=_client_ip(), user=session.get('user'),
+           promo=pid, semester=semester, formation=formation, matiere=code, source=source)
+    return jsonify(_promo_notes_payload(pdb, pid, semester, formation))
 
 # Couleur d'en-tête par type de matière (cohérent avec _coeffKindColor côté frontend)
 _NOTES_KIND_FILL = {'SAE': 'DBEAFE', 'RES': 'DCFCE7', 'PORT': 'FEF3C7',
