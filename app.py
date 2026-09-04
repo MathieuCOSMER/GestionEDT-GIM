@@ -4921,6 +4921,20 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     # Moyenne annuelle courante = moyenne des 2 semestres de l'année (S1+S2, S3+S4, S5+S6)
     s_odd, s_even = f'S{year * 2 - 1}', f'S{year * 2}'
     year_averages, year_competences = _year_competence_averages(pdb, pid, s_odd, s_even, ref_all)
+    # Autre semestre de l'année : moyennes d'UE et note de bonus. La grille en a
+    # besoin pour recalculer la moyenne annuelle dès la saisie d'un bonus ou d'une
+    # pénalité, sans aller-retour serveur.
+    other_sem = s_even if semester == s_odd else s_odd
+    d_other = ref_all.get(other_sem) or {}
+    other_averages = _semester_competence_averages(pdb, pid, other_sem,
+                                                   d_other.get('competences', []),
+                                                   d_other.get('components', []))
+    other_bonus = {}
+    _obcode = _code_by_kind(d_other.get('components', []), 'BONUS')
+    if _obcode:
+        for _r in _marks_rows(pdb, pid, other_sem):
+            if _r['matiere_code'] == _obcode:
+                other_bonus[str(_r['student_id'])] = _r['note']
     # Moyenne annuelle générale = moyenne des UE de l'année — même calcul que la
     # colonne GIM du Jury, pour que les deux onglets affichent le même nombre.
     year_gim = {}
@@ -4940,6 +4954,8 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
             'students': students, 'marks': marks, 'averages': averages, 'previous': previous,
             'year_semesters': [s_odd, s_even], 'year_competences': year_competences,
             'year_averages': year_averages, 'year_gim': year_gim,
+            'other_semester': other_sem, 'other_averages': other_averages,
+            'other_bonus': other_bonus,
             'ue_numbers': _jury_ue_numbers(ref_all),
             'year_validation': _year_validation(pdb, pid, ref_all, year),
             'year_decision': {str(s['id']): dec.get((year, str(s['id']))) for s in students}}

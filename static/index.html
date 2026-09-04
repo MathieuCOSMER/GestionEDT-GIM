@@ -537,7 +537,7 @@
         <h1>Promotions</h1>
         <div class="filters">
             <label for="promo-select">Promotion :</label>
-            <select id="promo-select" onchange="onPromoChange()" style="min-width:230px;font-weight:600">
+            <select id="promo-select" onchange="guardPromoChange()" style="min-width:230px;font-weight:600">
                 <option value="">—</option></select>
         </div>
     </div>
@@ -672,11 +672,11 @@
         <div class="toolbar">
             <div class="filters">
                 <label>Sous-cohorte :</label>
-                <select id="saisie-sub-select" onchange="loadSaisieGrid()">
+                <select id="saisie-sub-select" onchange="guardSaisieReload()">
                     <option value="FTP">FTP</option><option value="ALT">ALT</option>
                 </select>
                 <label style="margin-left:12px">Semestre :</label>
-                <select id="saisie-sem-select" onchange="loadSaisieGrid()">
+                <select id="saisie-sem-select" onchange="guardSaisieReload()">
                     <option value="">—</option>
                     <option selected>S1</option><option>S2</option><option>S3</option>
                     <option>S4</option><option>S5</option><option>S6</option>
@@ -694,11 +694,11 @@
         <div class="toolbar">
             <div class="filters">
                 <label>Sous-cohorte :</label>
-                <select id="notes-sub-select" onchange="loadNotesGrid()">
+                <select id="notes-sub-select" onchange="guardNotesReload()">
                     <option value="FTP">FTP</option><option value="ALT">ALT</option>
                 </select>
                 <label style="margin-left:12px">Semestre :</label>
-                <select id="notes-sem-select" onchange="loadNotesGrid()">
+                <select id="notes-sem-select" onchange="guardNotesReload()">
                     <option value="">—</option>
                     <option selected>S1</option><option>S2</option><option>S3</option>
                     <option>S4</option><option>S5</option><option>S6</option>
@@ -715,11 +715,11 @@
         <div class="toolbar">
             <div class="filters">
                 <label>Sous-cohorte :</label>
-                <select id="jury-sub-select" onchange="loadJuryGrid()">
+                <select id="jury-sub-select" onchange="guardJuryReload()">
                     <option value="FTP">FTP</option><option value="ALT">ALT</option>
                 </select>
                 <label style="margin-left:12px">Année :</label>
-                <select id="jury-year-select" onchange="loadJuryGrid()">
+                <select id="jury-year-select" onchange="guardJuryReload()">
                     <option value="1" selected>Année 1 (S1–S2)</option>
                     <option value="2">Année 2 (S3–S4)</option>
                     <option value="3">Année 3 (S5–S6)</option>
@@ -1202,6 +1202,19 @@
             <button type="button" class="btn btn-secondary" onclick="closeModal('modal-notes-import')">Annuler</button>
             <button type="button" class="btn btn-secondary" id="notes-import-check" onclick="submitNotesImport(true)">🔎 Analyser le fichier</button>
             <button type="button" class="btn btn-primary" id="notes-import-submit" onclick="submitNotesImport(false)" disabled>Importer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL MODIFICATIONS NON ENREGISTRÉES ===== -->
+<div class="modal-backdrop" id="modal-unsaved">
+    <div class="modal" style="max-width:460px">
+        <h2>Modifications non enregistrées</h2>
+        <p id="unsaved-msg" style="color:#374151;font-size:.92rem;margin-top:0"></p>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="resolveUnsaved('cancel')">Rester ici</button>
+            <button type="button" class="btn btn-secondary" onclick="resolveUnsaved('discard')">Quitter sans enregistrer</button>
+            <button type="button" class="btn btn-primary" onclick="resolveUnsaved('save')">Enregistrer et quitter</button>
         </div>
     </div>
 </div>
@@ -1865,7 +1878,89 @@ function svcQ(sep = '?') {
 
 function showServicePage() { showPage(_serviceTab); }
 
+// ===== Modifications non enregistrées =====
+// Les grilles qui exigent un clic sur « Enregistrer » sont surveillées : toute
+// saisie les marque « modifiées », et un nouveau rendu (rechargement ou
+// enregistrement réussi) les remet au propre. Quitter l'onglet, la page, la
+// promotion, ou changer de semestre, demande alors quoi faire.
+const _DIRTY_ZONES = [
+    // `clean: null` = grille qui se re-rend localement en gardant les saisies (tri,
+    // colonnes) : son état propre est posé à la main, pas déduit du re-rendu.
+    { mark: 'notes-content', clean: null, label: 'des notes du bulletin', save: () => saveNotesMarks() },
+    { mark: 'saisie-content', clean: 'saisie-content', label: 'des notes saisies', save: () => saveSaisie() },
+    { mark: 'jury-content', clean: null, label: 'des décisions de jury', save: () => saveJuryDecisions() },
+    { mark: 'promo-tab-groupes', clean: 'promo-groups-editor', label: 'des groupes de la promotion', save: () => savePromotionGroups() },
+    { mark: 'promo-tab-calendrier', clean: 'calendrier-body', label: 'des modifications du calendrier', save: () => saveCalendrier() },
+    { mark: 'page-programme', clean: 'prog-content', label: 'des modifications du programme', save: () => saveProg() },
+];
+let _dirtyZones = {};
+
+function initDirtyWatch() {
+    _DIRTY_ZONES.forEach(z => {
+        const el = document.getElementById(z.mark);
+        if (!el || el.dataset.dirtyWatch) return;
+        el.dataset.dirtyWatch = '1';
+        const touch = e => {
+            // les filtres (barre d'outils) ne sont pas des données à enregistrer
+            if (e.target && e.target.closest && e.target.closest('.toolbar')) return;
+            _dirtyZones[z.mark] = true;
+        };
+        el.addEventListener('input', touch);
+        el.addEventListener('change', touch);
+        const target = z.clean && document.getElementById(z.clean);
+        // Un re-rendu remplace les enfants DIRECTS du conteneur : c'est le signal
+        // que la grille vient du serveur, donc propre. Les retouches de cellules
+        // (recalcul d'une moyenne) sont plus profondes et ne comptent pas.
+        if (target) new MutationObserver(() => { delete _dirtyZones[z.mark]; })
+            .observe(target, { childList: true });
+    });
+}
+
+// Zone modifiée ET actuellement visible
+function _dirtyZone() {
+    return _DIRTY_ZONES.find(z => {
+        const el = document.getElementById(z.mark);
+        return _dirtyZones[z.mark] && el && el.offsetParent !== null;
+    }) || null;
+}
+
+function markZoneClean(id) { delete _dirtyZones[id]; }
+
+let _unsavedPending = null;
+function guardUnsaved(action, onCancel) {
+    const z = _dirtyZone();
+    if (!z) { action(); return; }
+    _unsavedPending = { zone: z, action, onCancel };
+    document.getElementById('unsaved-msg').textContent =
+        `Vous avez ${z.label} qui n'ont pas été enregistrées.`;
+    openModal('modal-unsaved');
+}
+
+async function resolveUnsaved(choice) {
+    const p = _unsavedPending;
+    _unsavedPending = null;
+    closeModal('modal-unsaved');
+    if (!p) return;
+    if (choice === 'cancel') { if (p.onCancel) p.onCancel(); return; }
+    if (choice === 'save') {
+        // une saisie invalide (note hors 0–20…) annule le départ : on reste sur place
+        if (await p.zone.save() === false) { if (p.onCancel) p.onCancel(); return; }
+    }
+    markZoneClean(p.zone.mark);
+    p.action();
+}
+
+// Fermeture / rechargement du navigateur : avertissement natif (3 choix impossibles)
+window.addEventListener('beforeunload', e => {
+    if (_dirtyZone()) { e.preventDefault(); e.returnValue = ''; }
+});
+
 function showPage(name) {
+    initDirtyWatch();
+    guardUnsaved(() => _showPage(name));
+}
+
+function _showPage(name) {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
     document.getElementById('page-' + name).classList.add('active');
@@ -2719,6 +2814,11 @@ function applyPromoReadOnly() {
     });
 }
 function showPromoTab(tab) {
+    initDirtyWatch();
+    guardUnsaved(() => _showPromoTab(tab));
+}
+
+function _showPromoTab(tab) {
     if (state.role === 'teacher' && !_promoTeacherTabs.includes(tab)) tab = 'effectif';
     _promoTab = tab;
     applyPromoSubtabsForRole();
@@ -4572,10 +4672,13 @@ async function saveSaisie() {
             _saisieData = await api(`/promotions/${pid}/saisie/${sem}?formation=${encodeURIComponent(sub)}`);
         }
         renderSaisieGrid();
+        markZoneClean('saisie-content');
         toast('Saisie enregistrée');
+        return true;
     } catch (e) {
         toast('Erreur : ' + e.message, 'error');
         btn.disabled = false;
+        return false;
     }
 }
 
@@ -4584,10 +4687,43 @@ async function loadNotes() {
     loadNotesGrid();
 }
 
+// Changer de promotion / semestre / sous-cohorte, c'est quitter la grille :
+// on prévient, et si l'on reste, le sélecteur reprend sa valeur précédente.
+function guardPromoChange() {
+    guardUnsaved(onPromoChange, () => { document.getElementById('promo-select').value = _promoId || ''; });
+}
+function guardNotesReload() {
+    guardUnsaved(loadNotesGrid, () => {
+        if (!_notesData) return;
+        document.getElementById('notes-sem-select').value = _notesData.semester;
+        const sub = document.getElementById('notes-sub-select');
+        if (sub && _notesSub) sub.value = _notesSub;
+    });
+}
+function guardSaisieReload() {
+    guardUnsaved(loadSaisieGrid, () => {
+        if (!_saisieData) return;
+        document.getElementById('saisie-sem-select').value = _saisieData.semester;
+        const sub = document.getElementById('saisie-sub-select');
+        if (sub && _saisieData.formation) sub.value = _saisieData.formation;
+    });
+}
+function guardJuryReload() {
+    guardUnsaved(loadJuryGrid, () => {
+        if (!_juryData) return;
+        document.getElementById('jury-year-select').value = _juryData.year;
+        const sub = document.getElementById('jury-sub-select');
+        if (sub && _jurySub) sub.value = _jurySub;
+    });
+}
+
+let _notesSub = 'FTP', _jurySub = 'FTP';
+
 async function loadNotesGrid() {
     const pid = document.getElementById('promo-select').value;
     const sem = document.getElementById('notes-sem-select').value;
     const sub = (document.getElementById('notes-sub-select') || {}).value || 'FTP';
+    _notesSub = sub;
     const saveBtn = document.getElementById('notes-save-btn');
     const impBtn = document.getElementById('notes-import-btn');
     const expBtn = document.getElementById('notes-export-btn');
@@ -4602,6 +4738,7 @@ async function loadNotesGrid() {
     try { _notesData = await api(`/promotions/${pid}/notes/${sem}?formation=${encodeURIComponent(sub)}`); }
     catch (e) { toast('Erreur : ' + e.message, 'error'); saveBtn.disabled = true; impBtn.disabled = true; expBtn.disabled = true; delBtn.disabled = true; return; }
     saveBtn.disabled = false; impBtn.disabled = false; expBtn.disabled = false; delBtn.disabled = false;
+    markZoneClean('notes-content');
     renderNotesGrid();
 }
 
@@ -5029,12 +5166,12 @@ function renderNotesGrid() {
             const jd = (d.year_decision || {})[s.id];
             const gim = (d.year_gim || {})[s.id];
             bilanCells = `<td title="${jd ? _JURY_DEC_TITLE[jd] : 'Aucune décision'}" style="text-align:center;white-space:nowrap;padding:2px 3px;border-left:4px solid #22c55e"><span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:.78rem;font-weight:700;${jd ? _JURY_DEC_STYLE[jd] : 'background:#e5e7eb;color:#6b7280'}">${jd || '—'}</span></td>`
-                + `<td title="Moyenne annuelle générale (moyenne des UE de l'année)" style="text-align:center;font-weight:700;font-size:.9rem;background:#dcfce7;color:#166534">${_fmtAvg(gim)}</td>` +
+                + `<td class="nz-gim" data-sid="${s.id}" title="Moyenne annuelle générale (moyenne des UE de l'année)" style="text-align:center;font-weight:700;font-size:.9rem;background:#dcfce7;color:#166534">${_fmtAvg(gim)}</td>` +
                 (d.year_competences || []).map((name, ci) => {
                     const st = _yearUeStatus(ya[ci]);
                     const stl = st === 'ok' ? 'background:#dcfce7;color:#166534'
                         : (st === 'ko' ? 'background:#fee2e2;color:#b91c1c' : 'background:#f0fdf4;color:#166534');
-                    return `<td title="${st === 'ok' ? 'UE acquise (≥10)' : (st === 'ko' ? 'UE non acquise (<10)' : 'Non évaluée')}" style="text-align:center;font-weight:700;font-size:.9rem;${stl}">${_fmtAvg(ya[ci])}</td>`;
+                    return `<td class="nz-yavg" data-sid="${s.id}" data-ci="${ci}" title="${st === 'ok' ? 'UE acquise (≥10)' : (st === 'ko' ? 'UE non acquise (<10)' : 'Non évaluée')}" style="text-align:center;font-weight:700;font-size:.9rem;${stl}">${_fmtAvg(ya[ci])}</td>`;
                 }).join('');
         }
         const prevCell = (g, first) => {
@@ -5137,6 +5274,89 @@ function _notesCalcText(kind, raw) {
 function onNotesSpecialInput(inp) {
     const calc = inp.parentElement.querySelector('.nz-calc');
     if (calc) calc.textContent = _notesCalcText(inp.dataset.kind, inp.value);
+    // Le malus d'assiduité et la bonification changent toutes les moyennes de la
+    // ligne : on les recalcule tout de suite, à l'écran (rien n'est enregistré).
+    refreshStudentAverages(inp.dataset.sid);
+}
+
+// ===== Recalcul immédiat des moyennes d'un étudiant (bonus / pénalité) =====
+// Mêmes formules que le serveur (barème IUT Toulon) : le malus se retranche de
+// chaque UE du semestre, la bonification s'ajoute à la moyenne ANNUELLE de chaque
+// UE. Rien n'est enregistré : « Enregistrer les notes » reste nécessaire, et le
+// serveur refait le calcul qui fait foi.
+function _noteNum(v) {
+    if (v === null || v === undefined || v === '') return null;
+    if (typeof v === 'number') return v;
+    const t = String(v).trim().toUpperCase();
+    if (t === 'ABI') return 0;                       // absence : comptée 0
+    const n = parseFloat(t.replace(',', '.'));
+    return isNaN(n) ? null : n;
+}
+
+// Moyennes d'UE du semestre affiché (miroir de _semester_competence_averages)
+function _liveSemAverages(d, sid) {
+    const pen = (d.components || []).find(m => m.kind === 'PEN');
+    const malus = pen ? notesPenaltyPoints(_noteNum(d.marks[sid + '_' + pen.code])) : 0;
+    return (d.competences || []).map((c, ci) => {
+        let num = 0, den = 0;
+        Object.entries(c.coeffs || {}).forEach(([code, coeff]) => {
+            const w = coeff || 0;
+            const v = _noteNum(d.marks[sid + '_' + code]);
+            if (w && v !== null) { num += w * v; den += w; }
+        });
+        let v = den > 0 ? Math.round(Math.max(0, num / den - malus) * 100) / 100 : null;
+        const rk = (d.red_kept || {})[sid + '_' + ci];   // redoublant : meilleure des deux
+        if (rk !== undefined && (v === null || rk > v)) v = rk;
+        return v;
+    });
+}
+
+// Moyennes annuelles + moyenne générale (miroir de _year_competence_averages)
+function _liveYearAverages(d, sid, sem) {
+    const bon = (d.components || []).find(m => m.kind === 'BONUS');
+    const notes = [bon ? _noteNum(d.marks[sid + '_' + bon.code]) : null,
+                   _noteNum((d.other_bonus || {})[sid])].filter(v => v !== null);
+    const bonus = notes.length ? notesBonusPoints(Math.max(...notes)) : 0;
+    const other = (d.other_averages || {})[sid] || {};
+    const year = (d.year_competences || []).map((name, ci) => {
+        const vals = [sem[ci], other[ci]].filter(v => v !== null && v !== undefined);
+        return vals.length
+            ? Math.round(Math.min(20, vals.reduce((a, b) => a + b, 0) / vals.length + bonus) * 100) / 100
+            : null;
+    });
+    const nn = year.filter(v => v !== null);
+    return { year, gim: nn.length ? Math.round(nn.reduce((a, b) => a + b, 0) / nn.length * 100) / 100 : null };
+}
+
+function refreshStudentAverages(sid) {
+    const d = _notesData;
+    if (!d || !sid) return;
+    _harvestNotesEdits();                 // les notes tapées comptent dans le calcul
+    const sem = _liveSemAverages(d, sid);
+    const { year, gim } = _liveYearAverages(d, sid, sem);
+    document.querySelectorAll(`#notes-content td.nz-avg[data-sid="${sid}"]`).forEach(td => {
+        const ci = +td.dataset.ci;
+        const rk = (d.red_kept || {})[sid + '_' + ci];
+        const st = _ueStatus(sem[ci], year[ci]);
+        td.style.cssText = `text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}`;
+        td.title = _UE_TITLE[st] + (rk === undefined ? '' : ' — note conservée du passage précédent (redoublant : meilleure des deux)');
+        td.innerHTML = _fmtAvg(sem[ci]) + (rk === undefined ? '' : ' <span style="font-size:.7rem;color:#7c3aed">↺</span>');
+    });
+    document.querySelectorAll(`#notes-content td.nz-yavg[data-sid="${sid}"]`).forEach(td => {
+        const ci = +td.dataset.ci, st = _yearUeStatus(year[ci]);
+        td.style.cssText = 'text-align:center;font-weight:700;font-size:.9rem;'
+            + (st === 'ok' ? 'background:#dcfce7;color:#166534'
+                           : (st === 'ko' ? 'background:#fee2e2;color:#b91c1c' : 'background:#f0fdf4;color:#166534'));
+        td.title = st === 'ok' ? 'UE acquise (≥10)' : (st === 'ko' ? 'UE non acquise (<10)' : 'Non évaluée');
+        td.textContent = _fmtAvg(year[ci]);
+    });
+    const g = document.querySelector(`#notes-content td.nz-gim[data-sid="${sid}"]`);
+    if (g) g.textContent = _fmtAvg(gim);
+    // le cache suit, pour que le tri et un re-rendu restent cohérents
+    const obj = arr => Object.fromEntries(arr.map((v, i) => [String(i), v]));
+    if (d.averages) d.averages[sid] = obj(sem);
+    if (d.year_averages) d.year_averages[sid] = obj(year);
+    (d.year_gim || (d.year_gim = {}))[sid] = gim;
 }
 
 // ===== Éditeur de pénalité d'assiduité (colonne PEN des Bulletins) =====
@@ -5222,6 +5442,7 @@ function applyPenalty() {
     if (isNaN(v)) { toast('Valeur invalide', 'error'); return; }
     _penInput.value = v === null ? '' : String(v);
     onNotesSpecialInput(_penInput);
+    _dirtyZones['notes-content'] = true;   // valeur posée par le modal : aucun événement de saisie
     closeModal('modal-notes-pen');
 }
 
@@ -5305,6 +5526,8 @@ async function loadJuryGrid() {
         return;
     }
     el.innerHTML = '<div class="spinner">Chargement…</div>';
+    _jurySub = sub;
+    markZoneClean('jury-content');
     try { _juryData = await api(`/promotions/${pid}/jury/${year}?formation=${encodeURIComponent(sub)}`); }
     catch (e) { toast('Erreur : ' + e.message, 'error'); saveBtn.disabled = true; return; }
     saveBtn.disabled = false;
@@ -5430,8 +5653,10 @@ async function saveJuryDecisions() {
         _juryData = await api(`/promotions/${pid}/jury/${year}?formation=${encodeURIComponent(sub)}`,
             { method: 'PUT', body: JSON.stringify({ decisions, year_decisions }) });
         renderJuryGrid();
+        markZoneClean('jury-content');
         toast('Décisions de jury enregistrées');
-    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+        return true;
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); return false; }
 }
 
 async function saveNotesMarks() {
@@ -5458,12 +5683,14 @@ async function saveNotesMarks() {
         }
         marks.push({ student_id: +inp.dataset.sid, matiere_code: inp.dataset.code, note: mark });
     });
-    if (invalid) { toast('Notes invalides (0–20).', 'error'); return; }
+    if (invalid) { toast('Notes invalides (0–20).', 'error'); return false; }
     try {
         _notesData = await api(`/promotions/${pid}/notes/${sem}?formation=${encodeURIComponent(sub)}`, { method: 'PUT', body: JSON.stringify({ marks }) });
         renderNotesGrid();
+        markZoneClean('notes-content');
         toast('Notes enregistrées');
-    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+        return true;
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); return false; }
 }
 
 // Supprime toutes les notes du semestre pour la sous-cohorte affichée
