@@ -1415,7 +1415,7 @@
                 <div class="form-group"><label>Code *</label><input id="course-code" required placeholder="ex: R1.01"></div>
                 <div class="form-group">
                     <label>Type</label>
-                    <select id="course-type">
+                    <select id="course-type" onchange="onMutualizedChange()">
                         <option value="Ressource">Ressource</option>
                         <option value="SAE">SAE</option>
                     </select>
@@ -6173,27 +6173,46 @@ function switchCourseTab(tab, btn) {
     btn.classList.add('active');
 }
 
+// TP communs à la promo pour la matière en cours d'édition ? (semestre mutualisé
+// + TP FTP/ALT NON distincts dans l'onglet Groupes ; jamais pour une SAÉ)
+function _courseTpCommon() {
+    if (!document.getElementById('course-mutualized').checked) return false;
+    const semId = parseInt(document.getElementById('course-semester').value) || null;
+    return _semTpCommon(semId, document.getElementById('course-type').value);
+}
+
 function onMutualizedChange() {
     const mut = document.getElementById('course-mutualized').checked;
+    // TP communs : la face ALT n'a plus rien de propre (TP et PT valent pour la
+    // promo entière) → panneau ALT masqué ET neutralisé, pour ne rien y saisir.
+    const tpCommon = _courseTpCommon();
     // Quand mutualisé : masquer tabs/copier, afficher les deux panneaux (FTP = CM/TD mut + TP/PT FTP, ALT = TP/PT ALT)
     document.getElementById('course-tab-bar').style.display = mut ? 'none' : '';
     document.getElementById('copy-formation-btns').style.display = mut ? 'none' : '';
     if (mut) {
         document.getElementById('course-hours-ftp').style.display = '';
-        document.getElementById('course-hours-alt').style.display = '';
+        document.getElementById('course-hours-alt').style.display = tpCommon ? 'none' : '';
     } else {
         // Remettre l'onglet FTP actif, masquer ALT
         document.getElementById('course-hours-alt').style.display = 'none';
         document.querySelectorAll('#modal-course .tab-btn').forEach((b,i) => b.classList.toggle('active', i===0));
     }
-    updateMutualizedLabels(mut);
+    setAltPanelDisabled(tpCommon);
+    updateMutualizedLabels(mut, tpCommon);
     refreshGroupTeachers();
+}
+
+// Neutralise (ou réactive) les champs du panneau ALT : masqué = non saisissable,
+// et hors validation HTML5 à l'enregistrement.
+function setAltPanelDisabled(off) {
+    document.querySelectorAll('#course-hours-alt input, #course-hours-alt select, #course-hours-alt button')
+        .forEach(el => { el.disabled = !!off; });
 }
 
 function onCourseSemesterChange() {
     const semId = parseInt(document.getElementById('course-semester').value) || null;
-    // Le nb de groupes de TD/TP/PT dépend du semestre : réévaluer dans tous les cas
-    refreshGroupTeachers();
+    // Mutualisation / TP communs et nb de groupes dépendent du semestre : réévaluer dans tous les cas
+    onMutualizedChange();
     if (!semId) return;
     const sem = state.semesters.find(s => s.id === semId);
     if (sem && (sem.code === 'S5' || sem.code === 'S6')) {
@@ -6236,7 +6255,7 @@ function applyDefaultWeeks() {
     s.disabled = e.disabled = cb.checked;
 }
 
-function updateMutualizedLabels(mut) {
+function updateMutualizedLabels(mut, tpCommon) {
     // Quand mutualisé : masquer CM/TD ALT, afficher les labels MUT
     const altCmTr = document.getElementById('alt-cm-hours').closest('tr');
     const altTdTr = document.getElementById('alt-td-hours').closest('tr');
@@ -6244,8 +6263,12 @@ function updateMutualizedLabels(mut) {
     altTdTr.style.display = mut ? 'none' : '';
     const altTdGrp = document.getElementById('alt-td-grp-row');
     if (mut && altTdGrp) altTdGrp.style.display = 'none';
-    document.getElementById('mut-label-ftp').style.display = mut ? '' : 'none';
-    document.getElementById('mut-label-alt').style.display = mut ? '' : 'none';
+    const lblFtp = document.getElementById('mut-label-ftp');
+    lblFtp.style.display = mut ? '' : 'none';
+    lblFtp.textContent = tpCommon ? 'CM / TD / TP / PT mutualisés (promo entière)'
+                                  : 'CM / TD mutualisés + TP / PT FTP';
+    // Pas de face ALT propre quand les TP sont communs à la promo
+    document.getElementById('mut-label-alt').style.display = (mut && !tpCommon) ? '' : 'none';
 }
 
 function syncHoursStep(durInput) {
@@ -6341,8 +6364,9 @@ async function openCourseModal(id = null) {
     document.getElementById('course-tab-bar').style.display = '';
     document.getElementById('copy-formation-btns').style.display = '';
     document.querySelectorAll('#modal-course .tab-btn').forEach((b,i) => b.classList.toggle('active', i===0));
-    // Restaurer les lignes ALT CM/TD
-    updateMutualizedLabels(false);
+    // Restaurer les lignes ALT CM/TD (et le panneau ALT saisissable)
+    setAltPanelDisabled(false);
+    updateMutualizedLabels(false, false);
     buildRoomSelects();
     buildRoomSelects({}, 'alt-');
     buildTeacherSelects();
@@ -6517,7 +6541,10 @@ async function submitCourse(e) {
             const typesFtpOnly = { CM: {hours:0}, TD: {hours:0}, TP: tpCommon ? {hours:0} : panelFtp.TP, PT: panelFtp.PT };
             await api('/courses/' + courseId + '/teaching-hours?formation_type=0' + svcQ('&'), { method: 'PUT', body: JSON.stringify(typesFtpOnly) });
             // ALT : uniquement TP/PT (TP seulement si distincts), effacer CM/TD
-            const typesAltOnly = { CM: {hours:0}, TD: {hours:0}, TP: tpCommon ? {hours:0} : panelAlt.TP, PT: panelAlt.PT };
+            // TP communs : panneau ALT masqué/neutralisé → la face ALT est vidée (tout est promo)
+            const typesAltOnly = tpCommon
+                ? { CM: {hours:0}, TD: {hours:0}, TP: {hours:0}, PT: {hours:0} }
+                : { CM: {hours:0}, TD: {hours:0}, TP: panelAlt.TP, PT: panelAlt.PT };
             await api('/courses/' + courseId + '/teaching-hours?formation_type=1' + svcQ('&'), { method: 'PUT', body: JSON.stringify(typesAltOnly) });
         } else {
             // Classique : FTP + ALT séparés, effacer MUT
