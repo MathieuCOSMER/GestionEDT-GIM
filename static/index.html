@@ -4741,11 +4741,111 @@ function _notesGroups() {
 function toggleNotesColGroup(key, on) {
     _notesGroups()[key] = on;
     try { localStorage.setItem('notesColGroups', JSON.stringify(_notesColGroups)); } catch (e) { }
+    _harvestNotesEdits();
     renderNotesGrid();
 }
 
 // Numéro canonique d'une UE (Maintenir=1 … Sécuriser=5) depuis son nom
 function _ueNum(d, name, ci) { return (d.ue_numbers || {})[name] || (ci + 1); }
+
+// ===== Tri des grilles Bulletins et Jury =====
+// État par grille : colonne (`key`) et sens. 'nom' par défaut, comme le serveur.
+// Une colonne de résultat se trie d'abord du meilleur au moins bon ; les valeurs
+// absentes restent toujours en fin de liste, quel que soit le sens.
+let _notesSort = { key: 'nom', dir: 1 };
+let _jurySort = { key: 'nom', dir: 1 };
+
+// Valeur comparable d'une cellule : nombre, ABI = 0 (absence, comptée 0), sinon null
+function _sortNum(v) {
+    if (v === null || v === undefined || v === '') return null;
+    if (typeof v === 'number') return v;
+    const t = String(v).trim().toUpperCase();
+    if (t === 'ABI') return 0;
+    const n = parseFloat(t.replace(',', '.'));
+    return isNaN(n) ? null : n;
+}
+
+// Trie une liste d'étudiants selon `st` ; `val(s)` = valeur de la colonne triée.
+// À valeurs égales (et pour la colonne « nom »), ordre alphabétique.
+function _sortStudents(students, st, val) {
+    const nom = s => ((s.nom || '') + ' ' + (s.prenom || '')).toLocaleLowerCase('fr');
+    return students.slice().sort((a, b) => {
+        if (st.key !== 'nom') {
+            const va = _sortNum(val(a)), vb = _sortNum(val(b));
+            if (va === null && vb !== null) return 1;      // sans résultat : en bas
+            if (vb === null && va !== null) return -1;
+            if (va !== null && vb !== null && va !== vb) return (va - vb) * st.dir;
+        }
+        return nom(a).localeCompare(nom(b), 'fr') * (st.key === 'nom' ? st.dir : 1);
+    });
+}
+
+function _sortMark(st, key) { return st.key === key ? (st.dir > 0 ? '▲' : '▼') : ''; }
+
+// Nouvelle colonne : sens naturel (nom croissant, résultat décroissant).
+// Même colonne : on inverse.
+function _toggleSort(st, key) {
+    if (st.key === key) st.dir = -st.dir;
+    else { st.key = key; st.dir = (key === 'nom') ? 1 : -1; }
+}
+
+// Un re-rendu repart de _notesData : sans cette récupération, les notes tapées
+// et non encore enregistrées seraient perdues en triant ou en masquant un groupe
+// de colonnes.
+function _harvestNotesEdits() {
+    const d = _notesData;
+    if (!d) return;
+    document.querySelectorAll('#notes-content input.nz-mark').forEach(inp => {
+        const k = inp.dataset.sid + '_' + inp.dataset.code;
+        const raw = inp.value.trim();
+        if (raw === '') { delete d.marks[k]; return; }
+        const n = parseFloat(raw.replace(',', '.'));
+        d.marks[k] = isNaN(n) ? raw.toUpperCase() : n;   // ABI (ou frappe en cours)
+    });
+}
+
+// Idem pour le Jury : codes d'UE (AJ/ADMJ) et décisions d'année en cours
+function _harvestJuryEdits() {
+    const d = _juryData;
+    if (!d) return;
+    document.querySelectorAll('#jury-content select.jr-code').forEach(sel => {
+        const r = d.rows[sel.dataset.sid];
+        if (r && r.ues && r.ues[sel.dataset.ue]) r.ues[sel.dataset.ue].code = sel.value;
+    });
+    document.querySelectorAll('#jury-content select.jr-yeardec').forEach(sel => {
+        const r = d.rows[sel.dataset.sid];
+        if (r) r.decision = sel.value;
+    });
+}
+
+function sortNotesBy(key) { _harvestNotesEdits(); _toggleSort(_notesSort, key); renderNotesGrid(); }
+
+// Valeur d'un étudiant pour une colonne de Bulletins :
+// 'nom' | 'ue:<i>' | 'year:<i>' | 'prevY:<annee>:<i>' | 'prevS:<sem>:<i>' | 'mat:<code>'
+function _notesSortVal(d, key, s) {
+    const [kind, a, b] = String(key).split(':');
+    if (kind === 'ue') return (d.averages[s.id] || {})[a];
+    if (kind === 'year') return ((d.year_averages || {})[s.id] || {})[a];
+    if (kind === 'mat') return d.marks[s.id + '_' + a];
+    if (kind === 'prevY' || kind === 'prevS') {
+        const sem = kind === 'prevS';
+        const g = (d.previous || []).find(x => (x.kind === 'semester') === sem
+            && String(sem ? x.sem : x.year) === a);
+        return g ? (g.averages[s.id] || {})[b] : null;
+    }
+    return null;
+}
+
+function sortJuryBy(key) { _harvestJuryEdits(); _toggleSort(_jurySort, key); renderJuryGrid(); }
+
+// Valeur d'un étudiant pour une colonne du Jury : 'nom' | 'gim' | 'ue:<num>:odd|even|annual'
+function _jurySortVal(d, key, s) {
+    const row = d.rows[s.id] || { ues: {} };
+    if (key === 'gim') return row.gim;
+    const [kind, num, part] = String(key).split(':');
+    if (kind === 'ue') return ((row.ues || {})[num] || {})[part];
+    return null;
+}
 
 function renderNotesGrid() {
     const d = _notesData;
@@ -4768,8 +4868,13 @@ function renderNotesGrid() {
     const prevSems = prev.filter(g => g.kind === 'semester');
     const cg = _notesGroups();
     // En-tête vertical (réduit la largeur des colonnes)
-    const vth = (txt, bg, extra, title, color) =>
-        `<th title="${esc(title || '')}" style="background:${bg};padding:6px 2px;vertical-align:bottom;text-align:center${extra || ''}"><div style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600;font-size:.85rem${color ? ';color:' + color : ''}">${esc(txt)}</div></th>`;
+    // `key` (optionnel) rend la colonne cliquable pour trier ; la flèche est posée
+    // hors du texte vertical, qui resterait illisible une fois pivoté.
+    const vth = (txt, bg, extra, title, color, key) =>
+        `<th title="${esc((title || '') + (key ? ' — cliquer pour trier' : ''))}"${key ? ` onclick="sortNotesBy('${esc(key)}')"` : ''}
+             style="background:${bg};padding:6px 2px;vertical-align:bottom;text-align:center${key ? ';cursor:pointer' : ''}${extra || ''}"><div
+             style="height:.8rem;line-height:.8rem;font-size:.62rem;color:#374151">${key ? _sortMark(_notesSort, key) : ''}</div><div
+             style="display:inline-block;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-weight:600;font-size:.85rem${color ? ';color:' + color : ''}">${esc(txt)}</div></th>`;
     // Ordre : Étudiant | statut & bilan année | rappels années précédentes | semestre précédent | UE du semestre | notes
     // Ligne 1 : noms des groupes de colonnes ; ligne 2 : en-têtes de colonnes
     const gth = (txt, bg, color, colspan, border) =>
@@ -4781,7 +4886,8 @@ function renderNotesGrid() {
     const cwPrevY = g => Math.floor(GW / Math.max(1, 1 + g.competences.length));
     const cwPrevS = g => Math.floor(GW / Math.max(1, g.competences.length));
     const cwUe = Math.floor(GW / Math.max(1, comps.length));
-    const groupRow = `<tr><th class="nz-sticky" rowspan="2" style="min-width:155px;max-width:155px;vertical-align:bottom;font-size:.8rem">Étudiant</th>` +
+    const groupRow = `<tr><th class="nz-sticky" rowspan="2" onclick="sortNotesBy('nom')" title="Trier par nom"
+            style="min-width:155px;max-width:155px;vertical-align:bottom;font-size:.8rem;cursor:pointer">Étudiant ${_sortMark(_notesSort, 'nom')}</th>` +
         (cg.prevYears ? prevYears.map(g => gth(`Année ${g.year || ''}`, '#eef2ff', '#3730a3', 1 + g.competences.length, '#6366f1')).join('') : '') +
         (cg.bilan ? gth(`Année ${_year}`, '#dcfce7', '#166534', 1 + (d.year_competences || []).length, '#22c55e') : '') +
         (cg.prevSem ? prevSems.map(g => gth(`Semestre S${g.sem || ''}`, '#eef2ff', '#3730a3', g.competences.length, '#818cf8')).join('') : '') +
@@ -4792,14 +4898,18 @@ function renderNotesGrid() {
         (cg.prevYears ? prevYears.map(g =>
             vth('Statut', '#eef2ff', ';border-left:4px solid #6366f1' + wext(cwPrevY(g)), 'Décision du jury — ' + g.label, '#3730a3') +
             g.competences.map((name, ci) =>
-                vth(`UE${_ueNum(d, name, ci)}N${g.year || ''}`, '#eef2ff', wext(cwPrevY(g)), g.label + ' — ' + name, '#3730a3')).join('')).join('') : '') +
+                vth(`UE${_ueNum(d, name, ci)}N${g.year || ''}`, '#eef2ff', wext(cwPrevY(g)), g.label + ' — ' + name, '#3730a3',
+                    `prevY:${g.year || ''}:${ci}`)).join('')).join('') : '') +
         (cg.bilan ? vth('Statut', '#dcfce7', ';border-left:4px solid #22c55e' + wext(cwBilan), 'Statut de l\'année en cours', '#166534') +
             (d.year_competences || []).map((name, ci) =>
-                vth(`UE${_ueNum(d, name, ci)}N${_year}`, '#dcfce7', wext(cwBilan), `Moyenne annuelle ${name} (${(d.year_semesters || []).join('–')})`, '#166534')).join('') : '') +
+                vth(`UE${_ueNum(d, name, ci)}N${_year}`, '#dcfce7', wext(cwBilan), `Moyenne annuelle ${name} (${(d.year_semesters || []).join('–')})`, '#166534',
+                    `year:${ci}`)).join('') : '') +
         (cg.prevSem ? prevSems.map(g => g.competences.map((name, ci) =>
-            vth(`UE${g.sem || ''}${_ueNum(d, name, ci)}`, '#eef2ff', (ci === 0 ? ';border-left:4px solid #818cf8' : '') + wext(cwPrevS(g)), g.label + ' — ' + name, '#3730a3')).join('')).join('') : '') +
+            vth(`UE${g.sem || ''}${_ueNum(d, name, ci)}`, '#eef2ff', (ci === 0 ? ';border-left:4px solid #818cf8' : '') + wext(cwPrevS(g)), g.label + ' — ' + name, '#3730a3',
+                `prevS:${g.sem || ''}:${ci}`)).join('')).join('') : '') +
         (cg.ue ? comps.map((c, ci) =>
-            vth(`UE${_semNum}${_ueNum(d, c.name, ci)}`, '#ede9fe', (ci === 0 ? ';border-left:4px solid #8b5cf6' : '') + wext(cwUe), `${c.name} — moyenne du semestre ${d.semester}`, '#4c1d95')).join('') : '') +
+            vth(`UE${_semNum}${_ueNum(d, c.name, ci)}`, '#ede9fe', (ci === 0 ? ';border-left:4px solid #8b5cf6' : '') + wext(cwUe), `${c.name} — moyenne du semestre ${d.semester}`, '#4c1d95',
+                `ue:${ci}`)).join('') : '') +
         (cg.notes ? mats.map((m, mi) => {
             // Origine officielle de la note : 🧮 calculée depuis la saisie enseignante
             // (lecture seule) · 📥 importée / saisie ici · ⚠ écart avec la saisie.
@@ -4811,11 +4921,11 @@ function renderNotesGrid() {
             const origin = src === 'saisie'
                 ? ` — note calculée depuis la saisie enseignante (${st === 'definitif' ? 'définitive' : 'provisoire'}), non modifiable ici`
                 : (st ? ` — note importée / saisie à la main${gap ? ` ; ${gap} écart(s) avec la saisie enseignante` : ' ; une saisie enseignante existe'}` : '');
-            return vth(m.code + ' · ' + (m.short_label || matAcronym(m.label)) + icon + flag, _coeffKindColor(m.kind), mi === 0 ? ';border-left:4px solid #6b7280' : '', (m.apogee_code ? m.apogee_code + ' — ' : '') + m.label + origin, '');
+            return vth(m.code + ' · ' + (m.short_label || matAcronym(m.label)) + icon + flag, _coeffKindColor(m.kind), mi === 0 ? ';border-left:4px solid #6b7280' : '', (m.apogee_code ? m.apogee_code + ' — ' : '') + m.label + origin, '', `mat:${m.code}`);
         }).join('') : '') +
         `</tr>`;
     const statutBadge = st => (st && st !== 'Actif') ? ` <span style="font-size:.68rem;color:#9ca3af">(${esc(st)})</span>` : '';
-    const body = d.students.map(s => {
+    const body = _sortStudents(d.students, _notesSort, s => _notesSortVal(d, _notesSort.key, s)).map(s => {
         const avg = d.averages[s.id] || {};
         const ya = (d.year_averages || {})[s.id] || {};
         let bilanCells = '';
@@ -5116,17 +5226,23 @@ function renderJuryGrid() {
     const y = d.year, sOdd = parseInt(d.semesters[0].slice(1)), sEven = parseInt(d.semesters[1].slice(1));
     // Ligne 1 : groupes d'UE (colspan 4) ; ligne 2 : UExy / UExy / UExNy / Code
     const bl = ';border-left:3px solid #6b7280';
-    const head1 = `<tr><th class="nz-sticky" rowspan="2" style="min-width:170px;max-width:170px;vertical-align:bottom;font-size:.8rem">Étudiant</th>` +
+    const head1 = `<tr><th class="nz-sticky" rowspan="2" onclick="sortJuryBy('nom')" title="Trier par nom"
+            style="min-width:170px;max-width:170px;vertical-align:bottom;font-size:.8rem;cursor:pointer">Étudiant ${_sortMark(_jurySort, 'nom')}</th>` +
         d.ues.map(u => `<th colspan="4" title="${u.terminal ? 'UE sans niveau supérieur : doit être validée pour un passage AJAC' : ''}"
             style="text-align:center;background:#ede9fe;color:#4c1d95;font-size:.66rem;padding:5px 3px${bl}">UE${u.num} · ${esc(u.name)}${u.terminal ? ' *' : ''}</th>`).join('') +
-        `<th rowspan="2" style="background:#dcfce7;color:#166534;text-align:center;vertical-align:bottom;font-size:.66rem;padding:5px 4px;border-left:3px solid #22c55e">GIM${y}<br><span style="font-weight:400;font-size:.58rem">moyenne</span></th>` +
+        `<th rowspan="2" onclick="sortJuryBy('gim')" title="Moyenne générale de l'année — cliquer pour trier"
+            style="background:#dcfce7;color:#166534;text-align:center;vertical-align:bottom;font-size:.66rem;padding:5px 4px;border-left:3px solid #22c55e;cursor:pointer">GIM${y} ${_sortMark(_jurySort, 'gim')}<br><span style="font-weight:400;font-size:.58rem">moyenne</span></th>` +
         `<th rowspan="2" style="background:#f3f4f6;text-align:center;vertical-align:bottom;font-size:.66rem;padding:5px 4px${bl}">Décision</th></tr>`;
-    const sub = (txt, title, extra) => `<th title="${esc(title || '')}" style="text-align:center;background:#faf5ff;font-size:.59rem;font-weight:600;color:#6b7280;padding:3px 3px${extra || ''}">${txt}</th>`;
+    // `key` (optionnel) rend la colonne cliquable pour trier la grille
+    const sub = (txt, title, extra, key) => `<th title="${esc((title || '') + (key ? ' — cliquer pour trier' : ''))}"${key ? ` onclick="sortJuryBy('${key}')"` : ''}
+        style="text-align:center;background:#faf5ff;font-size:.59rem;font-weight:600;color:#6b7280;padding:3px 3px${key ? ';cursor:pointer' : ''}${extra || ''}">${txt}${key ? ' ' + _sortMark(_jurySort, key) : ''}</th>`;
     const head2 = '<tr>' + d.ues.map(u =>
-        sub(`UE${sOdd}${u.num}`, `Moyenne S${sOdd}`, bl) + sub(`UE${sEven}${u.num}`, `Moyenne S${sEven}`) +
-        sub(`UE${u.num}N${y}`, 'Moyenne annuelle (niveau ' + y + ')') + sub('Code', 'ADM / AJ / ADMJ / CMP')).join('') + '</tr>';
+        sub(`UE${sOdd}${u.num}`, `Moyenne S${sOdd}`, bl, `ue:${u.num}:odd`) +
+        sub(`UE${sEven}${u.num}`, `Moyenne S${sEven}`, '', `ue:${u.num}:even`) +
+        sub(`UE${u.num}N${y}`, 'Moyenne annuelle (niveau ' + y + ')', '', `ue:${u.num}:annual`) +
+        sub('Code', 'ADM / AJ / ADMJ / CMP')).join('') + '</tr>';
     const statutBadge = st => (st && st !== 'Actif') ? ` <span style="font-size:.68rem;color:#9ca3af">(${esc(st)})</span>` : '';
-    const body = d.students.map(s => {
+    const body = _sortStudents(d.students, _jurySort, s => _jurySortVal(d, _jurySort.key, s)).map(s => {
         const row = d.rows[s.id] || { ues: {} };
         const ueCells = d.ues.map(u => {
             const v = row.ues[u.num] || {};
