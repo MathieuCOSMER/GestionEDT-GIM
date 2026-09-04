@@ -1211,19 +1211,17 @@
     <div class="modal" style="max-width:440px">
         <h2>Pénalité d'assiduité</h2>
         <p id="pen-who" style="color:#6b7280;font-size:.9rem;margin-top:0"></p>
-        <div class="form-group">
-            <label>Ce que vous saisissez</label>
-            <label style="display:block;font-weight:400;font-size:.88rem;margin:2px 0">
-                <input type="radio" name="pen-mode" value="hours" checked onchange="onPenaltyModeChange()">
-                le nombre d'<strong>heures d'absence</strong> injustifiée</label>
-            <label style="display:block;font-weight:400;font-size:.88rem;margin:2px 0">
-                <input type="radio" name="pen-mode" value="points" onchange="onPenaltyModeChange()">
-                directement le <strong>malus</strong>, en points</label>
-        </div>
-        <div class="form-group">
-            <label id="pen-label">Heures d'absence injustifiée</label>
-            <input type="text" inputmode="decimal" id="pen-value" oninput="renderPenaltyPreview()"
-                   onkeydown="if (event.key === 'Enter') applyPenalty()">
+        <div class="form-group" style="display:flex;gap:14px">
+            <div style="flex:1">
+                <label for="pen-hours">Nb heures d'absence</label>
+                <input type="text" inputmode="decimal" id="pen-hours" oninput="onPenaltyInput('hours')"
+                       onkeydown="if (event.key === 'Enter') applyPenalty()" style="width:100%">
+            </div>
+            <div style="flex:1">
+                <label for="pen-points">Nb de points (malus)</label>
+                <input type="text" inputmode="decimal" id="pen-points" oninput="onPenaltyInput('points')"
+                       onkeydown="if (event.key === 'Enter') applyPenalty()" style="width:100%">
+            </div>
         </div>
         <div id="pen-preview" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px;font-size:.85rem;margin-bottom:12px"></div>
         <div class="form-actions">
@@ -4917,6 +4915,7 @@ function sortNotesBy(key) { _harvestNotesEdits(); _toggleSort(_notesSort, key); 
 function _notesSortVal(d, key, s) {
     const [kind, a, b] = String(key).split(':');
     if (kind === 'ue') return (d.averages[s.id] || {})[a];
+    if (kind === 'gim') return (d.year_gim || {})[s.id];
     if (kind === 'year') return ((d.year_averages || {})[s.id] || {})[a];
     if (kind === 'mat') return d.marks[s.id + '_' + a];
     if (kind === 'prevY' || kind === 'prevS') {
@@ -4974,14 +4973,14 @@ function renderNotesGrid() {
     // Largeur cible identique pour chaque groupe (hors SAÉ/Ressources), répartie sur ses colonnes
     const GW = 250;
     const wext = cw => `;width:${cw}px;min-width:${cw}px;max-width:${cw}px`;
-    const cwBilan = Math.floor(GW / Math.max(1, 1 + (d.year_competences || []).length));
+    const cwBilan = Math.floor(GW / Math.max(1, 2 + (d.year_competences || []).length));
     const cwPrevY = g => Math.floor(GW / Math.max(1, 1 + g.competences.length));
     const cwPrevS = g => Math.floor(GW / Math.max(1, g.competences.length));
     const cwUe = Math.floor(GW / Math.max(1, comps.length));
     const groupRow = `<tr><th class="nz-sticky" rowspan="2" onclick="sortNotesBy('nom')" title="Trier par nom"
             style="min-width:155px;max-width:155px;vertical-align:bottom;font-size:.8rem;cursor:pointer">Étudiant ${_sortMark(_notesSort, 'nom')}</th>` +
         (cg.prevYears ? prevYears.map(g => gth(`Année ${g.year || ''}`, '#eef2ff', '#3730a3', 1 + g.competences.length, '#6366f1')).join('') : '') +
-        (cg.bilan ? gth(`Année ${_year}`, '#dcfce7', '#166534', 1 + (d.year_competences || []).length, '#22c55e') : '') +
+        (cg.bilan ? gth(`Année ${_year}`, '#dcfce7', '#166534', 2 + (d.year_competences || []).length, '#22c55e') : '') +
         (cg.prevSem ? prevSems.map(g => gth(`Semestre S${g.sem || ''}`, '#eef2ff', '#3730a3', g.competences.length, '#818cf8')).join('') : '') +
         (cg.ue ? gth(`Semestre ${d.semester}`, '#ede9fe', '#4c1d95', comps.length, '#8b5cf6') : '') +
         (cg.notes ? gth('SAÉ / Ressources', '#f3f4f6', '#374151', mats.length, '#6b7280') : '') +
@@ -4993,6 +4992,9 @@ function renderNotesGrid() {
                 vth(`UE${_ueNum(d, name, ci)}N${g.year || ''}`, '#eef2ff', wext(cwPrevY(g)), g.label + ' — ' + name, '#3730a3',
                     `prevY:${g.year || ''}:${ci}`)).join('')).join('') : '') +
         (cg.bilan ? vth('Statut', '#dcfce7', ';border-left:4px solid #22c55e' + wext(cwBilan), 'Statut de l\'année en cours', '#166534') +
+            vth('Moyenne', '#dcfce7', wext(cwBilan),
+                `Moyenne annuelle générale (moyenne des UE de l'année ${_year}) — colonne GIM${_year} du Jury`,
+                '#166534', 'gim') +
             (d.year_competences || []).map((name, ci) =>
                 vth(`UE${_ueNum(d, name, ci)}N${_year}`, '#dcfce7', wext(cwBilan), `Moyenne annuelle ${name} (${(d.year_semesters || []).join('–')})`, '#166534',
                     `year:${ci}`)).join('') : '') +
@@ -5023,7 +5025,9 @@ function renderNotesGrid() {
         let bilanCells = '';
         if (cg.bilan) {
             const jd = (d.year_decision || {})[s.id];
-            bilanCells = `<td title="${jd ? _JURY_DEC_TITLE[jd] : 'Aucune décision'}" style="text-align:center;white-space:nowrap;padding:2px 3px;border-left:4px solid #22c55e"><span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:.78rem;font-weight:700;${jd ? _JURY_DEC_STYLE[jd] : 'background:#e5e7eb;color:#6b7280'}">${jd || '—'}</span></td>` +
+            const gim = (d.year_gim || {})[s.id];
+            bilanCells = `<td title="${jd ? _JURY_DEC_TITLE[jd] : 'Aucune décision'}" style="text-align:center;white-space:nowrap;padding:2px 3px;border-left:4px solid #22c55e"><span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:.78rem;font-weight:700;${jd ? _JURY_DEC_STYLE[jd] : 'background:#e5e7eb;color:#6b7280'}">${jd || '—'}</span></td>`
+                + `<td title="Moyenne annuelle générale (moyenne des UE de l'année)" style="text-align:center;font-weight:700;font-size:.9rem;background:#dcfce7;color:#166534">${_fmtAvg(gim)}</td>` +
                 (d.year_competences || []).map((name, ci) => {
                     const st = _yearUeStatus(ya[ci]);
                     const stl = st === 'ok' ? 'background:#dcfce7;color:#166534'
@@ -5138,7 +5142,7 @@ function onNotesSpecialInput(inp) {
 // déduit le malus). L'éditeur accepte les deux entrées : les heures, ou le malus
 // voulu — converti en heures par l'inverse du barème, exact car linéaire par morceaux.
 let _penInput = null;
-let _penMode = 'hours';
+let _penMode = 'hours';     // champ réellement saisi : c'est lui qui fait foi
 
 function notesPenaltyHours(p) {
     if (!(p > 0)) return 0;
@@ -5152,70 +5156,69 @@ function openPenaltyEditor(inp) {
     const st = ((_notesData || {}).students || []).find(s => String(s.id) === String(inp.dataset.sid)) || {};
     document.getElementById('pen-who').textContent =
         `${st.nom || ''} ${st.prenom || ''}`.trim() + ` — ${inp.dataset.code}`;
-    const r = document.querySelector('input[name="pen-mode"][value="hours"]');
-    if (r) r.checked = true;
-    document.getElementById('pen-label').textContent = "Heures d'absence injustifiée";
-    document.getElementById('pen-value').value = inp.value.trim();
-    renderPenaltyPreview();
+    document.getElementById('pen-hours').value = inp.value.trim();
+    document.getElementById('pen-points').value = '';
+    _penSync('hours');
     openModal('modal-notes-pen');
-    setTimeout(() => document.getElementById('pen-value').focus(), 30);
+    setTimeout(() => document.getElementById('pen-hours').focus(), 30);
 }
 
-// Valeur saisie : null = case vide, NaN = invalide
-function _penRaw() {
-    const raw = document.getElementById('pen-value').value.trim().replace(',', '.');
+// Valeur d'un champ : null = vide, NaN = invalide
+function _penField(id) {
+    const raw = document.getElementById(id).value.trim().replace(',', '.');
     if (raw === '') return null;
     const n = parseFloat(raw);
     return (isNaN(n) || n < 0) ? NaN : n;
 }
 
-// Heures d'absence correspondant à la saisie, quel que soit le mode
+// Les deux champs décrivent la même pénalité : remplir l'un renseigne l'autre.
+function _penSync(which) {
+    _penMode = which;
+    const hEl = document.getElementById('pen-hours'), pEl = document.getElementById('pen-points');
+    const v = _penField(which === 'points' ? 'pen-points' : 'pen-hours');
+    if (v === null) {
+        (which === 'points' ? hEl : pEl).value = '';         // vider l'un vide l'autre
+    } else if (!isNaN(v)) {
+        if (which === 'hours') pEl.value = _fmtPts(notesPenaltyPoints(v));
+        else hEl.value = _fmtPts(Math.round(notesPenaltyHours(v) * 100) / 100);
+    }
+    renderPenaltyPreview();
+}
+
+function onPenaltyInput(which) { _penSync(which); }
+
+// Heures à enregistrer (la case de la grille stocke des heures)
 function _penHours() {
-    const v = _penRaw();
+    const v = _penField(_penMode === 'points' ? 'pen-points' : 'pen-hours');
     if (v === null || isNaN(v)) return v;
     return _penMode === 'points' ? Math.round(notesPenaltyHours(v) * 100) / 100 : v;
 }
 
-function onPenaltyModeChange() {
-    const now = document.querySelector('input[name="pen-mode"]:checked').value;
-    const el = document.getElementById('pen-value');
-    const v = _penRaw();
-    if (v !== null && !isNaN(v) && now !== _penMode) {
-        // la valeur déjà saisie est convertie : on garde la même pénalité réelle
-        const h = _penMode === 'points' ? notesPenaltyHours(v) : v;
-        el.value = now === 'points' ? String(notesPenaltyPoints(h)) : String(Math.round(h * 100) / 100);
-    }
-    _penMode = now;
-    document.getElementById('pen-label').textContent = now === 'points'
-        ? 'Malus, en points retirés à chaque UE'
-        : "Heures d'absence injustifiée";
-    renderPenaltyPreview();
-}
-
 function renderPenaltyPreview() {
     const box = document.getElementById('pen-preview');
-    const v = _penRaw();
-    if (v === null) { box.innerHTML = '<span style="color:#6b7280">Case vide : aucune pénalité pour cet étudiant.</span>'; return; }
+    const v = _penField(_penMode === 'points' ? 'pen-points' : 'pen-hours');
+    if (v === null) { box.innerHTML = '<span style="color:#6b7280">Champs vides : aucune pénalité pour cet étudiant.</span>'; return; }
     if (isNaN(v)) { box.innerHTML = '<span style="color:#b91c1c">Valeur invalide (nombre positif attendu).</span>'; return; }
-    const h = _penHours();
-    const p = notesPenaltyPoints(h);
+    const h = _penHours(), p = notesPenaltyPoints(h);
     box.innerHTML = `<strong>${_fmtPts(h)} h</strong> d'absence injustifiée → malus de
         <strong style="color:#b91c1c">−${_fmtPts(p)} pt</strong> sur chaque UE du semestre`
         + (p === 0 ? ' <span style="color:#6b7280">(seuil de 8 h non atteint)</span>' : '')
         + `<div style="color:#6b7280;font-size:.78rem;margin-top:4px">Barème : rien jusqu'à 8 h, puis 0,05 pt/h jusqu'à 18 h, puis 0,1 pt/h.
-           La case enregistre les <strong>heures</strong>.</div>`;
+           La case de la grille enregistre les <strong>heures</strong>.</div>`;
 }
 
 function clearPenalty() {
-    document.getElementById('pen-value').value = '';
+    document.getElementById('pen-hours').value = '';
+    document.getElementById('pen-points').value = '';
+    _penMode = 'hours';
     applyPenalty();
 }
 
 function applyPenalty() {
     if (!_penInput) return;
-    const v = _penRaw();
+    const v = _penHours();
     if (isNaN(v)) { toast('Valeur invalide', 'error'); return; }
-    _penInput.value = v === null ? '' : String(_penHours());
+    _penInput.value = v === null ? '' : String(v);
     onNotesSpecialInput(_penInput);
     closeModal('modal-notes-pen');
 }

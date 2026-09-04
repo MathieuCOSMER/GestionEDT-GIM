@@ -4911,6 +4911,12 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     # Moyenne annuelle courante = moyenne des 2 semestres de l'année (S1+S2, S3+S4, S5+S6)
     s_odd, s_even = f'S{year * 2 - 1}', f'S{year * 2}'
     year_averages, year_competences = _year_competence_averages(pdb, pid, s_odd, s_even, ref_all)
+    # Moyenne annuelle générale = moyenne des UE de l'année — même calcul que la
+    # colonne GIM du Jury, pour que les deux onglets affichent le même nombre.
+    year_gim = {}
+    for _sid, _row in (year_averages or {}).items():
+        _vals = [v for v in _row.values() if v is not None]
+        year_gim[_sid] = round(sum(_vals) / len(_vals), 2) if _vals else None
     return {'semester': semester, 'year': year, 'components': components,
             'competences': [{'name': c.get('name', ''), 'coeffs': c.get('coeffs', {})} for c in competences],
             # Statut de la saisie enseignant par matière (Saisie Notes) :
@@ -4923,7 +4929,7 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
             'red_kept': red_kept,
             'students': students, 'marks': marks, 'averages': averages, 'previous': previous,
             'year_semesters': [s_odd, s_even], 'year_competences': year_competences,
-            'year_averages': year_averages,
+            'year_averages': year_averages, 'year_gim': year_gim,
             'ue_numbers': _jury_ue_numbers(ref_all),
             'year_validation': _year_validation(pdb, pid, ref_all, year),
             'year_decision': {str(s['id']): dec.get((year, str(s['id']))) for s in students}}
