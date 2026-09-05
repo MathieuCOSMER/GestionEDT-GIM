@@ -4572,7 +4572,9 @@ function renderSaisieGrid() {
     el.innerHTML = `<div style="overflow:auto;max-height:calc(100vh - 210px)">
         <table class="notes-grid" style="border-collapse:collapse;font-size:.85rem">
         <thead>${h1}${h2}${h3}</thead><tbody>${rows}</tbody></table></div>
-        <p style="font-size:.78rem;color:#6b7280;margin:8px 2px">Notes sur 20 (ou <strong>ABI</strong>).
+        <p style="font-size:.78rem;color:#6b7280;margin:8px 2px">Notes sur 20, ou <strong>ABI</strong>
+        (absence injustifiée : comptée 0 ; si toutes les sous-notes comptées sont ABI, la note matière l'est aussi).
+        
         🔒 = colonne d'un autre enseignant (lecture seule). La colonne <strong>Moy.</strong> affiche la
         <span style="color:#166534">moyenne pondérée</span> dès que toutes les sous-notes comptées sont saisies ;
         sinon elle montre la note matière actuelle de Bulletins (<span style="color:#1e40af">📥 importée</span>
@@ -4581,16 +4583,15 @@ function renderSaisieGrid() {
         ou d'une saisie de l'administration et n'est pas écrasée (l'écart est signalé dans les deux onglets).</p>`;
 }
 
-// Valeur courante d'une cellule (input éditable ou note chargée), pour la moyenne live
-function _saisieCellVal(code, sid) {
+// Contenu brut d'une cellule (input éditable ou note chargée), en majuscules
+function _saisieCellRaw(code, sid) {
     const inp = document.querySelector(`[data-note="${CSS.escape(code + '|' + sid)}"]`);
     const raw = inp ? inp.value : (( _saisieData.marks[`${sid}_${code}`] ?? '') + '');
-    const t = String(raw).trim().toUpperCase();
-    if (t === '') return null;
-    if (t === 'ABI') return 0;
-    const n = parseFloat(String(raw).replace(',', '.'));
-    return isNaN(n) ? null : n;
+    return String(raw).trim().toUpperCase();
 }
+
+// Valeur courante d'une cellule pour la moyenne live (ABI = 0)
+function _saisieCellVal(code, sid) { return _sortNum(_saisieCellRaw(code, sid)); }
 
 // Pondération courante d'une sous-matière (input du référent ou valeur chargée)
 function _saisieWeight(g, s) {
@@ -4599,20 +4600,24 @@ function _saisieWeight(g, s) {
     return isNaN(w) ? s.weight : w;
 }
 
-// Moyenne pondérée courante des sous-notes : le nombre, `null` si une note
-// manque encore (moyenne non calculable), `undefined` si aucune sous-matière ne
-// compte sur cette face.
+// Moyenne pondérée courante des sous-notes : le nombre, `'ABI'` si toutes les
+// sous-notes comptées sont des absences injustifiées (la note vaut 0, mais
+// l'absence reste lisible), `null` si une note manque encore (moyenne non
+// calculable), `undefined` si aucune sous-matière ne compte sur cette face.
 function _saisieAvgVal(g, sid) {
-    let sw = 0, sum = 0;
+    let sw = 0, sum = 0, abi = true;
     for (const s of g.subs) {
         if (!s.face_ok) continue;                    // pas de séance sur cette face
         const w = _saisieWeight(g, s);
         if (!(w > 0)) continue;                      // pondération 0 : exclue
-        const v = _saisieCellVal(s.code, sid);
+        const raw = _saisieCellRaw(s.code, sid);
+        const v = _sortNum(raw);
         if (v === null) return null;                 // saisie incomplète
+        if (raw !== 'ABI') abi = false;
         sw += w; sum += v * w;
     }
-    return sw ? Math.round(sum / sw * 100) / 100 : undefined;
+    if (!sw) return undefined;
+    return abi ? 'ABI' : Math.round(sum / sw * 100) / 100;
 }
 
 // Colonne « Moy. » d'une matière : la moyenne pondérée quand elle est calculable
@@ -4626,8 +4631,8 @@ function _saisieNoteCell(g, sid) {
     const BLUE = 'background:#eff6ff;color:#1e40af';
     const showOff = hasOff && (g.source !== 'saisie' || live === null || live === undefined);
     if (showOff) {
-        const num = parseFloat(String(off).replace(',', '.'));
-        const gap = (typeof live === 'number') && !isNaN(num) && Math.abs(live - num) > 0.005;
+        const l = _sortNum(live), num = _sortNum(off);   // ABI = 0 des deux côtés
+        const gap = l !== null && num !== null && Math.abs(l - num) > 0.005;
         return {
             style: BLUE,
             title: g.source === 'saisie'
@@ -4639,6 +4644,7 @@ function _saisieNoteCell(g, sid) {
     }
     if (live === undefined) return { style: GREEN, title: 'Aucune sous-matière comptée sur cette face', html: '<span style="color:#d1d5db">—</span>' };
     if (live === null) return { style: GREEN, title: 'Moyenne incomplète — il manque au moins une sous-note', html: '<span style="color:#d1d5db">…</span>' };
+    if (live === 'ABI') return { style: GREEN, title: "Absence injustifiée à toutes les sous-notes comptées — la note matière vaut 0, l'absence reste signalée (ABI)", html: 'ABI' };
     return { style: GREEN, title: 'Moyenne pondérée des sous-notes — devient la note matière (Bulletins)', html: String(live) };
 }
 
@@ -4694,18 +4700,31 @@ async function saveSaisie() {
                 });
             }
         }
-        // 2) Colonnes éditables : notes + statut définitif
-        const columns = [];
+        // 2) Colonnes éditables : notes + statut définitif. Une valeur qui n'est
+        // ni vide, ni ABI, ni une note de 0 à 20 serait ignorée par le serveur :
+        // on la signale au lieu de la laisser disparaître au rechargement.
+        const columns = []; let invalid = false;
         for (const g of d.groups) {
             for (const s of g.subs) {
                 if (!s.editable) continue;
                 const notes = {};
                 document.querySelectorAll(`[data-note^="${CSS.escape(s.code + '|')}"]`).forEach(inp => {
-                    notes[inp.dataset.note.split('|')[1]] = inp.value.trim().replace(',', '.');
+                    const raw = inp.value.trim().replace(',', '.');
+                    const n = parseFloat(raw);
+                    if (raw !== '' && raw.toUpperCase() !== 'ABI' && (isNaN(n) || n < 0 || n > 20)) {
+                        invalid = true; inp.style.borderColor = '#ef4444'; return;
+                    }
+                    inp.style.borderColor = '#d1d5db';
+                    notes[inp.dataset.note.split('|')[1]] = raw;
                 });
                 const defCb = document.querySelector(`[data-def="${CSS.escape(s.code)}"]`);
                 columns.push({ code: s.code, notes, definitive: !!(defCb && defCb.checked) });
             }
+        }
+        if (invalid) {
+            toast('Notes invalides : une note de 0 à 20, ou ABI (absence injustifiée).', 'error');
+            btn.disabled = false;
+            return false;
         }
         if (columns.length) {
             _saisieData = await api(`/promotions/${pid}/saisie/${sem}/notes`, {
@@ -4880,11 +4899,14 @@ function _fmtAvg(v) { return (v === null || v === undefined) ? '—' : Number(v)
 function _noteSource(d, code) { return (d.note_sources || {})[code] || 'import'; }
 
 // La note affichée diffère-t-elle de la moyenne calculée depuis la saisie ?
+// Comparaison sur la valeur comptée : deux ABI ne sont pas un écart, un ABI
+// face à une vraie moyenne en est un.
 function _markDiffers(v, comp) {
-    if (comp === undefined || comp === null) return false;
+    if (comp === undefined || comp === null || comp === '') return false;
     if (v === undefined || v === null || v === '') return true;
-    if (typeof v === 'string' && isNaN(parseFloat(v.replace(',', '.')))) return true;   // mention (ABI)
-    return Math.abs(parseFloat(String(v).replace(',', '.')) - Number(comp)) > 0.005;
+    const a = _sortNum(v), b = _sortNum(comp);
+    if (a === null || b === null) return true;
+    return Math.abs(a - b) > 0.005;
 }
 
 function _notesGap(d, code) {
@@ -5281,7 +5303,8 @@ function renderNotesGrid() {
             ${fbox('ue', 'UE du semestre', true)}
             ${fbox('notes', 'Notes (matières)', true)}
         </div>
-        <div style="font-size:.8rem;color:#6b7280;margin-bottom:10px">Notes sur 20. Case vide = note absente (le coefficient correspondant est retiré du calcul).
+        <div style="font-size:.8rem;color:#6b7280;margin-bottom:10px">Notes sur 20, ou <strong>ABI</strong> (absence injustifiée : comptée 0, l'absence reste affichée).
+            Case vide = note absente (le coefficient correspondant est retiré du calcul).
             Colonne <strong>Pénalité</strong> = nombre d'<strong>heures</strong> d'absences injustifiées (le malus est calculé selon le barème IUT&nbsp;Toulon
             et retranché de chaque UE du semestre) — <strong>cliquez sur une case</strong> pour saisir les heures
             <em>ou</em> directement le malus en points. Colonne <strong>Bonus</strong> = meilleure note sport/art <strong>/20</strong>
@@ -5746,7 +5769,7 @@ async function saveNotesMarks() {
         }
         marks.push({ student_id: +inp.dataset.sid, matiere_code: inp.dataset.code, note: mark });
     });
-    if (invalid) { toast('Notes invalides (0–20).', 'error'); return false; }
+    if (invalid) { toast('Notes invalides : une note de 0 à 20, ou ABI (absence injustifiée).', 'error'); return false; }
     try {
         _notesData = await api(`/promotions/${pid}/notes/${sem}?formation=${encodeURIComponent(sub)}`, { method: 'PUT', body: JSON.stringify({ marks }) });
         renderNotesGrid();

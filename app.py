@@ -5449,7 +5449,11 @@ def _computed_matiere_marks(pdb, pid, semester, keys=None, students=None):
     pour les matières dont TOUTES les sous-matières comptées (pondération > 0 sur
     la face de l'étudiant) ont une note. Indépendant de l'origine officielle :
     sert au report automatique ET à l'affichage de l'écart dans Bulletins.
-    `keys=None` = toutes les matières du semestre."""
+    `keys=None` = toutes les matières du semestre.
+
+    La valeur est 'ABI' (et non 0) quand toutes les sous-notes comptées sont des
+    absences injustifiées : la note vaut bien 0, mais l'absence doit rester
+    lisible dans Bulletins et au jury au lieu de se confondre avec un vrai zéro."""
     if not pdb.execute('''SELECT 1 FROM submatiere_marks WHERE promotion_id=? AND semester=?
                           AND note IS NOT NULL LIMIT 1''', (pid, semester)).fetchone():
         return {}   # aucune saisie enseignante : rien à calculer (ni base année à ouvrir)
@@ -5467,8 +5471,8 @@ def _computed_matiere_marks(pdb, pid, semester, keys=None, students=None):
     weights = {(r['formation'], r['code']): r['weight'] for r in pdb.execute(
         '''SELECT formation, code, weight FROM submatiere_meta
            WHERE promotion_id=? AND semester=?''', (pid, semester))}
-    notes = {(r['student_id'], r['code']): r['note'] for r in pdb.execute(
-        '''SELECT student_id, code, note FROM submatiere_marks
+    notes = {(r['student_id'], r['code']): (r['note'], r['mention']) for r in pdb.execute(
+        '''SELECT student_id, code, note, mention FROM submatiere_marks
            WHERE promotion_id=? AND semester=? AND note IS NOT NULL''', (pid, semester))}
     out = {}
     for s in students:
@@ -5484,9 +5488,13 @@ def _computed_matiere_marks(pdb, pid, semester, keys=None, students=None):
             if not wsubs:
                 continue
             vals = [(notes.get((s['id'], code)), w) for code, w in wsubs]
-            if any(n is None for n, _ in vals):
+            if any(v is None for v, _ in vals):
                 continue   # saisie incomplète : pas de moyenne
-            out[(s['id'], key)] = round(sum(n * w for n, w in vals) / sum(w for _, w in vals), 2)
+            if all(v[1] == 'ABI' for v, _ in vals):
+                out[(s['id'], key)] = 'ABI'      # absent à tout : 0, mais signalé
+            else:
+                out[(s['id'], key)] = round(sum(v[0] * w for v, w in vals)
+                                            / sum(w for _, w in vals), 2)
     return out
 
 def _recompute_matiere_marks(pdb, pid, semester, keys):
@@ -5507,11 +5515,12 @@ def _recompute_matiere_marks(pdb, pid, semester, keys):
     for (sid, key), avg in computed.items():
         if srcs[faces[sid]].get(key) != 'saisie':
             continue   # note officielle importée/manuelle : on ne l'écrase pas
+        note, mention = (0.0, 'ABI') if avg == 'ABI' else (avg, None)
         pdb.execute('''INSERT INTO student_marks(promotion_id, semester, student_id, matiere_code, note, mention, source)
-                       VALUES(?,?,?,?,?,NULL,'saisie')
+                       VALUES(?,?,?,?,?,?,'saisie')
                        ON CONFLICT(promotion_id, semester, student_id, matiere_code)
-                       DO UPDATE SET note=excluded.note, mention=NULL, source='saisie' ''',
-                    (pid, semester, sid, key, avg))
+                       DO UPDATE SET note=excluded.note, mention=excluded.mention, source='saisie' ''',
+                    (pid, semester, sid, key, note, mention))
     pdb.commit()
 
 def _saisie_status(pdb, pid, semester, formation):
