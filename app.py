@@ -653,9 +653,11 @@ _STUDENT_CURSUS_RENAMES = {'EI': 'ING', 'RE': 'REP', 'PB': 'BAC', 'PrP': 'PP'}
 _STUDENT_RECRUT = ['PS', 'EC', 'ADIUT']               # ParcourSup / eCandidat / ADIUT (étrangers)
 _STUDENT_PROFILE = {'sexe': _STUDENT_SEXE, 'bac': _STUDENT_BAC,
                     'cursus': _STUDENT_CURSUS, 'recrutement': _STUDENT_RECRUT}
-# Signification des codes, rappelée au-dessus du tableau d'effectif (onglet Promotions).
-# Les codes BAC (séries de bac) et Sexe (M/F) sont lisibles tels quels : pas de libellé.
+# Signification des codes, rappelée au-dessus du tableau d'effectif (onglet
+# Promotions) et en bas de l'export. Un code sans libellé n'y figure pas : ceux
+# du sexe (M/F) et les séries de bac qui se lisent d'elles-mêmes n'en ont pas.
 _STUDENT_PROFILE_LABELS = {
+    'bac': {'NBGE': 'Nouveau Bac Général', 'TI2D': 'STI2D', 'ETR': 'Étranger'},
     'cursus': {'ING': "École d'ingénieur", 'REP': "Reprise d'études",
                'BAC': 'Post-Bac', 'PP': 'Post-Prépa',
                'BTS': 'Brevet de technicien supérieur'},
