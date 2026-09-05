@@ -11,6 +11,7 @@ import sqlite3
 import os
 import re
 import json
+import unicodedata
 import math
 import shutil
 import hmac
@@ -654,6 +655,49 @@ _STUDENT_PROFILE_LABELS = {
     'recrutement': {'PS': 'ParcourSup', 'EC': 'eCandidat',
                     'ADIUT': 'ADIUT (candidats étrangers)'},
 }
+
+def _profile_key(v):
+    """Clé de comparaison d'un libellé : minuscules, sans accents ni ponctuation."""
+    s = unicodedata.normalize('NFD', '' if v is None else str(v))
+    return re.sub(r'[^a-z0-9]', '', s.encode('ascii', 'ignore').decode().lower())
+
+# Cellules qui signifient « non renseigné » dans une liste importée
+_PROFILE_EMPTY = ('', 'na', 'nc', 'nr', 'ns', 'inconnu', 'none', 'null')
+# Écritures du sexe rencontrées dans les listes importées -> code interne
+_SEXE_ALIASES = {'m': 'M', 'h': 'M', '1': 'M', 'mr': 'M', 'monsieur': 'M',
+                 'f': 'F', '2': 'F', 'mme': 'F', 'mlle': 'F', 'madame': 'F'}
+
+def _norm_sexe(v):
+    """'Masculin', 'H', 'M.', '1'… -> 'M' / 'F'. None si vide ou indéchiffrable."""
+    k = _profile_key(v)
+    if k in _PROFILE_EMPTY:
+        return None
+    if k in _SEXE_ALIASES:
+        return _SEXE_ALIASES[k]
+    if k.startswith(('fem', 'fille', 'female')):
+        return 'F'
+    if k.startswith(('masc', 'homme', 'garcon', 'male')):
+        return 'M'
+    return None
+
+def _norm_bac(v):
+    """Série de bac telle qu'écrite dans le fichier -> code interne (_STUDENT_BAC).
+    Une série non reconnue tombe dans « Autre » ; une cellule vide ne change rien."""
+    k = _profile_key(v)
+    if k in _PROFILE_EMPTY:
+        return None
+    for code in _STUDENT_BAC:
+        if k == _profile_key(code):
+            return code
+    if 'sti2d' in k or 'si2d' in k:
+        return 'STI2D'
+    if 'stl' in k:
+        return 'STL'
+    if k.startswith('pro') or 'bacpro' in k or 'professionnel' in k:
+        return 'PRO'
+    if k.startswith('gen') or 'general' in k or k in ('g', 's', 'es', 'l'):
+        return 'GEN'
+    return 'Autre'
 
 def _open_promotions_db():
     db = sqlite3.connect(_PROMOTIONS_DB, timeout=10)
@@ -2735,12 +2779,87 @@ def _promotion_name(start_year):
 
 _SUBCOHORTS = ('FTP', 'ALT')   # sous-cohortes d'une promotion (cohorte)
 
+# En-têtes acceptés pour une liste au format tableur (clé compacte : minuscules,
+# sans accents ni ponctuation). Sexe et BAC alimentent le profil d'entrée.
+_STUDENT_LIST_HEADERS = {
+    'nom': ('nom', 'name', 'nomdefamille', 'lastname'),
+    'prenom': ('prenom', 'prenom1', 'firstname'),
+    'numero': ('numero', 'n', 'no', 'num', 'code', 'codeapogee', 'apogee', 'napogee',
+               'noapogee', 'numapogee', 'matricule', 'netudiant', 'numetudiant',
+               'numeroetudiant', 'codeetudiant'),
+    'naissance': ('nele', 'neele', 'dob', 'ddn', 'datedenaissance', 'datenaissance'),
+    'sexe': ('sexe', 'sex', 'genre', 'gender', 'civilite', 'hf', 'fh', 'mf', 'fm'),
+    'bac': ('bac', 'baccalaureat', 'bacobtenu', 'serie', 'seriebac', 'seriedebac',
+            'seriedubac', 'typebac', 'typedebac'),
+}
+_STUDENT_LIST_FIELDS = ('numero', 'nom', 'prenom', 'naissance', 'sexe', 'bac')
+_STUDENT_LIST_HEADER_SCAN = 12    # lignes examinées à la recherche des en-têtes
+
+def _student_list_headers(ws, row):
+    """En-têtes reconnus sur une ligne : {champ: colonne}. Vide si ce n'est pas une
+    ligne d'en-têtes : il en faut au moins deux, dont Nom ou Numéro — « Nom » seul
+    se rencontre ailleurs (cellule « Trier par : Nom » des listes de groupes)."""
+    found = {}
+    for c in range(1, ws.max_column + 1):
+        h = _profile_key(ws.cell(row, c).value)
+        if not h:
+            continue
+        for field, names in _STUDENT_LIST_HEADERS.items():
+            if field not in found and (h in names or (field == 'naissance' and 'naiss' in h)):
+                found[field] = c
+                break
+    if len(found) < 2 or not ('nom' in found or 'numero' in found):
+        return {}
+    return found
+
+def _student_list_header_row(ws):
+    """Ligne d'en-têtes d'un onglet : la plus fournie des premières lignes (un titre
+    ou une ligne de compteurs précède souvent le tableau). (0, {}) si aucune."""
+    best_row, best = 0, {}
+    for row in range(1, _STUDENT_LIST_HEADER_SCAN + 1):
+        headers = _student_list_headers(ws, row)
+        if len(headers) > len(best):
+            best_row, best = row, headers
+    return best_row, best
+
+def _read_student_rows(ws, headers, first_row):
+    """Lignes d'étudiants sous les en-têtes, jusqu'à la première ligne vide."""
+    out = []
+    for r in range(first_row, first_row + 5000):
+        if all(ws.cell(r, c).value in (None, '') for c in range(1, ws.max_column + 1)):
+            break
+        rec = {k: '' for k in _STUDENT_LIST_FIELDS}
+        for key, col in headers.items():
+            v = ws.cell(r, col).value
+            if hasattr(v, 'strftime'):        # date de naissance saisie comme date
+                v = v.strftime('%d/%m/%Y')
+            rec[key] = ('' if v is None else str(v)).strip()
+        if rec['nom'] or rec['prenom'] or rec['numero']:
+            out.append(rec)
+    return out
+
+def _merge_student_rows(rows):
+    """Fusionne les doublons d'un même fichier (mêmes étudiants répétés d'un onglet
+    à l'autre) : la 1re occurrence fait foi, les suivantes ne comblent que ses vides."""
+    out, seen = [], {}
+    for rec in rows:
+        key = _dedup_key(rec)
+        prev = seen.get(key)
+        if prev is None:
+            seen[key] = rec
+            out.append(rec)
+            continue
+        for k, v in rec.items():
+            if v and not prev.get(k):
+                prev[k] = v
+    return out
+
 def _parse_student_list(path):
     """Lit une liste d'étudiants : auto-détection format Apogée (.xlsm/.xlsx,
-    roster ligne 18+) ou tableur simple (en-têtes ligne 1). Retourne
-    [{numero, nom, prenom, naissance}]."""
+    roster ligne 18+) ou tableur simple (ligne d'en-têtes cherchée dans les
+    premières lignes de chaque onglet). Retourne
+    [{numero, nom, prenom, naissance, sexe, bac}]."""
     import openpyxl
-    import unicodedata
     is_xlsm = path.lower().endswith('.xlsm')
     wb = openpyxl.load_workbook(path, data_only=True, keep_vba=is_xlsm)
     ws = wb.active
@@ -2748,12 +2867,15 @@ def _parse_student_list(path):
     def txt(v):
         return ('' if v is None else str(v)).strip()
 
+    def rec(numero='', nom='', prenom='', naissance=''):
+        return {'numero': numero, 'nom': nom, 'prenom': prenom,
+                'naissance': naissance, 'sexe': '', 'bac': ''}
+
     # PV de jury : n° étudiant en col B sous la ligne des codes ELP (T3IS../T3IR..),
     # NOM/Prénom en cols C/D. Pas de date de naissance dans ce modèle.
     if _find_pv_code_row(ws):
         _, rows = _pv_marks_ws(ws)
-        return [{'numero': r['numero'], 'nom': r['nom'], 'prenom': r['prenom'],
-                 'naissance': ''} for r in rows]
+        return [rec(r['numero'], r['nom'], r['prenom']) for r in rows]
 
     # Détection Apogée : marqueur 'apoL_a01_code' en A6 ou 'Numéro' en A17
     a6 = txt(ws.cell(6, 1).value).lower()
@@ -2764,42 +2886,20 @@ def _parse_student_list(path):
             num = ws.cell(r, 1).value
             if num in (None, ''):
                 break
-            students.append({'numero': txt(num), 'nom': txt(ws.cell(r, 2).value),
-                             'prenom': txt(ws.cell(r, 3).value), 'naissance': txt(ws.cell(r, 4).value)})
+            students.append(rec(txt(num), txt(ws.cell(r, 2).value),
+                                txt(ws.cell(r, 3).value), txt(ws.cell(r, 4).value)))
             r += 1
         return students
 
-    # Format simple : en-têtes ligne 1
-    def norm(s):
-        s = unicodedata.normalize('NFD', txt(s)).encode('ascii', 'ignore').decode().lower().strip()
-        return s
-    headers = {}
-    for c in range(1, ws.max_column + 1):
-        h = norm(ws.cell(1, c).value)
-        if not h:
-            continue
-        if h in ('nom', 'name', 'nom de famille', 'last name'):
-            headers.setdefault('nom', c)
-        elif h in ('prenom', 'first name'):
-            headers.setdefault('prenom', c)
-        elif h in ('numero', 'n', 'no', 'num', 'code', 'code apogee', 'apogee', 'matricule', 'n etudiant'):
-            headers.setdefault('numero', c)
-        elif 'naiss' in h or h in ('ne le', 'nee le', 'dob', 'date de naissance'):
-            headers.setdefault('naissance', c)
-    students = []
-    if not headers:
-        return students
-    r = 2
-    while r <= 5000:
-        if all(ws.cell(r, c).value in (None, '') for c in range(1, ws.max_column + 1)):
-            break
-        rec = {'numero': '', 'nom': '', 'prenom': '', 'naissance': ''}
-        for key, col in headers.items():
-            rec[key] = txt(ws.cell(r, col).value)
-        if rec['nom'] or rec['prenom'] or rec['numero']:
-            students.append(rec)
-        r += 1
-    return students
+    # Tableur simple : la ligne d'en-têtes n'est pas forcément la 1re (titre,
+    # compteurs… — cf. l'export d'effectif de l'application) et un même fichier
+    # peut répartir les étudiants sur plusieurs onglets (FTP/ALT, groupes).
+    rows = []
+    for sheet in wb.worksheets:
+        hrow, headers = _student_list_header_row(sheet)
+        if headers:
+            rows += _read_student_rows(sheet, headers, hrow + 1)
+    return _merge_student_rows(rows)
 
 def _dedup_key(s):
     """Clé d'unicité d'un étudiant : numéro si présent, sinon nom+prénom+naissance."""
@@ -2809,6 +2909,46 @@ def _dedup_key(s):
     return ('id', (s.get('nom') or '').strip().lower(),
             (s.get('prenom') or '').strip().lower(),
             (s.get('naissance') or '').strip().lower())
+
+def _import_students_rows(db, pid, students, formation, year=None):
+    """Insère les étudiants absents de la promotion et met à jour le profil
+    d'entrée (sexe / BAC) de ceux qui y sont déjà : réimporter une liste enrichie
+    complète les fiches au lieu d'être sans effet. Une colonne absente ou une
+    cellule vide ne modifie jamais une valeur déjà saisie.
+    Retourne (imported, updated, skipped)."""
+    existing = {}
+    for r in db.execute('''SELECT id, numero, nom, prenom, naissance, sexe, bac
+                           FROM promotion_students WHERE promotion_id=?''', (pid,)):
+        existing[_dedup_key(dict(r))] = dict(r)
+    imported = updated = skipped = 0
+    for s in students:
+        profile = {k: v for k, v in (('sexe', _norm_sexe(s.get('sexe'))),
+                                     ('bac', _norm_bac(s.get('bac')))) if v}
+        key = _dedup_key(s)
+        row = existing.get(key)
+        if row is not None:
+            changed = {k: v for k, v in profile.items() if (row.get(k) or None) != v}
+            if not changed:
+                skipped += 1
+                continue
+            db.execute('UPDATE promotion_students SET %s WHERE id=?'
+                       % ', '.join('%s=?' % k for k in changed),
+                       list(changed.values()) + [row['id']])
+            row.update(changed)
+            updated += 1
+            continue
+        cols = ['promotion_id', 'numero', 'nom', 'prenom', 'naissance', 'statut', 'formation']
+        vals = [pid, s['numero'], s['nom'], s['prenom'], s['naissance'], 'Actif', formation]
+        if year is not None:
+            cols.append('entry_year'); vals.append(year)
+        for k, v in profile.items():
+            cols.append(k); vals.append(v)
+        cur = db.execute('INSERT INTO promotion_students(%s) VALUES(%s)'
+                         % (', '.join(cols), ', '.join('?' * len(cols))), vals)
+        existing[key] = dict(s, id=cur.lastrowid)
+        imported += 1
+    db.commit()
+    return imported, updated, skipped
 
 def _promotion_payload(db, pid):
     promo = db.execute('SELECT * FROM promotions WHERE id=?', (pid,)).fetchone()
@@ -3114,25 +3254,14 @@ def import_promotion_students(pid):
     formation = (request.form.get('formation') or '').strip().upper()
     if formation not in _SUBCOHORTS:
         formation = 'FTP'
-    # Dédoublonnage : on n'importe pas un étudiant déjà présent dans la promotion
-    existing = {_dedup_key(dict(r)) for r in db.execute(
-        'SELECT numero, nom, prenom, naissance FROM promotion_students WHERE promotion_id=?', (pid,))}
-    imported = skipped = 0
-    for s in students:
-        key = _dedup_key(s)
-        if key in existing:
-            skipped += 1
-            continue
-        existing.add(key)
-        db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance, statut, formation)
-                      VALUES(?,?,?,?,?,'Actif',?)''',
-                   (pid, s['numero'], s['nom'], s['prenom'], s['naissance'], formation))
-        imported += 1
-    db.commit()
+    # Étudiant déjà présent : pas de doublon, mais son profil (sexe / BAC) est
+    # repris du fichier s'il y est renseigné.
+    imported, updated, skipped = _import_students_rows(db, pid, students, formation)
     _audit('PROMO_IMPORT', ip=_client_ip(), user=session.get('user'),
-           imported=imported, skipped=skipped)
+           imported=imported, updated=updated, skipped=skipped)
     payload = _promotion_payload(db, pid)
-    payload['import_report'] = {'imported': imported, 'skipped': skipped, 'total_fichier': len(students)}
+    payload['import_report'] = {'imported': imported, 'updated': updated,
+                                'skipped': skipped, 'total_fichier': len(students)}
     return jsonify(payload)
 
 # ---- Effectif par année d'étude (1..3) : report auto du jury + ajustements manuels ----
@@ -3277,6 +3406,9 @@ def export_year_effectif(pid, year):
                     c.alignment = center
             row += 1
         if not studs:
+            # Ligne vide d'abord : sinon cette phrase, placée sous l'en-tête
+            # « Nom », se relirait comme un étudiant à la réimportation.
+            row += 1
             ws.cell(row, 2, 'Aucun étudiant dans cette sous-cohorte pour cette année.').font = f_sub
             row += 1
 
@@ -3509,25 +3641,12 @@ def import_year_students(pid, year):
         except OSError: pass
     if not students:
         return error_response('Aucun étudiant détecté dans le fichier', 400)
-    existing = {_dedup_key(dict(r)) for r in db.execute(
-        'SELECT numero, nom, prenom, naissance FROM promotion_students WHERE promotion_id=?', (pid,))}
-    imported = skipped = 0
-    for s in students:
-        key = _dedup_key(s)
-        if key in existing:
-            skipped += 1
-            continue
-        existing.add(key)
-        db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance,
-                                                     statut, formation, entry_year)
-                      VALUES(?,?,?,?,?,'Actif',?,?)''',
-                   (pid, s['numero'], s['nom'], s['prenom'], s['naissance'], formation, year))
-        imported += 1
-    db.commit()
+    imported, updated, skipped = _import_students_rows(db, pid, students, formation, year)
     _audit('PROMO_IMPORT', ip=_client_ip(), user=session.get('user'),
-           imported=imported, skipped=skipped, year=year)
+           imported=imported, updated=updated, skipped=skipped, year=year)
     payload = _year_effectif_payload(db, pid, year)
-    payload['import_report'] = {'imported': imported, 'skipped': skipped, 'total_fichier': len(students)}
+    payload['import_report'] = {'imported': imported, 'updated': updated,
+                                'skipped': skipped, 'total_fichier': len(students)}
     return jsonify(payload)
 
 # ---- Redoublants (RED) : bascule vers la promo cible (année +1) ou Abandon ----

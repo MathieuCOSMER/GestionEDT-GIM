@@ -1157,8 +1157,12 @@
         <h2>Importer un effectif</h2>
         <p style="color:#6b7280;font-size:.9rem;margin-top:0">
             Fichier <code>.xlsm</code>/<code>.xlsx</code> : export <strong>Apogée</strong> (roster standard)
-            ou tableur simple avec en-têtes <em>Nom, Prénom, Numéro, Naissance</em> en première ligne.
-            Les étudiants déjà présents (même n° Apogée, ou même nom/prénom/naissance) ne sont pas réimportés.
+            ou tableur avec en-têtes <em>Nom, Prénom, Numéro, Naissance</em> — et, si vous les avez,
+            <em>Sexe</em> et <em>BAC</em>. Les en-têtes sont cherchés dans les premières lignes de
+            chaque onglet : l'export d'effectif de cet écran, complété sous Excel, se réimporte tel quel.
+            Les étudiants déjà présents (même n° Apogée, ou même nom/prénom/naissance) ne sont pas
+            dupliqués : leur <strong>sexe</strong> et leur <strong>BAC</strong> sont mis à jour si le
+            fichier les renseigne, et une colonne vide n'efface jamais une saisie.
         </p>
         <div class="form-group">
             <label>Fichier *</label>
@@ -4438,7 +4442,8 @@ async function submitPromoImport() {
         closeModal('modal-promo-import');
         renderPromoEffectif();
         const rep = _effData.import_report || {};
-        toast(`Import (année ${_effYear}) : ${rep.imported || 0} ajouté(s), ${rep.skipped || 0} déjà présent(s)`);
+        toast(`Import (année ${_effYear}) : ${rep.imported || 0} ajouté(s), `
+            + `${rep.updated || 0} profil(s) mis à jour, ${rep.skipped || 0} inchangé(s)`);
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
     finally { btn.disabled = false; btn.textContent = 'Importer'; }
 }
