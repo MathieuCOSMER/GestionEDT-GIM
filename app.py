@@ -638,7 +638,14 @@ _STUDENT_STATUS_CHOICES = ['Actif', 'Césure', 'Abandon']
 _PROMO_SEMESTERS = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6']
 # Profil d'entrée de l'étudiant (valeurs autorisées ; '' = non renseigné)
 _STUDENT_SEXE = ['M', 'F']
-_STUDENT_BAC = ['STI2D', 'GEN', 'PRO', 'STL', 'Autre']
+# Séries de bac : codes tels qu'ils figurent dans la colonne BAC des PV de jury
+# (nomenclature Apogée). « Autre » recueille les séries qui n'y sont pas encore
+# apparues, pour qu'une valeur inconnue reste enregistrable.
+_STUDENT_BAC = ['NBGE', 'TI2D', 'STMG', 'S', 'S-MA', 'ETR', 'Autre']
+# Codes de bac renommés (anciens -> nouveaux), rejoués au démarrage sur les
+# lignes déjà saisies pour qu'elles restent des valeurs autorisées.
+_STUDENT_BAC_RENAMES = {'SI2D': 'TI2D', 'STI2D': 'TI2D', 'GEN': 'NBGE',
+                        'PRO': 'Autre', 'STL': 'Autre'}
 _STUDENT_CURSUS = ['ING', 'REP', 'BAC', 'PP', 'BTS']  # École d'ingé / Reprise d'étude / PostBac / PostPrépa / BTS
 # Renommage des codes cursus (anciens -> nouveaux), rejoué au démarrage sur les
 # lignes déjà saisies pour qu'elles restent des valeurs autorisées.
@@ -682,21 +689,20 @@ def _norm_sexe(v):
 
 def _norm_bac(v):
     """Série de bac telle qu'écrite dans le fichier -> code interne (_STUDENT_BAC).
-    Une série non reconnue tombe dans « Autre » ; une cellule vide ne change rien."""
+    Les PV de jury portent déjà les codes attendus ; les anciens codes et les
+    libellés en toutes lettres des autres listes y sont ramenés. Une série non
+    reconnue tombe dans « Autre » ; une cellule vide ne change rien."""
     k = _profile_key(v)
     if k in _PROFILE_EMPTY:
         return None
     for code in _STUDENT_BAC:
         if k == _profile_key(code):
             return code
-    if 'sti2d' in k or 'si2d' in k:
-        return 'STI2D'
-    if 'stl' in k:
-        return 'STL'
-    if k.startswith('pro') or 'bacpro' in k or 'professionnel' in k:
-        return 'PRO'
-    if k.startswith('gen') or 'general' in k or k in ('g', 's', 'es', 'l'):
-        return 'GEN'
+    for old, new in _STUDENT_BAC_RENAMES.items():
+        if k == _profile_key(old):
+            return new
+    if k.startswith('gen') or 'general' in k:
+        return 'NBGE'
     return 'Autre'
 
 def _open_promotions_db():
@@ -877,9 +883,10 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
         )
     ''')
-    # Le bac technologique s'écrit STI2D : reprise des fiches saisies avec
-    # l'ancien code SI2D, qui n'est plus une valeur autorisée.
-    db.execute("UPDATE promotion_students SET bac='STI2D' WHERE bac='SI2D'")
+    # Séries de bac alignées sur les codes des PV de jury : reprise des fiches
+    # saisies avec les anciens codes, qui ne sont plus des valeurs autorisées.
+    for _old, _new in _STUDENT_BAC_RENAMES.items():
+        db.execute("UPDATE promotion_students SET bac=? WHERE bac=?", (_new, _old))
 
     # Année de césure (1..3) : l'étudiant s'absente cette année-là et reprend
     # l'année SUIVANTE dans la cohorte d'après. NULL = pas de césure.
@@ -2794,6 +2801,14 @@ _STUDENT_LIST_HEADERS = {
 }
 _STUDENT_LIST_FIELDS = ('numero', 'nom', 'prenom', 'naissance', 'sexe', 'bac')
 _STUDENT_LIST_HEADER_SCAN = 12    # lignes examinées à la recherche des en-têtes
+# Feuilles d'un classeur de PV de jury qui portent un effectif : la délibération
+# (PV…, Jury…) et son brouillon (Temp). Les autres n'en sont pas une.
+_PV_ROSTER_SHEETS = ('PV', 'JURY', 'TEMP')
+
+def _pv_roster_sheets(wb):
+    """Feuilles de délibération d'un classeur de PV de jury (cf. _PV_ROSTER_SHEETS)."""
+    return [ws for ws in wb.worksheets
+            if ws.title.strip().upper().startswith(_PV_ROSTER_SHEETS)]
 
 def _student_list_headers(ws, row):
     """En-têtes reconnus sur une ligne : {champ: colonne}. Vide si ce n'est pas une
@@ -2867,15 +2882,21 @@ def _parse_student_list(path):
     def txt(v):
         return ('' if v is None else str(v)).strip()
 
-    def rec(numero='', nom='', prenom='', naissance=''):
+    def rec(numero='', nom='', prenom='', naissance='', bac=''):
         return {'numero': numero, 'nom': nom, 'prenom': prenom,
-                'naissance': naissance, 'sexe': '', 'bac': ''}
+                'naissance': naissance, 'sexe': '', 'bac': bac}
 
     # PV de jury : n° étudiant en col B sous la ligne des codes ELP (T3IS../T3IR..),
-    # NOM/Prénom en cols C/D. Pas de date de naissance dans ce modèle.
+    # NOM/Prénom en cols C/D, série de bac en col BAC. Pas de date de naissance.
+    # L'effectif est lu sur les feuilles de délibération (PV… / Jury… / Temp) et
+    # nulle part ailleurs : PARAM garde l'historique de toutes les promotions
+    # passées, et Import/Menu/Aide/Affichage/Annexe RED ne sont pas des effectifs.
     if _find_pv_code_row(ws):
-        _, rows = _pv_marks_ws(ws)
-        return [rec(r['numero'], r['nom'], r['prenom']) for r in rows]
+        rows = []
+        for sheet in _pv_roster_sheets(wb) or [ws]:
+            rows += [rec(r['numero'], r['nom'], r['prenom'], bac=r.get('bac', ''))
+                     for r in _pv_marks_ws(sheet)[1]]
+        return _merge_student_rows(rows)
 
     # Détection Apogée : marqueur 'apoL_a01_code' en A6 ou 'Numéro' en A17
     a6 = txt(ws.cell(6, 1).value).lower()
@@ -5724,19 +5745,20 @@ def _pv_num(v):
         return str(int(v))
     return _cell_txt(v)
 
-def _pv_name_cols(ws, hdr_row):
-    """Colonnes NOM / Prénom repérées sur la ligne d'en-tête (accents ignorés).
-    Repli sur C/D, disposition standard des PV de jury."""
-    import unicodedata
-    nom_col = prenom_col = None
+def _pv_student_cols(ws, hdr_row):
+    """Colonnes NOM / Prénom / BAC repérées sur la ligne d'en-tête (accents ignorés).
+    Repli sur C/D pour les noms, disposition standard des PV de jury ; la colonne
+    BAC est absente de certains modèles, d'où None."""
+    nom_col = prenom_col = bac_col = None
     for c in range(1, ws.max_column + 1):
-        t = _cell_txt(ws.cell(hdr_row, c).value)
-        t = unicodedata.normalize('NFD', t).encode('ascii', 'ignore').decode().lower()
+        t = _profile_key(ws.cell(hdr_row, c).value)
         if 'prenom' in t and prenom_col is None:
             prenom_col = c
         elif 'nom' in t and nom_col is None:
             nom_col = c
-    return nom_col or 3, prenom_col or 4
+        elif t in _STUDENT_LIST_HEADERS['bac'] and bac_col is None:
+            bac_col = c
+    return nom_col or 3, prenom_col or 4, bac_col
 
 def _pv_marks_ws(ws):
     """Layout PV de jury : codes matière T3IS../T3IR.. sur une ligne d'en-tête (repérée
@@ -5751,7 +5773,7 @@ def _pv_marks_ws(ws):
         if re.match(r'^T3I[SR]\d', code, re.I):
             elps.append({'note_col': c, 'code': code.upper(),
                          'kind': _kind_from_code(code, ws.cell(code_row - 1, c).value)})
-    nom_col, prenom_col = _pv_name_cols(ws, code_row - 1)
+    nom_col, prenom_col, bac_col = _pv_student_cols(ws, code_row - 1)
     rows = []
     for r in range(code_row + 1, ws.max_row + 1):
         num = _pv_num(ws.cell(r, 2).value)
@@ -5765,6 +5787,7 @@ def _pv_marks_ws(ws):
         rows.append({'numero': num,
                      'nom': _cell_txt(ws.cell(r, nom_col).value),
                      'prenom': _cell_txt(ws.cell(r, prenom_col).value),
+                     'bac': _cell_txt(ws.cell(r, bac_col).value) if bac_col else '',
                      'notes': notes})
     return elps, rows
 

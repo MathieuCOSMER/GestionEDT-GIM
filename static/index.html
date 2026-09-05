@@ -1156,10 +1156,12 @@
     <div class="modal">
         <h2>Importer un effectif</h2>
         <p style="color:#6b7280;font-size:.9rem;margin-top:0">
-            Fichier <code>.xlsm</code>/<code>.xlsx</code> : export <strong>Apogée</strong> (roster standard)
-            ou tableur avec en-têtes <em>Nom, Prénom, Numéro, Naissance</em> — et, si vous les avez,
-            <em>Sexe</em> et <em>BAC</em>. Les en-têtes sont cherchés dans les premières lignes de
-            chaque onglet : l'export d'effectif de cet écran, complété sous Excel, se réimporte tel quel.
+            Fichier <code>.xlsm</code>/<code>.xlsx</code> : <strong>PV de jury</strong> (la colonne
+            BAC y est reprise ; seules les feuilles <em>PV…</em>, <em>Jury…</em> et <em>Temp</em> sont
+            lues), export <strong>Apogée</strong>, ou tableur avec en-têtes <em>Nom, Prénom, Numéro,
+            Naissance</em> — et, si vous les avez, <em>Sexe</em> et <em>BAC</em>. Les en-têtes sont
+            cherchés dans les premières lignes de chaque onglet : l'export d'effectif de cet écran,
+            complété sous Excel, se réimporte tel quel.
             Les étudiants déjà présents (même n° Apogée, ou même nom/prénom/naissance) ne sont pas
             dupliqués : leur <strong>sexe</strong> et leur <strong>BAC</strong> sont mis à jour si le
             fichier les renseigne, et une colonne vide n'efface jamais une saisie.
@@ -4065,7 +4067,7 @@ function renderPromoEffectif() {
                 <table class="pn-table" style="table-layout:auto;width:100%">
                     <thead><tr><th style="width:40px">#</th><th>Nom</th><th>Prénom</th><th>N° Apogée</th><th>Naissance</th>
                         <th title="Sexe de l'étudiant (M / F)">Sexe</th>
-                        <th title="BAC obtenu (STI2D, GEN, PRO, STL, Autre)">BAC</th>
+                        <th title="Série de bac — codes des PV de jury (${esc((profOpts.bac || []).join(', '))})">BAC</th>
                         <th title="Cursus antérieur — ING: École d'ingé, REP: reprise d'étude, BAC: PostBac, PP: PostPrépa, BTS: post-BTS">Cursus</th>
                         <th title="Recrutement — PS: ParcourSup, EC: eCandidat, ADIUT: étrangers">Recrut.</th>
                         <th title="Mobilité internationale : semestre effectué dans un établissement partenaire. Ses UE sont validées par équivalence, sans note.">MI</th>
