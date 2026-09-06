@@ -1207,11 +1207,8 @@
                 <option>Actif</option><option>Abandon</option>
             </select>
         </div>
-        <div class="form-group" id="student-sem-group" style="display:none"><label>Semestre d'abandon</label>
-            <select id="student-sem">
-                <option value="">— Choisir —</option>
-                <option>S1</option><option>S2</option><option>S3</option><option>S4</option><option>S5</option><option>S6</option>
-            </select>
+        <div class="form-group" id="student-sem-group" style="display:none"><label>Semaine d'abandon</label>
+            <select id="student-sem"><option value="">— Choisir —</option></select>
         </div>
         <div class="form-actions">
             <button type="button" class="btn btn-secondary" onclick="closeModal('modal-add-student')">Annuler</button>
@@ -4049,13 +4046,17 @@ function renderPromoEffectif() {
     const stChoices = d.status_choices || d.statuses;
     const optList = st => (stChoices.includes(st) ? stChoices : [st, ...stChoices]).map(s =>
         `<option ${s === st ? 'selected' : ''}${stChoices.includes(s) ? '' : ' disabled'}>${s}</option>`).join('');
-    // Semestres de l'année affichée uniquement : abandonner dans S(2y-1)/S(2y) garde
-    // l'étudiant visible dans l'année en cours et ne le retire que des années suivantes.
-    const yearSems = ['S' + (2 * y - 1), 'S' + (2 * y)];
+    // Semaines de l'année affichée, dans l'ordre du calendrier scolaire (rentrée
+    // d'abord). Dater l'abandon dans l'année en cours y garde l'étudiant visible et
+    // ne le retire que des années suivantes — l'année vient de l'écran, la semaine
+    // seule ne suffirait pas puisqu'elle se répète d'une année sur l'autre.
+    const semaines = d.abandon_semaines || [];
     const semSelect = s => s.statut !== 'Abandon' ? '' :
-        `<select onchange="changeAbandonSemestre(${s.id}, this.value)"
+        `<select onchange="changeAbandonSemaine(${s.id}, this.value)"
+            title="Semaine où l'étudiant a cessé de suivre la formation (année ${y})"
             style="margin-left:6px;padding:3px;border:1px solid #d1d5db;border-radius:4px">
-            <option value="">— sem. —</option>${yearSems.map(se => `<option ${se === s.abandon_semestre ? 'selected' : ''}>${se}</option>`).join('')}</select>`;
+            <option value="">— semaine —</option>${semaines.map(w =>
+                `<option value="${w}"${w === s.abandon_semaine ? ' selected' : ''}>S${w}</option>`).join('')}</select>`;
     // Césure : l'année d'absence. Par défaut celle affichée — il reprendra cette
     // même année dans la cohorte suivante.
     const cesSelect = s => s.statut !== 'Césure' ? '' :
@@ -4432,9 +4433,15 @@ async function changeCohorte(sid, formation) {
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
-async function changeAbandonSemestre(sid, sem) {
+// La semaine seule ne dit pas de quelle année d'étude il s'agit : on envoie
+// l'année affichée avec elle, c'est elle qui détermine à partir de quand
+// l'étudiant sort de l'effectif.
+async function changeAbandonSemaine(sid, semaine) {
     try {
-        await api(`/promotions/${_promoId}/students/${sid}`, { method: 'PUT', body: JSON.stringify({ abandon_semestre: sem }) });
+        await api(`/promotions/${_promoId}/students/${sid}`, {
+            method: 'PUT',
+            body: JSON.stringify({ abandon_semaine: semaine, abandon_annee: _effYear })
+        });
         loadEffectif();
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
@@ -4561,7 +4568,11 @@ function openAddStudent(formation) {
     if (h) h.textContent = 'Ajouter un étudiant — ' + _studentFormation;
     ['student-nom', 'student-prenom', 'student-numero', 'student-naissance'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('student-statut').value = 'Actif';
-    document.getElementById('student-sem').value = '';
+    // Semaines de l'année affichée, remplies depuis l'effectif chargé
+    const semSel = document.getElementById('student-sem');
+    semSel.innerHTML = '<option value="">— Choisir —</option>'
+        + (((_effData || {}).abandon_semaines) || []).map(w => `<option value="${w}">S${w}</option>`).join('');
+    semSel.value = '';
     toggleAddStudentSem();
     openModal('modal-add-student');
 }
@@ -4573,7 +4584,8 @@ async function submitAddStudent() {
         numero: document.getElementById('student-numero').value,
         naissance: document.getElementById('student-naissance').value,
         statut: document.getElementById('student-statut').value,
-        abandon_semestre: document.getElementById('student-sem').value,
+        abandon_semaine: document.getElementById('student-sem').value,
+        abandon_annee: _effYear,
         formation: _studentFormation,
     };
     if (!body.nom && !body.prenom && !body.numero) { toast('Renseignez au moins un nom ou un numéro', 'error'); return; }
@@ -9747,8 +9759,8 @@ function statsParcours(d) {
             <table class="st-tbl"><thead><tr><th></th><th>FTP</th><th>ALT</th><th>Total</th><th>Actifs</th></tr></thead>
             <tbody>${faces}</tbody></table>
             ${stColumns(eff, { color: '#4f46e5' })}
-            ${c.abandons_semestre.length ? '<h3 style="margin:10px 0 4px;font-size:.78rem;color:#6b7280">Abandons par semestre</h3>'
-                + stBars(c.abandons_semestre, { color: '#b91c1c' }) : ''}`,
+            ${(c.abandons_semaine || []).length ? '<h3 style="margin:10px 0 4px;font-size:.78rem;color:#6b7280">Abandons par semaine</h3>'
+                + stBars(c.abandons_semaine, { color: '#b91c1c' }) : ''}`,
             `${c.total} fiches`);
     }).join('');
     const ueRows = (d.jury.ue || []).map(([y, ue, pct, n]) => [`Année ${y} · UE ${ue}`, pct, n]);

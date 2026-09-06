@@ -896,6 +896,23 @@ def _apply_promotions_migrations(db):
     # suppression de sa fiche.
     db.execute("DELETE FROM promotion_year_override WHERE action='remove'")
 
+    # Abandon daté à la SEMAINE (numéro ISO) plutôt qu'au seul semestre, avec
+    # l'année d'étude où elle tombe. L'année reste ce qui détermine à partir de
+    # quand l'étudiant sort de l'effectif ; la semaine dit précisément quand il
+    # est parti (suivi des départs, statistiques).
+    for _col in ('abandon_semaine', 'abandon_annee'):
+        try:
+            db.execute("ALTER TABLE promotion_students ADD COLUMN %s INTEGER" % _col)
+        except sqlite3.OperationalError:
+            pass
+    # Reprise des fiches saisies au semestre : l'année est déductible, la semaine non.
+    db.execute("""UPDATE promotion_students
+                  SET abandon_annee = CASE
+                        WHEN abandon_semestre IN ('S1','S2') THEN 1
+                        WHEN abandon_semestre IN ('S3','S4') THEN 2
+                        WHEN abandon_semestre IN ('S5','S6') THEN 3 END
+                  WHERE abandon_annee IS NULL AND abandon_semestre IS NOT NULL""")
+
     # Année de césure (1..3) : l'étudiant s'absente cette année-là et reprend
     # l'année SUIVANTE dans la cohorte d'après. NULL = pas de césure.
     if 'cesure_year' not in [r[1] for r in db.execute("PRAGMA table_info(promotion_students)").fetchall()]:
@@ -3013,7 +3030,7 @@ def _promotion_payload(db, pid):
     if not promo:
         return None
     students = [dict(r) for r in db.execute(
-        '''SELECT id, numero, nom, prenom, naissance, statut, abandon_semestre, formation
+        '''SELECT id, numero, nom, prenom, naissance, statut, abandon_semaine, abandon_annee, formation
            FROM promotion_students WHERE promotion_id=?
            ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,))]
     counts = {st: 0 for st in _STUDENT_STATUSES}
@@ -3207,15 +3224,15 @@ def add_promotion_student(pid):
     statut = (data.get('statut') or 'Actif').strip()
     if statut not in _STUDENT_STATUS_CHOICES:
         statut = 'Actif'
-    sem = (data.get('abandon_semestre') or '').strip()
-    if statut != 'Abandon' or sem not in _PROMO_SEMESTERS:
-        sem = None
+    semaine = _abandon_semaine(data.get('abandon_semaine')) if statut == 'Abandon' else None
     formation = (data.get('formation') or '').strip().upper()
     if formation not in _SUBCOHORTS:
         formation = 'FTP'
-    db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance, statut, abandon_semestre, formation)
-                  VALUES(?,?,?,?,?,?,?,?)''',
-               (pid, numero, nom, prenom, (data.get('naissance') or '').strip(), statut, sem, formation))
+    db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance,
+                                                 statut, abandon_semaine, abandon_annee, formation)
+                  VALUES(?,?,?,?,?,?,?,?,?)''',
+               (pid, numero, nom, prenom, (data.get('naissance') or '').strip(), statut,
+                semaine, 1 if statut == 'Abandon' else None, formation))
     db.commit()
     return jsonify(_promotion_payload(db, pid))
 
@@ -3244,12 +3261,17 @@ def update_promotion_student(pid, sid):
         if st in _STUDENT_STATUS_CHOICES:
             new_statut = st
             fields.append('statut=?'); params.append(st)
-    # Semestre d'abandon : effacé si le statut n'est plus « Abandon »
+    # Semaine d'abandon : effacée si le statut n'est plus « Abandon ». L'année
+    # d'étude qui l'accompagne détermine à partir de quand l'étudiant sort de
+    # l'effectif ; elle vient de l'écran (année affichée), pas de la semaine seule,
+    # qui se répète d'une année sur l'autre.
     if new_statut is not None and new_statut != 'Abandon':
-        fields.append('abandon_semestre=?'); params.append(None)
-    elif 'abandon_semestre' in data:
-        sem = (data.get('abandon_semestre') or '').strip()
-        fields.append('abandon_semestre=?'); params.append(sem if sem in _PROMO_SEMESTERS else None)
+        fields += ['abandon_semaine=?', 'abandon_annee=?']; params += [None, None]
+    elif 'abandon_semaine' in data:
+        fields.append('abandon_semaine=?'); params.append(_abandon_semaine(data.get('abandon_semaine')))
+        an = data.get('abandon_annee')
+        if an in (1, 2, 3, '1', '2', '3'):
+            fields.append('abandon_annee=?'); params.append(int(an))
     # Année de césure : effacée si le statut n'est plus « Césure ». Repasser un
     # étudiant en césure à un autre statut annule aussi sa reprise dans la
     # cohorte suivante (la fiche créée là-bas est supprimée).
@@ -3324,6 +3346,55 @@ def import_promotion_students(pid):
 
 # ---- Effectif par année d'étude (1..3) : report auto du jury + ajustements manuels ----
 
+def _promo_year_weeks(pdb, pid, year):
+    """Semaines de l'année universitaire pendant laquelle la cohorte suit son année
+    d'étude `year`, dans l'ordre du calendrier scolaire (rentrée d'abord). C'est la
+    liste de choix de la semaine d'abandon. Vide si cette année n'existe pas encore."""
+    promo = pdb.execute('SELECT start_year FROM promotions WHERE id=?', (pid,)).fetchone()
+    if not promo:
+        return []
+    y = promo['start_year'] + year - 1
+    path = db_path_for_year('%d-%d' % (y, y + 1))
+    if not os.path.isfile(path):
+        return []
+    db = _open_connection(path)
+    try:
+        cfg = {}
+        for r in db.execute('SELECT key, value FROM app_settings'):
+            try:
+                cfg[r['key']] = int(r['value'])
+            except (TypeError, ValueError):
+                pass
+    except sqlite3.Error:
+        return []
+    finally:
+        db.close()
+    gmax = get_academic_max_week('%d-%d' % (y, y + 1))
+    start = cfg.get('academic_start_week_y%d' % year, cfg.get('academic_start_week', 36))
+    end = cfg.get('academic_end_week_y%d' % year, cfg.get('academic_end_week', 26))
+    mx = cfg.get('academic_max_week_y%d' % year, gmax)
+    return sorted(get_valid_school_weeks(start, end, mx), key=lambda w: school_week_key(w, start, mx))
+
+def _abandon_libelle(r):
+    """Comment se lit un abandon : « semaine 12 (année 1) », ou l'année seule pour les
+    fiches saisies avant que la semaine ne soit demandée."""
+    sem, an = r['abandon_semaine'], r['abandon_annee']
+    if sem and an:
+        return 'semaine %d (année %d)' % (sem, an)
+    if sem:
+        return 'semaine %d' % sem
+    if an:
+        return 'année %d' % an
+    return ''
+
+def _abandon_semaine(v):
+    """Numéro de semaine ISO d'un abandon : 1..53, sinon None (non renseigné)."""
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return None
+    return n if 1 <= n <= 53 else None
+
 def _hors_annee_raison(r, year, comp):
     """Pourquoi une fiche n'est pas dans l'effectif de l'année affichée. Sert d'explication
     à l'écran : une fiche visible sans motif serait plus déroutante qu'utile."""
@@ -3331,8 +3402,8 @@ def _hors_annee_raison(r, year, comp):
     if entry > year:
         return "entre en année %d" % entry
     if r['statut'] == 'Abandon':
-        sem = r['abandon_semestre']
-        return "abandon" + (" en %s" % sem if sem else "")
+        lib = _abandon_libelle(r)
+        return "abandon" + (" " + lib if lib else "")
     if r['cesure_year']:
         return "césure en année %d" % r['cesure_year']
     for y in range(1, year):
@@ -3376,7 +3447,8 @@ def _year_effectif_payload(pdb, pid, year):
         '''SELECT student_id, COUNT(*) AS n FROM student_marks
            WHERE promotion_id=? GROUP BY student_id''', (pid,))}
     students = []
-    for r in pdb.execute('''SELECT id, numero, nom, prenom, naissance, statut, abandon_semestre,
+    for r in pdb.execute('''SELECT id, numero, nom, prenom, naissance, statut,
+                                   abandon_semaine, abandon_annee,
                                    formation, entry_year, cesure_year, sexe, bac, cursus, recrutement
                             FROM promotion_students
                             WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''',
@@ -3424,6 +3496,7 @@ def _year_effectif_payload(pdb, pid, year):
             'statuses': _STUDENT_STATUSES,
             'status_choices': _STUDENT_STATUS_CHOICES,
             'semesters': _PROMO_SEMESTERS, 'years': [1, 2, 3],
+            'abandon_semaines': _promo_year_weeks(pdb, pid, year),
             'profile_options': {k: list(v) for k, v in _STUDENT_PROFILE.items()},
             'profile_labels': {k: dict(v) for k, v in _STUDENT_PROFILE_LABELS.items()}}
 
@@ -3468,7 +3541,7 @@ def export_year_effectif(pid, year):
     promo_name = payload['promotion'].get('name') or f'promo {pid}'
     cols = [('#', 5), ('Nom', 22), ('Prénom', 18), ('N° Apogée', 14), ('Naissance', 13),
             ('Sexe', 6), ('BAC', 9), ('Cursus', 9), ('Recrut.', 10), ('Statut', 11),
-            ('Sem. abandon', 13), ('Cohorte', 9), ('Remarques', 26)]
+            ('Semaine abandon', 16), ('Cohorte', 9), ('Remarques', 26)]
 
     wb = Workbook()
     wb.remove(wb.active)
@@ -3496,7 +3569,7 @@ def export_year_effectif(pid, year):
                       s.get('naissance') or '', s.get('sexe') or '',
                       s.get('bac') or '', s.get('cursus') or '',
                       s.get('recrutement') or '', s.get('statut') or '',
-                      s.get('abandon_semestre') or '', formation, ' ; '.join(notes)]
+                      _abandon_libelle(s), formation, ' ; '.join(notes)]
             for i, v in enumerate(values, start=1):
                 c = ws.cell(row, i, v)
                 c.border = border
@@ -3881,8 +3954,8 @@ def _revert_red_transfer(db, pid, sid, prev, restore_statut='RED'):
         return
     if prev['target_student_id']:
         db.execute('DELETE FROM promotion_students WHERE id=?', (prev['target_student_id'],))
-    db.execute('UPDATE promotion_students SET statut=?, abandon_semestre=NULL WHERE id=?',
-               (restore_statut, sid))
+    db.execute('''UPDATE promotion_students SET statut=?, abandon_semaine=NULL, abandon_annee=NULL
+                  WHERE id=?''', (restore_statut, sid))
     db.execute('DELETE FROM promotion_red_transfer WHERE promotion_id=? AND student_id=?', (pid, sid))
 
 def _reconcile_red_transfers(db, pid, comp=None):
@@ -3926,8 +3999,9 @@ def decide_red_student(pid, sid):
         return error_response('Décision invalide', 400)
     target_student_id = None
     if decision == 'ABANDON':
-        db.execute("UPDATE promotion_students SET statut='Abandon', abandon_semestre=? WHERE id=?",
-                   (f'S{year * 2}', sid))
+        # Abandon prononcé par le jury : il clôt l'année qui vient d'être jugée.
+        db.execute("UPDATE promotion_students SET statut='Abandon', abandon_annee=? WHERE id=?",
+                   (year, sid))
     else:
         target_id = _ensure_target_promo(db, pid)   # crée la promo cible si absente
         if not target_id:
@@ -4940,13 +5014,13 @@ def _year_rosters(pdb, pid, comp=None):
     Un ajustement manuel (promotion_year_override, action 'add') peut réintégrer un
     étudiant sur une année. Retourne {1:set, 2:set, 3:set}."""
     meta = {}
-    for r in pdb.execute('''SELECT id, statut, abandon_semestre, entry_year, cesure_year
+    for r in pdb.execute('''SELECT id, statut, abandon_semaine, abandon_annee, entry_year, cesure_year
                             FROM promotion_students WHERE promotion_id=?''', (pid,)):
         meta[r['id']] = {
             'statut': r['statut'],
             # Année d'abandon connue seulement si un semestre est renseigné ; sinon None
             # (l'étudiant reste visible partout tant que le semestre n'est pas précisé).
-            'abandon_year': _sem_year(r['abandon_semestre']) if r['abandon_semestre'] else None,
+            'abandon_year': r['abandon_annee'],
             'cesure_year': r['cesure_year'],
             'entry': r['entry_year'] or 1}
     adds = {1: set(), 2: set(), 3: set()}
@@ -10039,8 +10113,9 @@ def _stats_academique(pdb):
             'total': len(ss),
             'statuts': dict(_count_by(ss, 'statut', _STUDENT_STATUSES)),
             'effectifs': eff,
-            'abandons_semestre': _count_by([s for s in ss if s['statut'] == 'Abandon'],
-                                           'abandon_semestre', _PROMO_SEMESTERS, empty='Non précisé'),
+            'abandons_semaine': _count_by(
+                [{'semaine': ('semaine %d' % s['abandon_semaine']) if s['abandon_semaine'] else None}
+                 for s in ss if s['statut'] == 'Abandon'], 'semaine', empty='Non précisée'),
         })
         # décisions de jury par année, toutes promos confondues
         for (y, sid), dec in comp['decisions'].items():
