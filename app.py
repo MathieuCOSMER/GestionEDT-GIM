@@ -3324,14 +3324,36 @@ def import_promotion_students(pid):
 
 # ---- Effectif par année d'étude (1..3) : report auto du jury + ajustements manuels ----
 
+def _hors_annee_raison(r, year, comp):
+    """Pourquoi une fiche n'est pas dans l'effectif de l'année affichée. Sert d'explication
+    à l'écran : une fiche visible sans motif serait plus déroutante qu'utile."""
+    entry = r['entry_year'] or 1
+    if entry > year:
+        return "entre en année %d" % entry
+    if r['statut'] == 'Abandon':
+        sem = r['abandon_semestre']
+        return "abandon" + (" en %s" % sem if sem else "")
+    if r['cesure_year']:
+        return "césure en année %d" % r['cesure_year']
+    for y in range(1, year):
+        dec = comp['decisions'].get((y, str(r['id'])))
+        if dec in ('AJ', 'RED'):
+            return "%s en année %d" % ('redoublant' if dec == 'RED' else 'ajourné', y)
+    return "hors effectif de l'année"
+
 def _year_effectif_payload(pdb, pid, year):
     """Effectif d'une promotion pour une année d'étude (1..3) avec compteurs par
-    sous-cohorte. Chaque étudiant est marqué « entrant » (entry_year==année) et, le cas
-    échéant, ajusté à la main ('add'/'remove')."""
+    sous-cohorte. Chaque étudiant est marqué « entrant » (entry_year==année).
+
+    TOUTES les fiches de la cohorte sont renvoyées, y compris celles qui ne sont pas
+    dans l'effectif de l'année (`hors_annee`) : sans cela une fiche pouvait n'être
+    visible sur aucun écran, donc ni corrigeable ni supprimable. Les compteurs, eux,
+    ne portent que sur l'effectif de l'année."""
     promo = pdb.execute('SELECT * FROM promotions WHERE id=?', (pid,)).fetchone()
     if not promo:
         return None
-    roster = _year_rosters(pdb, pid).get(year, set())
+    comp = _jury_compute(pdb, pid)
+    roster = _year_rosters(pdb, pid, comp).get(year, set())
     # Les étudiants en césure CETTE année sont hors effectif (ni notes ni jury,
     # _year_rosters les exclut) mais restent affichés, grisés, pour ne pas oublier
     # de les réinscrire dans la cohorte suivante.
@@ -3359,24 +3381,26 @@ def _year_effectif_payload(pdb, pid, year):
                             FROM promotion_students
                             WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''',
                          (pid,)):
-        if r['id'] in roster or r['id'] in cesure_ids:
-            d = dict(r)
-            d['formation'] = fm.get(r['id'], d.get('formation') or 'FTP')
-            d['entrant'] = (r['entry_year'] or 1) == year
-            d['manual'] = overrides.get(r['id'])
-            d['cesure'] = r['id'] in cesure_ids
-            d['origin'] = origins.get(r['id'])
-            d['nb_notes'] = nb_notes.get(r['id'], 0)
-            students.append(d)
+        d = dict(r)
+        d['formation'] = fm.get(r['id'], d.get('formation') or 'FTP')
+        d['entrant'] = (r['entry_year'] or 1) == year
+        d['manual'] = overrides.get(r['id'])
+        d['cesure'] = r['id'] in cesure_ids
+        d['origin'] = origins.get(r['id'])
+        d['nb_notes'] = nb_notes.get(r['id'], 0)
+        d['hors_annee'] = not (r['id'] in roster or r['id'] in cesure_ids)
+        if d['hors_annee']:
+            d['raison'] = _hors_annee_raison(r, year, comp)
+        students.append(d)
+    dans_annee = [s for s in students if not s['hors_annee']]
     sub_counts = {f: {st: 0 for st in _STUDENT_STATUSES} for f in _SUBCOHORTS}
-    for s in students:
+    for s in dans_annee:
         f = _face(s.get('formation'))
         sub_counts[f][s['statut']] = sub_counts[f].get(s['statut'], 0) + 1
     for f in _SUBCOHORTS:
         sub_counts[f]['total'] = sum(sub_counts[f][st] for st in _STUDENT_STATUSES)
-        sub_counts[f]['origin'] = sum(1 for s in students
-                                      if s.get('origin')
-                                      and (s.get('formation') or 'FTP') == f)
+        sub_counts[f]['origin'] = sum(1 for s in dans_annee
+                                      if s.get('origin') and _face(s.get('formation')) == f)
     # Mobilité internationale (MI) : semestre de l'année effectué ailleurs
     s_odd, s_even = f'S{year * 2 - 1}', f'S{year * 2}'
     mob = _mobility_map(pdb, pid)
@@ -3396,7 +3420,8 @@ def _year_effectif_payload(pdb, pid, year):
     return {'promotion': payload_promo, 'year': year, 'students': students,
             'year_semesters': [s_odd, s_even],
             'sub_counts': sub_counts, 'subcohorts': list(_SUBCOHORTS),
-            'total': len(students), 'statuses': _STUDENT_STATUSES,
+            'total': len(dans_annee), 'hors_annee': len(students) - len(dans_annee),
+            'statuses': _STUDENT_STATUSES,
             'status_choices': _STUDENT_STATUS_CHOICES,
             'semesters': _PROMO_SEMESTERS, 'years': [1, 2, 3],
             'profile_options': {k: list(v) for k, v in _STUDENT_PROFILE.items()},
