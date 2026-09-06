@@ -8130,68 +8130,70 @@ def get_teacher_service(teacher_id):
     except Exception as e:
         return error_response(f'Error calculating service: {str(e)}', 500)
 
+def _service_rows(db):
+    """Service de chaque enseignant sur une base année : heures CM/TD/TP/PT et HETD.
+    Heures multipliées par le nb de groupes (table semester_groups) selon (semestre, face),
+    groupes « Promo » si le semestre est mutualisé. Trié par nom."""
+    cursor = db.cursor()
+    cursor.execute('''
+        SELECT cs.id AS session_id, cs.teacher_id,
+               cs.teaching_type, cs.total_hours,
+               cs.formation_type, s.code AS semester_code, c.tp_type
+        FROM course_sessions cs
+        JOIN courses c ON cs.course_id = c.id
+        JOIN semesters s ON c.semester_id = s.id
+    ''')
+    rows = cursor.fetchall()
+    sg_map, mut_set, tpsep_set = _load_semester_groups(db)
+    gt_map = _load_group_teachers(db)
+    names = {r['id']: r['name'] for r in cursor.execute('SELECT id, name FROM teachers').fetchall()}
+
+    # Agréger par enseignant, groupe par groupe : chaque groupe de TD / TP / PT
+    # peut être confié à un enseignant différent de celui de la session.
+    agg = {}
+    for r in rows:
+        mult = _group_multiplier(sg_map, mut_set, tpsep_set, r['semester_code'], r['formation_type'], r['teaching_type'], r['tp_type'])
+        tt = r['teaching_type'].upper().replace(' ', '')
+        h = r['total_hours'] or 0
+        for tid in _group_teacher_list(r['teacher_id'], gt_map.get(r['session_id']), mult):
+            if not tid or tid not in names:
+                continue
+            if tid not in agg:
+                agg[tid] = {'teacher_id': tid, 'teacher_name': names[tid],
+                            'cm_hours': 0, 'td_hours': 0, 'tp_hours': 0, 'pt_hours': 0}
+            if tt == 'CM':
+                agg[tid]['cm_hours'] += h
+            elif tt == 'TD':
+                agg[tid]['td_hours'] += h
+            elif tt.startswith('TP'):
+                agg[tid]['tp_hours'] += h
+            elif tt == 'PT':
+                agg[tid]['pt_hours'] += h
+
+    services = []
+    for s in agg.values():
+        cm_h, td_h, tp_h, pt_h = s['cm_hours'], s['td_hours'], s['tp_hours'], s['pt_hours']
+        hetd = cm_h * 1.5 + td_h * 1.0 + tp_h * (2.0/3.0) + pt_h * 1.0
+        total_h = cm_h + td_h + tp_h + pt_h
+        if total_h > 0:
+            services.append({
+                'teacher_id': s['teacher_id'],
+                'teacher_name': s['teacher_name'],
+                'cm_hours': round(cm_h, 1),
+                'td_hours': round(td_h, 1),
+                'tp_hours': round(tp_h, 1),
+                'pt_hours': round(pt_h, 1),
+                'total_hours': round(total_h, 1),
+                'total_hetd': round(hetd, 2),
+            })
+    services.sort(key=lambda x: x['teacher_name'])
+    return services
+
 @app.route('/api/service/all', methods=['GET'])
 def get_all_service():
-    """Get all teachers' service hours with breakdown by type.
-    Heures multipliées par le nb de groupes (table semester_groups) selon (semestre, face),
-    groupes « Promo » si le semestre est mutualisé."""
+    """Service de tous les enseignants de l'année active (heures + HETD)."""
     try:
-        db = get_db()
-        cursor = db.cursor()
-
-        cursor.execute('''
-            SELECT cs.id AS session_id, cs.teacher_id,
-                   cs.teaching_type, cs.total_hours,
-                   cs.formation_type, s.code AS semester_code, c.tp_type
-            FROM course_sessions cs
-            JOIN courses c ON cs.course_id = c.id
-            JOIN semesters s ON c.semester_id = s.id
-        ''')
-        rows = cursor.fetchall()
-        sg_map, mut_set, tpsep_set = _load_semester_groups(db)
-        gt_map = _load_group_teachers(db)
-        names = {r['id']: r['name'] for r in cursor.execute('SELECT id, name FROM teachers').fetchall()}
-
-        # Agréger par enseignant, groupe par groupe : chaque groupe de TD / TP / PT
-        # peut être confié à un enseignant différent de celui de la session.
-        agg = {}
-        for r in rows:
-            mult = _group_multiplier(sg_map, mut_set, tpsep_set, r['semester_code'], r['formation_type'], r['teaching_type'], r['tp_type'])
-            tt = r['teaching_type'].upper().replace(' ', '')
-            h = r['total_hours'] or 0
-            for tid in _group_teacher_list(r['teacher_id'], gt_map.get(r['session_id']), mult):
-                if not tid or tid not in names:
-                    continue
-                if tid not in agg:
-                    agg[tid] = {'teacher_id': tid, 'teacher_name': names[tid],
-                                'cm_hours': 0, 'td_hours': 0, 'tp_hours': 0, 'pt_hours': 0}
-                if tt == 'CM':
-                    agg[tid]['cm_hours'] += h
-                elif tt == 'TD':
-                    agg[tid]['td_hours'] += h
-                elif tt.startswith('TP'):
-                    agg[tid]['tp_hours'] += h
-                elif tt == 'PT':
-                    agg[tid]['pt_hours'] += h
-
-        services = []
-        for s in agg.values():
-            cm_h, td_h, tp_h, pt_h = s['cm_hours'], s['td_hours'], s['tp_hours'], s['pt_hours']
-            hetd = cm_h * 1.5 + td_h * 1.0 + tp_h * (2.0/3.0) + pt_h * 1.0
-            total_h = cm_h + td_h + tp_h + pt_h
-            if total_h > 0:
-                services.append({
-                    'teacher_id': s['teacher_id'],
-                    'teacher_name': s['teacher_name'],
-                    'cm_hours': round(cm_h, 1),
-                    'td_hours': round(td_h, 1),
-                    'tp_hours': round(tp_h, 1),
-                    'pt_hours': round(pt_h, 1),
-                    'total_hours': round(total_h, 1),
-                    'total_hetd': round(hetd, 2),
-                })
-        services.sort(key=lambda x: x['teacher_name'])
-        return jsonify(services), 200
+        return jsonify(_service_rows(get_db())), 200
     except Exception as e:
         return error_response(f'Error calculating services: {str(e)}', 500)
 
@@ -9852,6 +9854,331 @@ def set_session_year():
         return error_response(f"Année {year} introuvable", 404)
     session['year'] = year
     return jsonify({'current': year})
+
+# ======================= STATISTIQUES (onglet transversal) =======================
+# Agrège les trois sources du logiciel : la base des promotions (profils, notes,
+# jury), la base de l'année universitaire active (service, matières, salles) et
+# la liste des années archivées. Lecture seule : rien n'est écrit ici.
+
+def _num_stats(vals):
+    """Résumé d'une série de valeurs : effectif, moyenne, médiane, quartiles, écart-type."""
+    vals = sorted(v for v in vals if isinstance(v, (int, float)))
+    n = len(vals)
+    if not n:
+        return None
+    moy = sum(vals) / n
+    med = vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2
+    ecart = (sum((v - moy) ** 2 for v in vals) / n) ** 0.5
+    return {'n': n, 'moy': round(moy, 2), 'med': round(med, 2),
+            'min': round(vals[0], 2), 'max': round(vals[-1], 2),
+            'ecart': round(ecart, 2),
+            'q1': round(vals[n // 4], 2), 'q3': round(vals[min(n - 1, (3 * n) // 4)], 2)}
+
+def _count_by(rows, key, order=None, empty='Non renseigné'):
+    """Répartition [[valeur, effectif], …] triée selon `order` puis par effectif."""
+    c = {}
+    for r in rows:
+        v = r.get(key) or empty
+        c[v] = c.get(v, 0) + 1
+    if order:
+        keys = [k for k in order if k in c] + sorted(k for k in c if k not in order)
+    else:
+        keys = sorted(c, key=lambda k: (-c[k], str(k)))
+    return [[k, c[k]] for k in keys]
+
+def _hist20(vals, step=2):
+    """Répartition de notes /20 par tranches (la dernière inclut 20)."""
+    nb = int(20 / step)
+    buckets = [0] * nb
+    for v in vals:
+        buckets[min(nb - 1, max(0, int(v // step)))] += 1
+    return [['%g–%g' % (i * step, (i + 1) * step), buckets[i]] for i in range(nb)]
+
+# Notes de matières uniquement : la bonification sport/art et les heures
+# d'absence ne sont pas des notes et fausseraient toute moyenne.
+_STATS_SKIP_KINDS = ('BONUS', 'PEN')
+
+def _stats_promo_notes(pdb, pid, coeffs):
+    """Toutes les notes matière d'une promotion : [{sem, year, sid, code, label, note, mention}].
+    Les matières sans coefficient et les colonnes BONUS/PEN sont écartées."""
+    out = []
+    for sem in _PROMO_SEMESTERS:
+        d = coeffs.get(sem) or {}
+        comps = {c['code']: c for c in _visible_note_components(d.get('components', []),
+                                                                d.get('competences', []))
+                 if c.get('kind') not in _STATS_SKIP_KINDS}
+        if not comps:
+            continue
+        for r in _marks_rows(pdb, pid, sem):
+            c = comps.get(r['matiere_code'])
+            if not c or r['note'] is None:
+                continue
+            out.append({'sem': sem, 'year': _sem_year(sem), 'sid': r['student_id'],
+                        'code': r['matiere_code'], 'label': c.get('label') or r['matiere_code'],
+                        'kind': c.get('kind') or '', 'note': r['note'],
+                        'mention': r['mention']})
+    return out
+
+def _stats_group_avg(rows, keyfn, valfn=lambda r: r['note'], mini=3):
+    """[[clé, moyenne, effectif], …] par ordre décroissant de moyenne.
+    Les groupes de moins de `mini` valeurs sont écartés (moyenne non significative)."""
+    g = {}
+    for r in rows:
+        k = keyfn(r)
+        if k is None:
+            continue
+        g.setdefault(k, []).append(valfn(r))
+    out = [[k, round(sum(v) / len(v), 2), len(v)] for k, v in g.items() if len(v) >= mini]
+    out.sort(key=lambda x: -x[1])
+    return out
+
+def _stats_academique(pdb):
+    """Profils, parcours et résultats de toutes les promotions."""
+    promos = [dict(r) for r in pdb.execute(
+        'SELECT * FROM promotions ORDER BY start_year DESC')]
+    students = [dict(r) for r in pdb.execute(
+        '''SELECT s.*, p.name AS promo FROM promotion_students s
+           JOIN promotions p ON p.id = s.promotion_id''')]
+    prof = {s['id']: s for s in students}
+
+    # --- profil d'entrée
+    profil = {
+        'sexe': _count_by(students, 'sexe', _STUDENT_SEXE),
+        'bac': _count_by(students, 'bac', _STUDENT_BAC),
+        'cursus': _count_by(students, 'cursus', _STUDENT_CURSUS),
+        'recrutement': _count_by(students, 'recrutement', _STUDENT_RECRUT),
+        'formation': _count_by(students, 'formation', list(_SUBCOHORTS)),
+        'statut': _count_by(students, 'statut', _STUDENT_STATUSES),
+        'promo': _count_by(students, 'promo'),
+        'renseigne': [[k, sum(1 for s in students if s.get(k))] for k in _STUDENT_PROFILE],
+    }
+    # Féminisation par promotion (sur les fiches où le sexe est renseigné)
+    fem = []
+    for p in promos:
+        ss = [s for s in students if s['promotion_id'] == p['id'] and s.get('sexe')]
+        if ss:
+            fem.append([p['name'], round(100.0 * sum(1 for s in ss if s['sexe'] == 'F') / len(ss), 1), len(ss)])
+    profil['feminisation'] = fem
+
+    # --- parcours par cohorte : effectifs par année, décisions de jury, sorties
+    cohortes, decisions, ue_reussite, notes = [], {}, {}, []
+    annees_avg, sem_avg_rows = [], []
+    for p in promos:
+        pid = p['id']
+        comp = _jury_compute(pdb, pid)
+        rosters = _year_rosters(pdb, pid, comp)
+        ss = [s for s in students if s['promotion_id'] == pid]
+        eff = []
+        for y in (1, 2, 3):
+            ids = rosters.get(y) or set()
+            fm = _year_formation_map(pdb, pid, y)
+            eff.append({'annee': y, 'total': len(ids),
+                        'FTP': sum(1 for i in ids if fm.get(i) == 'FTP'),
+                        'ALT': sum(1 for i in ids if fm.get(i) == 'ALT')})
+        cohortes.append({
+            'promo': p['name'], 'start_year': p['start_year'],
+            'total': len(ss),
+            'statuts': dict(_count_by(ss, 'statut', _STUDENT_STATUSES)),
+            'effectifs': eff,
+            'abandons_semestre': _count_by([s for s in ss if s['statut'] == 'Abandon'],
+                                           'abandon_semestre', _PROMO_SEMESTERS, empty='Non précisé'),
+        })
+        # décisions de jury par année, toutes promos confondues
+        for (y, sid), dec in comp['decisions'].items():
+            if dec:
+                decisions.setdefault(y, {}).setdefault(dec, 0)
+                decisions[y][dec] += 1
+        # taux de validation par UE et par année
+        for (y, sid), codes in comp['ue_codes'].items():
+            for ue, code in codes.items():
+                if not code:
+                    continue
+                k = (y, ue)
+                ue_reussite.setdefault(k, [0, 0])
+                ue_reussite[k][1] += 1
+                if code in ('ADM', 'ADMJ', 'CMP'):
+                    ue_reussite[k][0] += 1
+        # moyennes annuelles par compétence
+        for y, rows in comp['year_avgs'].items():
+            for sid, ues in rows.items():
+                for ue, v in ues.items():
+                    if v is not None:
+                        annees_avg.append({'promo': p['name'], 'annee': y, 'ue': ue,
+                                           'sid': int(sid), 'note': v})
+        # moyennes de semestre par compétence
+        for sem, rows in comp['sem_avgs'].items():
+            for sid, ues in rows.items():
+                for ue, v in ues.items():
+                    if v is not None:
+                        sem_avg_rows.append({'promo': p['name'], 'sem': sem, 'ue': ue,
+                                             'sid': int(sid), 'note': v})
+        # notes matière
+        coeffs = _promo_coeffs(pdb, pid) or {}
+        for n in _stats_promo_notes(pdb, pid, coeffs):
+            n['promo'] = p['name']
+            n['pid'] = pid
+            notes.append(n)
+
+    # Sous-cohorte de l'étudiant pour l'année du semestre de la note
+    fmaps = {}
+    for n in notes:
+        key = (n['pid'], n['year'])
+        if key not in fmaps:
+            fmaps[key] = _year_formation_map(pdb, n['pid'], n['year'])
+        n['face'] = fmaps[key].get(n['sid'], 'FTP')
+
+    vals = [n['note'] for n in notes]
+    croise = lambda champ: _stats_group_avg(
+        notes, lambda n: (prof.get(n['sid']) or {}).get(champ), mini=10)
+    resultats = {
+        'total_notes': len(notes),
+        'abi': sum(1 for n in notes if n['mention'] == 'ABI'),
+        'global': _num_stats(vals),
+        'histogramme': _hist20(vals),
+        'sous_10': round(100.0 * sum(1 for v in vals if v < 10) / len(vals), 1) if vals else None,
+        'par_semestre': [[s, _num_stats([n['note'] for n in notes if n['sem'] == s])]
+                         for s in _PROMO_SEMESTERS
+                         if any(n['sem'] == s for n in notes)],
+        'par_promo': [[p['name'], _num_stats([n['note'] for n in notes if n['promo'] == p['name']])]
+                      for p in promos if any(n['promo'] == p['name'] for n in notes)],
+        'par_face': [[f, _num_stats([n['note'] for n in notes if n['face'] == f])]
+                     for f in _SUBCOHORTS],
+        'matieres': _stats_group_avg(notes, lambda n: n['label'], mini=5),
+        'par_bac': croise('bac'),
+        'par_sexe': croise('sexe'),
+        'par_cursus': croise('cursus'),
+        'par_recrutement': croise('recrutement'),
+    }
+    # Moyenne générale de chaque étudiant (toutes notes du semestre le plus récent)
+    par_etudiant = {}
+    for n in notes:
+        par_etudiant.setdefault(n['sid'], []).append(n['note'])
+    moyennes = [sum(v) / len(v) for v in par_etudiant.values() if len(v) >= 3]
+    resultats['etudiants'] = _num_stats(moyennes)
+    resultats['histogramme_etudiants'] = _hist20(moyennes, 1)
+
+    jury = {
+        'decisions': [[y, sorted(d.items(), key=lambda kv: -kv[1])]
+                      for y, d in sorted(decisions.items())],
+        'ue': [[y, ue, round(100.0 * ok / tot, 1), tot]
+               for (y, ue), (ok, tot) in sorted(ue_reussite.items())],
+        'annuelles': [[y, _num_stats([r['note'] for r in annees_avg if r['annee'] == y])]
+                      for y in (1, 2, 3) if any(r['annee'] == y for r in annees_avg)],
+        'semestres': [[s, _num_stats([r['note'] for r in sem_avg_rows if r['sem'] == s])]
+                      for s in _PROMO_SEMESTERS if any(r['sem'] == s for r in sem_avg_rows)],
+    }
+
+    # --- encadrement : tuteurs et entreprises d'alternance
+    tut = [dict(r) for r in pdb.execute(
+        'SELECT tuteur_univ, tuteur_entreprise, entreprise, year FROM student_tutors')]
+    encadrement = {
+        'total': len(tut),
+        'tuteurs_univ': _count_by([t for t in tut if t['tuteur_univ']], 'tuteur_univ'),
+        'entreprises': _count_by([t for t in tut if t['entreprise']], 'entreprise'),
+        'mobilites': [dict(r) for r in pdb.execute(
+            '''SELECT semester, etablissement, COUNT(*) AS n FROM student_mobility
+               GROUP BY semester, etablissement ORDER BY n DESC''')],
+        'redoublants': pdb.execute('SELECT COUNT(*) c FROM promotion_red_transfer').fetchone()['c'],
+        'cesures': pdb.execute('SELECT COUNT(*) c FROM promotion_cesure_transfer').fetchone()['c'],
+        'transferts': pdb.execute('SELECT COUNT(*) c FROM student_origin').fetchone()['c'],
+    }
+    return {'promotions': promos, 'profil': profil, 'cohortes': cohortes,
+            'resultats': resultats, 'jury': jury, 'encadrement': encadrement,
+            'nb_etudiants': len(students)}
+
+def _stats_enseignement(db):
+    """Service, matières, volumes et salles de la base année fournie."""
+    services = _service_rows(db)
+    heures = {k: round(sum(s[k] for s in services), 1)
+              for k in ('cm_hours', 'td_hours', 'tp_hours', 'pt_hours', 'total_hours')}
+    hetd = round(sum(s['total_hetd'] for s in services), 1)
+    nb_teachers = db.execute('SELECT COUNT(*) c FROM teachers').fetchone()['c']
+    # Volume par semestre et par type d'enseignement
+    par_sem = [dict(r) for r in db.execute(
+        '''SELECT s.code AS sem, COUNT(DISTINCT c.id) AS matieres,
+                  COUNT(cs.id) AS sessions, ROUND(SUM(COALESCE(cs.total_hours,0)),1) AS heures
+           FROM semesters s
+           LEFT JOIN courses c ON c.semester_id = s.id
+           LEFT JOIN course_sessions cs ON cs.course_id = c.id
+           GROUP BY s.code ORDER BY s.code''')]
+    par_type = [dict(r) for r in db.execute(
+        '''SELECT UPPER(teaching_type) AS type, COUNT(*) AS sessions,
+                  ROUND(SUM(COALESCE(total_hours,0)),1) AS heures
+           FROM course_sessions GROUP BY UPPER(teaching_type)
+           ORDER BY heures DESC''')]
+    par_face = [dict(r) for r in db.execute(
+        '''SELECT formation_type AS face, COUNT(*) AS sessions,
+                  ROUND(SUM(COALESCE(total_hours,0)),1) AS heures
+           FROM course_sessions GROUP BY formation_type ORDER BY face''')]
+    semaines = [[r['week_number'], round(r['h'], 1)] for r in db.execute(
+        '''SELECT week_number, SUM(COALESCE(hours,0)) AS h FROM weekly_hours
+           GROUP BY week_number HAVING h > 0 ORDER BY week_number''')]
+    corps = [[r['corps_code'] or 'Non renseigné', r['c']] for r in db.execute(
+        '''SELECT corps_code, COUNT(*) AS c FROM teachers
+           GROUP BY corps_code ORDER BY c DESC''')]
+    statuts = [[r['status'] or 'Non renseigné', r['c']] for r in db.execute(
+        'SELECT status, COUNT(*) AS c FROM teachers GROUP BY status ORDER BY c DESC')]
+    salles = [dict(r) for r in db.execute(
+        '''SELECT room_type, COUNT(*) AS n, SUM(COALESCE(capacity,0)) AS capacite
+           FROM rooms GROUP BY room_type ORDER BY n DESC''')]
+    sans_ens = db.execute(
+        'SELECT COUNT(*) c FROM course_sessions WHERE teacher_id IS NULL').fetchone()['c']
+    return {
+        'nb_enseignants': nb_teachers,
+        'nb_en_service': len(services),
+        'sans_service': nb_teachers - len(services),
+        'heures': heures, 'hetd': hetd,
+        'hetd_moy': round(hetd / len(services), 1) if services else 0,
+        'services': sorted(services, key=lambda s: -s['total_hetd']),
+        'hetd_stats': _num_stats([s['total_hetd'] for s in services]),
+        'par_semestre': par_sem, 'par_type': par_type, 'par_face': par_face,
+        'semaines': semaines, 'corps': corps, 'statuts': statuts, 'salles': salles,
+        'sessions_sans_enseignant': sans_ens,
+        'nb_matieres': db.execute('SELECT COUNT(*) c FROM courses').fetchone()['c'],
+        'nb_sessions': db.execute('SELECT COUNT(*) c FROM course_sessions').fetchone()['c'],
+        'nb_salles': db.execute('SELECT COUNT(*) c FROM rooms').fetchone()['c'],
+        'capacite_totale': db.execute(
+            'SELECT COALESCE(SUM(capacity),0) c FROM rooms').fetchone()['c'],
+    }
+
+def _stats_annees():
+    """Comparaison rapide de toutes les années universitaires archivées."""
+    out = []
+    for y in list_years():
+        try:
+            db = _open_connection(db_path_for_year(y))
+        except sqlite3.Error:
+            continue
+        try:
+            row = {'annee': y}
+            for k, q in (('enseignants', 'SELECT COUNT(*) c FROM teachers'),
+                         ('matieres', 'SELECT COUNT(*) c FROM courses'),
+                         ('sessions', 'SELECT COUNT(*) c FROM course_sessions'),
+                         ('salles', 'SELECT COUNT(*) c FROM rooms')):
+                row[k] = db.execute(q).fetchone()['c']
+            row['heures'] = round(db.execute(
+                'SELECT COALESCE(SUM(total_hours),0) h FROM course_sessions').fetchone()['h'], 1)
+            row['hetd'] = round(sum(s['total_hetd'] for s in _service_rows(db)), 1)
+            out.append(row)
+        except sqlite3.Error:
+            pass
+        finally:
+            db.close()
+    return sorted(out, key=lambda r: r['annee'])
+
+@app.route('/api/stats', methods=['GET'])
+def get_stats():
+    """Tableau de bord statistique : profils et résultats des promotions, service
+    et volumes de l'année active, comparaison des années archivées."""
+    err = _require_promo_read()
+    if err:
+        return err
+    year = get_current_year()
+    payload = {'annee': year, 'annees_dispo': list_years()}
+    payload.update(_stats_academique(get_promotions_db()))
+    payload['enseignement'] = _stats_enseignement(get_db())
+    payload['annees'] = _stats_annees()
+    return jsonify(payload)
 
 # ======================= ERROR HANDLERS =======================
 

@@ -33,6 +33,54 @@
         .card .label { font-size: .85rem; color: #6b7280; }
         .card .value { font-size: 2rem; font-weight: 700; margin-top: 4px; }
 
+        /* ---- Onglet Statistiques ---- */
+        .st-sec { margin-bottom: 26px; }
+        .st-sec > h2 { font-size: 1rem; color: #374151; margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px solid #e5e7eb; }
+        .st-sec > h2 small { font-weight: 400; color: #9ca3af; font-size: .78rem; margin-left: 8px; }
+        .st-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; align-items: start; }
+        .st-grid.wide { grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); }
+        .st-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
+        .st-kpi { background: #fff; border: 1px solid #e5e7eb; border-left: 4px solid #4f46e5; border-radius: 8px; padding: 12px 14px; }
+        .st-kpi-l { font-size: .74rem; color: #6b7280; text-transform: uppercase; letter-spacing: .02em; }
+        .st-kpi-v { font-size: 1.5rem; font-weight: 700; color: #111827; line-height: 1.2; margin-top: 2px; }
+        .st-kpi-s { font-size: .74rem; color: #9ca3af; margin-top: 2px; }
+        .st-box-c { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; }
+        .st-box-c > h3 { font-size: .84rem; color: #374151; margin: 0 0 10px; font-weight: 700; }
+        .st-box-c > h3 span { font-weight: 400; color: #9ca3af; }
+        .st-none { color: #9ca3af; font-size: .82rem; padding: 10px 0; text-align: center; }
+        .st-svg { width: 100%; height: auto; display: block; }
+        .st-ax { font-size: 9px; fill: #9ca3af; }
+        .st-val { font-size: 9px; fill: #6b7280; font-weight: 600; }
+        .st-dv { font-size: 19px; font-weight: 700; fill: #111827; }
+        .st-dl { font-size: 8px; fill: #9ca3af; }
+        .st-donut { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+        .st-lgs { flex: 1 1 130px; min-width: 130px; }
+        .st-lg { font-size: .78rem; color: #374151; display: flex; align-items: center; gap: 6px; padding: 1px 0; }
+        .st-lg i { width: 10px; height: 10px; border-radius: 2px; flex: 0 0 auto; }
+        .st-lg b { margin-left: auto; }
+        .st-lg em { font-style: normal; color: #9ca3af; min-width: 38px; text-align: right; }
+        .st-bars { display: flex; flex-direction: column; gap: 4px; }
+        .st-bar { display: flex; align-items: center; gap: 8px; font-size: .78rem; }
+        .st-bar-l { flex: 0 0 38%; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .st-bar-t { flex: 1 1 auto; background: #f3f4f6; border-radius: 3px; height: 13px; overflow: hidden; }
+        .st-bar-t > span { display: block; height: 100%; border-radius: 3px; }
+        .st-bar-v { flex: 0 0 auto; font-weight: 700; color: #111827; min-width: 46px; text-align: right; }
+        .st-bar-v em { font-style: normal; font-weight: 400; color: #9ca3af; margin-left: 4px; font-size: .72rem; }
+        .st-tbl { width: 100%; border-collapse: collapse; font-size: .8rem; background: none; box-shadow: none; }
+        .st-tbl th { padding: 5px 8px; font-size: .7rem; color: #6b7280; text-transform: uppercase; border-bottom: 1px solid #e5e7eb; text-align: right; background: none; }
+        .st-tbl th:first-child { text-align: left; }
+        .st-tbl td { padding: 5px 8px; border-bottom: 1px solid #f3f4f6; text-align: right; font-variant-numeric: tabular-nums; }
+        .st-tbl td:first-child { text-align: left; font-weight: 600; color: #374151; }
+        .st-tbl tr:hover td { background: #f9fafb; }
+        /* Boîte à moustaches miniature : étendue, quartiles, médiane, seuil 10/20 */
+        .st-box { position: relative; display: block; height: 14px; min-width: 90px; background: #f3f4f6; border-radius: 3px; }
+        .st-box i { position: absolute; }
+        .st-wh { top: 6px; height: 2px; background: #c7d2fe; }
+        .st-bx { top: 2px; height: 10px; background: #a5b4fc; border-radius: 2px; }
+        .st-md { top: 1px; width: 2px; height: 12px; background: #3730a3; }
+        .st-tn { top: 0; width: 1px; height: 14px; background: #ef4444; opacity: .5; }
+        .st-pill { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: .72rem; font-weight: 700; }
+
         .link-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
         .link-card { background: #eef2ff; border-radius: 8px; padding: 20px; cursor: pointer; transition: box-shadow .2s; }
         .link-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.15); }
@@ -392,6 +440,7 @@
     <button onclick="showPage('programme')" id="nav-programme">Programme</button>
     <button onclick="showPage('mon-compte')" id="nav-mon-compte" style="display:none">Mon Compte</button>
     <button onclick="showPage('promotions')" id="nav-promotions">Promotions</button>
+    <button onclick="showPage('statistiques')" id="nav-statistiques">Statistiques</button>
     <button onclick="showPage('parametres')" id="nav-parametres" class="admin-only">Paramètres</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
         <span id="role-badge" class="role-badge" style="display:none"></span>
@@ -1032,6 +1081,26 @@
     <div id="rep-pane-jour" style="display:none">
         <div id="repj-content"><div class="empty">Choisissez une promo et une semaine.</div></div>
     </div>
+</div>
+
+<!-- ===== STATISTIQUES ===== -->
+<div class="page" id="page-statistiques">
+    <div class="toolbar">
+        <h1 style="margin:0">Statistiques</h1>
+        <div class="filters">
+            <span id="stats-annee" style="font-size:.85rem;color:#6b7280"></span>
+            <button class="btn btn-secondary btn-sm" onclick="loadStats(true)">↻ Actualiser</button>
+        </div>
+    </div>
+    <div class="subtabs" id="stats-subtabs">
+        <button type="button" class="subtab active" id="st-subtab-apercu" onclick="showStatsTab('apercu')">Vue d'ensemble</button>
+        <button type="button" class="subtab" id="st-subtab-etudiants" onclick="showStatsTab('etudiants')">Étudiants</button>
+        <button type="button" class="subtab" id="st-subtab-parcours" onclick="showStatsTab('parcours')">Parcours &amp; jury</button>
+        <button type="button" class="subtab" id="st-subtab-resultats" onclick="showStatsTab('resultats')">Résultats</button>
+        <button type="button" class="subtab" id="st-subtab-enseignement" onclick="showStatsTab('enseignement')">Enseignement</button>
+        <button type="button" class="subtab" id="st-subtab-annees" onclick="showStatsTab('annees')">Années</button>
+    </div>
+    <div id="stats-content"><div class="empty">Chargement…</div></div>
 </div>
 
 </main>
@@ -2014,6 +2083,7 @@ async function loadPage(name, forceReload) {
             if (_progTab === 'contenu') await showProgTab('contenu');
         }
         else if (name === 'promotions') { await loadPromotions(); }
+        else if (name === 'statistiques') { await loadStats(); }
         else if (name === 'parametres') { await loadParametres(); }
         else if (name === 'repartition-enseignant') {
             // Vue Service enseignant : données de l'année choisie (_serviceYear)
@@ -9340,6 +9410,384 @@ document.querySelectorAll('.modal-backdrop').forEach(b => {
 });
 
 // ===== UTILS =====
+// ===== ONGLET STATISTIQUES =====
+// Tableau de bord transversal : /api/stats agrège promotions, année active et
+// années archivées. Tous les graphiques sont dessinés ici (SVG + CSS) : aucune
+// dépendance externe, le logiciel devant rester utilisable hors ligne.
+
+let _statsData = null, _statsTab = 'apercu';
+
+const ST_COLORS = ['#4f46e5', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444',
+                   '#8b5cf6', '#14b8a6', '#f97316', '#ec4899', '#64748b'];
+const ST_FACE = { FTP: '#0369a1', ALT: '#c2410c' };
+// Couleurs des décisions de jury, reprises de la grille Jury
+const ST_DEC = { ADM: '#15803d', ADMJ: '#0e7490', CMP: '#b45309', AJAC: '#7c3aed', AJ: '#b91c1c', RED: '#be123c' };
+
+const stNum = (v, d = 0) => (v === null || v === undefined || isNaN(v)) ? '—'
+    : Number(v).toLocaleString('fr-FR', { minimumFractionDigits: d, maximumFractionDigits: d });
+
+function stKpi(label, value, sub, color) {
+    return `<div class="st-kpi" style="border-left-color:${color || '#4f46e5'}">
+        <div class="st-kpi-l">${esc(label)}</div>
+        <div class="st-kpi-v">${value === null || value === undefined ? '—' : esc(String(value))}</div>
+        ${sub ? `<div class="st-kpi-s">${sub}</div>` : ''}</div>`;
+}
+
+function stCard(title, body, note) {
+    return `<div class="st-box-c"><h3>${esc(title)}${note ? ` <span>· ${esc(note)}</span>` : ''}</h3>${body}</div>`;
+}
+
+// Barres horizontales : [[libellé, valeur, effectif?], …]
+function stBars(data, opts = {}) {
+    const rows = (data || []).filter(Boolean);
+    if (!rows.length) return '<div class="st-none">Aucune donnée</div>';
+    const max = opts.max || Math.max(...rows.map(r => Number(r[1]) || 0)) || 1;
+    const fmt = opts.fmt || (v => stNum(v, opts.dec || 0));
+    return '<div class="st-bars">' + rows.map((r, i) => {
+        const v = Number(r[1]) || 0;
+        const c = opts.colorFn ? opts.colorFn(r, i) : (opts.color || ST_COLORS[i % ST_COLORS.length]);
+        return `<div class="st-bar" title="${esc(String(r[0]))} : ${esc(fmt(v))}${r[2] !== undefined ? ' (n=' + r[2] + ')' : ''}">
+            <span class="st-bar-l">${esc(String(r[0]))}</span>
+            <span class="st-bar-t"><span style="width:${Math.max(0, Math.min(100, 100 * v / max))}%;background:${c}"></span></span>
+            <span class="st-bar-v">${esc(fmt(v))}${r[2] !== undefined ? `<em>n=${r[2]}</em>` : ''}</span></div>`;
+    }).join('') + '</div>';
+}
+
+// Colonnes verticales (histogrammes) : [[libellé, valeur], …]
+function stColumns(data, opts = {}) {
+    const rows = (data || []).filter(Boolean);
+    if (!rows.length) return '<div class="st-none">Aucune donnée</div>';
+    const W = 620, H = 190, L = 30, B = 26, T = 12;
+    const max = Math.max(...rows.map(r => Number(r[1]) || 0)) || 1;
+    const bw = (W - L - 8) / rows.length;
+    const y = v => T + (H - T - B) * (1 - v / max);
+    const grid = [0, .5, 1].map(f => {
+        const yy = y(max * f);
+        return `<line x1="${L}" y1="${yy}" x2="${W - 4}" y2="${yy}" stroke="#eef0f2"/>
+            <text x="${L - 4}" y="${yy + 3}" text-anchor="end" class="st-ax">${stNum(Math.round(max * f))}</text>`;
+    }).join('');
+    const bars = rows.map((r, i) => {
+        const v = Number(r[1]) || 0, x = L + i * bw + bw * .15;
+        const c = opts.colorFn ? opts.colorFn(r, i) : (opts.color || '#4f46e5');
+        return `<g><title>${esc(String(r[0]))} : ${stNum(v, opts.dec || 0)}</title>
+            <rect x="${x}" y="${y(v)}" width="${bw * .7}" height="${Math.max(0, y(0) - y(v))}" rx="2" fill="${c}"/>
+            ${v ? `<text x="${x + bw * .35}" y="${y(v) - 3}" text-anchor="middle" class="st-val">${stNum(v, opts.dec || 0)}</text>` : ''}
+            <text x="${x + bw * .35}" y="${H - B + 12}" text-anchor="middle" class="st-ax">${esc(String(r[0]))}</text></g>`;
+    }).join('');
+    return `<svg class="st-svg" viewBox="0 0 ${W} ${H}">${grid}${bars}</svg>`;
+}
+
+// Anneau + légende : [[libellé, valeur], …]
+function stDonut(data, opts = {}) {
+    const rows = (data || []).filter(r => Number(r[1]) > 0);
+    const tot = rows.reduce((a, r) => a + Number(r[1]), 0);
+    if (!tot) return '<div class="st-none">Aucune donnée</div>';
+    const R = 54, r0 = 34, cx = 60, cy = 60;
+    const col = (r, i) => (opts.colors && opts.colors[r[0]]) || ST_COLORS[i % ST_COLORS.length];
+    let a0 = -Math.PI / 2, paths = '';
+    rows.forEach((row, i) => {
+        const frac = Number(row[1]) / tot, a1 = a0 + frac * 2 * Math.PI;
+        const t = `<title>${esc(String(row[0]))} : ${row[1]} (${Math.round(100 * frac)} %)</title>`;
+        if (rows.length === 1) {
+            // Part unique : un arc fermé se replierait sur lui-même, on trace un cercle
+            paths += `<circle cx="${cx}" cy="${cy}" r="${(R + r0) / 2}" fill="none"
+                stroke="${col(row, i)}" stroke-width="${R - r0}">${t}</circle>`;
+        } else {
+            const p = (r, a) => [(cx + r * Math.cos(a)).toFixed(2), (cy + r * Math.sin(a)).toFixed(2)];
+            const [x0, y0] = p(R, a0), [x1, y1] = p(R, a1), [x2, y2] = p(r0, a1), [x3, y3] = p(r0, a0);
+            const big = frac > .5 ? 1 : 0;
+            paths += `<path d="M${x0} ${y0} A${R} ${R} 0 ${big} 1 ${x1} ${y1} L${x2} ${y2} A${r0} ${r0} 0 ${big} 0 ${x3} ${y3} Z" fill="${col(row, i)}">${t}</path>`;
+        }
+        a0 = a1;
+    });
+    const legend = rows.map((row, i) => `<div class="st-lg"><i style="background:${col(row, i)}"></i>
+        ${esc(String(row[0]))} <b>${stNum(row[1])}</b> <em>${Math.round(100 * Number(row[1]) / tot)} %</em></div>`).join('');
+    return `<div class="st-donut"><svg viewBox="0 0 120 120" width="128" height="128">${paths}
+        <text x="60" y="58" text-anchor="middle" class="st-dv">${stNum(tot)}</text>
+        <text x="60" y="72" text-anchor="middle" class="st-dl">${esc(opts.unit || 'total')}</text></svg>
+        <div class="st-lgs">${legend}</div></div>`;
+}
+
+// Courbe remplie : [[x, y], …]
+function stLine(points, opts = {}) {
+    const rows = (points || []).filter(Boolean);
+    if (rows.length < 2) return '<div class="st-none">Aucune donnée</div>';
+    const W = 720, H = 180, L = 34, B = 22, T = 10;
+    const max = Math.max(...rows.map(r => Number(r[1]) || 0)) || 1;
+    const x = i => L + (W - L - 6) * i / (rows.length - 1);
+    const y = v => T + (H - T - B) * (1 - v / max);
+    const pts = rows.map((r, i) => `${x(i).toFixed(1)} ${y(Number(r[1]) || 0).toFixed(1)}`);
+    const grid = [0, .5, 1].map(f => `<line x1="${L}" y1="${y(max * f)}" x2="${W - 4}" y2="${y(max * f)}" stroke="#eef0f2"/>
+        <text x="${L - 4}" y="${y(max * f) + 3}" text-anchor="end" class="st-ax">${stNum(Math.round(max * f))}</text>`).join('');
+    const step = Math.ceil(rows.length / 18);
+    const labels = rows.map((r, i) => (i % step) ? '' :
+        `<text x="${x(i)}" y="${H - B + 12}" text-anchor="middle" class="st-ax">${esc(String(r[0]))}</text>`).join('');
+    const dots = rows.map((r, i) => `<circle cx="${x(i)}" cy="${y(Number(r[1]) || 0)}" r="2.5" fill="${opts.color || '#4f46e5'}" opacity=".85">
+        <title>${esc(opts.xLabel || '')} ${esc(String(r[0]))} : ${stNum(r[1], opts.dec || 0)}</title></circle>`).join('');
+    return `<svg class="st-svg" viewBox="0 0 ${W} ${H}">${grid}
+        <path d="M${x(0)} ${y(0)} L${pts.join(' L')} L${x(rows.length - 1)} ${y(0)} Z" fill="${opts.color || '#4f46e5'}" opacity=".12"/>
+        <path d="M${pts.join(' L')}" fill="none" stroke="${opts.color || '#4f46e5'}" stroke-width="2"/>
+        ${dots}${labels}</svg>`;
+}
+
+// Boîte à moustaches miniature (étendue, quartiles, médiane) + repère 10/20
+function stBox(s, max) {
+    if (!s) return '<span class="st-none">—</span>';
+    max = max || 20;
+    const p = v => Math.max(0, Math.min(100, 100 * v / max));
+    return `<span class="st-box" title="min ${s.min} · Q1 ${s.q1} · médiane ${s.med} · Q3 ${s.q3} · max ${s.max}">
+        <i class="st-wh" style="left:${p(s.min)}%;width:${Math.max(0, p(s.max) - p(s.min))}%"></i>
+        <i class="st-bx" style="left:${p(s.q1)}%;width:${Math.max(1, p(s.q3) - p(s.q1))}%"></i>
+        <i class="st-md" style="left:${p(s.med)}%"></i>
+        <i class="st-tn" style="left:${p(10)}%"></i></span>`;
+}
+
+// Tableau de résumés : [[libellé, résumé], …]
+function stSummaryTable(rows, head) {
+    const list = (rows || []).filter(r => r && r[1]);
+    if (!list.length) return '<div class="st-none">Aucune donnée</div>';
+    return `<table class="st-tbl"><thead><tr><th>${esc(head || '')}</th><th>Notes</th><th>Moy.</th>
+        <th>Méd.</th><th>Écart</th><th style="width:34%">Répartition (0–20)</th></tr></thead><tbody>` +
+        list.map(([lbl, s]) => `<tr><td>${esc(String(lbl))}</td><td>${stNum(s.n)}</td>
+            <td><strong>${stNum(s.moy, 2)}</strong></td><td>${stNum(s.med, 2)}</td>
+            <td>${stNum(s.ecart, 2)}</td><td>${stBox(s)}</td></tr>`).join('') + '</tbody></table>';
+}
+
+async function loadStats(force) {
+    const el = document.getElementById('stats-content');
+    if (force) _statsData = null;
+    if (!_statsData) el.innerHTML = '<div class="empty">Calcul des statistiques…</div>';
+    try {
+        _statsData = await api('/stats');
+    } catch (e) {
+        el.innerHTML = `<div class="empty">Statistiques indisponibles — ${esc(e.message)}</div>`;
+        return;
+    }
+    const a = document.getElementById('stats-annee');
+    if (a) a.textContent = 'Année active : ' + (_statsData.annee || '—');
+    renderStats();
+}
+
+function showStatsTab(tab) {
+    _statsTab = tab;
+    renderStats();
+    window.scrollTo(0, 0);   // sinon on arrive au milieu du nouvel onglet
+}
+
+function renderStats() {
+    const d = _statsData;
+    const el = document.getElementById('stats-content');
+    if (!d) { el.innerHTML = '<div class="empty">Aucune donnée</div>'; return; }
+    document.querySelectorAll('#stats-subtabs .subtab').forEach(b =>
+        b.classList.toggle('active', b.id === 'st-subtab-' + _statsTab));
+    const render = { apercu: statsApercu, etudiants: statsEtudiants, parcours: statsParcours,
+                     resultats: statsResultats, enseignement: statsEnseignement, annees: statsAnnees };
+    el.innerHTML = (render[_statsTab] || statsApercu)(d);
+}
+
+function statsApercu(d) {
+    const r = d.resultats, e = d.enseignement;
+    const actifs = (d.profil.statut.find(x => x[0] === 'Actif') || [, 0])[1];
+    const kpis = [
+        stKpi('Étudiants', stNum(d.nb_etudiants), `${stNum(actifs)} actifs · ${d.promotions.length} promotions`),
+        stKpi('Moyenne générale', r.global ? stNum(r.global.moy, 2) : '—',
+              r.sous_10 !== null ? `${stNum(r.sous_10, 1)} % des notes < 10` : '', '#0ea5e9'),
+        stKpi('Notes saisies', stNum(r.total_notes), `dont ${stNum(r.abi)} ABI`, '#10b981'),
+        stKpi('Enseignants', stNum(e.nb_enseignants), `${stNum(e.nb_en_service)} en service`, '#8b5cf6'),
+        stKpi('Heures maquette', stNum(e.heures.total_hours), `${stNum(e.hetd)} HETD`, '#f59e0b'),
+        stKpi('Matières', stNum(e.nb_matieres), `${stNum(e.nb_sessions)} sessions`, '#14b8a6'),
+        stKpi('Salles', stNum(e.nb_salles), `${stNum(e.capacite_totale)} places`, '#64748b'),
+        stKpi('Années gérées', d.annees.length, (d.annees_dispo[0] || '') + ' → ' + (d.annees_dispo.slice(-1)[0] || ''), '#ec4899'),
+    ].join('');
+    const decs = (d.jury.decisions || []).map(([y, list]) =>
+        stCard('Décisions de jury — année ' + y, stBars(list, { colorFn: r => ST_DEC[r[0]] || '#64748b' })));
+    return `<div class="st-kpis">${kpis}</div>
+        <div class="st-sec"><h2>Répartition des étudiants</h2><div class="st-grid">
+            ${stCard('Sous-cohorte', stDonut(d.profil.formation, { colors: ST_FACE, unit: 'étudiants' }))}
+            ${stCard('Statut', stDonut(d.profil.statut, { unit: 'étudiants' }))}
+            ${stCard('Par promotion', stBars(d.profil.promo))}
+        </div></div>
+        <div class="st-sec"><h2>Résultats <small>toutes promotions confondues</small></h2>
+            ${stCard('Répartition des notes de matières (/20)',
+                     stColumns(r.histogramme, { colorFn: (x, i) => i < 5 ? '#ef4444' : '#10b981' }),
+                     'rouge = sous la moyenne')}
+        </div>
+        <div class="st-sec"><h2>Jury</h2><div class="st-grid">${decs.join('')}</div></div>
+        <div class="st-sec"><h2>Charge d'enseignement <small>année ${esc(d.annee || '')}</small></h2><div class="st-grid wide">
+            ${stCard('Heures par type', stDonut([['CM', e.heures.cm_hours], ['TD', e.heures.td_hours],
+                                                 ['TP', e.heures.tp_hours], ['PT', e.heures.pt_hours]], { unit: 'heures' }))}
+            ${stCard('Heures par semaine de l\'année', stLine(e.semaines, { xLabel: 'semaine', dec: 0 }), 'semaine ISO')}
+        </div></div>`;
+}
+
+function statsEtudiants(d) {
+    const p = d.profil;
+    const renseigne = p.renseigne.map(([k, n]) =>
+        [k === 'recrutement' ? 'Recrutement' : k.charAt(0).toUpperCase() + k.slice(1),
+         Math.round(1000 * n / (d.nb_etudiants || 1)) / 10]);
+    return `<div class="st-sec"><h2>Profil d'entrée <small>${stNum(d.nb_etudiants)} fiches</small></h2>
+        <div class="st-grid">
+            ${stCard('Sexe', stDonut(p.sexe, { colors: { M: '#0ea5e9', F: '#ec4899', 'Non renseigné': '#e5e7eb' }, unit: 'étudiants' }))}
+            ${stCard('Série de bac', stDonut(p.bac, { colors: { 'Non renseigné': '#e5e7eb' }, unit: 'étudiants' }))}
+            ${stCard('Cursus antérieur', stDonut(p.cursus, { colors: { 'Non renseigné': '#e5e7eb' }, unit: 'étudiants' }))}
+            ${stCard('Recrutement', stDonut(p.recrutement, { colors: { 'Non renseigné': '#e5e7eb' }, unit: 'étudiants' }))}
+        </div></div>
+        <div class="st-sec"><h2>Complétude des fiches</h2><div class="st-grid wide">
+            ${stCard('Champs renseignés', stBars(renseigne, { max: 100, fmt: v => stNum(v, 1) + ' %' }),
+                     'part des fiches où le champ est saisi')}
+            ${stCard('Part de femmes par promotion', stBars(p.feminisation, { max: 100, fmt: v => stNum(v, 1) + ' %', color: '#ec4899' }),
+                     'sur les fiches où le sexe est renseigné')}
+        </div></div>
+        <div class="st-sec"><h2>Effectifs</h2><div class="st-grid wide">
+            ${stCard('Étudiants par promotion', stColumns(p.promo))}
+            ${stCard('Statut', stBars(p.statut, { colorFn: r => ({ Actif: '#15803d', RED: '#b45309', 'Césure': '#0e7490', Abandon: '#b91c1c' })[r[0]] || '#64748b' }))}
+        </div></div>`;
+}
+
+function statsParcours(d) {
+    const coh = d.cohortes.map(c => {
+        const eff = c.effectifs.map(e => [`Année ${e.annee}`, e.total]);
+        const faces = c.effectifs.map(e => `<tr><td>Année ${e.annee}</td><td>${e.FTP}</td><td>${e.ALT}</td>
+            <td><strong>${e.total}</strong></td></tr>`).join('');
+        const st = Object.entries(c.statuts).map(([k, v]) => `<span class="st-pill" style="background:${
+            ({ Actif: '#dcfce7', RED: '#fef3c7', 'Césure': '#cffafe', Abandon: '#fee2e2' })[k] || '#f3f4f6'}">${esc(k)} ${v}</span>`).join(' ');
+        return stCard(`Promotion ${c.promo}`, `<div style="margin-bottom:8px">${st}</div>
+            <table class="st-tbl"><thead><tr><th></th><th>FTP</th><th>ALT</th><th>Total</th></tr></thead>
+            <tbody>${faces}</tbody></table>
+            ${stColumns(eff, { color: '#4f46e5' })}
+            ${c.abandons_semestre.length ? '<h3 style="margin:10px 0 4px;font-size:.78rem;color:#6b7280">Abandons par semestre</h3>'
+                + stBars(c.abandons_semestre, { color: '#b91c1c' }) : ''}`,
+            `${c.total} fiches`);
+    }).join('');
+    const ueRows = (d.jury.ue || []).map(([y, ue, pct, n]) => [`Année ${y} · UE ${ue}`, pct, n]);
+    const enc = d.encadrement;
+    return `<div class="st-sec"><h2>Cohortes <small>effectif calculé par report automatique du jury</small></h2>
+        <div class="st-grid wide">${coh}</div></div>
+        <div class="st-sec"><h2>Jury</h2><div class="st-grid wide">
+            ${stCard('Taux de validation des UE', stBars(ueRows, { max: 100, fmt: v => stNum(v, 1) + ' %', color: '#15803d' }),
+                     'ADM, ADMJ ou compensée')}
+            ${stCard('Moyennes annuelles par compétence', stSummaryTable(d.jury.annuelles.map(([y, s]) => ['Année ' + y, s]), 'Année'))}
+        </div>
+        <div class="st-grid wide" style="margin-top:14px">
+            ${stCard('Moyennes de semestre par compétence', stSummaryTable(d.jury.semestres, 'Semestre'))}
+        </div></div>
+        <div class="st-sec"><h2>Mouvements &amp; encadrement</h2>
+        <div class="st-kpis">
+            ${stKpi('Redoublements traités', stNum(enc.redoublants), 'décisions RED arbitrées', '#b45309')}
+            ${stKpi('Césures', stNum(enc.cesures), 'reprises programmées', '#0e7490')}
+            ${stKpi('Transferts de cohorte', stNum(enc.transferts), 'fiches rattachées à une origine', '#8b5cf6')}
+            ${stKpi('Tutorats', stNum(enc.total), 'lignes tuteur / entreprise', '#10b981')}
+        </div>
+        <div class="st-grid wide">
+            ${stCard('Entreprises d\'accueil', stBars(enc.entreprises.slice(0, 12), { color: '#0f766e' }))}
+            ${stCard('Tuteurs universitaires', stBars(enc.tuteurs_univ.slice(0, 12), { color: '#4f46e5' }))}
+        </div>
+        ${enc.mobilites.length ? `<div style="margin-top:14px">${stCard('Mobilité internationale',
+            stBars(enc.mobilites.map(m => [`${m.semester} — ${m.etablissement || 'établissement non précisé'}`, m.n]), { color: '#0ea5e9' }))}</div>` : ''}
+        </div>`;
+}
+
+function statsResultats(d) {
+    const r = d.resultats;
+    const g = r.global || {};
+    const croise = (titre, rows, note) => stCard(titre,
+        stBars(rows.map(x => [x[0], x[1], x[2]]), { max: 20, dec: 2, color: '#4f46e5' }), note);
+    return `<div class="st-kpis">
+            ${stKpi('Notes de matières', stNum(r.total_notes), `${stNum(r.abi)} ABI · ${stNum(g.n)} exploitées`)}
+            ${stKpi('Moyenne', stNum(g.moy, 2), `médiane ${stNum(g.med, 2)} · écart-type ${stNum(g.ecart, 2)}`, '#0ea5e9')}
+            ${stKpi('Sous la moyenne', r.sous_10 !== null ? stNum(r.sous_10, 1) + ' %' : '—', 'notes < 10/20', '#ef4444')}
+            ${stKpi('Quartiles', `${stNum(g.q1, 1)} – ${stNum(g.q3, 1)}`, `étendue ${stNum(g.min, 1)} – ${stNum(g.max, 1)}`, '#8b5cf6')}
+            ${stKpi('Moyenne par étudiant', r.etudiants ? stNum(r.etudiants.moy, 2) : '—',
+                    r.etudiants ? `${stNum(r.etudiants.n)} étudiants notés` : '', '#10b981')}
+        </div>
+        <div class="st-sec"><h2>Distribution</h2><div class="st-grid wide">
+            ${stCard('Notes de matières (/20)', stColumns(r.histogramme, { colorFn: (x, i) => i < 5 ? '#ef4444' : '#10b981' }), 'tranches de 2 points')}
+            ${stCard('Moyenne générale par étudiant', stColumns(r.histogramme_etudiants, { colorFn: (x, i) => i < 10 ? '#ef4444' : '#10b981' }), 'tranches de 1 point')}
+        </div></div>
+        <div class="st-sec"><h2>Comparaisons</h2>
+            ${stCard('Par semestre', stSummaryTable(r.par_semestre, 'Semestre'))}
+            <div class="st-grid wide" style="margin-top:14px">
+                ${stCard('Par promotion', stSummaryTable(r.par_promo, 'Promotion'))}
+                ${stCard('Par sous-cohorte', stSummaryTable(r.par_face, 'Cohorte'))}
+            </div></div>
+        <div class="st-sec"><h2>Matières <small>au moins 5 notes</small></h2><div class="st-grid wide">
+            ${stCard('Moyennes les plus hautes', stBars(r.matieres.slice(0, 12), { max: 20, dec: 2, color: '#15803d' }))}
+            ${stCard('Moyennes les plus basses', stBars(r.matieres.slice(-12).reverse(), { max: 20, dec: 2, color: '#b91c1c' }))}
+        </div></div>
+        <div class="st-sec"><h2>Croisements profil × résultats <small>groupes d'au moins 10 notes</small></h2>
+        <div class="st-grid">
+            ${croise('Par série de bac', r.par_bac)}
+            ${croise('Par sexe', r.par_sexe)}
+            ${croise('Par cursus antérieur', r.par_cursus)}
+            ${croise('Par voie de recrutement', r.par_recrutement)}
+        </div></div>`;
+}
+
+function statsEnseignement(d) {
+    const e = d.enseignement;
+    const faceLabel = f => ({ 0: 'FTP', 1: 'ALT', 2: 'Mutualisé' })[f] ?? ('Face ' + f);
+    const top = e.services.slice(0, 15).map(s => [s.teacher_name, s.total_hetd]);
+    const alertes = [];
+    if (e.sessions_sans_enseignant) alertes.push(`<span class="st-pill" style="background:#fee2e2;color:#b91c1c">${e.sessions_sans_enseignant} session(s) sans enseignant</span>`);
+    if (e.sans_service) alertes.push(`<span class="st-pill" style="background:#fef3c7;color:#b45309">${e.sans_service} enseignant(s) sans service</span>`);
+    return `<div class="st-kpis">
+            ${stKpi('Heures maquette', stNum(e.heures.total_hours), `${stNum(e.nb_sessions)} sessions`)}
+            ${stKpi('HETD', stNum(e.hetd), `moyenne ${stNum(e.hetd_moy, 1)} par enseignant`, '#f59e0b')}
+            ${stKpi('Enseignants en service', stNum(e.nb_en_service), `sur ${stNum(e.nb_enseignants)} référencés`, '#8b5cf6')}
+            ${stKpi('HETD médiane', e.hetd_stats ? stNum(e.hetd_stats.med, 1) : '—',
+                    e.hetd_stats ? `de ${stNum(e.hetd_stats.min, 1)} à ${stNum(e.hetd_stats.max, 1)}` : '', '#0ea5e9')}
+            ${stKpi('Matières', stNum(e.nb_matieres), `${stNum(e.nb_salles)} salles · ${stNum(e.capacite_totale)} places`, '#14b8a6')}
+        </div>
+        ${alertes.length ? `<div style="margin:-6px 0 16px;display:flex;gap:8px;flex-wrap:wrap">${alertes.join('')}</div>` : ''}
+        <div class="st-sec"><h2>Volume horaire</h2><div class="st-grid wide">
+            ${stCard('Par type d\'enseignement', stDonut([['CM', e.heures.cm_hours], ['TD', e.heures.td_hours],
+                                                          ['TP', e.heures.tp_hours], ['PT', e.heures.pt_hours]], { unit: 'heures' }),
+                     'heures de service, groupes inclus')}
+            ${stCard('Par semestre', stColumns(e.par_semestre.map(s => [s.sem, s.heures]), { color: '#4f46e5' }), 'heures de maquette')}
+        </div>
+        <div style="margin-top:14px">${stCard('Charge par semaine', stLine(e.semaines, { xLabel: 'semaine' }), 'somme des heures réparties')}</div>
+        </div>
+        <div class="st-sec"><h2>Enseignants</h2><div class="st-grid wide">
+            ${stCard('Les 15 services les plus lourds', stBars(top, { dec: 1, color: '#4f46e5' }), 'en HETD')}
+            <div>
+                ${stCard('Par corps', stBars(e.corps, { color: '#8b5cf6' }))}
+                <div style="height:14px"></div>
+                ${stCard('Par statut', stBars(e.statuts, { color: '#0ea5e9' }))}
+            </div>
+        </div></div>
+        <div class="st-sec"><h2>Détail</h2><div class="st-grid wide">
+            ${stCard('Matières et sessions par semestre', `<table class="st-tbl">
+                <thead><tr><th>Semestre</th><th>Matières</th><th>Sessions</th><th>Heures</th></tr></thead><tbody>${
+                e.par_semestre.map(s => `<tr><td>${esc(s.sem)}</td><td>${stNum(s.matieres)}</td>
+                    <td>${stNum(s.sessions)}</td><td>${stNum(s.heures, 1)}</td></tr>`).join('')}</tbody></table>`)}
+            ${stCard('Sessions par face et salles', `<table class="st-tbl">
+                <thead><tr><th>Face</th><th>Sessions</th><th>Heures</th></tr></thead><tbody>${
+                e.par_face.map(f => `<tr><td>${esc(faceLabel(f.face))}</td><td>${stNum(f.sessions)}</td>
+                    <td>${stNum(f.heures, 1)}</td></tr>`).join('')}</tbody></table>
+                <table class="st-tbl" style="margin-top:10px">
+                <thead><tr><th>Type de salle</th><th>Nombre</th><th>Capacité</th></tr></thead><tbody>${
+                e.salles.map(s => `<tr><td>${esc(s.room_type || 'non typé')}</td><td>${stNum(s.n)}</td>
+                    <td>${stNum(s.capacite)}</td></tr>`).join('')}</tbody></table>`)}
+        </div></div>`;
+}
+
+function statsAnnees(d) {
+    const a = d.annees || [];
+    if (!a.length) return '<div class="empty">Aucune année archivée</div>';
+    return `<div class="st-sec"><h2>Comparaison des années universitaires</h2>
+        <div class="st-grid wide">
+            ${stCard('Heures de maquette', stColumns(a.map(r => [r.annee.slice(2), r.heures]), { color: '#4f46e5', dec: 0 }))}
+            ${stCard('HETD', stColumns(a.map(r => [r.annee.slice(2), r.hetd]), { color: '#f59e0b', dec: 0 }))}
+        </div>
+        <div style="margin-top:14px">${stCard('Détail', `<table class="st-tbl">
+            <thead><tr><th>Année</th><th>Enseignants</th><th>Matières</th><th>Sessions</th>
+            <th>Salles</th><th>Heures</th><th>HETD</th></tr></thead><tbody>${
+            a.map(r => `<tr><td>${esc(r.annee)}${r.annee === d.annee ? ' <span class="st-pill" style="background:#eef2ff;color:#4f46e5">active</span>' : ''}</td>
+                <td>${stNum(r.enseignants)}</td><td>${stNum(r.matieres)}</td><td>${stNum(r.sessions)}</td>
+                <td>${stNum(r.salles)}</td><td>${stNum(r.heures, 1)}</td><td>${stNum(r.hetd, 1)}</td></tr>`).join('')}
+            </tbody></table>`)}</div></div>`;
+}
+
 function esc(str) {
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
