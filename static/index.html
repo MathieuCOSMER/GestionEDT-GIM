@@ -3754,15 +3754,40 @@ async function deleteProgramme() {
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
+// Libellé d'une option du sélecteur : « 24-27 · BUT3 (29/30) ».
+// Les parenthèses valent « actifs / total », sur toute la cohorte.
+function _promoOptionLabel(nom, startYear, actifs, total) {
+    const yl = _promoYearLabel(startYear);
+    return `${nom || ''}${yl ? ' · ' + yl : ''} (${actifs ?? '?'}/${total ?? '?'})`;
+}
+function _promoOptionTitre(actifs, total) {
+    return `${actifs ?? '?'} actif(s) sur ${total ?? '?'} fiche(s) — toute la cohorte `
+         + `(3 années, FTP et ALT réunis), et non l'effectif de l'année affichée.`;
+}
+
+// Recale les compteurs du sélecteur sur l'état renvoyé par le serveur. Appelé à
+// chaque rendu de l'effectif, donc après tout ajout, retrait, import ou
+// changement de statut : sans cela les parenthèses restaient figées sur les
+// valeurs chargées à l'ouverture de l'onglet.
+function _syncPromoOption(promo) {
+    if (!promo || promo.total_fiches === undefined) return;
+    const p = (_promotions || []).find(x => x.id === _promoId);
+    if (p) { p.actifs = promo.actifs_fiches; p.total = promo.total_fiches; }
+    const opt = document.querySelector('#promo-select option[value="' + _promoId + '"]');
+    if (!opt) return;
+    opt.textContent = _promoOptionLabel(promo.name, promo.start_year,
+                                        promo.actifs_fiches, promo.total_fiches);
+    opt.title = _promoOptionTitre(promo.actifs_fiches, promo.total_fiches);
+}
+
 async function loadPromotions() {
     applyPromoSubtabsForRole(); // enseignant : masque Groupes/Calendrier/Actions
     try { _promotions = await api('/promotions'); }
     catch (e) { _promotions = []; }
     const sel = document.getElementById('promo-select');
-    sel.innerHTML = '<option value="">—</option>' + _promotions.map(p => {
-        const yl = _promoYearLabel(p.start_year);
-        return `<option value="${p.id}">${esc(p.name)}${yl ? ' · ' + yl : ''} (${p.actifs}/${p.total})</option>`;
-    }).join('');
+    sel.innerHTML = '<option value="">—</option>' + _promotions.map(p =>
+        `<option value="${p.id}" title="${esc(_promoOptionTitre(p.actifs, p.total))}">${
+            esc(_promoOptionLabel(p.name, p.start_year, p.actifs, p.total))}</option>`).join('');
     // Présélection : promo courante si toujours présente, sinon la première de la liste
     if (!(_promoId && _promotions.some(p => p.id === _promoId)) && _promotions.length) {
         _promoId = _promotions[0].id;
@@ -4154,6 +4179,7 @@ function renderPromoEffectif() {
         + (d.subcohorts || ['FTP', 'ALT']).map(section).join('')
         + _renderCesureSection()
         + _renderRedLink();
+    _syncPromoOption(d.promotion);
     applyPromoReadOnly();
 }
 

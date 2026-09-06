@@ -3373,10 +3373,14 @@ def _year_effectif_payload(pdb, pid, year):
         sem = next((sm for sm in (s_odd, s_even) if sm in v), None)
         st['mobility'] = {'semester': sem, 'etablissement': v.get(sem, '')} if sem else None
     payload_promo = dict(promo)
-    # Nombre de fiches de la COHORTE (toutes années, tous statuts) : rappelé dans le
-    # bandeau de totaux, car il ne varie pas quand on retire quelqu'un d'une année.
-    payload_promo['total_fiches'] = pdb.execute(
-        'SELECT COUNT(*) c FROM promotion_students WHERE promotion_id=?', (pid,)).fetchone()['c']
+    # Compteurs de la COHORTE entière (toutes années, tous statuts) : ils alimentent
+    # le bandeau de totaux et le « actifs / total » du sélecteur de promotion, qui
+    # doit suivre chaque ajout, retrait, import ou changement de statut.
+    cnt = pdb.execute('''SELECT COUNT(*) AS total,
+                                SUM(CASE WHEN statut='Actif' THEN 1 ELSE 0 END) AS actifs
+                         FROM promotion_students WHERE promotion_id=?''', (pid,)).fetchone()
+    payload_promo['total_fiches'] = cnt['total']
+    payload_promo['actifs_fiches'] = cnt['actifs'] or 0
     return {'promotion': payload_promo, 'year': year, 'students': students,
             'year_semesters': [s_odd, s_even],
             'sub_counts': sub_counts, 'subcohorts': list(_SUBCOHORTS),
