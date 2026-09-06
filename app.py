@@ -10332,7 +10332,10 @@ def _stats_enseignement(db):
         'sans_service': nb_teachers - len(services),
         'heures': heures, 'hetd': hetd,
         'hetd_moy': round(hetd / len(services), 1) if services else 0,
-        'services': sorted(services, key=lambda s: -s['total_hetd']),
+        # La liste nominative des services n'est PAS renvoyée : l'onglet est ouvert
+        # à tous, et classer des collègues par charge n'est pas son objet. Les
+        # agrégats ci-dessus en disent l'essentiel sans désigner personne ; le
+        # détail par enseignant reste dans le Bilan Global.
         'hetd_stats': _num_stats([s['total_hetd'] for s in services]),
         'par_semestre': par_sem, 'par_type': par_type, 'par_face': par_face,
         'semaines': semaines, 'corps': corps, 'statuts': statuts, 'salles': salles,

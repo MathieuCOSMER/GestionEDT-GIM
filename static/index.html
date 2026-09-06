@@ -9868,7 +9868,6 @@ function statsResultats(d) {
 function statsEnseignement(d) {
     const e = d.enseignement;
     const faceLabel = f => ({ 0: 'FTP', 1: 'ALT', 2: 'Mutualisé' })[f] ?? ('Face ' + f);
-    const top = e.services.slice(0, 15).map(s => [s.teacher_name, s.total_hetd]);
     const alertes = [];
     if (e.sessions_sans_enseignant) alertes.push(`<span class="st-pill" style="background:#fee2e2;color:#b91c1c">${e.sessions_sans_enseignant} session(s) sans enseignant</span>`);
     if (e.sans_service) alertes.push(`<span class="st-pill" style="background:#fef3c7;color:#b45309">${e.sans_service} enseignant(s) sans service</span>`);
@@ -9889,13 +9888,16 @@ function statsEnseignement(d) {
         </div>
         <div style="margin-top:14px">${stCard('Charge par semaine', stLine(e.semaines, { xLabel: 'semaine' }), 'somme des heures réparties')}</div>
         </div>
-        <div class="st-sec"><h2>Enseignants</h2><div class="st-grid wide">
-            ${stCard('Les 15 services les plus lourds', stBars(top, { dec: 1, color: '#4f46e5' }), 'en HETD')}
-            <div>
-                ${stCard('Par corps', stBars(e.corps, { color: '#8b5cf6' }))}
-                <div style="height:14px"></div>
-                ${stCard('Par statut', stBars(e.statuts, { color: '#0ea5e9' }))}
-            </div>
+        <div class="st-sec"><h2>Enseignants</h2><div class="st-grid">
+            ${stCard('Par corps', stBars(e.corps, { color: '#8b5cf6' }))}
+            ${stCard('Par statut', stBars(e.statuts, { color: '#0ea5e9' }))}
+            ${stCard('Répartition des services', `<table class="st-tbl">
+                <thead><tr><th>HETD par enseignant</th><th></th></tr></thead><tbody>
+                <tr><td>Moyenne</td><td>${stNum(e.hetd_moy, 1)}</td></tr>
+                ${e.hetd_stats ? `<tr><td>Médiane</td><td>${stNum(e.hetd_stats.med, 1)}</td></tr>
+                <tr><td>Quartiles</td><td>${stNum(e.hetd_stats.q1, 1)} – ${stNum(e.hetd_stats.q3, 1)}</td></tr>
+                <tr><td>Étendue</td><td>${stNum(e.hetd_stats.min, 1)} – ${stNum(e.hetd_stats.max, 1)}</td></tr>` : ''}
+                </tbody></table>`, 'sans nommer personne')}
         </div></div>
         <div class="st-sec"><h2>Détail</h2><div class="st-grid wide">
             ${stCard('Matières et sessions par semestre', `<table class="st-tbl">
