@@ -4148,6 +4148,7 @@ function renderPromoEffectif() {
     }
 
     el.innerHTML = _promoProgrammeSelector()
+        + _effTotaux(d, y)
         + `<div style="font-size:.82rem;color:#6b7280;margin-bottom:10px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px">
             Effectif de l'<strong>année ${y}</strong>. Il se compose automatiquement à partir du jury (les ajournés <strong>AJ/RED</strong> et les départs sont retirés des années suivantes) et reste ajustable à la main (+ Étudiant, retrait 🗑, ou import). Le retrait n'enlève l'étudiant que de l'effectif — ses notes sont conservées.</div>`
         + (d.subcohorts || ['FTP', 'ALT']).map(section).join('')
@@ -4409,6 +4410,31 @@ async function changeAbandonSemestre(sid, sem) {
         await api(`/promotions/${_promoId}/students/${sid}`, { method: 'PUT', body: JSON.stringify({ abandon_semestre: sem }) });
         loadEffectif();
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// Bandeau de tête : total des deux listes et nombre d'actifs, en un coup d'œil.
+// Le « total fiches » de la cohorte est rappelé à côté : il ne bouge pas quand on
+// retire quelqu'un d'une année (🗑 retire de l'effectif, il ne supprime pas la fiche).
+function _effTotaux(d, y) {
+    const sc = d.sub_counts || {};
+    const faces = d.subcohorts || ['FTP', 'ALT'];
+    const n = (f, k) => ((sc[f] || {})[k] || 0);
+    const total = faces.reduce((a, f) => a + n(f, 'total'), 0);
+    const actifs = faces.reduce((a, f) => a + n(f, 'Actif'), 0);
+    const autres = d.statuses.filter(st => st !== 'Actif')
+        .map(st => [st, faces.reduce((a, f) => a + n(f, st), 0)]).filter(x => x[1]);
+    const bloc = (lbl, val, couleur, titre) => `<span title="${esc(titre || '')}"
+        style="display:inline-flex;align-items:baseline;gap:6px;padding:4px 12px;border-radius:8px;background:${couleur}">
+        <strong style="font-size:1.15rem;line-height:1">${val}</strong>
+        <span style="font-size:.78rem;color:#4b5563">${esc(lbl)}</span></span>`;
+    return `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px">
+        ${bloc(`inscrits en année ${y}`, total, '#eef2ff', 'FTP + ALT de l\'année affichée')}
+        ${bloc('actifs', actifs, '#dcfce7', 'Hors RED, césure et abandon')}
+        ${faces.map(f => bloc(f, n(f, 'total'), f === 'ALT' ? '#ffedd5' : '#e0f2fe')).join('')}
+        ${autres.map(([st, v]) => bloc(st.toLowerCase(), v, _statutColor(st))).join('')}
+        <span style="margin-left:auto;font-size:.78rem;color:#9ca3af" title="Toutes années et tous statuts confondus. Retirer un étudiant d'une année ne supprime pas sa fiche.">
+            cohorte : ${d.promotion ? (d.promotion.total_fiches ?? '') : ''} fiche(s)</span>
+    </div>`;
 }
 
 async function removeStudentYear(sid) {
@@ -9648,11 +9674,11 @@ function statsParcours(d) {
     const coh = d.cohortes.map(c => {
         const eff = c.effectifs.map(e => [`Année ${e.annee}`, e.total]);
         const faces = c.effectifs.map(e => `<tr><td>Année ${e.annee}</td><td>${e.FTP}</td><td>${e.ALT}</td>
-            <td><strong>${e.total}</strong></td></tr>`).join('');
+            <td><strong>${e.total}</strong></td><td>${e.actifs ?? '—'}</td></tr>`).join('');
         const st = Object.entries(c.statuts).map(([k, v]) => `<span class="st-pill" style="background:${
             ({ Actif: '#dcfce7', RED: '#fef3c7', 'Césure': '#cffafe', Abandon: '#fee2e2' })[k] || '#f3f4f6'}">${esc(k)} ${v}</span>`).join(' ');
         return stCard(`Promotion ${c.promo}`, `<div style="margin-bottom:8px">${st}</div>
-            <table class="st-tbl"><thead><tr><th></th><th>FTP</th><th>ALT</th><th>Total</th></tr></thead>
+            <table class="st-tbl"><thead><tr><th></th><th>FTP</th><th>ALT</th><th>Total</th><th>Actifs</th></tr></thead>
             <tbody>${faces}</tbody></table>
             ${stColumns(eff, { color: '#4f46e5' })}
             ${c.abandons_semestre.length ? '<h3 style="margin:10px 0 4px;font-size:.78rem;color:#6b7280">Abandons par semestre</h3>'

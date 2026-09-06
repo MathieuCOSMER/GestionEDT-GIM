@@ -2936,9 +2936,28 @@ def _dedup_key(s):
     num = (s.get('numero') or '').strip().lower()
     if num:
         return ('num', num)
+    return _ident_key(s)
+
+def _ident_key(s):
+    """Identité d'un étudiant : nom + prénom + naissance, sans le numéro."""
     return ('id', (s.get('nom') or '').strip().lower(),
             (s.get('prenom') or '').strip().lower(),
             (s.get('naissance') or '').strip().lower())
+
+def _student_keys(s):
+    """Toutes les clés sous lesquelles une fiche peut être retrouvée : son numéro
+    s'il en a un, ET son identité. Un fichier sans n° Apogée (export ParcourSup,
+    liste de groupes…) doit pouvoir compléter une fiche qui, elle, en porte un —
+    avec la seule clé « numéro sinon identité », les deux ne se rencontraient
+    jamais et l'import créait des doublons."""
+    keys = []
+    num = (s.get('numero') or '').strip().lower()
+    if num:
+        keys.append(('num', num))
+    ident = _ident_key(s)
+    if ident[1] or ident[2]:        # au moins un nom : sinon la clé ne prouve rien
+        keys.append(ident)
+    return keys
 
 def _import_students_rows(db, pid, students, formation, year=None):
     """Insère les étudiants absents de la promotion et met à jour le profil
@@ -2949,13 +2968,14 @@ def _import_students_rows(db, pid, students, formation, year=None):
     existing = {}
     for r in db.execute('''SELECT id, numero, nom, prenom, naissance, sexe, bac
                            FROM promotion_students WHERE promotion_id=?''', (pid,)):
-        existing[_dedup_key(dict(r))] = dict(r)
+        row = dict(r)
+        for k in _student_keys(row):
+            existing.setdefault(k, row)     # à clé partagée, la 1re fiche l'emporte
     imported = updated = skipped = 0
     for s in students:
         profile = {k: v for k, v in (('sexe', _norm_sexe(s.get('sexe'))),
                                      ('bac', _norm_bac(s.get('bac')))) if v}
-        key = _dedup_key(s)
-        row = existing.get(key)
+        row = next((existing[k] for k in _student_keys(s) if k in existing), None)
         if row is not None:
             changed = {k: v for k, v in profile.items() if (row.get(k) or None) != v}
             if not changed:
@@ -2975,7 +2995,9 @@ def _import_students_rows(db, pid, students, formation, year=None):
             cols.append(k); vals.append(v)
         cur = db.execute('INSERT INTO promotion_students(%s) VALUES(%s)'
                          % (', '.join(cols), ', '.join('?' * len(cols))), vals)
-        existing[key] = dict(s, id=cur.lastrowid)
+        new = dict(s, id=cur.lastrowid)
+        for k in _student_keys(new):
+            existing.setdefault(k, new)
         imported += 1
     db.commit()
     return imported, updated, skipped
@@ -3350,7 +3372,12 @@ def _year_effectif_payload(pdb, pid, year):
         v = mob.get(st['id']) or {}
         sem = next((sm for sm in (s_odd, s_even) if sm in v), None)
         st['mobility'] = {'semester': sem, 'etablissement': v.get(sem, '')} if sem else None
-    return {'promotion': dict(promo), 'year': year, 'students': students,
+    payload_promo = dict(promo)
+    # Nombre de fiches de la COHORTE (toutes années, tous statuts) : rappelé dans le
+    # bandeau de totaux, car il ne varie pas quand on retire quelqu'un d'une année.
+    payload_promo['total_fiches'] = pdb.execute(
+        'SELECT COUNT(*) c FROM promotion_students WHERE promotion_id=?', (pid,)).fetchone()['c']
+    return {'promotion': payload_promo, 'year': year, 'students': students,
             'year_semesters': [s_odd, s_even],
             'sub_counts': sub_counts, 'subcohorts': list(_SUBCOHORTS),
             'total': len(students), 'statuses': _STUDENT_STATUSES,
@@ -9980,7 +10007,9 @@ def _stats_academique(pdb):
             ids = rosters.get(y) or set()
             fm = _year_formation_map(pdb, pid, y)
             faces = [_face(fm.get(i)) for i in ids]
+            statuts = {s['id']: s['statut'] for s in ss}
             eff.append({'annee': y, 'total': len(ids),
+                        'actifs': sum(1 for i in ids if statuts.get(i) == 'Actif'),
                         'FTP': faces.count('FTP'), 'ALT': faces.count('ALT')})
         cohortes.append({
             'promo': p['name'], 'start_year': p['start_year'],
