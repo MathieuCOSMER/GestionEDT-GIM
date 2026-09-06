@@ -889,6 +889,12 @@ def _apply_promotions_migrations(db):
     # saisies avec les anciens codes, qui ne sont plus des valeurs autorisées.
     for _old, _new in _STUDENT_BAC_RENAMES.items():
         db.execute("UPDATE promotion_students SET bac=? WHERE bac=?", (_new, _old))
+    # Le « retrait d'une année » n'existe plus : il sortait l'étudiant de l'effectif
+    # sans le supprimer, donc sans aucun écran où le revoir ni moyen de le remettre.
+    # Les retraits déjà enregistrés sont annulés, sinon ces fiches resteraient
+    # invisibles à jamais. Sortir quelqu'un se fait par son statut ou par la
+    # suppression de sa fiche.
+    db.execute("DELETE FROM promotion_year_override WHERE action='remove'")
 
     # Année de césure (1..3) : l'étudiant s'absente cette année-là et reprend
     # l'année SUIVANTE dans la cohorte d'après. NULL = pas de césure.
@@ -3612,23 +3618,6 @@ def add_year_student(pid, year):
     db.commit()
     return jsonify(_year_effectif_payload(db, pid, year))
 
-@app.route('/api/promotions/<int:pid>/effectif/<int:year>/students/<int:sid>', methods=['DELETE'])
-def remove_year_student(pid, year, sid):
-    """Retire un étudiant de l'effectif d'une année (ajustement 'remove'). N'efface ni
-    l'étudiant ni ses notes ; il reste présent dans les autres années."""
-    err = _require_admin()
-    if err:
-        return err
-    if year not in (1, 2, 3):
-        return error_response('Année invalide', 400)
-    db = get_promotions_db()
-    if not db.execute('SELECT 1 FROM promotion_students WHERE id=? AND promotion_id=?', (sid, pid)).fetchone():
-        return error_response('Étudiant introuvable', 404)
-    db.execute('''INSERT OR REPLACE INTO promotion_year_override(promotion_id, year, student_id, action)
-                  VALUES(?,?,?,'remove')''', (pid, year, sid))
-    db.commit()
-    return jsonify(_year_effectif_payload(db, pid, year))
-
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>/students/<int:sid>/cohorte', methods=['POST'])
 def set_year_cohorte(pid, year, sid):
     """Change la sous-cohorte (FTP/ALT) d'un étudiant À PARTIR de l'année `year` (les
@@ -4923,8 +4912,8 @@ def _year_rosters(pdb, pid, comp=None):
     Année 1 = étudiants entrés en 1re année. Chaque année suivante reprend les étudiants
     de l'année précédente qui PASSENT (décision jury ≠ AJ/RED) et ne sont pas partis
     (Abandon/Sortie), plus les redoublants entrant directement cette année-là (entry_year).
-    Des ajustements manuels (promotion_year_override) retirent ('remove') ou réintègrent
-    ('add') un étudiant sur une année. Retourne {1:set, 2:set, 3:set}."""
+    Un ajustement manuel (promotion_year_override, action 'add') peut réintégrer un
+    étudiant sur une année. Retourne {1:set, 2:set, 3:set}."""
     meta = {}
     for r in pdb.execute('''SELECT id, statut, abandon_semestre, entry_year, cesure_year
                             FROM promotion_students WHERE promotion_id=?''', (pid,)):
@@ -4935,12 +4924,11 @@ def _year_rosters(pdb, pid, comp=None):
             'abandon_year': _sem_year(r['abandon_semestre']) if r['abandon_semestre'] else None,
             'cesure_year': r['cesure_year'],
             'entry': r['entry_year'] or 1}
-    removes = {1: set(), 2: set(), 3: set()}
     adds = {1: set(), 2: set(), 3: set()}
-    for r in pdb.execute('SELECT year, student_id, action FROM promotion_year_override '
-                         'WHERE promotion_id=?', (pid,)):
-        if r['year'] in removes:
-            (removes if r['action'] == 'remove' else adds)[r['year']].add(r['student_id'])
+    for r in pdb.execute("""SELECT year, student_id FROM promotion_year_override
+                            WHERE promotion_id=? AND action='add'""", (pid,)):
+        if r['year'] in adds:
+            adds[r['year']].add(r['student_id'])
     comp = comp or _jury_compute(pdb, pid)
     failed_at = {1: set(), 2: set(), 3: set()}
     for (y, sid), dec in comp['decisions'].items():
@@ -4972,7 +4960,7 @@ def _year_rosters(pdb, pid, comp=None):
         # Filtre appliqué à TOUTE la base, y compris l'année 1 et les entrants
         # directs : une césure posée sur leur année d'entrée doit les en sortir.
         base = {sid for sid in base if not left_before(sid, y)}
-        rosters[y] = (base - removes[y]) | (adds[y] & set(meta.keys()))
+        rosters[y] = base | (adds[y] & set(meta.keys()))
     return rosters
 
 def _jury_payload(pdb, pid, year, formation=None):
