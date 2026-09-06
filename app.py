@@ -10029,6 +10029,26 @@ def _hist20(vals, step=2):
 # d'absence ne sont pas des notes et fausseraient toute moyenne.
 _STATS_SKIP_KINDS = ('BONUS', 'PEN')
 
+def _abandons_par_semaine(students, ordre):
+    """Départs d'une cohorte : [[libellé, effectif], …] dans l'ordre du calendrier
+    scolaire (rentrée d'abord), et non par effectif décroissant — sur des semaines,
+    c'est le MOMENT du décrochage qui se lit, pas le classement. Les fiches sans
+    semaine (datées au semestre avant la bascule) ferment la liste."""
+    if not ordre:
+        ordre = sorted(get_valid_school_weeks(36, 26, 52),
+                       key=lambda w: school_week_key(w, 36, 52))
+    rang = {w: i for i, w in enumerate(ordre)}
+    compte = {}
+    for s in students:
+        w = s.get('abandon_semaine')
+        compte[w] = compte.get(w, 0) + 1
+    out = [['semaine %d' % w, n]
+           for w, n in sorted((kv for kv in compte.items() if kv[0]),
+                              key=lambda kv: (rang.get(kv[0], len(rang)), kv[0]))]
+    if compte.get(None):
+        out.append(['Non précisée', compte[None]])
+    return out
+
 def _stats_promo_notes(pdb, pid, coeffs):
     """Toutes les notes matière d'une promotion : [{sem, year, sid, code, label, note, mention}].
     Les matières sans coefficient et les colonnes BONUS/PEN sont écartées."""
@@ -10113,9 +10133,8 @@ def _stats_academique(pdb):
             'total': len(ss),
             'statuts': dict(_count_by(ss, 'statut', _STUDENT_STATUSES)),
             'effectifs': eff,
-            'abandons_semaine': _count_by(
-                [{'semaine': ('semaine %d' % s['abandon_semaine']) if s['abandon_semaine'] else None}
-                 for s in ss if s['statut'] == 'Abandon'], 'semaine', empty='Non précisée'),
+            'abandons_semaine': _abandons_par_semaine(
+                [s for s in ss if s['statut'] == 'Abandon'], _promo_year_weeks(pdb, pid, 1)),
         })
         # décisions de jury par année, toutes promos confondues
         for (y, sid), dec in comp['decisions'].items():
