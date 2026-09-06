@@ -2788,6 +2788,13 @@ def _promotion_name(start_year):
 
 _SUBCOHORTS = ('FTP', 'ALT')   # sous-cohortes d'une promotion (cohorte)
 
+def _face(formation):
+    """Sous-cohorte d'affichage et de comptage d'un étudiant. Toute valeur hors
+    FTP/ALT — vide, ou héritée d'avant la normalisation des sous-cohortes — compte
+    en FTP : sans cette règle unique, une fiche échappe aux deux sections et les
+    effectifs ne s'additionnent plus."""
+    return formation if formation in _SUBCOHORTS else 'FTP'
+
 # En-têtes acceptés pour une liste au format tableur (clé compacte : minuscules,
 # sans accents ni ponctuation). Sexe et BAC alimentent le profil d'entrée.
 _STUDENT_LIST_HEADERS = {
@@ -2986,7 +2993,7 @@ def _promotion_payload(db, pid):
     sub_counts = {f: {st: 0 for st in _STUDENT_STATUSES} for f in _SUBCOHORTS}
     for s in students:
         counts[s['statut']] = counts.get(s['statut'], 0) + 1
-        f = s.get('formation') if s.get('formation') in _SUBCOHORTS else 'FTP'
+        f = _face(s.get('formation'))
         sub_counts[f][s['statut']] = sub_counts[f].get(s['statut'], 0) + 1
     for f in _SUBCOHORTS:
         sub_counts[f]['total'] = sum(sub_counts[f][st] for st in _STUDENT_STATUSES)
@@ -3329,7 +3336,7 @@ def _year_effectif_payload(pdb, pid, year):
             students.append(d)
     sub_counts = {f: {st: 0 for st in _STUDENT_STATUSES} for f in _SUBCOHORTS}
     for s in students:
-        f = s.get('formation') if s.get('formation') in _SUBCOHORTS else 'FTP'
+        f = _face(s.get('formation'))
         sub_counts[f][s['statut']] = sub_counts[f].get(s['statut'], 0) + 1
     for f in _SUBCOHORTS:
         sub_counts[f]['total'] = sum(sub_counts[f][st] for st in _STUDENT_STATUSES)
@@ -4858,7 +4865,7 @@ def _year_formation_map(pdb, pid, year):
     dernier changement de cohorte d'une année <= `year`, sinon la formation de base.
     Un changement en année N vaut donc pour N et les années suivantes (report auto),
     sans modifier les années antérieures. Retourne {student_id: 'FTP'|'ALT'}."""
-    base = {r['id']: (r['formation'] or 'FTP')
+    base = {r['id']: _face(r['formation'])
             for r in pdb.execute('SELECT id, formation FROM promotion_students WHERE promotion_id=?', (pid,))}
     over = {}
     for r in pdb.execute('''SELECT year, student_id, formation FROM promotion_year_formation
@@ -5217,7 +5224,7 @@ def save_promotion_notes(pid, semester):
     # Une matière dont la note officielle est calculée depuis la saisie enseignante
     # n'est pas modifiable ici (il faut la basculer en « importée » d'abord).
     roster, _ = _semester_roster(pdb, pid, semester)
-    faces = {r['id']: (r['formation'] if r['formation'] in _SUBCOHORTS else 'FTP') for r in roster}
+    faces = {r['id']: _face(r['formation']) for r in roster}
     srcs = {f: _matiere_sources(pdb, pid, semester, f) for f in _SUBCOHORTS}
     locked = 0
     for m in (request.get_json() or {}).get('marks') or []:
@@ -5476,7 +5483,7 @@ def _computed_matiere_marks(pdb, pid, semester, keys=None, students=None):
            WHERE promotion_id=? AND semester=? AND note IS NOT NULL''', (pid, semester))}
     out = {}
     for s in students:
-        f = s['formation'] if s['formation'] in _SUBCOHORTS else 'FTP'
+        f = _face(s['formation'])
         groups = by_face[f]
         for key in (groups.keys() if keys is None else keys):
             wsubs = []
@@ -5510,7 +5517,7 @@ def _recompute_matiere_marks(pdb, pid, semester, keys):
     computed = _computed_matiere_marks(pdb, pid, semester, keys, students)
     if not computed:
         return
-    faces = {s['id']: (s['formation'] if s['formation'] in _SUBCOHORTS else 'FTP') for s in students}
+    faces = {s['id']: _face(s['formation']) for s in students}
     srcs = {f: _matiere_sources(pdb, pid, semester, f) for f in _SUBCOHORTS}
     for (sid, key), avg in computed.items():
         if srcs[faces[sid]].get(key) != 'saisie':
@@ -5881,7 +5888,7 @@ def import_promotion_notes(pid, semester):
     # d'une note matière (calculée / importée) se décide par matière × face.
     students_by_num, faces = {}, {}
     for s in pdb.execute('SELECT id, numero, formation FROM promotion_students WHERE promotion_id=?', (pid,)):
-        faces[s['id']] = s['formation'] if s['formation'] in _SUBCOHORTS else 'FTP'
+        faces[s['id']] = _face(s['formation'])
         num = (s['numero'] or '').strip().lower()
         if num:
             students_by_num[num] = s['id']
@@ -9972,9 +9979,9 @@ def _stats_academique(pdb):
         for y in (1, 2, 3):
             ids = rosters.get(y) or set()
             fm = _year_formation_map(pdb, pid, y)
+            faces = [_face(fm.get(i)) for i in ids]
             eff.append({'annee': y, 'total': len(ids),
-                        'FTP': sum(1 for i in ids if fm.get(i) == 'FTP'),
-                        'ALT': sum(1 for i in ids if fm.get(i) == 'ALT')})
+                        'FTP': faces.count('FTP'), 'ALT': faces.count('ALT')})
         cohortes.append({
             'promo': p['name'], 'start_year': p['start_year'],
             'total': len(ss),
@@ -10025,7 +10032,7 @@ def _stats_academique(pdb):
         key = (n['pid'], n['year'])
         if key not in fmaps:
             fmaps[key] = _year_formation_map(pdb, n['pid'], n['year'])
-        n['face'] = fmaps[key].get(n['sid'], 'FTP')
+        n['face'] = _face(fmaps[key].get(n['sid']))
 
     vals = [n['note'] for n in notes]
     croise = lambda champ: _stats_group_avg(
