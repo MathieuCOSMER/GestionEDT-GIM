@@ -10322,10 +10322,11 @@ def _stats_annees():
 @app.route('/api/stats', methods=['GET'])
 def get_stats():
     """Tableau de bord statistique : profils et résultats des promotions, service
-    et volumes de l'année active, comparaison des années archivées."""
-    err = _require_promo_read()
-    if err:
-        return err
+    et volumes de l'année active, comparaison des années archivées.
+
+    Lecture seule, ouverte à tout utilisateur connecté : tout y est agrégé — aucun
+    étudiant n'y est nommé — et le service par enseignant qu'il reprend est déjà
+    consultable de tous (Bilan Global, /api/service/all)."""
     year = get_current_year()
     payload = {'annee': year, 'annees_dispo': list_years()}
     payload.update(_stats_academique(get_promotions_db()))
