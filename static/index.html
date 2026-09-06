@@ -1463,6 +1463,16 @@
                     (Effectifs, Notes, Jury). Réinitialiser supprime l'ancien mot de passe et
                     fait réapparaître le bouton ; révoquer retire tout accès.
                 </div>
+                <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-weight:600">
+                    <input type="checkbox" id="teacher-admin" onchange="teacherAdminToggle(this)">
+                    Droits d'administration <span id="teacher-admin-state" style="font-weight:400;color:#6b7280"></span>
+                </label>
+                <div style="font-size:.78rem;color:#6b7280;margin-top:4px">
+                    Donne à cet enseignant les mêmes droits que l'administrateur. Exige un mot de
+                    passe défini, et ne s'applique qu'aux connexions faites AVEC ce mot de passe :
+                    entrer son seul nom de famille ouvre toujours une session enseignante.
+                    Supprimer ou révoquer le mot de passe retire les droits.
+                </div>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('modal-teacher')">Annuler</button>
@@ -2352,6 +2362,34 @@ function refreshTeacherPwdBlock(t) {
     document.getElementById('teacher-pwd-reset').style.display = t.has_password ? '' : 'none';
     document.getElementById('teacher-pwd-revoke').style.display =
         (t.password_allowed || t.has_password) ? '' : 'none';
+    // Les droits d'administration n'ont de sens qu'avec un mot de passe.
+    const adm = document.getElementById('teacher-admin');
+    adm.checked = !!t.is_admin;
+    adm.disabled = !t.has_password;
+    document.getElementById('teacher-admin-state').textContent =
+        t.has_password ? (t.is_admin ? '— accordés' : '')
+                       : '— indisponible tant qu\'aucun mot de passe n\'est défini';
+}
+
+async function teacherAdminToggle(cb) {
+    const id = document.getElementById('teacher-id').value;
+    const t = state.teachers.find(x => x.id === parseInt(id));
+    if (!id) { cb.checked = false; return; }
+    const veut = cb.checked;
+    if (veut && !confirm('Donner les droits d\'administration à ' + ((t && t.name) || 'cet enseignant') + ' ?\n\n'
+        + 'Il pourra tout modifier, comme l\'administrateur, lorsqu\'il se connectera avec son mot de passe.')) {
+        cb.checked = false; return;
+    }
+    try {
+        const r = await api('/teachers/' + id + '/admin',
+            { method: 'PUT', body: JSON.stringify({ admin: veut }) });
+        if (t) t.is_admin = r.is_admin;
+        refreshTeacherPwdBlock(t || r);
+        toast(r.is_admin ? 'Droits d\'administration accordés' : 'Droits d\'administration retirés');
+    } catch (e) {
+        cb.checked = !veut;
+        toast('Erreur : ' + e.message, 'error');
+    }
 }
 
 async function teacherPwdAction(action) {
@@ -2363,7 +2401,7 @@ async function teacherPwdAction(action) {
         const r = await api('/teachers/' + id + '/password-access',
             { method: 'PUT', body: JSON.stringify({ action }) });
         const t = state.teachers.find(x => x.id === parseInt(id));
-        if (t) { t.has_password = r.has_password; t.password_allowed = r.password_allowed; }
+        if (t) { t.has_password = r.has_password; t.password_allowed = r.password_allowed; t.is_admin = r.is_admin; }
         refreshTeacherPwdBlock(t || r);
         toast(action === 'allow' ? 'Création du mot de passe autorisée'
             : action === 'reset' ? 'Mot de passe réinitialisé'

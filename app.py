@@ -1262,6 +1262,15 @@ def _apply_migrations(db):
         db.execute("ALTER TABLE teachers ADD COLUMN password_allowed INTEGER DEFAULT 0")
         # Compat : un mot de passe déjà défini vaut autorisation
         db.execute("UPDATE teachers SET password_allowed = 1 WHERE password_hash IS NOT NULL")
+    # Droits d'administration confiés à un enseignant. Ils n'ont de sens qu'avec un
+    # mot de passe : sans lui la connexion se fait au seul nom de famille, ce qui
+    # ouvrirait l'administration à quiconque le connaît. Poser le drapeau exige donc
+    # un mot de passe défini, et le supprimer retire les droits (cf. password-access).
+    if 'is_admin' not in [r[1] for r in db.execute("PRAGMA table_info(teachers)").fetchall()]:
+        db.execute("ALTER TABLE teachers ADD COLUMN is_admin INTEGER DEFAULT 0")
+    # Garde-fou rejoué au démarrage : jamais d'administrateur sans mot de passe.
+    db.execute("UPDATE teachers SET is_admin = 0 WHERE is_admin = 1 AND password_hash IS NULL")
+
     # Enseignant référent par MATIÈRE (groupe de sous-matières, clé = code sans
     # lettre finale, cf. _mat_base_key) et par face (FTP/ALT) — choix MANUEL de
     # l'admin, prioritaire sur la règle automatique (titulaire unique intervenant).
@@ -1957,7 +1966,8 @@ def login():
     # incorrect refuse TOUTE connexion (pas de session dégradée silencieuse).
     if username:
         db = get_db()
-        row = db.execute('SELECT name, status, password_hash FROM teachers WHERE LOWER(name) = LOWER(?)', (username,)).fetchone()
+        row = db.execute('''SELECT name, status, password_hash, is_admin FROM teachers
+                            WHERE LOWER(name) = LOWER(?)''', (username,)).fetchone()
         if row:
             promo_access = False
             if password:
@@ -1968,14 +1978,17 @@ def login():
                 promo_access = True
             _reset_login_failures(ip)
             status = row['status'] or 'Titulaire'
+            # Les droits d'administration ne s'ouvrent QUE sur mot de passe vérifié :
+            # se connecter au seul nom de famille reste une session enseignante.
+            role = 'admin' if (promo_access and row['is_admin']) else 'teacher'
             session.permanent = True
             session['user'] = row['name']
-            session['role'] = 'teacher'
+            session['role'] = role
             session['teacher_name'] = row['name']
             session['teacher_status'] = status
             session['promo_access'] = promo_access
-            _audit('LOGIN_OK', ip=ip, user=row['name'], role='teacher', promo=int(promo_access))
-            return jsonify({'username': row['name'], 'role': 'teacher',
+            _audit('LOGIN_OK', ip=ip, user=row['name'], role=role, promo=int(promo_access))
+            return jsonify({'username': row['name'], 'role': role,
                             'teacher': row['name'], 'status': status,
                             'promo_access': promo_access})
     _register_login_failure(ip)
@@ -6297,6 +6310,7 @@ def _teacher_public(d):
     et password_allowed (création autorisée par l'admin) sont exposés à l'API."""
     d['has_password'] = bool(d.pop('password_hash', None))
     d['password_allowed'] = bool(d.get('password_allowed'))
+    d['is_admin'] = bool(d.get('is_admin'))
     return d
 
 @app.route('/api/teachers', methods=['GET'])
@@ -6436,21 +6450,57 @@ def set_teacher_password_access(teacher_id):
                    (teacher_id,))
         event = 'TEACHER_PWD_ALLOWED'
     elif action == 'reset':
+        # Plus de mot de passe, donc plus de droits d'administration : les laisser
+        # rendrait l'administration accessible au seul nom de famille.
         db.execute('''UPDATE teachers SET password_hash = NULL, password_allowed = 1,
-                      updated_at = CURRENT_TIMESTAMP WHERE id = ?''', (teacher_id,))
+                      is_admin = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?''', (teacher_id,))
         event = 'TEACHER_PWD_RESET'
     elif action == 'revoke':
         db.execute('''UPDATE teachers SET password_hash = NULL, password_allowed = 0,
-                      updated_at = CURRENT_TIMESTAMP WHERE id = ?''', (teacher_id,))
+                      is_admin = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?''', (teacher_id,))
         event = 'TEACHER_PWD_REVOKED'
     else:
         return error_response('Action invalide (allow, reset ou revoke)')
     db.commit()
     _audit(event, ip=_client_ip(), teacher=row['name'])
-    t = db.execute('SELECT password_allowed, password_hash FROM teachers WHERE id = ?',
+    t = db.execute('SELECT password_allowed, password_hash, is_admin FROM teachers WHERE id = ?',
                    (teacher_id,)).fetchone()
     return jsonify({'password_allowed': bool(t['password_allowed']),
-                    'has_password': bool(t['password_hash'])}), 200
+                    'has_password': bool(t['password_hash']),
+                    'is_admin': bool(t['is_admin'])}), 200
+
+@app.route('/api/teachers/<int:teacher_id>/admin', methods=['PUT'])
+def set_teacher_admin(teacher_id):
+    """Donne ou retire les droits d'administration à un enseignant (admin seul).
+    Body {admin: true|false}.
+
+    Les accorder exige un mot de passe déjà défini : sans lui, la connexion se fait
+    au seul nom de famille et l'administration serait ouverte à qui le connaît. Les
+    droits ne s'appliquent d'ailleurs qu'à une session ouverte AVEC ce mot de passe.
+    La table teachers étant propre à chaque année universitaire, la promotion vaut
+    pour l'année active (comme le mot de passe lui-même)."""
+    err = _require_admin()
+    if err:
+        return err
+    db = get_db()
+    row = db.execute('SELECT name, password_hash, is_admin FROM teachers WHERE id = ?',
+                     (teacher_id,)).fetchone()
+    if not row:
+        return error_response('Teacher not found', 404)
+    data = request.get_json() or {}
+    if 'admin' not in data:
+        return error_response('Champ « admin » manquant', 400)
+    veut_admin = bool(data.get('admin'))
+    if veut_admin and not row['password_hash']:
+        return error_response(
+            "Cet enseignant n'a pas encore de mot de passe : autorisez-en la création "
+            "et attendez qu'il le définisse avant de lui donner les droits.", 400)
+    db.execute('UPDATE teachers SET is_admin = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+               (1 if veut_admin else 0, teacher_id))
+    db.commit()
+    _audit('TEACHER_ADMIN_GRANT' if veut_admin else 'TEACHER_ADMIN_REVOKE',
+           ip=_client_ip(), user=session.get('user'), teacher=row['name'])
+    return jsonify({'is_admin': veut_admin, 'has_password': bool(row['password_hash'])}), 200
 
 # ======================= MON COMPTE (enseignant connecté) =======================
 # Fiche contact + heures HETD effectuées hors GIM. Ces heures sont personnelles :
