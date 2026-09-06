@@ -3342,6 +3342,11 @@ def _year_effectif_payload(pdb, pid, year):
         'SELECT student_id, action FROM promotion_year_override WHERE promotion_id=? AND year=?',
         (pid, year))}
     fm = _year_formation_map(pdb, pid, year)          # sous-cohorte propre à cette année
+    # Notes déjà saisies, toutes années : ce que la suppression d'une fiche
+    # effacerait. Annoncé dans la confirmation plutôt que découvert après coup.
+    nb_notes = {r['student_id']: r['n'] for r in pdb.execute(
+        '''SELECT student_id, COUNT(*) AS n FROM student_marks
+           WHERE promotion_id=? GROUP BY student_id''', (pid,))}
     students = []
     for r in pdb.execute('''SELECT id, numero, nom, prenom, naissance, statut, abandon_semestre,
                                    formation, entry_year, cesure_year, sexe, bac, cursus, recrutement
@@ -3355,6 +3360,7 @@ def _year_effectif_payload(pdb, pid, year):
             d['manual'] = overrides.get(r['id'])
             d['cesure'] = r['id'] in cesure_ids
             d['origin'] = origins.get(r['id'])
+            d['nb_notes'] = nb_notes.get(r['id'], 0)
             students.append(d)
     sub_counts = {f: {st: 0 for st in _STUDENT_STATUSES} for f in _SUBCOHORTS}
     for s in students:

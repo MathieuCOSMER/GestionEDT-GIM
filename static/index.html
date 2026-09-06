@@ -4155,7 +4155,7 @@ function renderPromoEffectif() {
             <td style="white-space:nowrap">${miCell(s)}</td>
             <td style="white-space:nowrap"><select onchange="changeStudentStatus(${s.id}, this.value)"${s.statut === 'RED' ? ' title="Statut issu de la décision de jury — se traite dans le tableau des redoublants, plus bas"' : ''}
                 style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${_statutColor(s.statut)}">${optList(s.statut)}</select>${semSelect(s)}${cesSelect(s)}</td>
-            <td style="white-space:nowrap">${cohorteToggle(s)} <button class="btn btn-secondary btn-sm" title="Retirer de l'effectif de l'année ${y}${y === 1 ? ' (et des années suivantes)' : ''} — ne supprime pas ses notes" onclick="removeStudentYear(${s.id})">🗑</button></td>
+            <td style="white-space:nowrap">${cohorteToggle(s)} <button class="btn btn-secondary btn-sm" title="Retirer de l'effectif de l'année ${y}${y === 1 ? ' (et des années suivantes)' : ''} — la fiche et les notes sont conservées" onclick="removeStudentYear(${s.id})">🗑</button> <button class="btn btn-secondary btn-sm" style="color:#b91c1c;font-weight:700" title="Supprimer définitivement la fiche de la cohorte${s.nb_notes ? ' et ses ' + s.nb_notes + ' note(s)' : ''} — irréversible" onclick="deleteStudentFiche(${s.id})">✕</button></td>
         </tr>`).join('');
         return header + `<div style="margin-bottom:8px">${badges}</div>` + profLegend() + `
             <div style="overflow:auto;max-height:45vh;border:1px solid #e5e7eb;border-radius:8px">
@@ -4463,11 +4463,35 @@ function _effTotaux(d, y) {
     </div>`;
 }
 
+// Suppression DÉFINITIVE de la fiche, à distinguer du 🗑 qui ne fait que sortir
+// l'étudiant de l'effectif d'une année. Sans elle, un étudiant ajouté par erreur
+// restait dans la cohorte pour toujours et continuait d'être compté.
+async function deleteStudentFiche(sid) {
+    const s = ((_effData || {}).students || []).find(x => x.id === sid);
+    if (!s) return;
+    const qui = `${s.nom || ''} ${s.prenom || ''}`.trim() || 'cet étudiant';
+    const n = s.nb_notes || 0;
+    if (!confirm(`Supprimer définitivement la fiche de ${qui} ?\n\n`
+        + `Elle disparaît des 3 années de la cohorte`
+        + (n ? `, avec ses ${n} note(s).` : `.`)
+        + `\nCette action est irréversible.\n\n`
+        + `Pour seulement le sortir de l'effectif de l'année ${_effYear} en gardant ses notes, `
+        + `utilisez le bouton 🗑.`)) return;
+    try {
+        await api(`/promotions/${_promoId}/students/${sid}`, { method: 'DELETE' });
+        await loadEffectif();
+        toast('Fiche supprimée');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
 async function removeStudentYear(sid) {
     const y = _effYear;
-    const msg = y === 1
-        ? 'Retirer cet étudiant de l\'effectif (années suivantes incluses) ? Ses notes seront conservées.'
-        : `Retirer cet étudiant de l'effectif de l'année ${y} ? Ses notes seront conservées.`;
+    const msg = (y === 1
+        ? 'Retirer cet étudiant de l\'effectif (années suivantes incluses) ?'
+        : `Retirer cet étudiant de l'effectif de l'année ${y} ?`)
+        + '\n\nSa fiche et ses notes sont conservées : il reste compté dans la cohorte'
+        + ' (le « actifs / total » du sélecteur ne bougera pas).'
+        + '\nPour supprimer la fiche elle-même, utilisez le bouton ✕.';
     if (!confirm(msg)) return;
     try {
         _effData = await api(`/promotions/${_promoId}/effectif/${y}/students/${sid}`, { method: 'DELETE' });
