@@ -20,6 +20,10 @@
         /* Onglet Jury : large tableau (UE × 4 colonnes) → pleine largeur si nécessaire */
         main:has(#page-promotions.active #promo-subtab-jury.active) { max-width: none; }
         main:has(#page-promotions.active #promo-subtab-saisie.active) { max-width: none; }
+        /* Onglet Effectif : la fiche étudiant plus les onze colonnes du dossier
+           ParcourSup → pleine largeur, sinon le tableau défile alors que l'écran
+           a de la place de reste de chaque côté. */
+        main:has(#page-promotions.active #promo-subtab-effectif.active) { max-width: none; }
 
         .page { display: none; }
         .page.active { display: block; }
@@ -48,6 +52,10 @@
         .st-box-c > h3 { font-size: .84rem; color: #374151; margin: 0 0 10px; font-weight: 700; }
         .st-box-c > h3 span { font-weight: 400; color: #9ca3af; }
         .st-none { color: #9ca3af; font-size: .82rem; padding: 10px 0; text-align: center; }
+        /* Encart d'explication quand une analyse ne peut pas encore etre calculee :
+           dire pourquoi vaut mieux qu'aligner des cadres vides. */
+        .st-note-warn { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;
+                        padding: 12px 14px; margin-bottom: 14px; font-size: .85rem; color: #78350f; }
         .st-svg { width: 100%; height: auto; display: block; }
         .st-ax { font-size: 9px; fill: #9ca3af; }
         .st-val { font-size: 9px; fill: #6b7280; font-weight: 600; }
@@ -307,6 +315,15 @@
         /* Trait leger entre sous-ressources, trait marque entre modules (fin de groupe) */
         .pn-table tbody td { border-bottom: 1px solid #e5e7eb; }
         .pn-table tbody tr.group-end td { border-bottom: 3px solid #475569; }
+        /* Effectif : en-tete sur deux rangs (colonnes de la fiche a cheval sur les
+           deux, colonnes ParcourSup groupees dessous) — les libelles se lisent mieux
+           centres verticalement que colles en haut de cellules de hauteur double.
+           Le tableau porte une vingtaine de colonnes : cellules resserrees et texte
+           un cran plus petit, pour qu'il tienne sans defilement horizontal. */
+        .eff-table thead th { vertical-align: middle; }
+        .eff-table th, .eff-table td { padding: 4px 6px; font-size: .8rem; }
+        .eff-table td { vertical-align: middle; }
+        .eff-table select { max-width: 100%; }
         .pn-table td.pn-mat { font-size: .82rem; text-align: center; vertical-align: middle; }
         .pn-table td.pn-mat strong { color: #4f46e5; }
         .pn-table td.pn-cell, .pn-table td.ens-cell { white-space: pre-wrap; font-size: .82rem; line-height: 1.35; }
@@ -609,6 +626,8 @@
                 <span id="eff-year-hint" style="color:#6b7280;font-size:.85rem"></span>
             </div>
             <div style="display:flex;gap:6px">
+                <button class="btn btn-secondary btn-sm" id="eff-ps-btn" onclick="openParcoursupImport()" disabled
+                    title="Importer un classement ParcourSup pour remplir le rang, la note et le dossier des étudiants déjà inscrits">⤒ Importer ParcourSup</button>
                 <button class="btn btn-secondary btn-sm" id="eff-export-btn" onclick="exportEffectifExcel()" disabled
                     title="Télécharger l'effectif de cette année au format Excel (un onglet par sous-cohorte)">⤓ Exporter en Excel</button>
                 <button class="btn btn-secondary btn-sm" id="eff-report-btn" onclick="reportEffectifYear()" disabled
@@ -917,9 +936,16 @@
         <h3 style="color:#374151;margin:32px 0 8px">Sauvegarde complète du site</h3>
         <p style="color:#6b7280;font-size:.9rem;margin-top:0">
             Toutes les données du site dans un seul fichier .zip : bases de toutes les années
-            universitaires, promotions, programmes, notes, contraintes et réglages.
+            universitaires (enseignants, matières, salles, emplois du temps), promotions et
+            <strong>effectifs</strong> (étudiants, notes, jury, tuteurs), programmes, fichiers de
+            notes et de contraintes, réglages et coefficients.
             Conservez ces fichiers en lieu sûr (hors du serveur) pour pouvoir restaurer le site
             en cas de piratage ou de perte de données.
+        </p>
+        <p style="color:#6b7280;font-size:.85rem;margin-top:0">
+            La sauvegarde emporte un inventaire chiffré de son contenu. À la restauration, le site
+            recompte ce qu'il a réellement en base et le confronte à cet inventaire : tout écart
+            vous est signalé plutôt que de passer inaperçu.
         </p>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">
             <a class="btn btn-primary" href="/api/backup/full" download style="text-decoration:none">⤓ Télécharger la sauvegarde</a>
@@ -1095,6 +1121,7 @@
     <div class="subtabs" id="stats-subtabs">
         <button type="button" class="subtab active" id="st-subtab-apercu" onclick="showStatsTab('apercu')">Vue d'ensemble</button>
         <button type="button" class="subtab" id="st-subtab-etudiants" onclick="showStatsTab('etudiants')">Étudiants</button>
+        <button type="button" class="subtab" id="st-subtab-recrutement" onclick="showStatsTab('recrutement')">Recrutement</button>
         <button type="button" class="subtab" id="st-subtab-parcours" onclick="showStatsTab('parcours')">Parcours &amp; jury</button>
         <button type="button" class="subtab" id="st-subtab-resultats" onclick="showStatsTab('resultats')">Résultats</button>
         <button type="button" class="subtab" id="st-subtab-enseignement" onclick="showStatsTab('enseignement')">Enseignement</button>
@@ -1222,15 +1249,20 @@
     <div class="modal">
         <h2>Importer un effectif</h2>
         <p style="color:#6b7280;font-size:.9rem;margin-top:0">
-            Fichier <code>.xlsm</code>/<code>.xlsx</code> : <strong>PV de jury</strong> (la colonne
-            BAC y est reprise ; seules les feuilles <em>PV…</em>, <em>Jury…</em> et <em>Temp</em> sont
-            lues), export <strong>Apogée</strong>, ou tableur avec en-têtes <em>Nom, Prénom, Numéro,
-            Naissance</em> — et, si vous les avez, <em>Sexe</em> et <em>BAC</em>. Les en-têtes sont
+            Fichier <code>.xlsm</code>/<code>.xlsx</code> : <strong>PV de jury</strong> (seules les
+            feuilles <em>PV…</em>, <em>Jury…</em> et <em>Temp</em> sont lues), export
+            <strong>Apogée</strong>, ou tableur avec en-têtes <em>Nom, Prénom, Numéro,
+            Naissance</em> — et, si vous l'avez, <em>Sexe</em>. Les en-têtes sont
             cherchés dans les premières lignes de chaque onglet : l'export d'effectif de cet écran,
             complété sous Excel, se réimporte tel quel.
             Les étudiants déjà présents (même n° Apogée, ou même nom/prénom/naissance) ne sont pas
-            dupliqués : leur <strong>sexe</strong> et leur <strong>BAC</strong> sont mis à jour si le
-            fichier les renseigne, et une colonne vide n'efface jamais une saisie.
+            dupliqués : leur <strong>sexe</strong> est mis à jour si le fichier le renseigne, et une
+            colonne vide n'efface jamais une saisie.
+        </p>
+        <p style="color:#6b7280;font-size:.85rem;background:#f5f3ff;border:1px solid #ddd6fe;
+                  border-radius:8px;padding:8px 12px">
+            La <strong>série de bac</strong> et le <strong>dossier du candidat</strong> ne s'importent
+            plus ici : ils viennent du bouton <strong>Importer ParcourSup</strong>, en haut de l'écran.
         </p>
         <div class="form-group">
             <label>Fichier *</label>
@@ -1239,6 +1271,37 @@
         <div class="form-actions">
             <button type="button" class="btn btn-secondary" onclick="closeModal('modal-promo-import')">Annuler</button>
             <button type="button" class="btn btn-primary" id="promo-import-submit" onclick="submitPromoImport()">Importer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL IMPORT CLASSEMENT PARCOURSUP ===== -->
+<div class="modal-backdrop" id="modal-ps-import">
+    <div class="modal">
+        <h2>Importer un classement ParcourSup</h2>
+        <p style="color:#6b7280;font-size:.9rem;margin-top:0">
+            Fichier <code>.xlsx</code> du classement des candidatures (export
+            <code>dossier_AD_…</code>). En sont repris, pour chaque étudiant :
+            <em>classement, n° ParcourSup, profil, scolarité, diplôme, préparé/obtenu, série,
+            spécialités, spécialité abandonnée en première, spécialité Bac Pro</em> et la
+            <em>note globale</em>.
+        </p>
+        <p style="color:#6b7280;font-size:.9rem">
+            Cet import <strong>ne crée aucune fiche</strong> : il complète celles qui sont déjà dans
+            l'effectif, rapprochées par <strong>nom et prénom</strong> (le classement est antérieur à
+            l'inscription, il ne porte pas de n° Apogée). Les centaines de candidats non inscrits
+            sont ignorés. Le classement <strong>STI2D</strong> et le classement
+            <strong>hors STI2D</strong> s'importent l'un après l'autre&nbsp;: après chaque import,
+            les étudiants restés sans dossier vous sont listés.
+        </p>
+        <div class="form-group">
+            <label>Fichier *</label>
+            <input type="file" id="ps-import-file" accept=".xlsm,.xlsx">
+        </div>
+        <div id="ps-import-report"></div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-ps-import')">Fermer</button>
+            <button type="button" class="btn btn-primary" id="ps-import-submit" onclick="submitParcoursupImport()">Importer</button>
         </div>
     </div>
 </div>
@@ -2918,7 +2981,7 @@ function applyPromoReadOnly() {
         el.querySelectorAll('input, select, textarea').forEach(i => i.disabled = true);
         el.querySelectorAll('button').forEach(b => b.style.display = 'none');
     });
-    ['eff-report-btn', 'notes-save-btn', 'notes-import-btn', 'notes-export-btn',
+    ['eff-report-btn', 'eff-ps-btn', 'notes-save-btn', 'notes-import-btn', 'notes-export-btn',
      'notes-delete-btn', 'jury-save-btn'].forEach(id => {
         const b = document.getElementById(id);
         if (b) b.style.display = 'none';
@@ -3839,7 +3902,7 @@ async function loadPromotions() {
 }
 
 function _togglePromoButtons(on) {
-    ['promo-delete-btn', 'eff-report-btn', 'eff-export-btn'].forEach(id => {
+    ['promo-delete-btn', 'eff-report-btn', 'eff-export-btn', 'eff-ps-btn'].forEach(id => {
         const b = document.getElementById(id); if (b) b.disabled = !on;
     });
 }
@@ -4103,9 +4166,11 @@ function renderPromoEffectif() {
             <option value="">— année —</option>${[1, 2, 3].map(yy =>
                 `<option value="${yy}" ${yy === s.cesure_year ? 'selected' : ''}>Année ${yy}</option>`).join('')}</select>`;
     const tag = (txt, bg, title) => `<span title="${title || ''}" style="display:inline-block;padding:1px 6px;border-radius:6px;font-size:.66rem;font-weight:700;background:${bg};margin-left:6px">${txt}</span>`;
-    // Profil d'entrée (BAC / cursus / recrutement) : listes déroulantes
-    const profOpts = d.profile_options || { sexe: [], bac: [], cursus: [], recrutement: [] };
-    // Signification des codes (Cursus / Recrutement) : rappelée en légende au-dessus
+    // Profil d'entrée saisissable (sexe / recrutement) : listes déroulantes.
+    // La série de bac et le cursus ne se saisissent plus : ils se lisent dans les
+    // colonnes ParcourSup ci-dessous, alimentées par l'import du classement.
+    const profOpts = d.profile_options || { sexe: [], recrutement: [] };
+    // Signification des codes (Recrutement) : rappelée en légende au-dessus
     // de chaque tableau et en infobulle sur chaque liste.
     const profLabels = d.profile_labels || {};
     const profLabel = (field, code) => (profLabels[field] || {})[code] || '';
@@ -4134,6 +4199,45 @@ function renderPromoEffectif() {
         return `<div style="font-size:.78rem;color:#4b5563;background:#f9fafb;border:1px solid #e5e7eb;
             border-radius:8px;padding:7px 12px;margin:8px 0 4px;display:flex;flex-wrap:wrap;gap:4px 20px">${parts.join('')}</div>`;
     };
+    // Colonnes reprises du classement ParcourSup (rang, note, dossier du candidat).
+    // Elles ne se saisissent pas : elles viennent de l'import du classement, seule
+    // source qui fasse foi. Les valeurs sont affichées ABRÉGÉES (sigles usuels
+    // calculés côté serveur, cf. _ps_court) : en toutes lettres, « Ingénierie,
+    // innovation et développement durable » prenait à lui seul plus de large que
+    // le reste de la fiche. L'intitulé complet est en infobulle sur la cellule,
+    // et l'export Excel, lui, garde tout en clair.
+    const psCols = d.ps_columns || [];
+    // Garde-fou de largeur pour les colonnes composées : une valeur qu'aucune
+    // abréviation ne couvre s'affiche en clair et ne doit pas étirer le tableau.
+    const psLarge = { ps_specialites: 135, ps_scolarite: 100, ps_spe_abandon: 90,
+                      ps_spe_bacpro: 90, ps_profil: 80 };
+    const psCell = (s, col) => {
+        const v = s[col.field];
+        if (v === null || v === undefined || v === '')
+            return '<td style="color:#d1d5db;text-align:center">—</td>';
+        if (col.field === 'ps_classement')
+            return `<td style="text-align:center;color:#6b7280">${esc(String(v))}</td>`;
+        if (col.field === 'ps_note')
+            return `<td style="text-align:center;font-weight:600">${esc(Number(v).toFixed(2))}</td>`;
+        const court = ((s.ps_court || {})[col.field]) || v;
+        const plein = String(v);
+        const tip = court === plein ? '' : ` title="${esc(plein)}"`;
+        const w = psLarge[col.field];
+        if (!w) return `<td${tip} style="white-space:nowrap">${esc(String(court))}</td>`;
+        return `<td><div${tip} style="max-width:${w}px;overflow:hidden;
+            text-overflow:ellipsis;white-space:nowrap">${esc(String(court))}</div></td>`;
+    };
+    // En-têtes ParcourSup : regroupés sous un bandeau, pour qu'on voie d'un coup
+    // d'œil où s'arrête la fiche de l'étudiant et où commence son dossier d'entrée.
+    // Chaque intitulé court porte en infobulle son sens complet ET la légende des
+    // abréviations de sa colonne — une légende sous le tableau en ferait dix lignes.
+    const psHead = psCols.map(c =>
+        `<th title="${esc(c.title || c.label)}" style="background:#f5f3ff">${esc(c.label)}</th>`).join('');
+    const psGroup = psCols.length
+        ? `<th colspan="${psCols.length}" style="background:#ede9fe;color:#5b21b6;text-align:center"
+             title="Repris du classement ParcourSup — importez le classement pour les remplir">ParcourSup</th>`
+        : '';
+
     // Bascule FTP↔ALT à partir de l'année affichée (années antérieures conservées)
     const cohorteToggle = s => {
         const other = (s.formation === 'ALT') ? 'FTP' : 'ALT';
@@ -4188,8 +4292,7 @@ function renderPromoEffectif() {
             <td>${esc(s.numero || '')}</td>
             <td>${esc(s.naissance || '')}</td>
             <td>${profSelect(s, 'sexe')}</td>
-            <td>${profSelect(s, 'bac')}</td>
-            <td>${profSelect(s, 'cursus')}</td>
+            ${psCols.map(c => psCell(s, c)).join('')}
             <td>${profSelect(s, 'recrutement')}</td>
             <td style="white-space:nowrap">${miCell(s)}</td>
             <td style="white-space:nowrap"><select onchange="changeStudentStatus(${s.id}, this.value)"${s.statut === 'RED' ? ' title="Statut issu de la décision de jury — se traite dans le tableau des redoublants, plus bas"' : ''}
@@ -4198,14 +4301,19 @@ function renderPromoEffectif() {
         </tr>`).join('');
         return header + `<div style="margin-bottom:8px">${badges}</div>` + profLegend() + `
             <div style="overflow:auto;max-height:45vh;border:1px solid #e5e7eb;border-radius:8px">
-                <table class="pn-table" style="table-layout:auto;width:100%">
-                    <thead><tr><th style="width:40px">#</th><th>Nom</th><th>Prénom</th><th>N° Apogée</th><th>Naissance</th>
-                        <th title="Sexe de l'étudiant (M / F)">Sexe</th>
-                        <th title="Série de bac — codes des PV de jury (${esc((profOpts.bac || []).join(', '))})">BAC</th>
-                        <th title="Cursus antérieur — ING: École d'ingé, REP: reprise d'étude, BAC: PostBac, PP: PostPrépa, BTS: post-BTS">Cursus</th>
-                        <th title="Recrutement — PS: ParcourSup, EC: eCandidat, ADIUT: étrangers">Recrut.</th>
-                        <th title="Mobilité internationale : semestre effectué dans un établissement partenaire. Ses UE sont validées par équivalence, sans note.">MI</th>
-                        <th style="width:210px">Statut</th><th style="width:130px">Cohorte / retrait</th></tr></thead>
+                <table class="pn-table eff-table" style="table-layout:auto;width:100%">
+                    <thead>
+                        <tr><th rowspan="2" style="width:34px">#</th><th rowspan="2">Nom</th><th rowspan="2">Prénom</th>
+                            <th rowspan="2" title="Numéro Apogée de l'étudiant">Apogée</th>
+                            <th rowspan="2" title="Date de naissance">Naiss.</th>
+                            <th rowspan="2" title="Sexe de l'étudiant (M / F)">Sexe</th>
+                            ${psGroup}
+                            <th rowspan="2" title="Voie de recrutement — PS : ParcourSup · EC : eCandidat · ADIUT : candidats étrangers">Recrut.</th>
+                            <th rowspan="2" title="Mobilité internationale : semestre effectué dans un établissement partenaire. Ses UE sont validées par équivalence, sans note.">MI</th>
+                            <th rowspan="2" style="width:190px">Statut</th>
+                            <th rowspan="2" style="width:120px" title="Sous-cohorte FTP / ALT, et suppression de la fiche">Cohorte</th></tr>
+                        <tr>${psHead}</tr>
+                    </thead>
                     <tbody>${rows}</tbody>
                 </table>
             </div>`;
@@ -4499,11 +4607,20 @@ function _effTotaux(d, y) {
         style="display:inline-flex;align-items:baseline;gap:6px;padding:4px 12px;border-radius:8px;background:${couleur}">
         <strong style="font-size:1.15rem;line-height:1">${val}</strong>
         <span style="font-size:.78rem;color:#4b5563">${esc(lbl)}</span></span>`;
+    // Couverture ParcourSup : combien d'inscrits ont leur dossier de candidature.
+    // Affichée tant qu'elle est incomplète — c'est le rappel qu'il reste un des
+    // deux classements (STI2D / hors STI2D) à importer.
+    const dansAnnee = (d.students || []).filter(s => !s.hors_annee);
+    const avecPs = dansAnnee.filter(s => s.ps_classement != null || s.ps_numero).length;
+    const ps = (!dansAnnee.length || avecPs === dansAnnee.length) ? '' :
+        bloc(`sans dossier ParcourSup`, dansAnnee.length - avecPs, '#ede9fe',
+             'Inscrits dont le classement ParcourSup n\'a pas encore été importé');
     return `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px">
         ${bloc(`inscrits en année ${y}`, total, '#eef2ff', 'FTP + ALT de l\'année affichée')}
         ${bloc('actifs', actifs, '#dcfce7', 'Hors RED, césure et abandon')}
         ${faces.map(f => bloc(f, n(f, 'total'), f === 'ALT' ? '#ffedd5' : '#e0f2fe')).join('')}
         ${autres.map(([st, v]) => bloc(st.toLowerCase(), v, _statutColor(st))).join('')}
+        ${ps}
         <span style="margin-left:auto;font-size:.78rem;color:#9ca3af" title="Toutes années et tous statuts confondus. Retirer un étudiant d'une année ne supprime pas sa fiche.">
             cohorte : ${d.promotion ? (d.promotion.total_fiches ?? '') : ''} fiche(s)</span>
     </div>`;
@@ -4658,6 +4775,51 @@ async function submitPromoImport() {
         const rep = _effData.import_report || {};
         toast(`Import (année ${_effYear}) : ${rep.imported || 0} ajouté(s), `
             + `${rep.updated || 0} profil(s) mis à jour, ${rep.skipped || 0} inchangé(s)`);
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+    finally { btn.disabled = false; btn.textContent = 'Importer'; }
+}
+
+// ===== Import du classement ParcourSup =====
+// Le classement porte des centaines de candidats pour quelques dizaines d'inscrits :
+// il ne crée donc pas de fiche, il complète celles de l'effectif (rapprochement sur
+// nom + prénom). Le compte rendu reste affiché dans la fenêtre plutôt que dans un
+// message fugace : c'est là qu'on lit qui n'a pas été retrouvé, et donc s'il reste
+// l'autre classement (STI2D / hors STI2D) à importer.
+function openParcoursupImport() {
+    if (!_promoId) { toast('Sélectionnez une promotion.', 'error'); return; }
+    document.getElementById('ps-import-file').value = '';
+    document.getElementById('ps-import-report').innerHTML = '';
+    openModal('modal-ps-import');
+}
+
+async function submitParcoursupImport() {
+    const f = document.getElementById('ps-import-file').files[0];
+    if (!f) { toast('Choisissez un fichier', 'error'); return; }
+    const btn = document.getElementById('ps-import-submit');
+    btn.disabled = true; btn.textContent = 'Import en cours…';
+    try {
+        const fd = new FormData(); fd.append('file', f);
+        const r = await fetch(`/api/promotions/${_promoId}/effectif/${_effYear}/import-parcoursup`,
+            { method: 'POST', body: fd });
+        if (!r.ok) throw new Error(await r.text());
+        _effData = await r.json();
+        renderPromoEffectif();
+        const rep = _effData.ps_report || {};
+        const manque = rep.sans_correspondance || [];
+        document.getElementById('ps-import-report').innerHTML = `
+            <div style="font-size:.86rem;border:1px solid #ddd6fe;background:#f5f3ff;border-radius:8px;padding:10px 12px">
+                <strong>${rep.updated || 0}</strong> fiche(s) complétée(s) sur les
+                <strong>${rep.fiches || 0}</strong> de la cohorte, à partir de
+                ${rep.candidats || 0} candidats classés.
+                ${manque.length ? `<div style="margin-top:8px;color:#92400e">
+                    <strong>${manque.length}</strong> étudiant(s) sans ligne dans ce classement —
+                    ils figurent sans doute dans l'autre (STI2D / hors STI2D), ou leur nom y est
+                    orthographié autrement :
+                    <div style="margin-top:4px;max-height:120px;overflow:auto;color:#4b5563">
+                        ${manque.map(n => esc(n)).join(' · ')}</div></div>`
+                    : `<div style="margin-top:6px;color:#15803d">Tous les étudiants de la cohorte ont un dossier ParcourSup.</div>`}
+            </div>`;
+        toast(`ParcourSup : ${rep.updated || 0} fiche(s) complétée(s)`);
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
     finally { btn.disabled = false; btn.textContent = 'Importer'; }
 }
@@ -7467,8 +7629,27 @@ async function importFullBackup(input) {
         const r = await fetch('/api/backup/full', { method: 'POST', body: fd });
         const res = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(res.error || ('HTTP ' + r.status));
-        toast(`Restauration effectuée : ${(res.years_imported || []).length} année(s), ${res.files || 0} fichier(s) — rechargement…`);
-        setTimeout(() => location.reload(), 1500);
+        // Le serveur recompte ce qu'il a en base et le confronte à ce que la
+        // sauvegarde annonçait. Un écart est signalé sans détour : c'est ce qui
+        // manquait quand les effectifs ne revenaient pas d'une restauration.
+        const ecarts = res.ecarts || [];
+        if (ecarts.length) {
+            alert('⚠️ La restauration s\'est terminée, mais tout n\'a pas été repris :\n\n'
+                + ecarts.map(e => '  • ' + e).join('\n')
+                + '\n\nL\'état précédent a été mis de côté côté serveur (fichiers .avant-import).');
+            toast('Restauration incomplète — voir le détail', 'error');
+        } else {
+            const ct = res.contents || {};
+            const bilan = [
+                `${(res.years_imported || []).length} année(s)`,
+                ct.promotions != null ? `${ct.promotions} promotion(s)` : null,
+                ct.etudiants != null ? `${ct.etudiants} étudiant(s)` : null,
+                ct.notes != null ? `${ct.notes} note(s)` : null,
+            ].filter(Boolean).join(', ');
+            toast(`Restauration effectuée : ${bilan}`
+                + (res.verified ? ' — contenu vérifié' : '') + ' — rechargement…');
+        }
+        setTimeout(() => location.reload(), ecarts.length ? 500 : 1500);
     } catch (e) {
         toast('Erreur de restauration : ' + e.message, 'error');
     }
@@ -9722,8 +9903,9 @@ function renderStats() {
     if (!d) { el.innerHTML = '<div class="empty">Aucune donnée</div>'; return; }
     document.querySelectorAll('#stats-subtabs .subtab').forEach(b =>
         b.classList.toggle('active', b.id === 'st-subtab-' + _statsTab));
-    const render = { apercu: statsApercu, etudiants: statsEtudiants, parcours: statsParcours,
-                     resultats: statsResultats, enseignement: statsEnseignement, annees: statsAnnees };
+    const render = { apercu: statsApercu, etudiants: statsEtudiants, recrutement: statsRecrutement,
+                     parcours: statsParcours, resultats: statsResultats,
+                     enseignement: statsEnseignement, annees: statsAnnees };
     el.innerHTML = (render[_statsTab] || statsApercu)(d);
 }
 
@@ -9770,9 +9952,14 @@ function statsEtudiants(d) {
     return `<div class="st-sec"><h2>Profil d'entrée <small>${stNum(d.nb_etudiants)} fiches</small></h2>
         <div class="st-grid">
             ${stCard('Sexe', stDonut(p.sexe, { colors: { M: '#0ea5e9', F: '#ec4899', 'Non renseigné': '#e5e7eb' }, unit: 'étudiants' }))}
-            ${stCard('Série de bac', stDonut(p.bac, { colors: { 'Non renseigné': '#e5e7eb' }, unit: 'étudiants' }))}
-            ${stCard('Cursus antérieur', stDonut(p.cursus, { colors: { 'Non renseigné': '#e5e7eb' }, unit: 'étudiants' }))}
+            ${stCard('Série de bac', stDonut(p.bac, { colors: { 'Non renseigné': '#e5e7eb' }, unit: 'étudiants' }),
+                     'reprise du classement ParcourSup')}
+            ${stCard('Sous-cohorte', stDonut(p.formation, { colors: ST_FACE, unit: 'étudiants' }))}
             ${stCard('Recrutement', stDonut(p.recrutement, { colors: { 'Non renseigné': '#e5e7eb' }, unit: 'étudiants' }))}
+        </div>
+        <div style="font-size:.82rem;color:#6b7280;margin-top:10px">
+            Le détail du dossier d'entrée — classement, note, spécialités de terminale — et son
+            croisement avec les résultats sont dans l'onglet <strong>Recrutement</strong>.
         </div></div>
         <div class="st-sec"><h2>Complétude des fiches</h2><div class="st-grid wide">
             ${stCard('Champs renseignés', stBars(renseigne, { max: 100, fmt: v => stNum(v, 1) + ' %' }),
@@ -9784,6 +9971,121 @@ function statsEtudiants(d) {
             ${stCard('Étudiants par promotion', stColumns(p.promo))}
             ${stCard('Statut', stBars(p.statut, { colorFn: r => ({ Actif: '#15803d', RED: '#b45309', 'Césure': '#0e7490', Abandon: '#b91c1c' })[r[0]] || '#64748b' }))}
         </div></div>`;
+}
+
+// ===== Recrutement : le dossier ParcourSup, et ce qu'il annonce des résultats =====
+// Le classement dit le niveau à l'entrée ; les notes disent ce qu'il en advient.
+// Les croiser demande des étudiants qui aient les deux — une promotion tout juste
+// recrutée n'a pas encore de notes, une promotion ancienne n'a pas de classement
+// importé. Quand le croisement est vide, on dit POURQUOI plutôt que d'afficher
+// des cadres blancs : la couverture par promotion est là pour ça.
+function statsRecrutement(d) {
+    const p = d.parcoursup || {};
+    if (!p.avec_dossier) {
+        return `<div class="empty">Aucun dossier ParcourSup enregistré.<br>
+            Importez un classement depuis <strong>Promotions → Effectifs → Importer ParcourSup</strong>
+            pour alimenter cette page.</div>`;
+    }
+    const n = p.note || {}, r = p.rang || {};
+    // Corrélation : au-delà du chiffre, ce qu'il faut en conclure. Une corrélation
+    // faible sur le classement d'entrée est un résultat en soi, pas une anomalie.
+    const corrLib = v => v === null || v === undefined ? '—'
+        : (Math.abs(v) < 0.2 ? 'quasi nulle' : Math.abs(v) < 0.4 ? 'faible'
+            : Math.abs(v) < 0.6 ? 'modérée' : 'forte');
+    const kpis = `<div class="st-kpis">
+        ${stKpi('Dossiers ParcourSup', stNum(p.avec_dossier), `sur ${stNum(p.total)} fiches`)}
+        ${stKpi('Note ParcourSup moyenne', n.moy != null ? stNum(n.moy, 2) : '—',
+                n.n ? `médiane ${stNum(n.med, 2)} · de ${stNum(n.min, 1)} à ${stNum(n.max, 1)} · ${stNum(n.n)} dossiers` : '', '#8b5cf6')}
+        ${stKpi('Rang médian', r.med != null ? stNum(r.med) : '—',
+                r.n ? `du ${stNum(r.min)}ᵉ au ${stNum(r.max)}ᵉ · quartiles ${stNum(r.q1)}–${stNum(r.q3)}` : '', '#0ea5e9')}
+        ${stKpi('Lien classement / résultats', p.correlation_note != null ? stNum(p.correlation_note, 2) : '—',
+                p.nb_apparies ? `corrélation ${corrLib(p.correlation_note)} · ${stNum(p.nb_apparies)} étudiants`
+                              : 'aucun étudiant n\'a encore dossier ET notes', '#10b981')}
+    </div>`;
+
+    // Une note globale de 0 marque un dossier écarté par la commission (note
+    // modulée à 0, rang retiré), pas un candidat qui aurait obtenu 0. On le dit
+    // plutôt que de laisser croire à un recrutement plus faible qu'il n'est.
+    const ecart = p.notes_ecartees ? `<div class="st-note-warn" style="margin-top:12px">
+            ${stNum(p.notes_ecartees)} dossier(s) portent une note globale de <strong>0</strong> :
+            c'est la modulation par laquelle la commission écarte un dossier — le candidat perd
+            aussi son rang. Ces zéros sont <strong>exclus des moyennes et des croisements</strong>
+            de cette page ; la colonne <em>Note</em> de l'onglet Effectifs, elle, affiche toujours
+            la valeur officielle du classement.</div>` : '';
+
+    const profil = `<div class="st-sec"><h2>Profil des candidats recrutés
+            <small>${stNum(p.avec_dossier)} dossiers</small></h2>
+        ${ecart}
+        <div class="st-grid">
+            ${stCard('Série de bac', stDonut(p.serie, { unit: 'étudiants' }))}
+            ${stCard('Profil à la candidature', stDonut(p.profil, { unit: 'étudiants' }))}
+        </div>
+        <div class="st-grid wide" style="margin-top:14px">
+            ${stCard('Note globale ParcourSup', stColumns(p.histogramme, { colorFn: (x, i) => i < 10 ? '#f59e0b' : '#10b981' }), 'tranches de 1 point')}
+            ${stCard('Combinaisons de spécialités', stBars(p.specialites, { color: '#8b5cf6' }), 'enseignements de terminale')}
+        </div>
+        <div class="st-grid wide" style="margin-top:14px">
+            ${stCard('Scolarité de l\'année de candidature', stBars(p.scolarite, { color: '#0ea5e9' }))}
+            ${stCard('Spécialité abandonnée en première', stBars(p.spe_abandon, { color: '#64748b' }))}
+        </div></div>`;
+
+    const niveau = `<div class="st-sec"><h2>Niveau du recrutement</h2><div class="st-grid">
+            ${stCard('Note ParcourSup moyenne par promotion',
+                     stBars(p.note_par_promo, { max: 20, dec: 2, color: '#4f46e5' }),
+                     'permet de suivre l\'évolution d\'une campagne à l\'autre')}
+            ${stCard('Note ParcourSup moyenne par sous-cohorte',
+                     stBars(p.note_par_face, { max: 20, dec: 2, colorFn: r => ST_FACE[r[0]] || '#64748b' }))}
+        </div></div>`;
+
+    // --- le croisement demandé : réussite selon le classement et selon la spécialité
+    const vide = !p.nb_apparies;
+    const croise = (titre, rows, note, opts) => stCard(titre,
+        rows && rows.length ? stBars(rows, Object.assign({ max: 20, dec: 2, color: '#4f46e5' }, opts || {}))
+                            : '<div class="st-none">Pas encore d\'étudiant noté dans ce groupe</div>', note);
+    const pourcent = { max: 100, dec: 1, color: '#15803d', fmt: v => stNum(v, 1) + ' %' };
+    const explication = vide ? `<div class="st-note-warn">
+            <strong>Ce croisement est vide pour l'instant.</strong>
+            Il demande des étudiants ayant à la fois un dossier ParcourSup et des notes :
+            ${stNum(p.avec_dossier)} fiche(s) ont un dossier, ${stNum(p.avec_notes)} ont des notes,
+            aucune n'a les deux. Il se remplira dès les premières notes de la promotion
+            recrutée, ou si vous importez les classements des promotions déjà notées.
+            <table class="st-tbl" style="margin-top:10px">
+                <thead><tr><th>Promotion</th><th>Fiches</th><th>Dossier ParcourSup</th><th>Étudiants notés</th></tr></thead>
+                <tbody>${(p.couverture || []).map(c => `<tr><td>${esc(c[0])}</td><td>${stNum(c[1])}</td>
+                    <td>${stNum(c[2])}</td><td>${stNum(c[3])}</td></tr>`).join('')}</tbody></table>
+        </div>` : '';
+
+    const reussite = `<div class="st-sec">
+        <h2>Recrutement × réussite <small>groupes d'au moins 3 étudiants notés</small></h2>
+        ${explication}
+        <div class="st-grid">
+            ${croise('Moyenne de BUT par tranche de classement', p.reussite_par_rang, 'rang au classement ParcourSup')}
+            ${croise('Moyenne de BUT par note ParcourSup', p.reussite_par_note, 'note globale du dossier')}
+        </div>
+        <div class="st-grid" style="margin-top:14px">
+            ${croise('Moyenne de BUT par combinaison de spécialités', p.reussite_par_specialites, 'enseignements de terminale')}
+            ${croise('Moyenne de BUT par série de bac', p.reussite_par_serie)}
+        </div>
+        <div class="st-grid" style="margin-top:14px">
+            ${croise('UE validées par tranche de classement', p.validation_par_rang, 'part des UE acquises', pourcent)}
+            ${croise('UE validées par combinaison de spécialités', p.validation_par_specialites, 'part des UE acquises', pourcent)}
+        </div>
+        <div class="st-grid" style="margin-top:14px">
+            ${croise('Moyenne de BUT par profil à la candidature', p.reussite_par_profil, 'terminale, réorienté, non scolarisé…')}
+            ${stCard('Ce que dit le dossier d\'entrée', `<table class="st-tbl">
+                <tbody>
+                <tr><td>Corrélation note ParcourSup / moyenne de BUT</td>
+                    <td><strong>${p.correlation_note != null ? stNum(p.correlation_note, 2) : '—'}</strong>
+                        <span style="color:#6b7280">${p.correlation_note != null ? '· ' + corrLib(p.correlation_note) : ''}</span></td></tr>
+                <tr><td>Corrélation rang au classement / moyenne de BUT</td>
+                    <td><strong>${p.correlation_rang != null ? stNum(p.correlation_rang, 2) : '—'}</strong>
+                        <span style="color:#6b7280">${p.correlation_rang != null ? '· ' + corrLib(p.correlation_rang) : ''}</span></td></tr>
+                <tr><td>Étudiants pris en compte</td><td>${stNum(p.nb_apparies)}</td></tr>
+                </tbody></table>`,
+                'un rang meilleur porte une corrélation positive ; proche de 0, le classement n\'annonce pas les résultats')}
+        </div></div>`;
+
+    return kpis + profil + niveau + reussite;
 }
 
 function statsParcours(d) {
@@ -9860,8 +10162,12 @@ function statsResultats(d) {
         <div class="st-grid">
             ${croise('Par série de bac', r.par_bac)}
             ${croise('Par sexe', r.par_sexe)}
-            ${croise('Par cursus antérieur', r.par_cursus)}
             ${croise('Par voie de recrutement', r.par_recrutement)}
+        </div>
+        <div style="font-size:.82rem;color:#6b7280;margin-top:10px">
+            La réussite selon le <strong>classement ParcourSup</strong> et selon les
+            <strong>spécialités de terminale</strong> se lit dans l'onglet
+            <strong>Recrutement</strong>.
         </div></div>`;
 }
 

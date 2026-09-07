@@ -414,13 +414,61 @@ def _fullbackup_safe_arcname(name):
         return len(parts) == 3 and _is_year(parts[1]) and parts[2] == f'edt_{parts[1]}.db'
     return name.startswith('uploads/notes/') or name.startswith('uploads/contraintes/')
 
-def _remove_wal_shm(db_path):
-    """Supprime les fichiers WAL/SHM d'une base avant son remplacement
-    (un WAL périmé corromprait la base restaurée)."""
-    for suffix in ('-wal', '-shm'):
+def _check_sqlite_bytes(data):
+    """Vérifie que ces octets sont une base SQLite lisible. Sert de contrôle
+    préalable à la restauration : une archive tronquée doit être refusée AVANT
+    qu'on ait commencé à écraser quoi que ce soit, pas découverte en cours de
+    route avec la moitié du site déjà remplacée."""
+    fd, tmp = tempfile.mkstemp(suffix='.db')
+    os.close(fd)
+    try:
+        with open(tmp, 'wb') as fh:
+            fh.write(data)
+        db = sqlite3.connect(tmp)
         try:
-            if os.path.exists(db_path + suffix):
-                os.remove(db_path + suffix)
+            res = db.execute('PRAGMA quick_check').fetchone()
+            if not res or res[0] != 'ok':
+                raise ValueError(res[0] if res else 'base illisible')
+            return db.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table'").fetchone()[0]
+        finally:
+            db.close()
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+def _restore_sqlite(target, data):
+    """Remplace le contenu d'une base par celui de l'archive, EN PASSANT PAR SQLITE
+    (API backup) plutôt qu'en réécrivant le fichier.
+
+    Écraser le fichier ne suffisait pas : les bases tournent en mode WAL, et les
+    écritures récentes vivent dans un `<base>.db-wal` à côté. Tant qu'une connexion
+    reste ouverte — un autre onglet, une requête concurrente, un autre worker — ce
+    WAL ne peut pas être supprimé ; il survit au remplacement du fichier et SQLite
+    le rejoue par-dessus, ramenant la base restaurée à son état d'avant. C'est ce
+    qui faisait disparaître les effectifs d'une sauvegarde pourtant complète.
+
+    L'API backup écrit à travers SQLite : le WAL est cohérent avec le nouveau
+    contenu et les connexions ouvertes voient le changement."""
+    fd, tmp = tempfile.mkstemp(suffix='.db')
+    os.close(fd)
+    try:
+        with open(tmp, 'wb') as fh:
+            fh.write(data)
+        src = sqlite3.connect(tmp)
+        dst = sqlite3.connect(target, timeout=30)
+        try:
+            src.backup(dst)
+            # Le contenu restauré est replié dans le fichier principal : la base
+            # reste exploitable même copiée sans son WAL.
+            dst.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        finally:
+            src.close()
+            dst.close()
+    finally:
+        try:
+            os.remove(tmp)
         except OSError:
             pass
 
@@ -434,6 +482,65 @@ def _stash_dir(d):
         os.rename(d, stash)
     except OSError:
         shutil.rmtree(d, ignore_errors=True)
+
+def _count_rows(path, table):
+    """Nombre de lignes d'une table, ou None si la base ou la table manque."""
+    if not os.path.isfile(path):
+        return None
+    db = sqlite3.connect(path)
+    try:
+        return db.execute('SELECT COUNT(*) FROM ' + table).fetchone()[0]
+    except sqlite3.Error:
+        return None
+    finally:
+        db.close()
+
+def _fullbackup_contents():
+    """Inventaire chiffré de ce que contiennent les données du site.
+
+    Calculé à l'identique à l'export et après une restauration : comparer les deux
+    est la seule preuve, pour l'administrateur, qu'une sauvegarde a bien tout repris.
+    Sans ce compte rendu, une base restée en arrière passait inaperçue jusqu'à ce
+    qu'on ouvre l'onglet concerné."""
+    inv = {'annees': {}}
+    for y in list_years():
+        p = db_path_for_year(y)
+        inv['annees'][y] = {'enseignants': _count_rows(p, 'teachers'),
+                            'matieres': _count_rows(p, 'courses'),
+                            'salles': _count_rows(p, 'rooms')}
+    inv['promotions'] = _count_rows(_PROMOTIONS_DB, 'promotions')
+    inv['etudiants'] = _count_rows(_PROMOTIONS_DB, 'promotion_students')
+    inv['notes'] = _count_rows(_PROMOTIONS_DB, 'student_marks')
+    inv['programmes'] = _count_rows(_PROGRAMMES_DB, 'programmes')
+    inv['fichiers_notes'] = sum(1 for _ in _iter_dir_files(_NOTES_DIR, 'n'))
+    inv['fichiers_contraintes'] = sum(1 for _ in _iter_dir_files(_CONSTRAINTS_DIR, 'c'))
+    return inv
+
+_CONTENT_LABELS = {'promotions': 'promotions', 'etudiants': 'étudiants',
+                   'notes': 'notes', 'programmes': 'programmes',
+                   'fichiers_notes': 'fichiers de notes',
+                   'fichiers_contraintes': 'fichiers de contraintes',
+                   'enseignants': 'enseignants', 'matieres': 'matières',
+                   'salles': 'salles'}
+
+def _compare_contents(attendu, obtenu):
+    """Écarts entre l'inventaire annoncé par la sauvegarde et celui obtenu après
+    restauration, en clair. Liste vide = tout a été repris."""
+    ecarts = []
+    for cle, lib in _CONTENT_LABELS.items():
+        a, o = attendu.get(cle), obtenu.get(cle)
+        if a is not None and o is not None and a != o:
+            ecarts.append(f'{lib} : {a} attendu(s), {o} restauré(s)')
+    for y, av in (attendu.get('annees') or {}).items():
+        ov = (obtenu.get('annees') or {}).get(y)
+        if ov is None:
+            ecarts.append(f'année {y} : absente après restauration')
+            continue
+        for cle, val in av.items():
+            if val is not None and ov.get(cle) is not None and val != ov[cle]:
+                ecarts.append(f'{y} — {_CONTENT_LABELS.get(cle, cle)} : '
+                              f'{val} attendu(s), {ov[cle]} restauré(s)')
+    return ecarts
 
 @app.route('/api/backup/full', methods=['GET'])
 def full_backup_export():
@@ -463,6 +570,9 @@ def full_backup_export():
             'version': _FULLBACKUP_VERSION,
             'created_at': datetime.now().isoformat(timespec='seconds'),
             'years': years,
+            # Inventaire de ce que l'archive emporte : la restauration le compare
+            # à ce qu'elle obtient et signale tout écart.
+            'contents': _fullbackup_contents(),
         }, indent=2))
     buf.seek(0)
     _audit('FULL_BACKUP_EXPORT', years=','.join(years))
@@ -495,6 +605,16 @@ def full_backup_import():
     if bad:
         return error_response('Entrées non autorisées dans l\'archive : '
                               + ', '.join(bad[:5]), 400)
+    # Toutes les bases de l'archive sont contrôlées AVANT d'écraser quoi que ce
+    # soit : une archive tronquée doit être refusée entière, pas laisser le site
+    # à moitié restauré.
+    for n in names:
+        if n.startswith('databases/'):
+            try:
+                _check_sqlite_bytes(z.read(n))
+            except Exception as e:
+                return error_response(f'Archive inutilisable : « {n} » n\'est pas une base '
+                                      f'SQLite lisible ({e}). Rien n\'a été modifié.', 400)
 
     # Sauvegarde de sécurité de l'existant avant écrasement
     for y in list_years():
@@ -534,9 +654,10 @@ def full_backup_import():
             target = os.path.join(_CONSTRAINTS_DIR, *n.split('/')[2:])
         os.makedirs(os.path.dirname(target), exist_ok=True)
         if target.endswith('.db'):
-            _remove_wal_shm(target)
-        with open(target, 'wb') as out:
-            out.write(z.read(n))
+            _restore_sqlite(target, z.read(n))
+        else:
+            with open(target, 'wb') as out:
+                out.write(z.read(n))
 
     # Caches et migrations de schéma sur les bases restaurées
     global _settings_cache
@@ -560,14 +681,26 @@ def full_backup_import():
         pass
 
     untouched = [y for y in list_years() if y not in imported_years]
+    # Vérification : ce que l'archive annonçait doit se retrouver en base. Une
+    # sauvegarde qui « passe » en laissant un pan du site en arrière (c'est ce
+    # qu'il se produisait avec les effectifs) doit se voir tout de suite.
+    attendu = manifest.get('contents') or {}
+    obtenu = _fullbackup_contents()
+    ecarts = _compare_contents(attendu, obtenu)
     _audit('FULL_BACKUP_IMPORT', user=session.get('user'),
-           years=','.join(imported_years), untouched=','.join(untouched))
+           years=','.join(imported_years), untouched=','.join(untouched),
+           ecarts=len(ecarts))
     return jsonify({
         'ok': True,
         'years_imported': imported_years,
         'years_untouched': untouched,
         'files': len(names) - 1,
         'backup_created_at': manifest.get('created_at'),
+        'contents': obtenu,
+        # Vide = tout ce que la sauvegarde annonçait a été retrouvé. Absent du
+        # manifeste (sauvegardes d'avant cette vérification) : rien à comparer.
+        'verified': bool(attendu),
+        'ecarts': ecarts,
     })
 
 def school_week_key(w, start_week=36, max_week=52):
@@ -651,24 +784,213 @@ _STUDENT_CURSUS = ['ING', 'REP', 'BAC', 'PP', 'BTS']  # École d'ingé / Reprise
 # lignes déjà saisies pour qu'elles restent des valeurs autorisées.
 _STUDENT_CURSUS_RENAMES = {'EI': 'ING', 'RE': 'REP', 'PB': 'BAC', 'PrP': 'PP'}
 _STUDENT_RECRUT = ['PS', 'EC', 'ADIUT']               # ParcourSup / eCandidat / ADIUT (étrangers)
-_STUDENT_PROFILE = {'sexe': _STUDENT_SEXE, 'bac': _STUDENT_BAC,
-                    'cursus': _STUDENT_CURSUS, 'recrutement': _STUDENT_RECRUT}
+# Champs du profil d'entrée SAISISSABLES à l'écran (colonnes du tableau d'effectif).
+# BAC et cursus n'en font plus partie : la série de bac vient désormais du classement
+# ParcourSup (colonne « Série », recopiée dans `bac` pour les statistiques) et le
+# cursus antérieur se lit dans les colonnes ParcourSup Profil / Diplôme.
+_STUDENT_PROFILE = {'sexe': _STUDENT_SEXE, 'recrutement': _STUDENT_RECRUT}
+# Tous les champs de profil portés par une fiche, saisis à l'écran ou alimentés par
+# un import : les statistiques mesurent la complétude des uns comme des autres.
+_STUDENT_PROFILE_FIELDS = ('sexe', 'bac', 'cursus', 'recrutement')
 # Signification des codes, rappelée au-dessus du tableau d'effectif (onglet
 # Promotions) et en bas de l'export. Un code sans libellé n'y figure pas : ceux
-# du sexe (M/F) et les séries de bac qui se lisent d'elles-mêmes n'en ont pas.
+# du sexe (M/F) n'en ont pas.
 _STUDENT_PROFILE_LABELS = {
-    'bac': {'NBGE': 'Nouveau Bac Général', 'TI2D': 'STI2D', 'ETR': 'Étranger'},
-    'cursus': {'ING': "École d'ingénieur", 'REP': "Reprise d'études",
-               'BAC': 'Post-Bac', 'PP': 'Post-Prépa',
-               'BTS': 'Brevet de technicien supérieur'},
     'recrutement': {'PS': 'ParcourSup', 'EC': 'eCandidat',
                     'ADIUT': 'ADIUT (candidats étrangers)'},
 }
+# Codes qui ne sont plus saisis mais restent lus (statistiques, fiches anciennes).
+_STUDENT_BAC_LABELS = {'NBGE': 'Nouveau Bac Général', 'TI2D': 'STI2D', 'ETR': 'Étranger'}
+_STUDENT_CURSUS_LABELS = {'ING': "École d'ingénieur", 'REP': "Reprise d'études",
+                          'BAC': 'Post-Bac', 'PP': 'Post-Prépa',
+                          'BTS': 'Brevet de technicien supérieur'}
 
 def _profile_key(v):
     """Clé de comparaison d'un libellé : minuscules, sans accents ni ponctuation."""
     s = unicodedata.normalize('NFD', '' if v is None else str(v))
     return re.sub(r'[^a-z0-9]', '', s.encode('ascii', 'ignore').decode().lower())
+
+# ===== Classement ParcourSup (export « dossier_AD_… ») =====
+# Colonnes du classement reprises sur la fiche étudiant. Chaque entrée :
+#   (champ de la fiche, en-tête affiché, préfixe de l'en-tête du fichier, type SQL)
+# L'en-tête du fichier est repéré par PRÉFIXE, pas par égalité : « Scolarité
+# 2025/2026 » porte l'année dans son intitulé et changerait à chaque campagne.
+# Nom et prénom (colonnes C/D) ne sont pas repris : ils servent au rapprochement
+# avec les fiches déjà présentes, que cet import complète sans jamais en créer.
+# Les en-têtes sont volontairement courts (le tableau porte une vingtaine de
+# colonnes) : leur sens complet, et la légende des abréviations employées dans la
+# colonne, sont donnés en infobulle plutôt qu'en légende sous le tableau.
+_PS_COLUMNS = [
+    ('ps_classement',  'Rang',    'classement',           'INTEGER',
+     'Rang au classement ParcourSup'),
+    ('ps_numero',      'N° PS',   'numeroparcoursup',     'TEXT',
+     'Numéro de candidat ParcourSup'),
+    ('ps_profil',      'Profil',  'profil',               'TEXT',
+     "Profil du candidat — Term. : en terminale · Réor. : réorienté · Non scol. : non "
+     "scolarisé · MAN : mise à niveau · Sup./Sec. étr. : scolarisé à l'étranger"),
+    ('ps_scolarite',   'Scol.',   'scolarite',            'TEXT',
+     "Scolarité de l'année de candidature — Term. / 1re : lycée · Sup1, Sup2, Sup3 : "
+     "1re, 2e, 3e année d'études supérieures, suivie de la filière · Prépa sup : année "
+     "préparatoire au supérieur"),
+    ('ps_diplome',     'Dipl.',   'diplome',              'TEXT',
+     'Diplôme — Bac : baccalauréat · Équiv. : diplôme équivalent'),
+    ('ps_obtention',   'État',    'enpreparationobtenu',  'TEXT',
+     'Diplôme préparé ou déjà obtenu — Prép. : en préparation · Obt. : obtenu'),
+    ('ps_serie',       'Série',   'seriedelanoteglobale', 'TEXT',
+     'Série retenue pour la note globale — GEN : générale · PRO : baccalauréat '
+     'professionnel · NC : non codifiée · sinon la série technologique (STI2D, STMG…)'),
+    ('ps_specialites', 'Spé term.', 'combinaisondesenseignements', 'TEXT',
+     "Enseignements de spécialité de terminale, en sigles usuels — MATHS, PC "
+     "(physique-chimie), NSI, SI, SVT, SES, LLCER, HGGSP, HLP · STI2D : PCM et 2I2D"),
+    ('ps_spe_abandon', 'Spé abd.', 'enseignementdespecialiteabandonne', 'TEXT',
+     'Enseignement de spécialité abandonné en fin de première (mêmes sigles)'),
+    ('ps_spe_bacpro',  'Spé pro', 'specialitebacpro',     'TEXT',
+     "Spécialité du baccalauréat professionnel, ou du baccalauréat d'avant 2021 — "
+     "ITEC, EE, AC, SIN pour un STI2D · MELEC, MSPC… pour un bac pro"),
+    ('ps_note',        'Note',    'noteglobalemodifiee',  'REAL',
+     'Note globale ParcourSup, modifiée ou modulée'),
+]
+_PS_FIELDS = [c[0] for c in _PS_COLUMNS]
+
+# --- Abréviations d'affichage du dossier ParcourSup ---
+# Onze colonnes reprises du classement, dont des libellés à rallonge : en toutes
+# lettres, « Ingénierie, innovation et développement durable » à lui seul prenait
+# plus de large que le reste de la fiche. Le tableau affiche donc ces abréviations ;
+# la valeur complète reste en infobulle sur la cellule et dans l'export Excel.
+# Les clés sont normalisées (_profile_key : minuscules, sans accents ni ponctuation),
+# ce qui absorbe au passage les coquilles du fichier source (apostrophes doublées).
+# Une valeur absente de ces tables s'affiche en clair : rien n'est jamais masqué.
+
+# Enseignements de spécialité, abrégés par leurs sigles usuels de l'Éducation
+# nationale. Sert aux trois colonnes de spécialités, chacune combinant ces termes.
+_PS_SPE_ABBR = {
+    # voie générale
+    'Mathématiques Spécialité': 'MATHS',
+    'Physique-Chimie Spécialité': 'PC',
+    'Numérique et Sciences Informatiques': 'NSI',
+    'Sciences de la vie et de la Terre Spécialité': 'SVT',
+    "Sciences de l'ingénieur et sciences physiques": 'SI',
+    "Sciences de l'ingénieur": 'SI',
+    'Sciences Economiques et Sociales Spécialité': 'SES',
+    'Langues, littératures et cultures étrangères et régionales': 'LLCER',
+    'Histoire-Géographie, Géopolitique et Sciences politiques': 'HGGSP',
+    'Humanités, Littérature et Philosophie': 'HLP',
+    'Éducation Physique, Pratiques Et Culture Sportives': 'EPPCS',
+    'Arts Plastiques Spécialité': 'ARTS',
+    "Littérature et langues et cultures de l’Antiquité: Latin": 'LLCA',
+    'Biologie': 'BIO',
+    'Ecologie': 'ÉCO',
+    # STI2D
+    'Physique-Chimie et Mathématiques': 'PCM',
+    'Ingénierie, innovation et développement durable': '2I2D',
+    'Innovation Technologique': 'IT',
+    "Systèmes d'information et numérique": 'SIN',
+    'Innovation technologique et eco conception': 'ITEC',
+    'Energies et environnement': 'EE',
+    'Architecture et construction': 'AC',
+    'Système informatique et numérique': 'SIN',
+    'Modélisation et prototypage 3d': 'MP3D',
+    # STL
+    'Sciences physiques et chimiques en laboratoire': 'SPCL',
+    'Biochimie-Biologie': 'BB',
+    'Biochimie-Biologie-Biotechnologie': 'BBB',
+    'Physique-Chimie pour la santé': 'PCS',
+    # STMG
+    'Droit et Economie': 'DE',
+    'Msgn': 'MSGN',
+    'Sciences de la gestion et numérique': 'MSGN',
+    "Systèmes d'information et de Gestion": 'SIG',
+    'Gestion et Finance': 'GF',
+    'Mercatique': 'MERC',
+    'Ressources humaines et communication': 'RHC',
+    # ST2S / STHR
+    'Sciences et techniques sanitaires et sociales': 'ST2S',
+    'Chimie, biologie et physiopathologie humaines': 'CBPH',
+    'Economie et gestion hôtelière': 'EGH',
+    'Sciences et Technologies culinaires et services-ESAE': 'STC',
+    # bacs professionnels
+    "Bac pro métiers de l'électricité et de ses environnements connectés": 'MELEC',
+    'Maintenance des systèmes de production connectés': 'MSPC',
+    'Maintenance des matériels option construction et manutention': 'MMCM',
+    'Maintenance véhicules option a voitures particulières': 'MV-VP',
+    'Aéronautique option systèmes': 'AÉRO-SYS',
+    'Microtechniques': 'MICRO',
+    'Sciences de la vie et de la terre': 'SVT',
+    'Sciences physiques': 'PC',
+    'Mathématiques': 'MATHS',
+}
+
+# Colonnes à valeur unique : profil, diplôme, obtention, série.
+_PS_VAL_ABBR = {
+    # Profil du candidat
+    'En terminale': 'Term.',
+    'Réorientés': 'Réor.',
+    'Non scolarisés': 'Non scol.',
+    'En mise à niveau': 'MAN',
+    'Dans le supérieur étranger': 'Sup. étr.',
+    'Dans le secondaire étranger': 'Sec. étr.',
+    'Autres': 'Autre',
+    # Diplôme préparé / obtenu
+    'Baccalauréat': 'Bac',
+    'Diplôme équivalent': 'Équiv.',
+    'En Préparation': 'Prép.',
+    'Obtenu': 'Obt.',
+    # Série de la note globale
+    'Générale': 'GEN',
+    'non codifiées': 'NC',
+    'P': 'PRO',
+    # Scolarité de l'année de candidature (« niveau - filière »), énumérée en
+    # entier : les intitulés sont figés côté ParcourSup et se comptent sur deux mains.
+    'Terminale - Terminale': 'Term.',
+    'Première - Première': '1re',
+    "1ère année d'études supérieures - BUT": 'Sup1 BUT',
+    "1ère année d'études supérieures - CPGE": 'Sup1 CPGE',
+    "1ère année d'études supérieures - Licence": 'Sup1 Licence',
+    "1ère année d'études supérieures - Formations des écoles d'ingénieurs": 'Sup1 Ingé',
+    "1ère année d'études supérieures - BTS - BTSA - BTSM": 'Sup1 BTS',
+    "1ère année d'études supérieures - Etudes de santé": 'Sup1 Santé',
+    "1ère année d'études supérieures - Formations des écoles de commerce et de management": 'Sup1 Commerce',
+    "1ère année d'études supérieures - Formations d'art, de design et du spectacle vivant": 'Sup1 Art',
+    "1ère année d'études supérieures - Autre formation du supérieur": 'Sup1 autre',
+    "1ère année d'études supérieures - DCG": 'Sup1 DCG',
+    "2nd année d'études supérieures - BUT": 'Sup2 BUT',
+    "2nd année d'études supérieures - CPGE": 'Sup2 CPGE',
+    "2nd année d'études supérieures - Licence": 'Sup2 Licence',
+    "2nd année d'études supérieures - Formations des écoles d'ingénieurs": 'Sup2 Ingé',
+    "2nd année d'études supérieures - BTS - BTSA - BTSM": 'Sup2 BTS',
+    "3ème année d'études supérieures - Licence": 'Sup3 Licence',
+    "Année préparatoire aux études supérieures - Formations préparatoires à l'enseignement supérieur": 'Prépa sup',
+    "Année préparatoire aux études supérieures - Certificats de spécialisation et FCIL": 'Prépa CS/FCIL',
+    "Scolarisé(e) en début d'année en 1ère année d'études supérieures": 'Sup1',
+    "Scolarisé(e) en début d'année en 2nd année d'études supérieures": 'Sup2',
+    "Scolarisé(e) en début d'année en 3ème année d'études supérieures": 'Sup3',
+    "Scolarisé(e) en début d'année en Année préparatoire aux études supérieures": 'Prépa sup',
+}
+_PS_SPE_KEYS = {_profile_key(k): v for k, v in _PS_SPE_ABBR.items()}
+_PS_VAL_KEYS = {_profile_key(k): v for k, v in _PS_VAL_ABBR.items()}
+# Colonnes dont la valeur combine plusieurs enseignements de spécialité.
+_PS_SPE_FIELDS = ('ps_specialites', 'ps_spe_abandon', 'ps_spe_bacpro')
+
+def _ps_court(field, value):
+    """Valeur abrégée pour l'affichage, ou la valeur telle quelle si aucune
+    abréviation ne la couvre — mieux vaut une colonne large qu'une information
+    tronquée sans qu'on sache par quoi."""
+    if not isinstance(value, str) or value == '':
+        return value        # rang et note : rien à abréger
+    txt = value
+    if field in _PS_SPE_FIELDS:
+        # « Maths Spé / PC Spé », parfois trois termes : chaque enseignement est
+        # abrégé séparément, sinon la combinaison ne serait jamais reconnue entière.
+        parts = [p.strip() for p in txt.split('/') if p.strip()]
+        if not parts:
+            return txt
+        return ' + '.join(_PS_SPE_KEYS.get(_profile_key(p), p) for p in parts)
+    return _PS_VAL_KEYS.get(_profile_key(txt), txt)
+# Colonnes du fichier servant au rapprochement (jamais recopiées telles quelles).
+_PS_IDENT = {'nom': 'nom', 'prenom': 'prenom'}
+_PS_HEADER_SCAN = 10        # lignes examinées à la recherche de la ligne d'en-têtes
+# Cellules du classement qui signifient « vide » : l'export y écrit un tiret.
+_PS_EMPTY = ('', '-', '–', 'na', 'nc')
 
 # Cellules qui signifient « non renseigné » dans une liste importée
 _PROFILE_EMPTY = ('', 'na', 'nc', 'nr', 'ns', 'inconnu', 'none', 'null')
@@ -824,6 +1146,13 @@ def _apply_promotions_migrations(db):
     # Codes cursus renommés : on remet les anciennes valeurs au nouveau format.
     for _old, _new in _STUDENT_CURSUS_RENAMES.items():
         db.execute("UPDATE promotion_students SET cursus=? WHERE cursus=?", (_new, _old))
+    # Classement ParcourSup : rang, note et éléments de dossier du candidat, repris
+    # de l'export « dossier_AD_… » et affichés dans le tableau d'effectif.
+    for _f, _lbl, _pfx, _sql, _t in _PS_COLUMNS:
+        try:
+            db.execute(f"ALTER TABLE promotion_students ADD COLUMN {_f} {_sql}")
+        except sqlite3.OperationalError:
+            pass
     # Ajustements manuels de l'effectif d'une année (par-dessus le calcul auto) :
     # action='remove' (retiré de l'année) ou 'add' (réintégré / ajouté à l'année).
     db.execute('''
@@ -2832,7 +3161,10 @@ def _face(formation):
     return formation if formation in _SUBCOHORTS else 'FTP'
 
 # En-têtes acceptés pour une liste au format tableur (clé compacte : minuscules,
-# sans accents ni ponctuation). Sexe et BAC alimentent le profil d'entrée.
+# sans accents ni ponctuation). Le sexe alimente le profil d'entrée. La série de
+# bac n'est plus lue ici : elle vient du classement ParcourSup, seule source de
+# ce que l'écran affiche, pour qu'un PV de jury ou une liste de groupes ne vienne
+# pas la réécrire avec une nomenclature différente.
 _STUDENT_LIST_HEADERS = {
     'nom': ('nom', 'name', 'nomdefamille', 'lastname'),
     'prenom': ('prenom', 'prenom1', 'firstname'),
@@ -2841,10 +3173,8 @@ _STUDENT_LIST_HEADERS = {
                'numeroetudiant', 'codeetudiant'),
     'naissance': ('nele', 'neele', 'dob', 'ddn', 'datedenaissance', 'datenaissance'),
     'sexe': ('sexe', 'sex', 'genre', 'gender', 'civilite', 'hf', 'fh', 'mf', 'fm'),
-    'bac': ('bac', 'baccalaureat', 'bacobtenu', 'serie', 'seriebac', 'seriedebac',
-            'seriedubac', 'typebac', 'typedebac'),
 }
-_STUDENT_LIST_FIELDS = ('numero', 'nom', 'prenom', 'naissance', 'sexe', 'bac')
+_STUDENT_LIST_FIELDS = ('numero', 'nom', 'prenom', 'naissance', 'sexe')
 _STUDENT_LIST_HEADER_SCAN = 12    # lignes examinées à la recherche des en-têtes
 # Feuilles d'un classeur de PV de jury qui portent un effectif : la délibération
 # (PV…, Jury…) et son brouillon (Temp). Les autres n'en sont pas une.
@@ -2918,28 +3248,34 @@ def _parse_student_list(path):
     """Lit une liste d'étudiants : auto-détection format Apogée (.xlsm/.xlsx,
     roster ligne 18+) ou tableur simple (ligne d'en-têtes cherchée dans les
     premières lignes de chaque onglet). Retourne
-    [{numero, nom, prenom, naissance, sexe, bac}]."""
-    import openpyxl
+    [{numero, nom, prenom, naissance, sexe}]."""
     is_xlsm = path.lower().endswith('.xlsm')
-    wb = openpyxl.load_workbook(path, data_only=True, keep_vba=is_xlsm)
+    # Lecture tolérante : sans elle un classement ParcourSup échouerait sur sa
+    # feuille de styles avant d'atteindre le message qui oriente vers le bon bouton.
+    wb = _load_workbook_lenient(path, data_only=True, keep_vba=is_xlsm)
     ws = wb.active
+    # Un classement ParcourSup a bien des colonnes Nom/Prénom, mais il liste tous
+    # les candidats, admis ou non : l'importer ici créerait des centaines de fiches.
+    if _looks_like_parcoursup(wb):
+        raise ValueError("ce fichier est un classement ParcourSup — utilisez le bouton "
+                         "« Importer ParcourSup », en haut de l'écran Effectif")
 
     def txt(v):
         return ('' if v is None else str(v)).strip()
 
-    def rec(numero='', nom='', prenom='', naissance='', bac=''):
+    def rec(numero='', nom='', prenom='', naissance=''):
         return {'numero': numero, 'nom': nom, 'prenom': prenom,
-                'naissance': naissance, 'sexe': '', 'bac': bac}
+                'naissance': naissance, 'sexe': ''}
 
     # PV de jury : n° étudiant en col B sous la ligne des codes ELP (T3IS../T3IR..),
-    # NOM/Prénom en cols C/D, série de bac en col BAC. Pas de date de naissance.
+    # NOM/Prénom en cols C/D. Pas de date de naissance.
     # L'effectif est lu sur les feuilles de délibération (PV… / Jury… / Temp) et
     # nulle part ailleurs : PARAM garde l'historique de toutes les promotions
     # passées, et Import/Menu/Aide/Affichage/Annexe RED ne sont pas des effectifs.
     if _find_pv_code_row(ws):
         rows = []
         for sheet in _pv_roster_sheets(wb) or [ws]:
-            rows += [rec(r['numero'], r['nom'], r['prenom'], bac=r.get('bac', ''))
+            rows += [rec(r['numero'], r['nom'], r['prenom'])
                      for r in _pv_marks_ws(sheet)[1]]
         return _merge_student_rows(rows)
 
@@ -2966,6 +3302,130 @@ def _parse_student_list(path):
         if headers:
             rows += _read_student_rows(sheet, headers, hrow + 1)
     return _merge_student_rows(rows)
+
+# ---- Import du classement ParcourSup (rang, note et dossier du candidat) ----
+
+# Remplissage vide écrit sans motif par l'export ParcourSup — openpyxl le refuse.
+_FILL_VIDE = re.compile(rb'<fill\s*/>|<fill\s*>\s*</fill\s*>')
+
+def _load_workbook_lenient(path, **kw):
+    """openpyxl, avec un repli pour les classeurs dont la feuille de styles est
+    invalide. L'export ParcourSup en produit une : elle contient un `<fill/>` sans
+    motif de remplissage, qu'openpyxl rejette (« expected Fill ») alors que les
+    données, elles, sont parfaitement lisibles.
+
+    Le repli réécrit une copie du classeur en donnant à ces remplissages vides le
+    motif « aucun ». La feuille de styles est réparée, pas supprimée : les cellules
+    y renvoient par indice, en retirer une entrée décalerait toutes les autres."""
+    import openpyxl
+    try:
+        return openpyxl.load_workbook(path, **kw)
+    except Exception:
+        import tempfile, zipfile
+        with zipfile.ZipFile(path) as src:
+            if 'xl/styles.xml' not in src.namelist():
+                raise
+            items = [(i, src.read(i.filename)) for i in src.infolist()]
+        fixed = False
+        for n, (item, data) in enumerate(items):
+            if item.filename != 'xl/styles.xml':
+                continue
+            repaired, cnt = _FILL_VIDE.subn(b'<fill><patternFill patternType="none"/></fill>',
+                                            data)
+            if cnt:
+                items[n], fixed = (item, repaired), True
+        if not fixed:
+            raise
+        fd, tmp = tempfile.mkstemp(suffix='.xlsx')
+        os.close(fd)
+        try:
+            with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as out:
+                for item, data in items:
+                    out.writestr(item, data)
+            # Sans read_only le classeur est chargé en mémoire : il survit donc à
+            # la suppression du fichier temporaire faite en sortant d'ici.
+            return openpyxl.load_workbook(tmp, **dict(kw, keep_vba=False))
+        finally:
+            try: os.remove(tmp)
+            except OSError: pass
+
+def _ps_txt(v):
+    """Cellule du classement en texte, tiret de remplissage ramené à vide."""
+    t = _cell_txt(v)
+    return '' if t.lower() in _PS_EMPTY else t
+
+def _ps_headers(ws):
+    """(ligne d'en-têtes, {champ: colonne}) du classement ParcourSup. Les en-têtes
+    sont reconnus par préfixe (cf. _PS_COLUMNS).
+
+    Quatre colonnes sont exigées : nom et prénom, sans lesquels le fichier ne peut
+    être rapproché d'aucune fiche, plus le classement et le n° ParcourSup, qui
+    n'appartiennent qu'à un classement. Sans cette exigence l'export d'effectif de
+    l'application, qui reprend ces mêmes colonnes, passerait ici pour un classement."""
+    for row in range(1, _PS_HEADER_SCAN + 1):
+        found = {}
+        for c in range(1, ws.max_column + 1):
+            h = _profile_key(ws.cell(row, c).value)
+            if not h:
+                continue
+            for field, name in _PS_IDENT.items():
+                if field not in found and h == name:
+                    found[field] = c
+            for field, _lbl, prefix, _sql, _t in _PS_COLUMNS:
+                if field not in found and h.startswith(prefix):
+                    found[field] = c
+        if all(k in found for k in ('nom', 'prenom', 'ps_classement', 'ps_numero')):
+            return row, found
+    return 0, {}
+
+def _looks_like_parcoursup(wb):
+    """Vrai si le classeur est un classement ParcourSup. L'import d'effectif s'en
+    sert pour refuser le fichier : ses colonnes Nom/Prénom le rendent lisible comme
+    une liste d'étudiants, et il y ajouterait les centaines de candidats non admis."""
+    return any(_ps_headers(ws)[1] for ws in wb.worksheets)
+
+def _ps_value(field, raw, sql):
+    """Cellule -> valeur stockée. Le rang et la note sont numériques (tri et
+    moyennes à l'écran) ; une cellule illisible vaut « non renseigné »."""
+    txt = _ps_txt(raw)
+    if not txt:
+        return None
+    if sql == 'INTEGER':
+        try: return int(float(txt.replace(',', '.')))
+        except ValueError: return None
+    if sql == 'REAL':
+        try: return round(float(txt.replace(',', '.')), 3)
+        except ValueError: return None
+    return txt
+
+def _parse_parcoursup(path):
+    """Lit un classement ParcourSup (export « dossier_AD_… ») et retourne
+    [{nom, prenom, ps_*}]. Un même classement ne couvre qu'une partie des
+    candidats (un fichier hors STI2D, un fichier STI2D) : les deux s'importent
+    l'un après l'autre, chacun complétant les fiches qu'il concerne."""
+    wb = _load_workbook_lenient(path, data_only=True)
+    rows = []
+    for ws in wb.worksheets:
+        hrow, cols = _ps_headers(ws)
+        if not cols:
+            continue
+        for r in range(hrow + 1, ws.max_row + 1):
+            nom = _ps_txt(ws.cell(r, cols['nom']).value)
+            prenom = _ps_txt(ws.cell(r, cols['prenom']).value)
+            if not nom and not prenom:
+                continue
+            rec = {'nom': nom, 'prenom': prenom}
+            for field, _lbl, _pfx, sql, _t in _PS_COLUMNS:
+                rec[field] = _ps_value(field, ws.cell(r, cols[field]).value, sql) \
+                    if field in cols else None
+            rows.append(rec)
+    return rows
+
+def _ps_key(nom, prenom):
+    """Clé de rapprochement d'un candidat : nom + prénom, casse et accents ignorés.
+    Le classement ne porte pas de n° Apogée (il est antérieur à l'inscription),
+    l'identité est donc le seul point commun avec une fiche d'effectif."""
+    return (_profile_key(nom), _profile_key(prenom))
 
 def _dedup_key(s):
     """Clé d'unicité d'un étudiant : numéro si présent, sinon nom+prénom+naissance."""
@@ -2997,20 +3457,20 @@ def _student_keys(s):
 
 def _import_students_rows(db, pid, students, formation, year=None):
     """Insère les étudiants absents de la promotion et met à jour le profil
-    d'entrée (sexe / BAC) de ceux qui y sont déjà : réimporter une liste enrichie
+    d'entrée (sexe) de ceux qui y sont déjà : réimporter une liste enrichie
     complète les fiches au lieu d'être sans effet. Une colonne absente ou une
-    cellule vide ne modifie jamais une valeur déjà saisie.
+    cellule vide ne modifie jamais une valeur déjà saisie. La série de bac et le
+    cursus ne s'importent plus ici : ils viennent du classement ParcourSup.
     Retourne (imported, updated, skipped)."""
     existing = {}
-    for r in db.execute('''SELECT id, numero, nom, prenom, naissance, sexe, bac
+    for r in db.execute('''SELECT id, numero, nom, prenom, naissance, sexe
                            FROM promotion_students WHERE promotion_id=?''', (pid,)):
         row = dict(r)
         for k in _student_keys(row):
             existing.setdefault(k, row)     # à clé partagée, la 1re fiche l'emporte
     imported = updated = skipped = 0
     for s in students:
-        profile = {k: v for k, v in (('sexe', _norm_sexe(s.get('sexe'))),
-                                     ('bac', _norm_bac(s.get('bac')))) if v}
+        profile = {k: v for k, v in (('sexe', _norm_sexe(s.get('sexe'))),) if v}
         row = next((existing[k] for k in _student_keys(s) if k in existing), None)
         if row is not None:
             changed = {k: v for k, v in profile.items() if (row.get(k) or None) != v}
@@ -3462,10 +3922,11 @@ def _year_effectif_payload(pdb, pid, year):
     students = []
     for r in pdb.execute('''SELECT id, numero, nom, prenom, naissance, statut,
                                    abandon_semaine, abandon_annee,
-                                   formation, entry_year, cesure_year, sexe, bac, cursus, recrutement
+                                   formation, entry_year, cesure_year, sexe, bac, cursus, recrutement,
+                                   %s
                             FROM promotion_students
-                            WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''',
-                         (pid,)):
+                            WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE'''
+                         % ', '.join(_PS_FIELDS), (pid,)):
         d = dict(r)
         d['formation'] = fm.get(r['id'], d.get('formation') or 'FTP')
         d['entrant'] = (r['entry_year'] or 1) == year
@@ -3473,6 +3934,9 @@ def _year_effectif_payload(pdb, pid, year):
         d['cesure'] = r['id'] in cesure_ids
         d['origin'] = origins.get(r['id'])
         d['nb_notes'] = nb_notes.get(r['id'], 0)
+        # Dossier ParcourSup abrégé pour l'affichage ; la valeur complète reste
+        # dans le champ d'origine, que le tableau donne en infobulle.
+        d['ps_court'] = {f: _ps_court(f, d.get(f)) for f in _PS_FIELDS}
         d['hors_annee'] = not (r['id'] in roster or r['id'] in cesure_ids)
         if d['hors_annee']:
             d['raison'] = _hors_annee_raison(r, year, comp)
@@ -3511,7 +3975,10 @@ def _year_effectif_payload(pdb, pid, year):
             'semesters': _PROMO_SEMESTERS, 'years': [1, 2, 3],
             'abandon_semaines': _promo_year_weeks(pdb, pid, year),
             'profile_options': {k: list(v) for k, v in _STUDENT_PROFILE.items()},
-            'profile_labels': {k: dict(v) for k, v in _STUDENT_PROFILE_LABELS.items()}}
+            'profile_labels': {k: dict(v) for k, v in _STUDENT_PROFILE_LABELS.items()},
+            # Colonnes ParcourSup à afficher : le tableau les rend dans cet ordre,
+            # sans avoir à répéter la liste des champs côté navigateur.
+            'ps_columns': [{'field': f, 'label': lbl, 'title': t} for f, lbl, _p, _s, t in _PS_COLUMNS]}
 
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>', methods=['GET'])
 def get_year_effectif(pid, year):
@@ -3552,9 +4019,15 @@ def export_year_effectif(pid, year):
     center = Alignment(horizontal='center', vertical='center')
 
     promo_name = payload['promotion'].get('name') or f'promo {pid}'
-    cols = [('#', 5), ('Nom', 22), ('Prénom', 18), ('N° Apogée', 14), ('Naissance', 13),
-            ('Sexe', 6), ('BAC', 9), ('Cursus', 9), ('Recrut.', 10), ('Statut', 11),
-            ('Semaine abandon', 16), ('Cohorte', 9), ('Remarques', 26)]
+    # Largeur d'une colonne ParcourSup : les combinaisons de spécialités sont de
+    # longues phrases, le rang et la note tiennent en quelques caractères.
+    _ps_width = {'ps_classement': 7, 'ps_numero': 11, 'ps_note': 9,
+                 'ps_specialites': 40, 'ps_spe_abandon': 26, 'ps_spe_bacpro': 26}
+    cols = ([('#', 5), ('Nom', 22), ('Prénom', 18), ('N° Apogée', 14), ('Naissance', 13),
+             ('Sexe', 6)]
+            + [(lbl, _ps_width.get(fld, 18)) for fld, lbl, _p, _s, _t in _PS_COLUMNS]
+            + [('Recrut.', 10), ('Statut', 11),
+               ('Semaine abandon', 16), ('Cohorte', 9), ('Remarques', 26)])
 
     wb = Workbook()
     wb.remove(wb.active)
@@ -3578,15 +4051,21 @@ def export_year_effectif(pid, year):
                 notes.append(f'entré directement en année {year}')
             if s.get('manual') == 'add':
                 notes.append('ajouté manuellement')
-            values = [n, s.get('nom') or '', s.get('prenom') or '', s.get('numero') or '',
-                      s.get('naissance') or '', s.get('sexe') or '',
-                      s.get('bac') or '', s.get('cursus') or '',
-                      s.get('recrutement') or '', s.get('statut') or '',
-                      _abandon_libelle(s), formation, ' ; '.join(notes)]
+            values = ([n, s.get('nom') or '', s.get('prenom') or '', s.get('numero') or '',
+                       s.get('naissance') or '', s.get('sexe') or '']
+                      + [s.get(fld) if s.get(fld) is not None else '' for fld in _PS_FIELDS]
+                      + [s.get('recrutement') or '', s.get('statut') or '',
+                         _abandon_libelle(s), formation, ' ; '.join(notes)])
+            # Colonnes centrées : le numéro de ligne, le sexe, et tout ce qui suit
+            # les spécialités (codes courts et notes) jusqu'à la cohorte.
+            wide = {'ps_profil', 'ps_scolarite', 'ps_diplome', 'ps_specialites',
+                    'ps_spe_abandon', 'ps_spe_bacpro'}
+            centered = {1, 6} | {7 + i for i, f in enumerate(_PS_FIELDS) if f not in wide}
+            centered |= set(range(7 + len(_PS_FIELDS), len(cols)))
             for i, v in enumerate(values, start=1):
                 c = ws.cell(row, i, v)
                 c.border = border
-                if i == 1 or 6 <= i <= 12:
+                if i in centered:
                     c.alignment = center
             row += 1
         if not studs:
@@ -3814,6 +4293,90 @@ def import_year_students(pid, year):
     payload = _year_effectif_payload(db, pid, year)
     payload['import_report'] = {'imported': imported, 'updated': updated,
                                 'skipped': skipped, 'total_fichier': len(students)}
+    return jsonify(payload)
+
+@app.route('/api/promotions/<int:pid>/effectif/<int:year>/import-parcoursup', methods=['POST'])
+def import_year_parcoursup(pid, year):
+    """Complète les fiches de l'effectif avec le classement ParcourSup (export
+    « dossier_AD_… ») : rang, note globale et éléments de dossier du candidat.
+
+    Cet import ne CRÉE aucune fiche. Un classement compte plusieurs centaines de
+    candidats alors que la promotion en accueille quelques dizaines : n'y ajouter
+    que ce qui correspond à un étudiant déjà inscrit est le seul comportement
+    utile. Les candidats du fichier sans fiche en face sont simplement ignorés, et
+    les étudiants sans ligne dans le fichier sont listés en retour — c'est là que
+    se voit qu'il reste l'autre classement (STI2D / hors STI2D) à importer.
+
+    Le rapprochement se fait sur nom + prénom : le classement est antérieur à
+    l'inscription, il ne porte donc pas de n° Apogée."""
+    err = _require_admin()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    db = get_promotions_db()
+    if not db.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return error_response('Aucun fichier reçu', 400)
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in _ALLOWED_GRADE_EXT:
+        return error_response('Type de fichier non autorisé (.xlsm/.xlsx)', 400)
+    if request.content_length and request.content_length > _MAX_GRADE_FILE:
+        return error_response('Fichier trop volumineux (max 15 Mo)', 400)
+    import tempfile
+    tmp = os.path.join(tempfile.gettempdir(), secure_filename(f.filename) or ('ps' + ext))
+    f.save(tmp)
+    try:
+        candidats = _parse_parcoursup(tmp)
+    except Exception as e:
+        return error_response(f'Lecture impossible : {e}', 400)
+    finally:
+        try: os.remove(tmp)
+        except OSError: pass
+    if not candidats:
+        return error_response("Aucun candidat détecté : ce fichier ne ressemble pas à un "
+                              "classement ParcourSup (colonnes Nom, Prénom, Classement…)", 400)
+
+    # À nom+prénom identiques dans le classement, la meilleure place fait foi :
+    # un candidat peut y figurer deux fois (vœu et vœu en apprentissage).
+    par_nom = {}
+    for c in candidats:
+        k = _ps_key(c['nom'], c['prenom'])
+        prev = par_nom.get(k)
+        if prev is None or (c.get('ps_classement') or 10 ** 9) < (prev.get('ps_classement') or 10 ** 9):
+            par_nom[k] = c
+
+    fiches = [dict(r) for r in db.execute(
+        'SELECT id, nom, prenom FROM promotion_students WHERE promotion_id=?', (pid,))]
+    matched = updated = 0
+    sans_correspondance = []
+    for fiche in fiches:
+        c = par_nom.get(_ps_key(fiche['nom'], fiche['prenom']))
+        if not c:
+            sans_correspondance.append(f"{fiche['nom'] or ''} {fiche['prenom'] or ''}".strip())
+            continue
+        matched += 1
+        # La série du classement alimente aussi `bac` : les statistiques par série
+        # de bac continuent d'être alimentées alors que la colonne BAC a quitté
+        # l'écran. Une série illisible tombe dans « Autre » (cf. _norm_bac).
+        vals = {fld: c.get(fld) for fld in _PS_FIELDS}
+        vals['bac'] = _norm_bac(c.get('ps_serie'))
+        vals = {k: v for k, v in vals.items() if v is not None}
+        if not vals:
+            continue
+        db.execute('UPDATE promotion_students SET %s WHERE id=?'
+                   % ', '.join(f'{k}=?' for k in vals),
+                   list(vals.values()) + [fiche['id']])
+        updated += 1
+    db.commit()
+    _audit('PROMO_PARCOURSUP_IMPORT', ip=_client_ip(), user=session.get('user'),
+           promo=pid, year=year, candidats=len(par_nom), matched=matched, updated=updated)
+    payload = _year_effectif_payload(db, pid, year)
+    payload['ps_report'] = {'candidats': len(par_nom), 'matched': matched,
+                            'updated': updated, 'fiches': len(fiches),
+                            'sans_correspondance': sorted(sans_correspondance)}
     return jsonify(payload)
 
 # ---- Redoublants (RED) : bascule vers la promo cible (année +1) ou Abandon ----
@@ -5901,19 +6464,16 @@ def _pv_num(v):
     return _cell_txt(v)
 
 def _pv_student_cols(ws, hdr_row):
-    """Colonnes NOM / Prénom / BAC repérées sur la ligne d'en-tête (accents ignorés).
-    Repli sur C/D pour les noms, disposition standard des PV de jury ; la colonne
-    BAC est absente de certains modèles, d'où None."""
-    nom_col = prenom_col = bac_col = None
+    """Colonnes NOM / Prénom repérées sur la ligne d'en-tête (accents ignorés).
+    Repli sur C/D, disposition standard des PV de jury."""
+    nom_col = prenom_col = None
     for c in range(1, ws.max_column + 1):
         t = _profile_key(ws.cell(hdr_row, c).value)
         if 'prenom' in t and prenom_col is None:
             prenom_col = c
         elif 'nom' in t and nom_col is None:
             nom_col = c
-        elif t in _STUDENT_LIST_HEADERS['bac'] and bac_col is None:
-            bac_col = c
-    return nom_col or 3, prenom_col or 4, bac_col
+    return nom_col or 3, prenom_col or 4
 
 def _pv_marks_ws(ws):
     """Layout PV de jury : codes matière T3IS../T3IR.. sur une ligne d'en-tête (repérée
@@ -5928,7 +6488,7 @@ def _pv_marks_ws(ws):
         if re.match(r'^T3I[SR]\d', code, re.I):
             elps.append({'note_col': c, 'code': code.upper(),
                          'kind': _kind_from_code(code, ws.cell(code_row - 1, c).value)})
-    nom_col, prenom_col, bac_col = _pv_student_cols(ws, code_row - 1)
+    nom_col, prenom_col = _pv_student_cols(ws, code_row - 1)
     rows = []
     for r in range(code_row + 1, ws.max_row + 1):
         num = _pv_num(ws.cell(r, 2).value)
@@ -5942,7 +6502,6 @@ def _pv_marks_ws(ws):
         rows.append({'numero': num,
                      'nom': _cell_txt(ws.cell(r, nom_col).value),
                      'prenom': _cell_txt(ws.cell(r, prenom_col).value),
-                     'bac': _cell_txt(ws.cell(r, bac_col).value) if bac_col else '',
                      'notes': notes})
     return elps, rows
 
@@ -10133,6 +10692,128 @@ def _stats_group_avg(rows, keyfn, valfn=lambda r: r['note'], mini=3):
     out.sort(key=lambda x: -x[1])
     return out
 
+def _pearson(pairs):
+    """Corrélation linéaire entre deux séries appariées, arrondie. None si
+    l'échantillon est trop petit ou sans variation — annoncer une corrélation
+    sur trois points tromperait plus qu'elle n'informerait."""
+    n = len(pairs)
+    if n < 8:
+        return None
+    mx = sum(a for a, _ in pairs) / n
+    my = sum(b for _, b in pairs) / n
+    dx = sum((a - mx) ** 2 for a, _ in pairs) ** 0.5
+    dy = sum((b - my) ** 2 for _, b in pairs) ** 0.5
+    if not dx or not dy:
+        return None
+    return round(sum((a - mx) * (b - my) for a, b in pairs) / (dx * dy), 3)
+
+# Tranches de lecture du dossier ParcourSup. Des tranches fixes valent mieux que
+# des quantiles : elles gardent le même sens d'une promotion à l'autre, ce qui
+# est tout l'intérêt quand on veut suivre l'évolution du recrutement.
+_PS_BANDES_NOTE = ((12, '< 12'), (14, '12–14'), (16, '14–16'), (18, '16–18'), (99, '≥ 18'))
+_PS_BANDES_RANG = ((25, '1–25'), (50, '26–50'), (100, '51–100'), (200, '101–200'), (10 ** 9, '> 200'))
+
+def _ps_bande(valeur, bandes):
+    if not valeur:      # None, ou note 0 = dossier écarté (cf. _stats_parcoursup)
+        return None
+    for seuil, libelle in bandes:
+        if valeur < seuil:
+            return libelle
+    return bandes[-1][1]
+
+def _stats_parcoursup(students, moy_etudiant, admis_etudiant):
+    """Ce que le classement ParcourSup dit du recrutement, et ce qu'il annonce (ou
+    non) de la réussite.
+
+    `moy_etudiant` : moyenne des notes de BUT par étudiant ; `admis_etudiant` :
+    part d'UE validées. Les croiser avec le dossier d'entrée est la seule façon de
+    savoir si le classement prédit quoi que ce soit — c'est la question que ces
+    colonnes permettent enfin de poser."""
+    avec = [s for s in students if s.get('ps_classement') is not None or s.get('ps_numero')]
+    # Libellés abrégés : les mêmes qu'à l'écran Effectif, sinon un graphique
+    # porterait « Ingénierie, innovation et développement durable » en légende.
+    court = lambda s, f: _ps_court(f, s.get(f))
+    rows = [{'sid': s['id'], 'promo': s.get('promo'), 'face': _face(s.get('formation')),
+             'note': s.get('ps_note'), 'rang': s.get('ps_classement'),
+             'serie': court(s, 'ps_serie'), 'profil': court(s, 'ps_profil'),
+             'scolarite': court(s, 'ps_scolarite'), 'specialites': court(s, 'ps_specialites'),
+             'spe_abandon': court(s, 'ps_spe_abandon'), 'spe_bacpro': court(s, 'ps_spe_bacpro'),
+             'obtention': court(s, 'ps_obtention')}
+            for s in avec]
+    # Une note globale de 0 n'est pas un résultat : c'est une MODULATION D'EXCLUSION.
+    # La commission ramène à 0 la note d'un dossier qu'elle écarte, et le candidat
+    # perd du même coup son rang (on trouve des dossiers dont la note calculée vaut
+    # 10 ou 8,9 et dont la note modulée, celle qu'on reprend, vaut 0). Les moyenner
+    # ferait plonger le niveau affiché du recrutement sans que rien ne le signale.
+    notes = [r['note'] for r in rows if r['note']]
+    rangs = [r['rang'] for r in rows if r['rang'] is not None]
+    ecartees = sum(1 for r in rows if r['note'] == 0)
+
+    def repartition(champ):
+        return _count_by([r for r in rows if r.get(champ)], champ)
+
+    # Réussite par tranche : moyenne de BUT des étudiants de chaque tranche.
+    def reussite(keyfn, mini=3):
+        return _stats_group_avg([r for r in rows if r['sid'] in moy_etudiant],
+                                keyfn, valfn=lambda r: moy_etudiant[r['sid']], mini=mini)
+
+    def validation(keyfn, mini=3):
+        return _stats_group_avg([r for r in rows if r['sid'] in admis_etudiant],
+                                keyfn, valfn=lambda r: admis_etudiant[r['sid']], mini=mini)
+
+    apparies = [(r['note'], moy_etudiant[r['sid']])
+                for r in rows if r['note'] and r['sid'] in moy_etudiant]
+    apparies_rang = [(-r['rang'], moy_etudiant[r['sid']])   # rang faible = meilleur dossier
+                     for r in rows if r['rang'] is not None and r['sid'] in moy_etudiant]
+    # Couverture par promotion. C'est elle qui explique qu'un croisement soit vide :
+    # croiser le dossier d'entrée et les résultats suppose des étudiants qui aient
+    # les deux, ce qui n'arrive pas tant qu'une promotion vient d'être recrutée
+    # (classement mais pas encore de notes) ou date d'avant l'import des classements.
+    couverture = []
+    for promo in sorted({s.get('promo') for s in students if s.get('promo')}):
+        ss = [s for s in students if s.get('promo') == promo]
+        couverture.append([promo, len(ss),
+                           sum(1 for s in ss
+                               if s.get('ps_classement') is not None or s.get('ps_numero')),
+                           sum(1 for s in ss if s['id'] in moy_etudiant)])
+    return {
+        'total': len(students), 'avec_dossier': len(avec),
+        'avec_notes': len(moy_etudiant), 'couverture': couverture,
+        'notes_ecartees': ecartees,
+        'note': _num_stats(notes),
+        'histogramme': _hist20(notes, 1),
+        'rang': _num_stats(rangs),
+        'serie': repartition('serie'),
+        'profil': repartition('profil'),
+        'scolarite': repartition('scolarite'),
+        'specialites': repartition('specialites'),
+        'spe_abandon': repartition('spe_abandon'),
+        'spe_bacpro': repartition('spe_bacpro'),
+        # Niveau du recrutement d'une promotion à l'autre, et entre FTP et ALT
+        'note_par_promo': _stats_group_avg([r for r in rows if r['note']],
+                                           lambda r: r['promo'],
+                                           valfn=lambda r: r['note'], mini=1),
+        'note_par_face': _stats_group_avg([r for r in rows if r['note']],
+                                          lambda r: r['face'],
+                                          valfn=lambda r: r['note'], mini=1),
+        # Le dossier d'entrée annonce-t-il les résultats ?
+        'correlation_note': _pearson(apparies),
+        'correlation_rang': _pearson(apparies_rang),
+        'nb_apparies': len(apparies),
+        'reussite_par_note': reussite(lambda r: _ps_bande(r['note'], _PS_BANDES_NOTE)),
+        'reussite_par_rang': reussite(lambda r: _ps_bande(r['rang'], _PS_BANDES_RANG)),
+        'reussite_par_serie': reussite(lambda r: r['serie']),
+        'reussite_par_specialites': reussite(lambda r: r['specialites']),
+        'reussite_par_profil': reussite(lambda r: r['profil']),
+        # Part d'UE validées, mêmes découpages : la moyenne dit le niveau, la
+        # validation dit si l'étudiant passe — les deux ne se recouvrent pas, un
+        # étudiant peut valider toutes ses UE avec 11 de moyenne.
+        'validation_par_note': validation(lambda r: _ps_bande(r['note'], _PS_BANDES_NOTE)),
+        'validation_par_rang': validation(lambda r: _ps_bande(r['rang'], _PS_BANDES_RANG)),
+        'validation_par_serie': validation(lambda r: r['serie']),
+        'validation_par_specialites': validation(lambda r: r['specialites']),
+    }
+
 def _stats_academique(pdb):
     """Profils, parcours et résultats de toutes les promotions."""
     promos = [dict(r) for r in pdb.execute(
@@ -10151,7 +10832,7 @@ def _stats_academique(pdb):
         'formation': _count_by(students, 'formation', list(_SUBCOHORTS)),
         'statut': _count_by(students, 'statut', _STUDENT_STATUSES),
         'promo': _count_by(students, 'promo'),
-        'renseigne': [[k, sum(1 for s in students if s.get(k))] for k in _STUDENT_PROFILE],
+        'renseigne': [[k, sum(1 for s in students if s.get(k))] for k in _STUDENT_PROFILE_FIELDS],
     }
     # Féminisation par promotion (sur les fiches où le sexe est renseigné)
     fem = []
@@ -10164,6 +10845,7 @@ def _stats_academique(pdb):
     # --- parcours par cohorte : effectifs par année, décisions de jury, sorties
     cohortes, decisions, ue_reussite, notes = [], {}, {}, []
     annees_avg, sem_avg_rows = [], []
+    ue_par_etudiant = {}     # sid -> [UE validées, UE évaluées] (croisement ParcourSup)
     for p in promos:
         pid = p['id']
         comp = _jury_compute(pdb, pid)
@@ -10201,6 +10883,11 @@ def _stats_academique(pdb):
                 ue_reussite[k][1] += 1
                 if code in ('ADM', 'ADMJ', 'CMP'):
                     ue_reussite[k][0] += 1
+                # … et par étudiant, pour croiser la réussite avec le dossier d'entrée
+                ue_par_etudiant.setdefault(int(sid), [0, 0])
+                ue_par_etudiant[int(sid)][1] += 1
+                if code in ('ADM', 'ADMJ', 'CMP'):
+                    ue_par_etudiant[int(sid)][0] += 1
         # moyennes annuelles par compétence
         for y, rows in comp['year_avgs'].items():
             for sid, ues in rows.items():
@@ -10256,9 +10943,14 @@ def _stats_academique(pdb):
     par_etudiant = {}
     for n in notes:
         par_etudiant.setdefault(n['sid'], []).append(n['note'])
-    moyennes = [sum(v) / len(v) for v in par_etudiant.values() if len(v) >= 3]
+    moy_etudiant = {sid: sum(v) / len(v) for sid, v in par_etudiant.items() if len(v) >= 3}
+    moyennes = list(moy_etudiant.values())
     resultats['etudiants'] = _num_stats(moyennes)
     resultats['histogramme_etudiants'] = _hist20(moyennes, 1)
+
+    # --- dossier ParcourSup : niveau du recrutement, et ce qu'il annonce des résultats
+    admis_etudiant = {sid: 100.0 * ok / tot for sid, (ok, tot) in ue_par_etudiant.items() if tot}
+    parcoursup = _stats_parcoursup(students, moy_etudiant, admis_etudiant)
 
     jury = {
         'decisions': [[y, sorted(d.items(), key=lambda kv: -kv[1])]
@@ -10287,7 +10979,7 @@ def _stats_academique(pdb):
     }
     return {'promotions': promos, 'profil': profil, 'cohortes': cohortes,
             'resultats': resultats, 'jury': jury, 'encadrement': encadrement,
-            'nb_etudiants': len(students)}
+            'parcoursup': parcoursup, 'nb_etudiants': len(students)}
 
 def _stats_enseignement(db):
     """Service, matières, volumes et salles de la base année fournie."""
