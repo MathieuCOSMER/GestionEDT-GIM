@@ -8916,17 +8916,20 @@ function renderRepJour() {
     }
     const typeColors = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' };
     const formColor = { FTP: '#0369a1', ALT: '#9a3412', MUT: '#7c3aed' };
-    // Détail des heures affichées par formation (sert au libellé du total)
-    const tot = { FTP: 0, ALT: 0, MUT: 0 };
-    list.forEach(r => { tot[r.formation] = (tot[r.formation] || 0) + r.by_week[w]; });
     const fmt = x => Math.round(x * 100) / 100;
     // Nb de groupes à compter pour les créneaux : les TP sont déjà éclatés en une
     // ligne par groupe (→ 1) ; les autres types (TD/PT, CM=1) comptent leurs groupes.
     const groupsFor = r => (r.type || '').toUpperCase() === 'TP' ? 1 : (r.group_count || 1);
     const creneaux = r => fmt((r.by_week[w] / (r.slot_duration || 1.5)) * groupsFor(r));
     const totalCreneaux = list.reduce((s, r) => s + creneaux(r), 0);
+    // Heures d'une ligne : le total réellement à placer, tous groupes confondus
+    // (séance × nb de groupes), quel que soit le type d'enseignement.
+    const heures = r => r.by_week[w] * groupsFor(r);
+    // Détail des heures affichées par formation (sert au libellé du total)
+    const tot = { FTP: 0, ALT: 0, MUT: 0 };
+    list.forEach(r => { tot[r.formation] = (tot[r.formation] || 0) + heures(r); });
     const rowsHtml = list.map(r => {
-        const h = r.by_week[w];
+        const h = heures(r);
         const slot = r.slot_duration || 1.5;
         const g = groupsFor(r);
         const n = creneaux(r);
@@ -8947,7 +8950,7 @@ function renderRepJour() {
     // Total = somme des lignes réellement affichées (un semestre mutualisé y
     // ajoute les faces FTP et ALT), détaillée par formation dès qu'il y en a plusieurs.
     const cohorteLabel = cohorte === 'MUT' ? 'MUT (FTP + ALT)' : cohorte;
-    const totCohorte = list.reduce((acc, r) => acc + r.by_week[w], 0);
+    const totCohorte = list.reduce((acc, r) => acc + heures(r), 0);
     const totParts = Object.keys(tot).filter(k => tot[k]).map(k => `${fmt(tot[k])}h ${k}`);
     const totDetail = totParts.length > 1 ? ` (dont ${totParts.join(', ')})` : '';
     // Flèche de tri sur la colonne active
