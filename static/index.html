@@ -9132,7 +9132,10 @@ function renderRepJour() {
                 if (!bIdx[bk]) { bIdx[bk] = { key: bk, rows: [] }; buckets.push(bIdx[bk]); }
                 bIdx[bk].rows.push(x);
             });
-            buckets.forEach(b => { if (b.rows.length > 1) _repJourTpKeys.push(b.key); });
+            buckets.forEach(b => {
+                if (b.rows.length > 1 && (b.rows[0].type || '').toUpperCase() === 'TP')
+                    _repJourTpKeys.push(b.key);
+            });
             const line = detailRow({
                 attrs: ` style="cursor:pointer" onclick="toggleRepJourSub('${esc(sb.key)}')"`
                     + ` title="${closed ? 'Déplier' : 'Replier'} le détail de la sous-matière"`,
@@ -9145,7 +9148,11 @@ function renderRepJour() {
             if (closed) return line;
             return line + buckets.map(b => {
                 const br = b.rows, b0 = br[0];
-                const multi = br.length > 1;          // session éclatée en groupes de TP
+                // Seuls les TP se déplient : leurs groupes sont places semaine par
+                // semaine, chacun a donc son propre placement. Un TD dédoublé
+                // garde ses groupes sur la même séance — pas de sous-ligne, la
+                // mention « n gr. » suffit à expliquer le volume d'heures.
+                const multi = br.length > 1 && (b0.type || '').toUpperCase() === 'TP';
                 const open = multi && _repJourTpOpen.has(b.key);
                 const bh = br.reduce((acc, x) => acc + heures(x), 0);
                 const bn = fmt(br.reduce((acc, x) => acc + creneaux(x), 0));
