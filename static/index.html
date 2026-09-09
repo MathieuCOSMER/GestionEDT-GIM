@@ -8893,6 +8893,14 @@ function foldAllRepJour(collapse) {
     renderRepJour();
 }
 
+// Code de la MATIÈRE porté par une sous-matière : le code sans sa lettre finale
+// (R1.02a → R1.02, SAE1.6b → SAE1.6). À la différence de matBaseKey(), qui
+// normalise le numéro pour se rapprocher du programme (SAE1.6 → SAE1.06), on
+// garde ici la forme réelle du code, celle que l'utilisateur connaît.
+function matSubCode(r) {
+    return (r.course_code || '').replace(/[a-z]$/, '');
+}
+
 // Libellé d'une matière : celui du programme national si la matière y figure,
 // sinon l'intitulé commun aux sous-matières (ou leur préfixe commun).
 function repJourMatLabel(sem, key, rows) {
@@ -8909,7 +8917,9 @@ function repJourMatLabel(sem, key, rows) {
         pre = pre.slice(0, i);
     });
     pre = pre.replace(/[\s\-–—:,(]+$/, '');
-    return pre.length >= 3 ? pre : names[0];
+    // Pas de préfixe commun exploitable (« Méca 1 » / « Mat 1 ») : on liste les
+    // intitulés des sous-matières.
+    return pre.length >= 3 ? pre : names.slice(0, 3).join(' / ');
 }
 
 function renderRepJour() {
@@ -8972,20 +8982,26 @@ function renderRepJour() {
     // Détail des heures affichées par formation (sert au libellé du total)
     const tot = { FTP: 0, ALT: 0, MUT: 0 };
     list.forEach(r => { tot[r.formation] = (tot[r.formation] || 0) + heures(r); });
-    // Regroupement par MATIÈRE (semestre + clé de base du code + face) : la
-    // première ligne est la matière entière — sous-matières comprises (R1.03a,
-    // R1.03b… se rangent sous R1.03) — puis une sous-ligne de détail par
-    // sous-matière × type d'enseignement, et une par groupe pour les TP.
+    // Regroupement par MATIÈRE (semestre + clé de base du code) : la première
+    // ligne est la matière entière — sous-matières comprises (R1.03a, R1.03b…
+    // se rangent sous R1.03) et faces confondues (le CM mutualisé et les TP
+    // dédoublés d'une même matière restent sous le même en-tête) — puis une
+    // sous-ligne de détail par sous-matière × type, et une par groupe de TP.
     const groups = [];
     const byKey = {};
     list.forEach(r => {
         const mk = matBaseKey(r.course_code || '');
-        const k = [r.semester, mk, r.formation].join('|');
-        if (!byKey[k]) { byKey[k] = { key: k, matKey: mk, first: r, rows: [] }; groups.push(byKey[k]); }
+        const k = [r.semester, mk].join('|');
+        if (!byKey[k]) {
+            byKey[k] = { key: k, matKey: mk, matCode: matSubCode(r), first: r, rows: [] };
+            groups.push(byKey[k]);
+        }
         byKey[k].rows.push(r);
     });
     _repJourKeys = groups.map(g => g.key);
     const dash = '<span style="color:#bbb">—</span>';
+    const formCell = f =>
+        `<td style="text-align:center;font-weight:700;color:${formColor[f] || '#374151'}">${esc(f || '')}</td>`;
     const badgeOf = r =>
         `<span class="badge ${typeColors[(r.type || '').toUpperCase()] || 'badge-cm'}">${esc(typeLabelJour(r))}</span>`;
     const seancesOf = r => {
@@ -9000,36 +9016,31 @@ function renderRepJour() {
     };
     const rowsHtml = groups.map(gp => {
         const rs = gp.rows, r0 = gp.first;
-        const form = `<td style="text-align:center;font-weight:700;color:${formColor[r0.formation] || '#374151'}">${esc(r0.formation || '')}</td>`;
-        if (rs.length === 1) {
-            const r = rs[0];
-            return `<tr>
-                <td style="text-align:center">${esc(r.semester || '')}</td>
-                <td><strong>${esc(r.course_code || '')}</strong></td>
-                <td>${esc(r.course_name || '')}</td>
-                <td style="text-align:center">${badgeOf(r)}</td>
-                ${form}
-                <td>${esc(r.teacher || '') || dash}</td>
-                <td style="text-align:center">${esc(r.room || '') || dash}</td>
-                <td style="text-align:center;font-weight:700">${fmt(heures(r))}h</td>
-                <td style="text-align:center;color:#6b7280">${seancesOf(r)}</td>
-            </tr>`;
-        }
+        // Faces présentes : une seule → affichée en clair ; plusieurs (CM mutualisé
+        // + TP dédoublés) → toutes listées, le détail portant la sienne.
+        const forms = [...new Set(rs.map(r => r.formation).filter(Boolean))];
+        const form = forms.length === 1
+            ? formCell(forms[0])
+            : `<td style="text-align:center;font-size:.68rem">${forms.map(f =>
+                `<span style="color:${formColor[f] || '#374151'};font-weight:700">${esc(f)}</span>`).join(' ')}</td>`;
         const gh = rs.reduce((acc, r) => acc + heures(r), 0);
         const gn = fmt(rs.reduce((acc, r) => acc + creneaux(r), 0));
         const gt = common(rs, r => r.teacher);
         const gr = common(rs, r => r.room);
         const folded = _repJourCollapsed.has(gp.key);
-        // Sous-matières distinctes : leur code est alors rappelé sur chaque détail
-        const multiSub = new Set(rs.map(r => r.course_code || '')).size > 1;
+        // Code affiché de la matière : le code des sous-matières sans la lettre
+        // finale (R1.02a → R1.02, SAE1.6a → SAE1.6) — la clé de regroupement,
+        // elle, est normalisée (SAE1.06) et ne sert qu'au rapprochement programme.
+        const nSubs = new Set(rs.map(r => r.course_code || '')).size;
         const caret = `<span style="color:#6b7280;font-size:.8rem;margin-right:4px">${folded ? '▸' : '▾'}</span>`;
+        const sub = nSubs > 1 ? `${nSubs} sous-matières` : `${rs.length} ligne${rs.length > 1 ? 's' : ''}`;
         const head = `<tr style="background:#f1f5f9;cursor:pointer"
                 onclick="toggleRepJourGroup('${esc(gp.key)}')"
                 title="${folded ? 'Déplier' : 'Replier'} le détail de la matière">
             <td style="text-align:center">${esc(r0.semester || '')}</td>
-            <td>${caret}<strong>${esc(gp.matKey)}</strong></td>
+            <td>${caret}<strong>${esc(gp.matCode)}</strong></td>
             <td><strong>${esc(repJourMatLabel(r0.semester, gp.matKey, rs))}</strong></td>
-            <td style="text-align:center;color:#9ca3af">${rs.length} lignes</td>
+            <td style="text-align:center;color:#9ca3af;font-size:.72rem">${sub}</td>
             ${form}
             <td>${esc(gt) || dash}</td>
             <td style="text-align:center">${esc(gr) || dash}</td>
@@ -9037,17 +9048,22 @@ function renderRepJour() {
             <td style="text-align:center;color:#6b7280">${gn} créneau(x)</td>
         </tr>`;
         if (folded) return head;
-        const details = rs.map(r => `<tr>
+        // Détail : une ligne par sous-matière × type (et par groupe pour les TP).
+        // Le code de la sous-matière n'est rappelé que s'il diffère de la matière.
+        const details = rs.map(r => {
+            const sc = (r.course_code || '') === gp.matCode ? '' : (r.course_code || '');
+            return `<tr>
             <td></td>
-            <td style="padding-left:20px;color:#6b7280">${multiSub ? '↳ ' + esc(r.course_code || '') : '↳'}</td>
-            <td style="color:#6b7280">${multiSub ? esc(r.course_name || '') : ''}</td>
+            <td style="padding-left:20px;color:#6b7280">${sc ? '↳ ' + esc(sc) : '↳'}</td>
+            <td style="color:#6b7280">${sc ? esc(r.course_name || '') : ''}</td>
             <td style="text-align:center">${badgeOf(r)}</td>
-            <td></td>
+            ${formCell(r.formation)}
             <td>${esc(r.teacher || '') || dash}</td>
             <td style="text-align:center">${esc(r.room || '') || dash}</td>
             <td style="text-align:center">${fmt(heures(r))}h</td>
             <td style="text-align:center;color:#6b7280">${seancesOf(r)}</td>
-        </tr>`).join('');
+        </tr>`;
+        }).join('');
         return head + details;
     }).join('');
     // Total = somme des lignes réellement affichées (un semestre mutualisé y
