@@ -8766,16 +8766,18 @@ function typeDisp(r) {
     return r.type || '';
 }
 
-// Libellé de type pour la répartition journalière : les TP portent leur numéro de
-// groupe (TP12_1, TP8_2…). Numéro local à la cohorte, déduit du group_label
-// ('gr.3'→3, 'ALT'→1, 'ALT 2'→2), sinon l'index de groupe.
+// Libellé de type pour la répartition journalière : les TP portent leur numéro
+// de groupe (TP12_1, TP8_2…), déduit du group_label ('gr.3'→3), sinon l'index
+// de groupe. Dans un semestre mutualisé, les derniers groupes sont ceux des
+// apprentis : ils portent ALT plutôt qu'un numéro (TP12_ALT), numéroté quand la
+// promo compte plusieurs groupes d'alternants (TP12_ALT1, TP12_ALT2).
 function typeLabelJour(r) {
     const base = typeDisp(r);
     if ((r.type || '').toUpperCase() !== 'TP') return base;
     const lbl = r.group_label || '';
     const m = lbl.match(/(\d+)/);
-    const num = m ? m[1] : (/alt/i.test(lbl) ? '1' : String(r.group_index || 1));
-    return base + '_' + num;
+    if (r.alt_group || /alt/i.test(lbl)) return base + '_ALT' + (m ? m[1] : '');
+    return base + '_' + (m ? m[1] : String(r.group_index || 1));
 }
 
 // ===== Sous-onglets Répartition : annuelle (tous) / journalière (admin) =====
