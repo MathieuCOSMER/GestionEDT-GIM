@@ -8928,24 +8928,73 @@ function renderRepJour() {
     // Détail des heures affichées par formation (sert au libellé du total)
     const tot = { FTP: 0, ALT: 0, MUT: 0 };
     list.forEach(r => { tot[r.formation] = (tot[r.formation] || 0) + heures(r); });
-    const rowsHtml = list.map(r => {
-        const h = heures(r);
-        const slot = r.slot_duration || 1.5;
+    // Regroupement par matière (semestre + code + face) : une ligne d'en-tête
+    // portant le total de la matière, puis une sous-ligne de détail par type
+    // d'enseignement (CM/TD/PT) ou par groupe de TP. Une matière qui n'a qu'une
+    // seule ligne de détail tient sur une seule ligne.
+    const groups = [];
+    const byKey = {};
+    list.forEach(r => {
+        const k = [r.semester, r.course_code, r.formation].join('|');
+        if (!byKey[k]) { byKey[k] = { first: r, rows: [] }; groups.push(byKey[k]); }
+        byKey[k].rows.push(r);
+    });
+    const dash = '<span style="color:#bbb">—</span>';
+    const badgeOf = r =>
+        `<span class="badge ${typeColors[(r.type || '').toUpperCase()] || 'badge-cm'}">${esc(typeLabelJour(r))}</span>`;
+    const seancesOf = r => {
         const g = groupsFor(r);
-        const n = creneaux(r);
-        const seances = `${n} × ${slot}h` + (g > 1 ? ` <span style="color:#9a3412;font-weight:600">(${g} gr.)</span>` : '');
-        const badge = `<span class="badge ${typeColors[(r.type || '').toUpperCase()] || 'badge-cm'}">${esc(typeLabelJour(r))}</span>`;
-        return `<tr>
-            <td style="text-align:center">${esc(r.semester || '')}</td>
-            <td><strong>${esc(r.course_code || '')}</strong></td>
-            <td>${esc(r.course_name || '')}</td>
-            <td style="text-align:center">${badge}</td>
-            <td style="text-align:center;font-weight:700;color:${formColor[r.formation] || '#374151'}">${esc(r.formation || '')}</td>
-            <td>${esc(r.teacher || '') || '<span style="color:#bbb">—</span>'}</td>
-            <td style="text-align:center">${esc(r.room || '') || '<span style="color:#bbb">—</span>'}</td>
-            <td style="text-align:center;font-weight:700">${fmt(h)}h</td>
-            <td style="text-align:center;color:#6b7280">${seances}</td>
+        return `${creneaux(r)} × ${r.slot_duration || 1.5}h`
+            + (g > 1 ? ` <span style="color:#9a3412;font-weight:600">(${g} gr.)</span>` : '');
+    };
+    // Valeur commune à toutes les sous-lignes, sinon '' (rien à remonter en en-tête)
+    const common = (rows, f) => {
+        const vals = [...new Set(rows.map(f).filter(Boolean))];
+        return vals.length === 1 && rows.every(r => f(r)) ? vals[0] : '';
+    };
+    const rowsHtml = groups.map(gp => {
+        const rs = gp.rows, r0 = gp.first;
+        const form = `<td style="text-align:center;font-weight:700;color:${formColor[r0.formation] || '#374151'}">${esc(r0.formation || '')}</td>`;
+        if (rs.length === 1) {
+            const r = rs[0];
+            return `<tr>
+                <td style="text-align:center">${esc(r.semester || '')}</td>
+                <td><strong>${esc(r.course_code || '')}</strong></td>
+                <td>${esc(r.course_name || '')}</td>
+                <td style="text-align:center">${badgeOf(r)}</td>
+                ${form}
+                <td>${esc(r.teacher || '') || dash}</td>
+                <td style="text-align:center">${esc(r.room || '') || dash}</td>
+                <td style="text-align:center;font-weight:700">${fmt(heures(r))}h</td>
+                <td style="text-align:center;color:#6b7280">${seancesOf(r)}</td>
+            </tr>`;
+        }
+        const gh = rs.reduce((acc, r) => acc + heures(r), 0);
+        const gn = fmt(rs.reduce((acc, r) => acc + creneaux(r), 0));
+        const gt = common(rs, r => r.teacher);
+        const gr = common(rs, r => r.room);
+        const head = `<tr style="background:#f1f5f9">
+            <td style="text-align:center">${esc(r0.semester || '')}</td>
+            <td><strong>${esc(r0.course_code || '')}</strong></td>
+            <td><strong>${esc(r0.course_name || '')}</strong></td>
+            <td style="text-align:center;color:#9ca3af">${rs.length} lignes</td>
+            ${form}
+            <td>${esc(gt) || dash}</td>
+            <td style="text-align:center">${esc(gr) || dash}</td>
+            <td style="text-align:center;font-weight:700">${fmt(gh)}h</td>
+            <td style="text-align:center;color:#6b7280">${gn} créneau(x)</td>
         </tr>`;
+        const details = rs.map(r => `<tr>
+            <td></td><td></td>
+            <td style="padding-left:26px;color:#9ca3af">↳</td>
+            <td style="text-align:center">${badgeOf(r)}</td>
+            <td></td>
+            <td>${esc(r.teacher || '') || dash}</td>
+            <td style="text-align:center">${esc(r.room || '') || dash}</td>
+            <td style="text-align:center">${fmt(heures(r))}h</td>
+            <td style="text-align:center;color:#6b7280">${seancesOf(r)}</td>
+        </tr>`).join('');
+        return head + details;
     }).join('');
     // Total = somme des lignes réellement affichées (un semestre mutualisé y
     // ajoute les faces FTP et ALT), détaillée par formation dès qu'il y en a plusieurs.
