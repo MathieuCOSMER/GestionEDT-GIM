@@ -9072,7 +9072,12 @@ function renderRepJour() {
             if (!sIdx[sk]) { sIdx[sk] = { key: sk, first: r, rows: [] }; subs.push(sIdx[sk]); }
             sIdx[sk].rows.push(r);
         });
-        subs.forEach(sb => _repJourSubKeys.push(sb.key));
+        // Sous-matière unique portant déjà le code de la matière (R3.02 « Info 3 »
+        // n'a pas de a/b) : sa ligne répéterait l'en-tête. On la saute et les
+        // lignes de type se rattachent directement à la matière — deux niveaux,
+        // comme les matières sans sous-matière doivent en avoir.
+        const flatSub = subs.length === 1 && (subs[0].first.course_code || '') === gp.matCode;
+        if (!flatSub) subs.forEach(sb => _repJourSubKeys.push(sb.key));
         const gh = rs.reduce((acc, r) => acc + heures(r), 0);
         const gn = fmt(rs.reduce((acc, r) => acc + creneaux(r), 0));
         const gt = common(rs, r => r.teacher);
@@ -9116,7 +9121,7 @@ function renderRepJour() {
         const names = rows => [...new Set(rows.map(x => x.teacher).filter(Boolean))].join(', ');
         const details = subs.map(sb => {
             const sr = sb.rows, s0 = sb.first;
-            const closed = _repJourSubClosed.has(sb.key);
+            const closed = !flatSub && _repJourSubClosed.has(sb.key);
             // Code de la sous-matière rappelé seulement s'il diffère de la matière
             const sc = (s0.course_code || '') === gp.matCode ? '' : (s0.course_code || '');
             const sh = sr.reduce((acc, x) => acc + heures(x), 0);
@@ -9146,7 +9151,9 @@ function renderRepJour() {
                 room: rooms(sr), hours: sh, seances: `${sn} créneau(x)`,
             });
             if (closed) return line;
-            return line + buckets.map(b => {
+            // Décalages : sans ligne de sous-matière, les types remontent d'un cran
+            const padType = flatSub ? 20 : 36, padGroup = flatSub ? 38 : 54;
+            return (flatSub ? '' : line) + buckets.map(b => {
                 const br = b.rows, b0 = br[0];
                 // Seuls les TP se déplient : leurs groupes sont places semaine par
                 // semaine, chacun a donc son propre placement. Un TD dédoublé
@@ -9162,7 +9169,7 @@ function renderRepJour() {
                 const tline = detailRow({
                     attrs: multi ? ` style="cursor:pointer" onclick="toggleRepJourTp('${esc(b.key)}')"`
                         + ` title="${open ? 'Replier' : 'Déplier'} les groupes"` : '',
-                    pad: 36, lead: (multi ? caret(!open) : '') + '·',
+                    pad: padType, lead: (multi ? caret(!open) : '') + '·',
                     name: '',
                     badge: badgeList(br, typeDisp)
                         + (ng > 1 ? ` <span style="color:#9a3412;font-weight:600;font-size:.72rem">${ng} gr.</span>` : ''),
@@ -9174,7 +9181,7 @@ function renderRepJour() {
                 if (!open) return tline;
                 // Niveau 4 : un groupe de TP par ligne, avec son enseignant
                 return tline + br.map(x => detailRow({
-                    pad: 54, lead: '·', name: '',
+                    pad: padGroup, lead: '·', name: '',
                     badge: badgeList([x], typeLabelJour), form: formCell(x.formation),
                     teacher: x.teacher, strong: true, room: x.room, hours: heures(x),
                     seances: `${creneaux(x)} × ${x.slot_duration || 1.5}h`,
