@@ -1599,6 +1599,11 @@ def _apply_migrations(db):
         db.execute("ALTER TABLE teachers ADD COLUMN is_admin INTEGER DEFAULT 0")
     # Garde-fou rejoué au démarrage : jamais d'administrateur sans mot de passe.
     db.execute("UPDATE teachers SET is_admin = 0 WHERE is_admin = 1 AND password_hash IS NULL")
+    # Préférence de contact déclarée par l'enseignant : texte libre (« de préférence
+    # par mail », « tél. le matin »…). Il la saisit dans son onglet Mon Compte ;
+    # elle s'affiche dans la liste des enseignants, à côté du mail et du téléphone.
+    if 'contact_pref' not in [r[1] for r in db.execute("PRAGMA table_info(teachers)").fetchall()]:
+        db.execute("ALTER TABLE teachers ADD COLUMN contact_pref TEXT")
 
     # Enseignant référent par MATIÈRE (groupe de sous-matières, clé = code sans
     # lettre finale, cf. _mat_base_key) et par face (FTP/ALT) — choix MANUEL de
@@ -7079,7 +7084,8 @@ def _my_account_payload(db, t):
         (t['id'],)).fetchall())
     return {
         'teacher': {'id': t['id'], 'name': t['name'], 'email': t['email'], 'phone': t['phone'],
-                    'structure': t['structure'], 'corps_code': t['corps_code'], 'status': t['status']},
+                    'structure': t['structure'], 'corps_code': t['corps_code'], 'status': t['status'],
+                    'contact_pref': t['contact_pref']},
         'external_hours': ext,
         'total_external_hetd': round(sum(float(e['hetd'] or 0) for e in ext), 2),
     }
@@ -7094,7 +7100,8 @@ def my_account_get():
 
 @app.route('/api/my-account', methods=['PUT'])
 def my_account_update():
-    """L'enseignant met à jour ses coordonnées : email, téléphone, employeur.
+    """L'enseignant met à jour ses coordonnées : email, téléphone, employeur et
+    préférence de contact (texte libre).
     (Nom, corps et statut restent gérés par l'admin dans la fiche enseignant.)"""
     db = get_db()
     t = _my_teacher_row(db)
@@ -7102,9 +7109,9 @@ def my_account_update():
         return error_response('Réservé aux enseignants connectés', 403)
     data = request.get_json() or {}
     fields, values = [], []
-    for field in ['email', 'phone', 'structure']:
+    for field in ['email', 'phone', 'structure', 'contact_pref']:
         if field in data:
-            v = (data.get(field) or '').strip() or None
+            v = (data.get(field) or '').strip()[:300] or None
             fields.append(f'{field} = ?')
             values.append(v)
     if not fields:

@@ -2297,6 +2297,12 @@ function renderMonCompte() {
                 <input id="mc-phone" value="${esc(t.phone || '')}" placeholder="06..."></div>
             <div class="form-group"><label>Employeur</label>
                 <input id="mc-structure" value="${esc(t.structure || '')}" placeholder="ex. IUT de Toulon, Lycée..."></div>
+            <div class="form-group"><label>Préférence de contact</label>
+                <textarea id="mc-contact-pref" rows="2" maxlength="300"
+                    placeholder="ex. de préférence par mail, téléphone le matin, pas le mercredi..."
+                    >${esc(t.contact_pref || '')}</textarea>
+                <div style="font-size:.76rem;color:#6b7280;margin-top:3px">
+                    Texte libre, visible dans la liste des enseignants.</div></div>
             <button class="btn btn-primary" onclick="saveMonCompteContact()">Enregistrer</button>
         </div>
         <div style="border:1px solid #e5e7eb;border-radius:8px;background:#fff;padding:16px">
@@ -2336,6 +2342,7 @@ async function saveMonCompteContact() {
             email: document.getElementById('mc-email').value,
             phone: document.getElementById('mc-phone').value,
             structure: document.getElementById('mc-structure').value,
+            contact_pref: document.getElementById('mc-contact-pref').value,
         }) });
         renderMonCompte();
         toast('Coordonnées enregistrées');
@@ -2380,12 +2387,15 @@ function renderTeachers() {
     if (!state.teachers.length) { el.innerHTML = '<div class="empty">Aucun enseignant</div>'; return; }
     el.innerHTML = `<table>
         <thead><tr>
-            <th>Nom</th><th>Email</th><th>Téléphone</th><th>Structure</th><th>Corps</th><th>Statut</th>${state.role === 'admin' ? '<th>Actions</th>' : ''}
+            <th>Nom</th><th>Email</th><th>Téléphone</th>
+            <th title="Préférence de contact déclarée par l'enseignant dans son onglet Mon Compte">Contact préféré</th>
+            <th>Structure</th><th>Corps</th><th>Statut</th>${state.role === 'admin' ? '<th>Actions</th>' : ''}
         </tr></thead>
         <tbody>${state.teachers.map(t => `<tr>
             <td><strong>${esc(t.name)}</strong></td>
             <td>${esc(t.email||'')}</td>
             <td>${esc(t.phone||'')}</td>
+            <td style="color:#6b7280;font-size:.84rem">${esc(t.contact_pref||'')}</td>
             <td>${esc(t.structure||'')}</td>
             <td>${esc(t.corps_code||'')}</td>
             <td>${esc(t.status||'Titulaire')}</td>
