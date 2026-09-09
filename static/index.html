@@ -8767,23 +8767,20 @@ function typeDisp(r) {
 }
 
 // Libellé de type pour la répartition journalière : les TP portent leur numéro
-// de groupe (TP12_1, TP8_2…), déduit du group_label ('gr.3'→3), sinon l'index
-// de groupe. Les groupes d'apprentis portent ALT plutôt qu'un numéro, numéroté
-// seulement s'il y en a plusieurs (TP12_ALT, TP12_ALT1, TP12_ALT2). Deux
-// montages les produisent :
-//  - TP mutualisé commun : les DERNIERS groupes sont ceux des apprentis
-//    (alt_group, group_label 'ALT' / 'ALT 2' qui porte déjà leur rang) ;
-//  - TP distincts par face (tp_separate) : la séance elle-même est sur la face
-//    ALT, ses groupes sont donc tous des groupes d'apprentis.
+// de groupe (TP12_1, TP8_2…). Le suffixe dépend du montage du semestre :
+//  - TP distincts par face (tp_separate) : la séance des apprentis est une
+//    session à part, portée par la face ALT → TP12_ALT, numéroté seulement
+//    s'il y a plusieurs groupes d'alternants (TP12_ALT1, TP12_ALT2) ;
+//  - TP communs FTP/ALT : tous les groupes appartiennent au même pool et
+//    partagent une seule numérotation, apprentis compris (ils occupent les
+//    derniers groupes) → TP12_1, TP12_2… et non TP12_ALT.
 function typeLabelJour(r) {
     const base = typeDisp(r);
     if ((r.type || '').toUpperCase() !== 'TP') return base;
-    const lbl = r.group_label || '';
-    const m = lbl.match(/(\d+)/);
-    if (r.alt_group || /alt/i.test(lbl)) return base + '_ALT' + (m ? m[1] : '');
     if ((r.formation || '').toUpperCase() === 'ALT')
         return base + '_ALT' + ((r.n_groups || 1) > 1 ? String(r.group_index || 1) : '');
-    return base + '_' + (m ? m[1] : String(r.group_index || 1));
+    const m = (r.group_label || '').match(/(\d+)/);
+    return base + '_' + String(r.group_index || (m ? m[1] : 1));
 }
 
 // ===== Sous-onglets Répartition : annuelle (tous) / journalière (admin) =====
