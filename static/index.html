@@ -8838,6 +8838,10 @@ async function loadRepJour() {
         ]);
         state.mutSemesters = sg.mutualized || {};
         state.tpSeparate = sg.tp_separate || {};
+        // Libellés des matières du programme (facultatif : sans lui on retombe
+        // sur les intitulés des sous-matières)
+        try { _repJourProg = await api('/matieres-programme' + svcQ()); }
+        catch (e) { _repJourProg = null; }
         const anchor = (state.config && state.config.academic_start_week) || 36;
         const mw = maxWeek();
         const skey = w => (w >= anchor ? w - anchor : w - anchor + mw);
@@ -8861,11 +8865,51 @@ async function loadRepJour() {
 // Tableau des cours à placer pour la semaine, l'année et la cohorte choisies
 // Colonne de tri de la répartition journalière (clic sur un en-tête pour trier)
 let _repJourSort = { key: 'default', dir: 1 };
+// Matières repliées (clé de groupe) et clés affichées au dernier rendu, pour
+// les boutons « Tout replier / Tout déplier ».
+let _repJourCollapsed = new Set();
+let _repJourKeys = [];
+// Matières du programme de l'année (libellé d'une matière regroupant plusieurs
+// sous-matières) — chargé avec la répartition, absent = repli sur les intitulés.
+let _repJourProg = null;
 
 function sortRepJour(key) {
     if (_repJourSort.key === key) _repJourSort.dir = -_repJourSort.dir;
     else _repJourSort = { key, dir: 1 };
     renderRepJour();
+}
+
+// Replie / déplie une matière (ligne d'en-tête cliquable)
+function toggleRepJourGroup(key) {
+    if (_repJourCollapsed.has(key)) _repJourCollapsed.delete(key);
+    else _repJourCollapsed.add(key);
+    renderRepJour();
+}
+
+// Replie ou déplie toutes les matières affichées
+function foldAllRepJour(collapse) {
+    if (collapse) _repJourKeys.forEach(k => _repJourCollapsed.add(k));
+    else _repJourCollapsed.clear();
+    renderRepJour();
+}
+
+// Libellé d'une matière : celui du programme national si la matière y figure,
+// sinon l'intitulé commun aux sous-matières (ou leur préfixe commun).
+function repJourMatLabel(sem, key, rows) {
+    const comps = ((_repJourProg && _repJourProg.semesters
+        && _repJourProg.semesters[sem]) || {}).components || [];
+    const comp = comps.find(c => matBaseKey(c.code) === key);
+    if (comp && (comp.short_label || comp.label)) return comp.short_label || comp.label;
+    const names = [...new Set(rows.map(r => r.course_name).filter(Boolean))];
+    if (names.length <= 1) return names[0] || '';
+    let pre = names[0];
+    names.forEach(n => {
+        let i = 0;
+        while (i < pre.length && i < n.length && pre[i] === n[i]) i++;
+        pre = pre.slice(0, i);
+    });
+    pre = pre.replace(/[\s\-–—:,(]+$/, '');
+    return pre.length >= 3 ? pre : names[0];
 }
 
 function renderRepJour() {
@@ -8928,17 +8972,19 @@ function renderRepJour() {
     // Détail des heures affichées par formation (sert au libellé du total)
     const tot = { FTP: 0, ALT: 0, MUT: 0 };
     list.forEach(r => { tot[r.formation] = (tot[r.formation] || 0) + heures(r); });
-    // Regroupement par matière (semestre + code + face) : une ligne d'en-tête
-    // portant le total de la matière, puis une sous-ligne de détail par type
-    // d'enseignement (CM/TD/PT) ou par groupe de TP. Une matière qui n'a qu'une
-    // seule ligne de détail tient sur une seule ligne.
+    // Regroupement par MATIÈRE (semestre + clé de base du code + face) : la
+    // première ligne est la matière entière — sous-matières comprises (R1.03a,
+    // R1.03b… se rangent sous R1.03) — puis une sous-ligne de détail par
+    // sous-matière × type d'enseignement, et une par groupe pour les TP.
     const groups = [];
     const byKey = {};
     list.forEach(r => {
-        const k = [r.semester, r.course_code, r.formation].join('|');
-        if (!byKey[k]) { byKey[k] = { first: r, rows: [] }; groups.push(byKey[k]); }
+        const mk = matBaseKey(r.course_code || '');
+        const k = [r.semester, mk, r.formation].join('|');
+        if (!byKey[k]) { byKey[k] = { key: k, matKey: mk, first: r, rows: [] }; groups.push(byKey[k]); }
         byKey[k].rows.push(r);
     });
+    _repJourKeys = groups.map(g => g.key);
     const dash = '<span style="color:#bbb">—</span>';
     const badgeOf = r =>
         `<span class="badge ${typeColors[(r.type || '').toUpperCase()] || 'badge-cm'}">${esc(typeLabelJour(r))}</span>`;
@@ -8973,10 +9019,16 @@ function renderRepJour() {
         const gn = fmt(rs.reduce((acc, r) => acc + creneaux(r), 0));
         const gt = common(rs, r => r.teacher);
         const gr = common(rs, r => r.room);
-        const head = `<tr style="background:#f1f5f9">
+        const folded = _repJourCollapsed.has(gp.key);
+        // Sous-matières distinctes : leur code est alors rappelé sur chaque détail
+        const multiSub = new Set(rs.map(r => r.course_code || '')).size > 1;
+        const caret = `<span style="color:#6b7280;font-size:.8rem;margin-right:4px">${folded ? '▸' : '▾'}</span>`;
+        const head = `<tr style="background:#f1f5f9;cursor:pointer"
+                onclick="toggleRepJourGroup('${esc(gp.key)}')"
+                title="${folded ? 'Déplier' : 'Replier'} le détail de la matière">
             <td style="text-align:center">${esc(r0.semester || '')}</td>
-            <td><strong>${esc(r0.course_code || '')}</strong></td>
-            <td><strong>${esc(r0.course_name || '')}</strong></td>
+            <td>${caret}<strong>${esc(gp.matKey)}</strong></td>
+            <td><strong>${esc(repJourMatLabel(r0.semester, gp.matKey, rs))}</strong></td>
             <td style="text-align:center;color:#9ca3af">${rs.length} lignes</td>
             ${form}
             <td>${esc(gt) || dash}</td>
@@ -8984,9 +9036,11 @@ function renderRepJour() {
             <td style="text-align:center;font-weight:700">${fmt(gh)}h</td>
             <td style="text-align:center;color:#6b7280">${gn} créneau(x)</td>
         </tr>`;
+        if (folded) return head;
         const details = rs.map(r => `<tr>
-            <td></td><td></td>
-            <td style="padding-left:26px;color:#9ca3af">↳</td>
+            <td></td>
+            <td style="padding-left:20px;color:#6b7280">${multiSub ? '↳ ' + esc(r.course_code || '') : '↳'}</td>
+            <td style="color:#6b7280">${multiSub ? esc(r.course_name || '') : ''}</td>
             <td style="text-align:center">${badgeOf(r)}</td>
             <td></td>
             <td>${esc(r.teacher || '') || dash}</td>
@@ -9007,10 +9061,16 @@ function renderRepJour() {
     const th = (k, label, style) =>
         `<th style="${style};cursor:pointer;user-select:none" onclick="sortRepJour('${k}')" title="Trier par ${esc(label)}">${esc(label)}${arrow(k)}</th>`;
     el.innerHTML = `
-        <div style="display:flex;gap:18px;margin-bottom:10px;font-size:.9rem">
+        <div style="display:flex;align-items:center;gap:18px;margin-bottom:10px;font-size:.9rem">
             <span><strong style="color:${formColor[cohorte]}">${esc(cohorteLabel)}</strong> :
                 ${fmt(totCohorte)}h${totDetail}</span>
             <span style="color:#6b7280">${fmt(totalCreneaux)} créneau(x) à placer</span>
+            <span style="margin-left:auto;display:flex;gap:6px">
+                <button type="button" class="btn btn-sm btn-secondary"
+                    onclick="foldAllRepJour(true)">Tout replier</button>
+                <button type="button" class="btn btn-sm btn-secondary"
+                    onclick="foldAllRepJour(false)">Tout déplier</button>
+            </span>
         </div>
         <div class="overflow-x">
         <table style="width:auto;min-width:820px">
