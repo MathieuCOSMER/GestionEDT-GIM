@@ -8877,9 +8877,13 @@ let _repJourSort = { key: 'default', dir: 1 };
 // les boutons « Tout replier / Tout déplier ».
 let _repJourCollapsed = new Set();
 let _repJourKeys = [];
-// Sous-matières repliées (niveau 2) : leur détail par enseignant est masqué.
+// Sous-matières repliées (niveau 2) : leurs lignes par type sont masquées.
 let _repJourSubClosed = new Set();
 let _repJourSubKeys = [];
+// Groupes de TP dépliés (niveau 4) — repliés par défaut : les TP12_1,
+// TP12_ALT… d'une même session tiennent sur la ligne de leur type.
+let _repJourTpOpen = new Set();
+let _repJourTpKeys = [];
 // Matières du programme de l'année (libellé d'une matière regroupant plusieurs
 // sous-matières) — chargé avec la répartition, absent = repli sur les intitulés.
 let _repJourProg = null;
@@ -8897,21 +8901,30 @@ function toggleRepJourGroup(key) {
     renderRepJour();
 }
 
-// Replie / déplie une sous-matière (ses lignes par enseignant)
+// Replie / déplie une sous-matière (ses lignes par type d'enseignement)
 function toggleRepJourSub(key) {
     if (_repJourSubClosed.has(key)) _repJourSubClosed.delete(key);
     else _repJourSubClosed.add(key);
     renderRepJour();
 }
 
-// Replie ou déplie tout : matières et sous-matières
+// Replie / déplie les groupes d'un TP (TP12_1, TP12_ALT…)
+function toggleRepJourTp(key) {
+    if (_repJourTpOpen.has(key)) _repJourTpOpen.delete(key);
+    else _repJourTpOpen.add(key);
+    renderRepJour();
+}
+
+// Replie ou déplie tout : matières, sous-matières et groupes de TP
 function foldAllRepJour(collapse) {
     if (collapse) {
         _repJourKeys.forEach(k => _repJourCollapsed.add(k));
         _repJourSubKeys.forEach(k => _repJourSubClosed.add(k));
+        _repJourTpOpen.clear();
     } else {
         _repJourCollapsed.clear();
         _repJourSubClosed.clear();
+        _repJourTpKeys.forEach(k => _repJourTpOpen.add(k));
     }
     renderRepJour();
 }
@@ -9023,6 +9036,7 @@ function renderRepJour() {
     });
     _repJourKeys = groups.map(g => g.key);
     _repJourSubKeys = [];
+    _repJourTpKeys = [];
     const dash = '<span style="color:#bbb">—</span>';
     const formCell = f =>
         `<td style="text-align:center;font-weight:700;color:${formColor[f] || '#374151'}">${esc(f || '')}</td>`;
@@ -9099,6 +9113,7 @@ function renderRepJour() {
             <td style="text-align:center;color:#6b7280">${o.seances}</td>
         </tr>`;
         const rooms = rows => [...new Set(rows.map(x => x.room).filter(Boolean))].join(', ');
+        const names = rows => [...new Set(rows.map(x => x.teacher).filter(Boolean))].join(', ');
         const details = subs.map(sb => {
             const sr = sb.rows, s0 = sb.first;
             const closed = _repJourSubClosed.has(sb.key);
@@ -9106,42 +9121,57 @@ function renderRepJour() {
             const sc = (s0.course_code || '') === gp.matCode ? '' : (s0.course_code || '');
             const sh = sr.reduce((acc, x) => acc + heures(x), 0);
             const sn = fmt(sr.reduce((acc, x) => acc + creneaux(x), 0));
-            // Niveau 3 : un enseignant par ligne. Les groupes de TP d'un même
-            // enseignant (TP12_1 et TP12_2 tenus par la même personne) tiennent
-            // sur sa ligne, avec le nombre de groupes.
-            const tIdx = {}, teachers = [];
+            const nT = new Set(sr.map(x => x.teacher || '')).size;
+            // Niveau 3 : une ligne par type d'enseignement, c'est-à-dire par
+            // session (le CM, le TD, le TP…). Les lignes d'une même session
+            // sont ses groupes de TP, gardés pour le niveau 4.
+            const buckets = [], bIdx = {};
             sr.forEach(x => {
-                const tk = x.teacher || '';
-                if (!tIdx[tk]) { tIdx[tk] = { name: tk, rows: [] }; teachers.push(tIdx[tk]); }
-                tIdx[tk].rows.push(x);
+                const bk = sb.key + '|' + (x.session_id != null ? 's' + x.session_id
+                    : [(x.type || '').toUpperCase(), x.formation || ''].join('|'));
+                if (!bIdx[bk]) { bIdx[bk] = { key: bk, rows: [] }; buckets.push(bIdx[bk]); }
+                bIdx[bk].rows.push(x);
             });
+            buckets.forEach(b => { if (b.rows.length > 1) _repJourTpKeys.push(b.key); });
             const line = detailRow({
                 attrs: ` style="cursor:pointer" onclick="toggleRepJourSub('${esc(sb.key)}')"`
-                    + ` title="${closed ? 'Déplier' : 'Replier'} les enseignants"`,
-                pad: 20, lead: caret(closed) + (sc ? '↳ ' + esc(sc) : '↳'),
+                    + ` title="${closed ? 'Déplier' : 'Replier'} le détail de la sous-matière"`,
+                pad: 18, lead: caret(closed) + (sc ? '↳ ' + esc(sc) : '↳'),
                 name: sc ? s0.course_name : '',
                 badge: badgeList(sr, typeDisp), form: formsCell(sr),
-                teacher: common(sr, x => x.teacher)
-                    || (teachers.length > 1 ? `${teachers.length} enseignants` : ''),
+                teacher: common(sr, x => x.teacher) || (nT > 1 ? `${nT} enseignants` : ''),
                 room: rooms(sr), hours: sh, seances: `${sn} créneau(x)`,
             });
             if (closed) return line;
-            return line + teachers.map(t => {
-                const th = t.rows.reduce((acc, x) => acc + heures(x), 0);
-                const tn = fmt(t.rows.reduce((acc, x) => acc + creneaux(x), 0));
-                // Durées de séance mêlées (CM 2h + TD 1,5h) : on s'en tient au
-                // nombre de créneaux.
-                const slots = [...new Set(t.rows.map(x => x.slot_duration || 1.5))];
+            return line + buckets.map(b => {
+                const br = b.rows, b0 = br[0];
+                const multi = br.length > 1;          // session éclatée en groupes de TP
+                const open = multi && _repJourTpOpen.has(b.key);
+                const bh = br.reduce((acc, x) => acc + heures(x), 0);
+                const bn = fmt(br.reduce((acc, x) => acc + creneaux(x), 0));
                 // Groupes couverts : une ligne par groupe pour les TP, mais un TD
                 // dédoublé tient sur une seule ligne comptant ses groupes.
-                const ng = t.rows.reduce((acc, x) => acc + groupsFor(x), 0);
-                return detailRow({
-                    pad: 44, lead: '·', name: '',
-                    badge: badgeList(t.rows, typeLabelJour), form: formsCell(t.rows),
-                    teacher: t.name, strong: true, room: rooms(t.rows), hours: th,
-                    seances: (slots.length === 1 ? `${tn} × ${slots[0]}h` : `${tn} créneau(x)`)
-                        + (ng > 1 ? ` <span style="color:#9a3412;font-weight:600">(${ng} gr.)</span>` : ''),
+                const ng = br.reduce((acc, x) => acc + groupsFor(x), 0);
+                const tline = detailRow({
+                    attrs: multi ? ` style="cursor:pointer" onclick="toggleRepJourTp('${esc(b.key)}')"`
+                        + ` title="${open ? 'Replier' : 'Déplier'} les groupes"` : '',
+                    pad: 36, lead: (multi ? caret(!open) : '') + '·',
+                    name: '',
+                    badge: badgeList(br, typeDisp)
+                        + (ng > 1 ? ` <span style="color:#9a3412;font-weight:600;font-size:.72rem">${ng} gr.</span>` : ''),
+                    form: formsCell(br),
+                    teacher: common(br, x => x.teacher) || names(br),
+                    room: rooms(br), hours: bh,
+                    seances: `${bn} × ${b0.slot_duration || 1.5}h`,
                 });
+                if (!open) return tline;
+                // Niveau 4 : un groupe de TP par ligne, avec son enseignant
+                return tline + br.map(x => detailRow({
+                    pad: 54, lead: '·', name: '',
+                    badge: badgeList([x], typeLabelJour), form: formCell(x.formation),
+                    teacher: x.teacher, strong: true, room: x.room, hours: heures(x),
+                    seances: `${creneaux(x)} × ${x.slot_duration || 1.5}h`,
+                })).join('');
             }).join('');
         }).join('');
         return head + details;
