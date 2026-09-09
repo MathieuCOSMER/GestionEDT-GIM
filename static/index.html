@@ -8869,6 +8869,10 @@ let _repJourSort = { key: 'default', dir: 1 };
 // les boutons « Tout replier / Tout déplier ».
 let _repJourCollapsed = new Set();
 let _repJourKeys = [];
+// Groupes de TP dépliés (une ligne par groupe) — repliés par défaut : les
+// TP12_1, TP12_2… d'une même sous-matière tiennent sur une seule ligne.
+let _repJourTpOpen = new Set();
+let _repJourTpKeys = [];
 // Matières du programme de l'année (libellé d'une matière regroupant plusieurs
 // sous-matières) — chargé avec la répartition, absent = repli sur les intitulés.
 let _repJourProg = null;
@@ -8886,10 +8890,22 @@ function toggleRepJourGroup(key) {
     renderRepJour();
 }
 
-// Replie ou déplie toutes les matières affichées
+// Replie / déplie les groupes d'un TP (TP12_1, TP12_2…)
+function toggleRepJourTp(key) {
+    if (_repJourTpOpen.has(key)) _repJourTpOpen.delete(key);
+    else _repJourTpOpen.add(key);
+    renderRepJour();
+}
+
+// Replie ou déplie tout : matières et groupes de TP
 function foldAllRepJour(collapse) {
-    if (collapse) _repJourKeys.forEach(k => _repJourCollapsed.add(k));
-    else _repJourCollapsed.clear();
+    if (collapse) {
+        _repJourKeys.forEach(k => _repJourCollapsed.add(k));
+        _repJourTpOpen.clear();
+    } else {
+        _repJourCollapsed.clear();
+        _repJourTpKeys.forEach(k => _repJourTpOpen.add(k));
+    }
     renderRepJour();
 }
 
@@ -8999,6 +9015,7 @@ function renderRepJour() {
         byKey[k].rows.push(r);
     });
     _repJourKeys = groups.map(g => g.key);
+    _repJourTpKeys = [];
     const dash = '<span style="color:#bbb">—</span>';
     const formCell = f =>
         `<td style="text-align:center;font-weight:700;color:${formColor[f] || '#374151'}">${esc(f || '')}</td>`;
@@ -9023,6 +9040,22 @@ function renderRepJour() {
             ? formCell(forms[0])
             : `<td style="text-align:center;font-size:.68rem">${forms.map(f =>
                 `<span style="color:${formColor[f] || '#374151'};font-weight:700">${esc(f)}</span>`).join(' ')}</td>`;
+        // Détail : une ligne par sous-matière × type d'enseignement. Les groupes
+        // d'un même TP (TP12_1, TP12_2…) sont réunis sur une seule ligne,
+        // dépliable quand on veut l'enseignant et la salle de chaque groupe.
+        const buckets = [];
+        const bIdx = {};
+        rs.forEach(r => {
+            // Une ligne de détail = une SESSION : les lignes d'une même session
+            // sont ses groupes de TP. Deux sessions distinctes (le TP côté FTP
+            // et celui côté ALT, ou deux TP d'une même sous-matière) restent
+            // deux lignes, comme ce sont deux séances à placer.
+            const bk = gp.key + '|' + (r.session_id != null ? 's' + r.session_id
+                : [r.course_code || '', (r.type || '').toUpperCase(), r.formation || ''].join('|'));
+            if (!bIdx[bk]) { bIdx[bk] = { key: bk, rows: [] }; buckets.push(bIdx[bk]); }
+            bIdx[bk].rows.push(r);
+        });
+        buckets.forEach(b => { if (b.rows.length > 1) _repJourTpKeys.push(b.key); });
         const gh = rs.reduce((acc, r) => acc + heures(r), 0);
         const gn = fmt(rs.reduce((acc, r) => acc + creneaux(r), 0));
         const gt = common(rs, r => r.teacher);
@@ -9033,7 +9066,8 @@ function renderRepJour() {
         // elle, est normalisée (SAE1.06) et ne sert qu'au rapprochement programme.
         const nSubs = new Set(rs.map(r => r.course_code || '')).size;
         const caret = `<span style="color:#6b7280;font-size:.8rem;margin-right:4px">${folded ? '▸' : '▾'}</span>`;
-        const sub = nSubs > 1 ? `${nSubs} sous-matières` : `${rs.length} ligne${rs.length > 1 ? 's' : ''}`;
+        const sub = nSubs > 1 ? `${nSubs} sous-matières`
+            : `${buckets.length} ligne${buckets.length > 1 ? 's' : ''}`;
         const head = `<tr style="background:#f1f5f9;cursor:pointer"
                 onclick="toggleRepJourGroup('${esc(gp.key)}')"
                 title="${folded ? 'Déplier' : 'Replier'} le détail de la matière">
@@ -9048,21 +9082,49 @@ function renderRepJour() {
             <td style="text-align:center;color:#6b7280">${gn} créneau(x)</td>
         </tr>`;
         if (folded) return head;
-        // Détail : une ligne par sous-matière × type (et par groupe pour les TP).
-        // Le code de la sous-matière n'est rappelé que s'il diffère de la matière.
-        const details = rs.map(r => {
-            const sc = (r.course_code || '') === gp.matCode ? '' : (r.course_code || '');
-            return `<tr>
+        // Une ligne de détail : `lead` (indentation + code de la sous-matière) et
+        // `badge` sont du HTML déjà construit, le reste est échappé ici.
+        const detailRow = (r, o) => `<tr${o.attrs || ''}>
             <td></td>
-            <td style="padding-left:20px;color:#6b7280">${sc ? '↳ ' + esc(sc) : '↳'}</td>
-            <td style="color:#6b7280">${sc ? esc(r.course_name || '') : ''}</td>
-            <td style="text-align:center">${badgeOf(r)}</td>
+            <td style="padding-left:${o.pad}px;color:#6b7280">${o.lead}</td>
+            <td style="color:#6b7280">${esc(o.name || '')}</td>
+            <td style="text-align:center">${o.badge}</td>
             ${formCell(r.formation)}
-            <td>${esc(r.teacher || '') || dash}</td>
-            <td style="text-align:center">${esc(r.room || '') || dash}</td>
-            <td style="text-align:center">${fmt(heures(r))}h</td>
-            <td style="text-align:center;color:#6b7280">${seancesOf(r)}</td>
+            <td>${esc(o.teacher || '') || dash}</td>
+            <td style="text-align:center">${esc(o.room || '') || dash}</td>
+            <td style="text-align:center">${fmt(o.hours)}h</td>
+            <td style="text-align:center;color:#6b7280">${o.seances}</td>
         </tr>`;
+        const details = buckets.map(b => {
+            const br = b.rows, r = br[0];
+            // Code de la sous-matière rappelé seulement s'il diffère de la matière
+            const sc = (r.course_code || '') === gp.matCode ? '' : (r.course_code || '');
+            const lead = sc ? '↳ ' + esc(sc) : '↳';
+            if (br.length === 1) {
+                return detailRow(r, { pad: 20, lead, name: sc ? r.course_name : '',
+                    badge: badgeOf(r), teacher: r.teacher, room: r.room,
+                    hours: heures(r), seances: seancesOf(r) });
+            }
+            const open = _repJourTpOpen.has(b.key);
+            const bh = br.reduce((acc, x) => acc + heures(x), 0);
+            const bn = fmt(br.reduce((acc, x) => acc + creneaux(x), 0));
+            const car = `<span style="font-size:.8rem;margin-right:3px">${open ? '▾' : '▸'}</span>`;
+            const line = detailRow(r, {
+                attrs: ` style="cursor:pointer" onclick="toggleRepJourTp('${esc(b.key)}')"`
+                    + ` title="${open ? 'Replier' : 'Déplier'} les groupes"`,
+                pad: 20, lead: car + lead, name: sc ? r.course_name : '',
+                badge: `<span class="badge ${typeColors[(r.type || '').toUpperCase()] || 'badge-cm'}">${esc(typeDisp(r))}</span>`
+                    + ` <span style="color:#9a3412;font-weight:600;font-size:.72rem">${br.length} gr.</span>`,
+                teacher: [...new Set(br.map(x => x.teacher).filter(Boolean))].join(', '),
+                room: [...new Set(br.map(x => x.room).filter(Boolean))].join(', '),
+                hours: bh, seances: `${bn} × ${r.slot_duration || 1.5}h`,
+            });
+            if (!open) return line;
+            return line + br.map(x => detailRow(x, {
+                pad: 44, lead: '·', name: '', badge: badgeOf(x),
+                teacher: x.teacher, room: x.room,
+                hours: heures(x), seances: seancesOf(x),
+            })).join('');
         }).join('');
         return head + details;
     }).join('');
