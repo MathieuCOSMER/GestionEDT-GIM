@@ -2166,11 +2166,11 @@ async function loadPage(name, forceReload) {
             state.sessions = sessions;
             state.teachers = teachers;
             state.semesterGroups = sg.groups || [];
-            // Séances dont l'appel se fait par QR code : clés « session|enseignant »
+            // Sous-matières dont l'appel se fait par QR code : clés « matière|enseignant »
             state.qrAttendance = new Set();
             try {
                 (await api('/qr-attendance' + svcQ())).forEach(r =>
-                    state.qrAttendance.add(r.course_session_id + '|' + r.teacher_id));
+                    state.qrAttendance.add(r.course_id + '|' + r.teacher_id));
             } catch (e) { /* silencieux : la colonne s'affiche décochée */ }
             state.mutSemesters = sg.mutualized || {};
             state.tpSeparate = sg.tp_separate || {};
@@ -7823,6 +7823,19 @@ function renderTeacherRepartition() {
         const isSelf = isSelfBlock(tid);
         const canQr = state.role === 'admin' || isSelf;
 
+        // Appel par QR code : réglé UNE fois par sous-matière, pour tous ses
+        // CM / TD / TP / PT (faces FTP et ALT comprises). La case vit donc sur la
+        // ligne de bilan de la matière ; les lignes de type n'en portent pas.
+        const qrCell = (c) => {
+            const on = (state.qrAttendance || new Set()).has(c.courseId + '|' + tid);
+            if (!canQr)
+                return `<td style="text-align:center" title="${on ? 'Appel par QR code' : 'Appel classique'}">${on ? '<span style="color:#059669">✓</span>' : '<span style="color:#d1d5db">—</span>'}</td>`;
+            return `<td style="text-align:center"><input type="checkbox"${on ? ' checked' : ''}
+                        onchange="toggleQrAttendance(${c.courseId}, ${tid}, this)"
+                        title="Faire l'appel par QR code pour toute la sous-matière ${esc(c.code||'')} (CM, TD, TP, PT)"
+                        style="cursor:pointer;width:15px;height:15px"></td>`;
+        };
+
         // Ligne de bilan (en-tête) en début de matière
         const courseSubtotalRow = (c) => `<tr style="background:#f3f4ff;font-weight:600">
                 <td colspan="5" style="text-align:left;color:#4f46e5">${esc(c.code||'')} — ${esc(c.name||'')}</td>
@@ -7831,7 +7844,7 @@ function renderTeacherRepartition() {
                 <td style="text-align:right">${c.pond.toFixed(1)}h</td>
                 <td></td>
                 <td style="text-align:right;color:#4f46e5">${c.hetd.toFixed(2)}</td>
-                <td></td>
+                ${qrCell(c)}
             </tr>`;
 
         // Regroupement par matière (semestre + code cours, contigus car déjà triés)
@@ -7849,19 +7862,11 @@ function renderTeacherRepartition() {
             const courseKey = `${s.semester_code||''}|${s.course_code||''}`;
             let cur = courseGroups[courseGroups.length - 1];
             if (!cur || cur.key !== courseKey) {
-                cur = { key: courseKey, code: s.course_code, name: s.course_name, brut: 0, pond: 0, hetd: 0, rows: [] };
+                cur = { key: courseKey, courseId: s.course_id, code: s.course_code,
+                        name: s.course_name, brut: 0, pond: 0, hetd: 0, rows: [] };
                 courseGroups.push(cur);
             }
             cur.brut += brut; cur.pond += pond; cur.hetd += hetd;
-
-            // Appel par QR code : choix personnel de l'enseignant pour CETTE séance
-            const qrOn = (state.qrAttendance || new Set()).has(s.id + '|' + s.teacher_id);
-            const qrCell = canQr
-                ? `<td style="text-align:center"><input type="checkbox"${qrOn ? ' checked' : ''}
-                        onchange="toggleQrAttendance(${s.id}, ${s.teacher_id}, this)"
-                        title="Faire l'appel par QR code pour cette séance"
-                        style="cursor:pointer;width:15px;height:15px"></td>`
-                : `<td style="text-align:center" title="${qrOn ? 'Appel par QR code' : 'Appel classique'}">${qrOn ? '<span style="color:#059669">✓</span>' : '<span style="color:#d1d5db">—</span>'}</td>`;
 
             cur.rows.push(`<tr>
                 <td>${esc(s.semester_code||'')}</td>
@@ -7874,7 +7879,7 @@ function renderTeacherRepartition() {
                 <td style="text-align:right">${pond.toFixed(1)}h</td>
                 <td style="text-align:right">${coef.toFixed(2)}</td>
                 <td style="text-align:right;color:#4f46e5;font-weight:600">${hetd.toFixed(2)}</td>
-                ${qrCell}
+                <td></td>
             </tr>`);
         });
         const rows = courseGroups.map(c => courseSubtotalRow(c) + c.rows.join('')).join('');
@@ -7942,7 +7947,7 @@ function renderTeacherRepartition() {
                     <th style="text-align:right">H. pondérées</th>
                     <th style="text-align:right">Coef.</th>
                     <th style="text-align:right">HETD</th>
-                    <th style="text-align:center" title="Appel des étudiants par QR code : chaque enseignant coche les séances qu'il souhaite pointer ainsi">Appel QR</th>
+                    <th style="text-align:center" title="Appel des étudiants par QR code : une case par sous-matière, valable pour tous ses CM, TD, TP et PT">Appel QR</th>
                 </tr></thead>
                 <tbody>${rows}${extRowsHtml}</tbody>
             </table></div>
@@ -7964,22 +7969,23 @@ function renderTeacherRepartition() {
     el.innerHTML = summary + blocks;
 }
 
-// Appel par QR code d'une séance : bascule le choix de l'enseignant.
-// La case revient à son état précédent si le serveur refuse (droits, séance
-// qui n'est pas la sienne), sans redessiner tout le tableau.
-async function toggleQrAttendance(sessionId, teacherId, cb) {
+// Appel par QR code d'une sous-matière : bascule le choix de l'enseignant pour
+// tous ses types d'enseignement. La case revient à son état précédent si le
+// serveur refuse (droits, matière qui n'est pas la sienne), sans redessiner
+// tout le tableau.
+async function toggleQrAttendance(courseId, teacherId, cb) {
     const wanted = cb.checked;
-    const key = sessionId + '|' + teacherId;
+    const key = courseId + '|' + teacherId;
     cb.disabled = true;
     try {
         await api('/qr-attendance' + svcQ(), {
             method: 'PUT',
-            body: JSON.stringify({ course_session_id: sessionId, teacher_id: teacherId, enabled: wanted }),
+            body: JSON.stringify({ course_id: courseId, teacher_id: teacherId, enabled: wanted }),
         });
         if (!state.qrAttendance) state.qrAttendance = new Set();
         if (wanted) state.qrAttendance.add(key); else state.qrAttendance.delete(key);
-        toast(wanted ? 'Appel par QR code activé pour cette séance'
-                     : 'Appel par QR code désactivé pour cette séance');
+        toast(wanted ? 'Appel par QR code activé pour cette sous-matière'
+                     : 'Appel par QR code désactivé pour cette sous-matière');
     } catch (e) {
         cb.checked = !wanted;
         toast('Erreur : ' + e.message, 'error');
