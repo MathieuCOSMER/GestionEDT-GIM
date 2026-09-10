@@ -4331,7 +4331,9 @@ function renderPromoEffectif() {
             <td style="white-space:nowrap">${miCell(s)}</td>
             <td style="white-space:nowrap"><select onchange="changeStudentStatus(${s.id}, this.value)"${s.statut === 'RED' ? ' title="Statut issu de la décision de jury — se traite dans le tableau des redoublants, plus bas"' : ''}
                 style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${_statutColor(s.statut)}">${optList(s.statut)}</select>${semSelect(s)}${cesSelect(s)}</td>
-            <td style="white-space:nowrap">${cohorteToggle(s)} <button class="btn btn-secondary btn-sm" style="color:#b91c1c" title="Supprimer la fiche de la cohorte${s.nb_notes ? ' et ses ' + s.nb_notes + ' note(s)' : ''} — irréversible" onclick="deleteStudentFiche(${s.id})">🗑</button></td>
+            <td style="white-space:nowrap">${cohorteToggle(s)} <button class="btn btn-secondary btn-sm" style="color:#b45309"
+                title="Ne poursuit pas : le retirer de l'année ${y} et des suivantes. Ses années précédentes et leurs notes sont conservées, et il reste réintégrable."
+                onclick="removeStudentFromYear(${s.id})">⊘</button> <button class="btn btn-secondary btn-sm" style="color:#b91c1c" title="Supprimer la fiche de la cohorte${s.nb_notes ? ' et ses ' + s.nb_notes + ' note(s)' : ''} — irréversible, les 3 années" onclick="deleteStudentFiche(${s.id})">🗑</button></td>
         </tr>`).join('');
         return header + `<div style="margin-bottom:8px">${badges}</div>` + profLegend() + `
             <div style="overflow:auto;max-height:45vh;border:1px solid #e5e7eb;border-radius:8px">
@@ -4661,10 +4663,14 @@ function _effTotaux(d, y) {
 }
 
 // Fiches de la cohorte absentes de l'effectif de l'année affichée : entrants d'une
-// année ultérieure, ajournés, abandons, césures. Elles sont listées ici pour qu'aucune
-// fiche ne soit visible sur aucun écran — sinon on ne peut ni la corriger ni la supprimer.
+// année ultérieure, abandons, césures, retraits manuels. Elles sont listées ici pour
+// qu'aucune fiche ne soit hors de portée — sinon on ne peut ni la corriger ni la supprimer.
+//
+// Les AJOURNÉS et REDOUBLANTS n'y figurent pas : quitter les années suivantes est la
+// conséquence normale de leur décision de jury, et ils restent consultables sur l'année
+// qu'ils ont faite. Les rappeler ici allongeait la liste sans rien apprendre.
 function _renderHorsAnnee(d, y) {
-    const studs = (d.students || []).filter(s => s.hors_annee);
+    const studs = (d.students || []).filter(s => s.hors_annee && s.hors_motif !== 'ajourne');
     if (!studs.length) return '';
     const rows = studs.map((s, i) => `<tr>
         <td style="color:#9ca3af">${i + 1}</td>
@@ -4676,7 +4682,9 @@ function _renderHorsAnnee(d, y) {
         <td><span class="st-pill" style="background:${_statutColor(s.statut)}">${esc(s.statut)}</span></td>
         <td style="color:#6b7280">${esc(s.raison || '')}</td>
         <td style="text-align:center;color:#9ca3af">${s.nb_notes || 0}</td>
-        <td style="white-space:nowrap"><button class="btn btn-secondary btn-sm" style="color:#b91c1c"
+        <td style="white-space:nowrap"><button class="btn btn-secondary btn-sm" style="color:#15803d"
+            title="Réintégrer cette fiche dans l'effectif de l'année ${y} (et lever le retrait des années suivantes)"
+            onclick="reintegrateStudent(${s.id})">↩</button> <button class="btn btn-secondary btn-sm" style="color:#b91c1c"
             title="Supprimer la fiche de la cohorte${s.nb_notes ? ' et ses ' + s.nb_notes + ' note(s)' : ''} — irréversible"
             onclick="deleteStudentFiche(${s.id})">🗑</button></td></tr>`).join('');
     return `<div style="margin-top:24px;border-top:2px solid #e5e7eb;padding-top:14px">
@@ -4684,7 +4692,9 @@ function _renderHorsAnnee(d, y) {
             <span style="font-weight:400;color:#9ca3af;font-size:.85rem">— ${studs.length} hors effectif de l'année ${y}</span></h3>
         <div style="font-size:.8rem;color:#6b7280;margin-bottom:8px">
             Elles ne comptent pas dans les totaux ci-dessus et n'ont ni notes ni jury sur cette année.
-            Elles sont listées pour qu'aucune fiche de la cohorte ne reste hors de portée.</div>
+            Elles sont listées pour qu'aucune fiche de la cohorte ne reste hors de portée.
+            Les <strong>ajournés</strong> et <strong>redoublants</strong> n'y sont pas : ils quittent les
+            années suivantes du fait de leur décision de jury et restent consultables sur l'année qu'ils ont faite.</div>
         <div style="overflow:auto;max-height:35vh;border:1px solid #e5e7eb;border-radius:8px">
             <table class="pn-table" style="table-layout:auto;width:100%">
                 <thead><tr><th style="width:40px">#</th><th>Nom</th><th>Prénom</th><th>N° Apogée</th>
@@ -4693,9 +4703,42 @@ function _renderHorsAnnee(d, y) {
                 <tbody>${rows}</tbody></table></div></div>`;
 }
 
-// La corbeille de la ligne : suppression pure et simple de la fiche, dans les
-// trois années, avec ses notes. Retirer quelqu'un d'une seule année sans le
-// supprimer n'a pas d'usage ici — l'effectif d'une année se déduit du jury.
+// Deux gestes bien distincts sur une fiche :
+//  ⊘ retirer À PARTIR de l'année affichée — celui qui ne poursuit pas en GIM.
+//    Ses années précédentes et leurs notes restent intactes, et il se réintègre.
+//  🗑 supprimer la fiche — les trois années et toutes les notes, sans retour.
+async function removeStudentFromYear(sid) {
+    const s = ((_effData || {}).students || []).find(x => x.id === sid);
+    if (!s) return;
+    const qui = `${s.nom || ''} ${s.prenom || ''}`.trim() || 'cet étudiant';
+    const apres = [1, 2, 3].filter(v => v > _effYear);
+    const suivantes = apres.length ? ` et de l'année ${apres.join(' et ')}` : '';
+    if (!confirm(`Retirer ${qui} de l'effectif à partir de l'année ${_effYear} ?\n\n`
+        + `Il sort de l'année ${_effYear}${suivantes}.\n`
+        + (_effYear > 1 ? `Ses années 1${_effYear > 2 ? ' et 2' : ''} sont conservées, avec leurs notes.\n` : '')
+        + `La fiche reste listée dans « Autres fiches de la cohorte » : rien n'est effacé, `
+        + `et le bouton ↩ l'y réintègre.`)) return;
+    try {
+        _effData = await api(`/promotions/${_promoId}/effectif/${_effYear}/students/${sid}`,
+            { method: 'DELETE' });
+        renderPromoEffectif();
+        toast(`${qui} retiré à partir de l'année ${_effYear}`);
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function reintegrateStudent(sid) {
+    const s = ((_effData || {}).students || []).find(x => x.id === sid);
+    if (!s) return;
+    const qui = `${s.nom || ''} ${s.prenom || ''}`.trim() || 'cet étudiant';
+    if (!confirm(`Réintégrer ${qui} dans l'effectif de l'année ${_effYear} ?`)) return;
+    try {
+        _effData = await api(`/promotions/${_promoId}/effectif/${_effYear}/students`,
+            { method: 'POST', body: JSON.stringify({ student_id: sid }) });
+        renderPromoEffectif();
+        toast(`${qui} réintégré en année ${_effYear}`);
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
 async function deleteStudentFiche(sid) {
     const s = ((_effData || {}).students || []).find(x => x.id === sid);
     if (!s) return;
@@ -4704,7 +4747,9 @@ async function deleteStudentFiche(sid) {
     if (!confirm(`Supprimer la fiche de ${qui} ?\n\n`
         + `Elle disparaît des 3 années de la cohorte`
         + (n ? `, avec ses ${n} note(s).` : `.`)
-        + `\nCette action est irréversible.`)) return;
+        + `\nCette action est irréversible.\n\n`
+        + `S'il ne fait que ne pas poursuivre, utilisez plutôt ⊘ : il sort de l'année `
+        + `${_effYear} et des suivantes, mais ses années précédentes sont conservées.`)) return;
     try {
         await api(`/promotions/${_promoId}/students/${sid}`, { method: 'DELETE' });
         await loadEffectif();
