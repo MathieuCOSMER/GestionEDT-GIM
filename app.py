@@ -1844,6 +1844,18 @@ def _apply_migrations(db):
         )
     ''')
 
+    # Semaines déjà planifiées à l'emploi du temps, par année de promotion
+    # (1A / 2A / 3A). Sert de suivi d'avancement dans la répartition journalière :
+    # une ligne = cette semaine est posée, son absence = elle reste à faire.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS edt_planned_weeks (
+            year_group  INTEGER NOT NULL,
+            week_number INTEGER NOT NULL,
+            updated_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (year_group, week_number)
+        )
+    ''')
+
     # Appel par QR code : choix de l'enseignant, SOUS-MATIÈRE par sous-matière
     # (Bilan global). Un seul réglage couvre tous les CM / TD / TP / PT du module,
     # faces FTP et ALT comprises. La clé porte AUSSI l'enseignant : une matière
@@ -2184,6 +2196,7 @@ _YEAR_OVERRIDE_PREFIXES = (
     '/api/my-account',           # onglet Mon Compte (contact + heures hors GIM)
     '/api/external-hours',       # heures hors GIM publiques (admin, Bilan Global)
     '/api/qr-attendance',        # appel par QR code, choisi dans le Bilan Global
+    '/api/edt-planned-weeks',    # suivi des semaines posées (répartition journalière)
     '/api/export/repartition',
     '/api/import/repartition',
 )
@@ -9685,6 +9698,55 @@ def get_repartition():
         }), 200
     except Exception as e:
         return error_response(f'Error fetching repartition: {str(e)}', 500)
+
+@app.route('/api/edt-planned-weeks', methods=['GET'])
+def get_edt_planned_weeks():
+    """Semaines déjà posées à l'emploi du temps. Sans paramètre : toutes les
+    années, sous la forme {'1': [36, 37…], '2': […]}. Avec ?year_group=n :
+    seulement celle-là."""
+    db = get_db()
+    yg = request.args.get('year_group')
+    if yg:
+        try:
+            yg = int(yg)
+        except ValueError:
+            return error_response('Année de promotion invalide')
+        rows = db.execute('''SELECT week_number FROM edt_planned_weeks
+                             WHERE year_group = ? ORDER BY week_number''', (yg,)).fetchall()
+        return jsonify({'year_group': yg, 'weeks': [r['week_number'] for r in rows]}), 200
+    out = {}
+    for r in db.execute('SELECT year_group, week_number FROM edt_planned_weeks '
+                        'ORDER BY year_group, week_number').fetchall():
+        out.setdefault(str(r['year_group']), []).append(r['week_number'])
+    return jsonify(out), 200
+
+@app.route('/api/edt-planned-weeks', methods=['PUT'])
+def set_edt_planned_week():
+    """Marque une semaine comme posée (ou non) à l'emploi du temps.
+    Body : {year_group, week_number, planned}. Réservé à l'admin, comme tout le
+    sous-onglet Répartition journalière."""
+    data = request.get_json() or {}
+    try:
+        yg = int(data.get('year_group'))
+        wk = int(data.get('week_number'))
+    except (TypeError, ValueError):
+        return error_response('Année de promotion ou semaine manquante')
+    if yg not in (1, 2, 3):
+        return error_response('Année de promotion invalide (1, 2 ou 3)')
+    if not (1 <= wk <= 53):
+        return error_response('Numéro de semaine invalide (1 à 53)')
+    db = get_db()
+    if data.get('planned'):
+        db.execute('''INSERT INTO edt_planned_weeks (year_group, week_number)
+                      VALUES (?, ?)
+                      ON CONFLICT(year_group, week_number) DO UPDATE SET
+                          updated_at = CURRENT_TIMESTAMP''', (yg, wk))
+    else:
+        db.execute('DELETE FROM edt_planned_weeks WHERE year_group = ? AND week_number = ?',
+                   (yg, wk))
+    db.commit()
+    return jsonify({'year_group': yg, 'week_number': wk,
+                    'planned': bool(data.get('planned'))}), 200
 
 @app.route('/api/checks/repartition', methods=['GET'])
 def checks_repartition():

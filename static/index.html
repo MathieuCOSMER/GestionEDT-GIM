@@ -1040,6 +1040,12 @@
             </select>
             <label style="margin-left:12px">Semaine :</label>
             <select id="repj-week" onchange="onRepJourWeek()"></select>
+            <label class="admin-only" style="margin-left:12px;display:inline-flex;align-items:center;gap:5px;cursor:pointer"
+                   title="Cocher une fois la semaine posée à l'emploi du temps : les semaines restantes se lisent alors d'un coup d'œil">
+                <input type="checkbox" id="repj-planned" onchange="toggleRepJourPlanned()"
+                       style="cursor:pointer;width:15px;height:15px">
+                Posée à l'EDT
+            </label>
         </div>
         <div class="filters" id="rep-filters-annuelle">
             <label>Semestres :</label>
@@ -8896,7 +8902,91 @@ function _autoRepJourCohorte() {
 // Changement de semaine : on repropose la cohorte adaptée avant d'afficher
 function onRepJourWeek() {
     _autoRepJourCohorte();
+    syncRepJourPlannedBox();
     renderRepJour();
+}
+
+// ----- Suivi des semaines posées à l'emploi du temps (année de promotion) -----
+// Une semaine cochée est planifiée : ce qui reste dans la liste est le travail
+// à finir. L'état vit dans la base de l'année consultée, par année de promo.
+let _repJourPlanned = new Set();
+
+// Libellé d'une semaine dans la liste déroulante : ✓ si elle est déjà posée
+function repJourWeekLabel(w) {
+    return (_repJourPlanned.has(w) ? '✓ ' : '') + 'Semaine ' + w;
+}
+
+// Remet la case « Posée à l'EDT » en accord avec la semaine affichée
+function syncRepJourPlannedBox() {
+    const cb = document.getElementById('repj-planned');
+    if (!cb) return;
+    const w = parseInt(document.getElementById('repj-week').value);
+    cb.checked = _repJourPlanned.has(w);
+    cb.disabled = !w;
+}
+
+// Va directement à une semaine (chips « reste à poser » du bandeau de suivi)
+function gotoRepJourWeek(w) {
+    const sel = document.getElementById('repj-week');
+    if (!sel) return;
+    sel.value = String(w);
+    onRepJourWeek();
+}
+
+// Coche / décoche la semaine affichée. La case revient à son état précédent si
+// le serveur refuse, sans recharger toute la répartition.
+async function toggleRepJourPlanned() {
+    const cb = document.getElementById('repj-planned');
+    const w = parseInt(document.getElementById('repj-week').value);
+    const yg = parseInt(document.getElementById('repj-annee').value) || 1;
+    const wanted = cb.checked;
+    cb.disabled = true;
+    try {
+        await api('/edt-planned-weeks' + svcQ(), {
+            method: 'PUT',
+            body: JSON.stringify({ year_group: yg, week_number: w, planned: wanted }),
+        });
+        if (wanted) _repJourPlanned.add(w); else _repJourPlanned.delete(w);
+        // Met à jour le ✓ de la liste sans la reconstruire (la sélection tient)
+        const opt = [...document.getElementById('repj-week').options]
+            .find(o => parseInt(o.value) === w);
+        if (opt) opt.textContent = repJourWeekLabel(w);
+        renderRepJour();
+    } catch (e) {
+        cb.checked = !wanted;
+        toast('Erreur : ' + e.message, 'error');
+    } finally {
+        cb.disabled = false;
+    }
+}
+
+// Bandeau d'avancement : combien de semaines posées sur celles qui portent des
+// cours, et lesquelles restent. Les semaines sans aucune séance (vacances,
+// stages, entreprise) ne comptent pas : il n'y a rien à y poser.
+function repJourProgressHtml() {
+    if (!_repJourData) return '';
+    const { weeks, rows } = _repJourData;
+    const todo = weeks.filter(w => rows.some(r => (r.by_week || {})[w] > 0));
+    if (!todo.length) return '';
+    const rest = todo.filter(w => !_repJourPlanned.has(w));
+    const done = todo.length - rest.length;
+    const pct = Math.round(done / todo.length * 100);
+    const cur = parseInt(document.getElementById('repj-week').value);
+    const shown = rest.slice(0, 14);
+    const chips = shown.map(w => `<button type="button" onclick="gotoRepJourWeek(${w})"
+            title="Aller à la semaine ${w}"
+            style="border:1px solid #fcd34d;background:${w === cur ? '#fde68a' : '#fffbeb'};color:#92400e;
+                   border-radius:999px;padding:1px 8px;font-size:.72rem;font-weight:600;cursor:pointer">S${w}</button>`).join(' ');
+    const more = rest.length > shown.length ? ` <span style="color:#92400e;font-size:.72rem">+${rest.length - shown.length}</span>` : '';
+    return `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;
+                padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-size:.85rem">
+            <span>Posées à l'EDT : <strong style="color:${rest.length ? '#92400e' : '#059669'}">${done}/${todo.length}</strong> semaines</span>
+            <span style="flex:0 0 120px;height:6px;background:#e5e7eb;border-radius:999px;overflow:hidden">
+                <span style="display:block;height:100%;width:${pct}%;background:${rest.length ? '#f59e0b' : '#10b981'}"></span></span>
+            ${rest.length
+                ? `<span style="color:#6b7280">Reste à poser :</span> ${chips}${more}`
+                : `<span style="color:#059669;font-weight:600">Toutes les semaines de l'année sont posées.</span>`}
+        </div>`;
 }
 
 // Charge les répartitions des deux semestres de l'année choisie
@@ -8913,6 +9003,13 @@ async function loadRepJour() {
         ]);
         state.mutSemesters = sg.mutualized || {};
         state.tpSeparate = sg.tp_separate || {};
+        // Semaines déjà posées à l'EDT pour cette année de promotion (suivi
+        // d'avancement) — absentes = il reste à les planifier.
+        _repJourPlanned = new Set();
+        try {
+            const pw = await api('/edt-planned-weeks?year_group=' + yg + svcQ('&'));
+            (pw.weeks || []).forEach(w => _repJourPlanned.add(w));
+        } catch (e) { /* silencieux : le suivi repart simplement à zéro */ }
         // Libellés des matières du programme (facultatif : sans lui on retombe
         // sur les intitulés des sous-matières)
         try { _repJourProg = await api('/matieres-programme' + svcQ()); }
@@ -8926,10 +9023,11 @@ async function loadRepJour() {
         // Liste des semaines : conserve la sélection, sinon semaine courante si présente
         const sel = document.getElementById('repj-week');
         const cur = parseInt(sel.value);
-        sel.innerHTML = weeks.map(w => `<option value="${w}">Semaine ${w}</option>`).join('');
+        sel.innerHTML = weeks.map(w => `<option value="${w}">${repJourWeekLabel(w)}</option>`).join('');
         if (weeks.includes(cur)) sel.value = cur;
         else if (weeks.includes(_isoWeekNow())) sel.value = _isoWeekNow();
         _autoRepJourCohorte();
+        syncRepJourPlannedBox();
         renderRepJour();
     } catch (e) {
         el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
@@ -9046,7 +9144,8 @@ function renderRepJour() {
     };
     const list = _repJourData.rows.filter(r => (r.by_week && r.by_week[w]) > 0 && inCohorte(r));
     if (!list.length) {
-        el.innerHTML = '<div class="empty">Aucun cours à placer en semaine ' + w +
+        el.innerHTML = repJourProgressHtml() +
+            '<div class="empty">Aucun cours à placer en semaine ' + w +
             ' pour la cohorte ' + esc(cohorte) + '.</div>';
         return;
     }
@@ -9267,7 +9366,7 @@ function renderRepJour() {
     const arrow = k => _repJourSort.key === k ? (_repJourSort.dir > 0 ? ' ▲' : ' ▼') : '';
     const th = (k, label, style) =>
         `<th style="${style};cursor:pointer;user-select:none" onclick="sortRepJour('${k}')" title="Trier par ${esc(label)}">${esc(label)}${arrow(k)}</th>`;
-    el.innerHTML = `
+    el.innerHTML = repJourProgressHtml() + `
         <div style="display:flex;align-items:center;gap:18px;margin-bottom:10px;font-size:.9rem">
             <span><strong style="color:${formColor[cohorte]}">${esc(cohorteLabel)}</strong> :
                 ${fmt(totCohorte)}h${totDetail}</span>
