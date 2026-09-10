@@ -1844,6 +1844,22 @@ def _apply_migrations(db):
         )
     ''')
 
+    # Appel par QR code : choix de l'enseignant, séance par séance (Bilan global).
+    # La clé porte AUSSI l'enseignant : une session partagée entre plusieurs
+    # enseignants (course_group_teachers) laisse chacun décider pour ses groupes.
+    # Absent = pas d'appel par QR code (le défaut).
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS session_qr_attendance (
+            course_session_id INTEGER NOT NULL,
+            teacher_id        INTEGER NOT NULL,
+            enabled           INTEGER NOT NULL DEFAULT 0,
+            updated_at        TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (course_session_id, teacher_id),
+            FOREIGN KEY (course_session_id) REFERENCES course_sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE
+        )
+    ''')
+
     # Heures HETD effectuées dans un autre département (onglet Mon Compte).
     # Saisies par l'enseignant lui-même et visibles par lui seul, sauf lignes
     # marquées publiques (is_public=1) : alors visibles AUSSI par l'admin
@@ -2165,6 +2181,7 @@ _YEAR_OVERRIDE_PREFIXES = (
     '/api/constraints',
     '/api/my-account',           # onglet Mon Compte (contact + heures hors GIM)
     '/api/external-hours',       # heures hors GIM publiques (admin, Bilan Global)
+    '/api/qr-attendance',        # appel par QR code, choisi dans le Bilan Global
     '/api/export/repartition',
     '/api/import/repartition',
 )
@@ -2193,8 +2210,11 @@ def _require_auth():
     if role != 'admin' and request.method not in ('GET', 'HEAD'):
         # Exception : l'enseignant intervenant peut éditer le contenu de SA matière.
         # L'autorisation fine (intervenant ou non) est vérifiée dans le handler.
+        # L'enseignant règle aussi l'appel par QR code de SES séances (Bilan global) :
+        # le handler vérifie qu'il s'agit bien des siennes.
         if role == 'teacher' and (_is_course_content_path(path) or _is_constraints_self_path(path)
                                   or path.startswith('/api/my-account')
+                                  or path == '/api/qr-attendance'
                                   or (_is_saisie_write_path(path) and session.get('promo_access'))):
             return
         # Le choix de l'année universitaire est personnel à la session : autorisé à tous
@@ -7199,6 +7219,67 @@ def public_external_hours():
         WHERE is_public = 1 ORDER BY teacher_id, id
     ''').fetchall()
     return jsonify(rows_to_list(rows)), 200
+
+# ======================= APPEL PAR QR CODE (Bilan global) =======================
+# Chaque enseignant indique, séance par séance, s'il fera l'appel par QR code.
+# Le choix est porté par le couple (session, enseignant) : une session partagée
+# entre plusieurs enseignants laisse à chacun le sien, pour ses propres groupes.
+
+def _teacher_teaches_session(db, session_id, teacher_id):
+    """Vrai si l'enseignant assure cette session, en titre ou pour un groupe."""
+    row = db.execute('''
+        SELECT 1 FROM course_sessions cs
+        WHERE cs.id = ? AND (cs.teacher_id = ?
+              OR EXISTS (SELECT 1 FROM course_group_teachers gt
+                         WHERE gt.course_session_id = cs.id AND gt.teacher_id = ?))
+    ''', (session_id, teacher_id, teacher_id)).fetchone()
+    return row is not None
+
+@app.route('/api/qr-attendance', methods=['GET'])
+def get_qr_attendance():
+    """Séances dont l'appel se fait par QR code : [{course_session_id, teacher_id}].
+    Seules les lignes activées sont renvoyées (l'absence vaut « non »)."""
+    rows = get_db().execute('''
+        SELECT course_session_id, teacher_id FROM session_qr_attendance
+        WHERE enabled = 1 ORDER BY course_session_id, teacher_id
+    ''').fetchall()
+    return jsonify(rows_to_list(rows)), 200
+
+@app.route('/api/qr-attendance', methods=['PUT'])
+def set_qr_attendance():
+    """Active / désactive l'appel par QR code d'une séance.
+    Body : {course_session_id, teacher_id, enabled}. Un enseignant ne peut régler
+    que SES propres séances ; l'admin peut régler celles de n'importe qui."""
+    db = get_db()
+    data = request.get_json() or {}
+    try:
+        sid = int(data.get('course_session_id'))
+        tid = int(data.get('teacher_id'))
+    except (TypeError, ValueError):
+        return error_response('Séance ou enseignant manquant')
+    enabled = 1 if data.get('enabled') else 0
+
+    if session.get('role') != 'admin':
+        me = _my_teacher_row(db)
+        if not me:
+            return error_response('Réservé aux enseignants connectés', 403)
+        if me['id'] != tid:
+            return error_response('Vous ne pouvez régler que vos propres séances', 403)
+    if not _teacher_teaches_session(db, sid, tid):
+        return error_response('Cet enseignant n\'assure pas cette séance', 404)
+
+    if enabled:
+        db.execute('''
+            INSERT INTO session_qr_attendance (course_session_id, teacher_id, enabled)
+            VALUES (?, ?, 1)
+            ON CONFLICT(course_session_id, teacher_id) DO UPDATE SET
+                enabled = 1, updated_at = CURRENT_TIMESTAMP
+        ''', (sid, tid))
+    else:
+        db.execute('DELETE FROM session_qr_attendance WHERE course_session_id = ? AND teacher_id = ?',
+                   (sid, tid))
+    db.commit()
+    return jsonify({'course_session_id': sid, 'teacher_id': tid, 'enabled': bool(enabled)}), 200
 
 @app.route('/api/teachers/<int:teacher_id>/availability', methods=['GET'])
 def get_teacher_availability(teacher_id):

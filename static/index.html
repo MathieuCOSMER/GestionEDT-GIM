@@ -1754,6 +1754,7 @@ async function api(endpoint, opts = {}) {
     // (l'autorisation fine — colonne éditable, référent — est vérifiée côté serveur)
     if (state.role === 'teacher' && method !== 'GET' && method !== 'HEAD'
             && endpoint !== '/years/session' && !endpoint.startsWith('/my-account')
+            && !endpoint.startsWith('/qr-attendance')
             && !/\/saisie\/S[1-6]\//.test(endpoint)) {
         toast('Lecture seule', 'error');
         throw new Error('Lecture seule');
@@ -2165,6 +2166,12 @@ async function loadPage(name, forceReload) {
             state.sessions = sessions;
             state.teachers = teachers;
             state.semesterGroups = sg.groups || [];
+            // Séances dont l'appel se fait par QR code : clés « session|enseignant »
+            state.qrAttendance = new Set();
+            try {
+                (await api('/qr-attendance' + svcQ())).forEach(r =>
+                    state.qrAttendance.add(r.course_session_id + '|' + r.teacher_id));
+            } catch (e) { /* silencieux : la colonne s'affiche décochée */ }
             state.mutSemesters = sg.mutualized || {};
             state.tpSeparate = sg.tp_separate || {};
             // Heures hors GIM du connecté (personnelles : visibles par lui seul)
@@ -7812,6 +7819,9 @@ function renderTeacherRepartition() {
 
         let tBrut = 0, tPond = 0, tHetd = 0;
         const sumByType = { CM:0, TD:0, TP:0, PT:0 };
+        // Bloc de l'enseignant connecté : lui seul (et l'admin) règle l'appel QR
+        const isSelf = isSelfBlock(tid);
+        const canQr = state.role === 'admin' || isSelf;
 
         // Ligne de bilan (en-tête) en début de matière
         const courseSubtotalRow = (c) => `<tr style="background:#f3f4ff;font-weight:600">
@@ -7821,6 +7831,7 @@ function renderTeacherRepartition() {
                 <td style="text-align:right">${c.pond.toFixed(1)}h</td>
                 <td></td>
                 <td style="text-align:right;color:#4f46e5">${c.hetd.toFixed(2)}</td>
+                <td></td>
             </tr>`;
 
         // Regroupement par matière (semestre + code cours, contigus car déjà triés)
@@ -7843,6 +7854,15 @@ function renderTeacherRepartition() {
             }
             cur.brut += brut; cur.pond += pond; cur.hetd += hetd;
 
+            // Appel par QR code : choix personnel de l'enseignant pour CETTE séance
+            const qrOn = (state.qrAttendance || new Set()).has(s.id + '|' + s.teacher_id);
+            const qrCell = canQr
+                ? `<td style="text-align:center"><input type="checkbox"${qrOn ? ' checked' : ''}
+                        onchange="toggleQrAttendance(${s.id}, ${s.teacher_id}, this)"
+                        title="Faire l'appel par QR code pour cette séance"
+                        style="cursor:pointer;width:15px;height:15px"></td>`
+                : `<td style="text-align:center" title="${qrOn ? 'Appel par QR code' : 'Appel classique'}">${qrOn ? '<span style="color:#059669">✓</span>' : '<span style="color:#d1d5db">—</span>'}</td>`;
+
             cur.rows.push(`<tr>
                 <td>${esc(s.semester_code||'')}</td>
                 <td><strong>${esc(s.course_code||'')}</strong></td>
@@ -7854,6 +7874,7 @@ function renderTeacherRepartition() {
                 <td style="text-align:right">${pond.toFixed(1)}h</td>
                 <td style="text-align:right">${coef.toFixed(2)}</td>
                 <td style="text-align:right;color:#4f46e5;font-weight:600">${hetd.toFixed(2)}</td>
+                ${qrCell}
             </tr>`);
         });
         const rows = courseGroups.map(c => courseSubtotalRow(c) + c.rows.join('')).join('');
@@ -7862,7 +7883,6 @@ function renderTeacherRepartition() {
         //  • bloc de l'enseignant connecté → toutes SES lignes (privées + publiques) ;
         //  • admin → uniquement les lignes déclarées PUBLIQUES par chaque enseignant ;
         //  • autres enseignants / visiteurs → rien (le serveur ne les expose pas).
-        const isSelf = isSelfBlock(tid);
         let extList = [], extNote = '';
         if (isSelf) {
             extList = state.myExternal || [];
@@ -7877,9 +7897,11 @@ function renderTeacherRepartition() {
             extRowsHtml = `<tr style="background:#fffbeb;font-weight:600">
                     <td colspan="9" style="text-align:left;color:#92400e">Hors GIM — ${extNote}</td>
                     <td style="text-align:right;color:#92400e">${extHetd.toFixed(2)}</td>
+                    <td></td>
                 </tr>` + extList.map(e => `<tr style="background:#fffdf5">
                     <td></td><td colspan="8" style="color:#92400e">${esc(e.label||'')}${isSelf && e.is_public ? ' <span style="font-size:.72rem">(public — admin)</span>' : ''}</td>
                     <td style="text-align:right;color:#92400e;font-weight:600">${(parseFloat(e.hetd)||0).toFixed(2)}</td>
+                    <td></td>
                 </tr>`).join('');
             tHetd += extHetd;
             gExtHetd += extHetd;
@@ -7920,6 +7942,7 @@ function renderTeacherRepartition() {
                     <th style="text-align:right">H. pondérées</th>
                     <th style="text-align:right">Coef.</th>
                     <th style="text-align:right">HETD</th>
+                    <th style="text-align:center" title="Appel des étudiants par QR code : chaque enseignant coche les séances qu'il souhaite pointer ainsi">Appel QR</th>
                 </tr></thead>
                 <tbody>${rows}${extRowsHtml}</tbody>
             </table></div>
@@ -7939,6 +7962,30 @@ function renderTeacherRepartition() {
         </div>`;
 
     el.innerHTML = summary + blocks;
+}
+
+// Appel par QR code d'une séance : bascule le choix de l'enseignant.
+// La case revient à son état précédent si le serveur refuse (droits, séance
+// qui n'est pas la sienne), sans redessiner tout le tableau.
+async function toggleQrAttendance(sessionId, teacherId, cb) {
+    const wanted = cb.checked;
+    const key = sessionId + '|' + teacherId;
+    cb.disabled = true;
+    try {
+        await api('/qr-attendance' + svcQ(), {
+            method: 'PUT',
+            body: JSON.stringify({ course_session_id: sessionId, teacher_id: teacherId, enabled: wanted }),
+        });
+        if (!state.qrAttendance) state.qrAttendance = new Set();
+        if (wanted) state.qrAttendance.add(key); else state.qrAttendance.delete(key);
+        toast(wanted ? 'Appel par QR code activé pour cette séance'
+                     : 'Appel par QR code désactivé pour cette séance');
+    } catch (e) {
+        cb.checked = !wanted;
+        toast('Erreur : ' + e.message, 'error');
+    } finally {
+        cb.disabled = false;
+    }
 }
 
 // ===== SERVICE =====
