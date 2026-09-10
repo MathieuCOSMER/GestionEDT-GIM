@@ -3501,21 +3501,68 @@ def _import_students_rows(db, pid, students, formation, year=None):
     complète les fiches au lieu d'être sans effet. Une colonne absente ou une
     cellule vide ne modifie jamais une valeur déjà saisie. La série de bac et le
     cursus ne s'importent plus ici : ils viennent du classement ParcourSup.
-    Retourne (imported, updated, skipped)."""
+
+    Un étudiant déjà présent mais rangé dans l'AUTRE sous-cohorte est recalé du
+    côté du fichier importé — un PV « FI » atteste que son auteur suit bien la
+    formation initiale. Le recalage s'écrit dans promotion_year_formation POUR
+    L'ANNÉE IMPORTÉE : il vaut pour elle et les suivantes, jamais pour les
+    années antérieures, car un étudiant peut basculer FTP/ALT d'une année sur
+    l'autre — et sans année de référence (import hors effectif annuel), on n'y
+    touche pas du tout.
+
+    L'ANNÉE D'ENTRÉE ne fait que descendre, jamais monter : figurer au PV de la
+    1re année prouve qu'on y était, et une fiche créée par l'import d'une 3e
+    année (entry_year=3) doit alors rejoindre l'effectif de la 1re. L'inverse
+    est faux — importer une 3e année ne dit rien des années d'avant, et un
+    entrant direct en 2e ou 3e année ne doit surtout pas redescendre. D'où la
+    règle : entry_year = min(entry_year actuel, année importée).
+
+    Retourne un compte rendu :
+    {imported, updated, skipped, recales, entrees} où `recales` liste les fiches
+    déplacées de sous-cohorte [(nom, prenom, ancienne)] et `entrees` celles dont
+    l'année d'entrée a été avancée [(nom, prenom, ancienne_annee)]."""
     existing = {}
-    for r in db.execute('''SELECT id, numero, nom, prenom, naissance, sexe
+    for r in db.execute('''SELECT id, numero, nom, prenom, naissance, sexe, entry_year
                            FROM promotion_students WHERE promotion_id=?''', (pid,)):
         row = dict(r)
         for k in _student_keys(row):
             existing.setdefault(k, row)     # à clé partagée, la 1re fiche l'emporte
+    # Sous-cohorte effective de chaque fiche POUR l'année importée (report auto
+    # des changements antérieurs compris) : c'est elle qu'on compare au fichier.
+    faces = _year_formation_map(db, pid, year) if year else {}
     imported = updated = skipped = 0
+    recales, entrees = [], []
     for s in students:
         profile = {k: v for k, v in (('sexe', _norm_sexe(s.get('sexe'))),) if v}
         row = next((existing[k] for k in _student_keys(s) if k in existing), None)
         if row is not None:
+            touche = False
+            # L'étudiant figure au PV de cette année : il y était. Si sa fiche
+            # le faisait entrer plus tard, on avance son année d'entrée — sans
+            # quoi il resterait hors de l'effectif de l'année qu'on importe.
+            entry = row.get('entry_year') or 1
+            if year and entry > year:
+                db.execute('UPDATE promotion_students SET entry_year=? WHERE id=?',
+                           (year, row['id']))
+                row['entry_year'] = year
+                entrees.append((row.get('nom') or '', row.get('prenom') or '', entry))
+                touche = True
+            # Recalage de sous-cohorte sur l'année importée, si elle diffère
+            face = faces.get(row['id'])
+            if face and face != formation:
+                db.execute('''INSERT INTO promotion_year_formation
+                                  (promotion_id, year, student_id, formation)
+                              VALUES (?, ?, ?, ?)
+                              ON CONFLICT(promotion_id, year, student_id) DO UPDATE SET
+                                  formation = excluded.formation''',
+                           (pid, year, row['id'], formation))
+                faces[row['id']] = formation
+                recales.append((row.get('nom') or '', row.get('prenom') or '', face))
+                touche = True
             changed = {k: v for k, v in profile.items() if (row.get(k) or None) != v}
             if not changed:
-                skipped += 1
+                if not touche:
+                    skipped += 1        # sinon déjà compté comme recalé / réintégré
                 continue
             db.execute('UPDATE promotion_students SET %s WHERE id=?'
                        % ', '.join('%s=?' % k for k in changed),
@@ -3534,9 +3581,14 @@ def _import_students_rows(db, pid, students, formation, year=None):
         new = dict(s, id=cur.lastrowid)
         for k in _student_keys(new):
             existing.setdefault(k, new)
+        # Fiche neuve : sa formation de base est celle du fichier, aucune ligne
+        # par année n'est nécessaire (l'absence de ligne = formation de base).
+        if year:
+            faces[cur.lastrowid] = formation
         imported += 1
     db.commit()
-    return imported, updated, skipped
+    return {'imported': imported, 'updated': updated, 'skipped': skipped,
+            'recales': recales, 'entrees': entrees}
 
 def _promotion_payload(db, pid):
     promo = db.execute('SELECT * FROM promotions WHERE id=?', (pid,)).fetchone()
@@ -3849,12 +3901,12 @@ def import_promotion_students(pid):
         formation = 'FTP'
     # Étudiant déjà présent : pas de doublon, mais son profil (sexe / BAC) est
     # repris du fichier s'il y est renseigné.
-    imported, updated, skipped = _import_students_rows(db, pid, students, formation)
+    res = _import_students_rows(db, pid, students, formation)
     _audit('PROMO_IMPORT', ip=_client_ip(), user=session.get('user'),
-           imported=imported, updated=updated, skipped=skipped)
+           imported=res['imported'], updated=res['updated'], skipped=res['skipped'])
     payload = _promotion_payload(db, pid)
-    payload['import_report'] = {'imported': imported, 'updated': updated,
-                                'skipped': skipped, 'total_fichier': len(students)}
+    payload['import_report'] = {'imported': res['imported'], 'updated': res['updated'],
+                                'skipped': res['skipped'], 'total_fichier': len(students)}
     return jsonify(payload)
 
 # ---- Effectif par année d'étude (1..3) : report auto du jury + ajustements manuels ----
@@ -4327,12 +4379,23 @@ def import_year_students(pid, year):
         except OSError: pass
     if not students:
         return error_response('Aucun étudiant détecté dans le fichier', 400)
-    imported, updated, skipped = _import_students_rows(db, pid, students, formation, year)
+    res = _import_students_rows(db, pid, students, formation, year)
     _audit('PROMO_IMPORT', ip=_client_ip(), user=session.get('user'),
-           imported=imported, updated=updated, skipped=skipped, year=year)
+           imported=res['imported'], updated=res['updated'], skipped=res['skipped'],
+           recales=len(res['recales']), entrees=len(res['entrees']), year=year)
     payload = _year_effectif_payload(db, pid, year)
-    payload['import_report'] = {'imported': imported, 'updated': updated,
-                                'skipped': skipped, 'total_fichier': len(students)}
+    payload['import_report'] = {
+        'imported': res['imported'], 'updated': res['updated'],
+        'skipped': res['skipped'], 'total_fichier': len(students),
+        'formation': formation,
+        # Ce qui a bougé sur des fiches existantes, nommément : rien en silence
+        'recales': len(res['recales']),
+        'recales_noms': ['%s %s (%s → %s)' % (n, p, old, formation)
+                         for n, p, old in res['recales']],
+        'entrees': len(res['entrees']),
+        'entrees_noms': ['%s %s (entrée année %s → %s)' % (n, p, old, year)
+                         for n, p, old in res['entrees']],
+    }
     return jsonify(payload)
 
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>/import-parcoursup', methods=['POST'])

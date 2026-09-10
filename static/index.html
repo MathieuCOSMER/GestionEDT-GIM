@@ -1265,6 +1265,14 @@
             dupliqués : leur <strong>sexe</strong> est mis à jour si le fichier le renseigne, et une
             colonne vide n'efface jamais une saisie.
         </p>
+        <p style="color:#6b7280;font-size:.85rem;background:#fffbeb;border:1px solid #fcd34d;
+                  border-radius:8px;padding:8px 12px">
+            Un étudiant déjà présent mais rangé dans l'autre sous-cohorte est <strong>recalé du côté
+            du fichier</strong>, <strong>pour l'année importée seulement</strong> : les années
+            précédentes gardent leur sous-cohorte (on peut passer de FTP à ALT en cours de cursus), et
+            l'année d'entrée d'une fiche existante n'est jamais modifiée. Les fiches déplacées sont
+            listées à la fin de l'import.
+        </p>
         <p style="color:#6b7280;font-size:.85rem;background:#f5f3ff;border:1px solid #ddd6fe;
                   border-radius:8px;padding:8px 12px">
             La <strong>série de bac</strong> et le <strong>dossier du candidat</strong> ne s'importent
@@ -1274,6 +1282,9 @@
             <label>Fichier *</label>
             <input type="file" id="promo-import-file" accept=".xlsm,.xlsx">
         </div>
+        <!-- Compte rendu : affiché dans la fenêtre (et non en message fugace)
+             dès qu'une fiche a changé de sous-cohorte — c'est là qu'on lit qui. -->
+        <div id="promo-import-report" style="display:none"></div>
         <div class="form-actions">
             <button type="button" class="btn btn-secondary" onclick="closeModal('modal-promo-import')">Annuler</button>
             <button type="button" class="btn btn-primary" id="promo-import-submit" onclick="submitPromoImport()">Importer</button>
@@ -4780,6 +4791,8 @@ function openPromoImport(formation) {
     const h = document.querySelector('#modal-promo-import h2');
     if (h) h.textContent = `Importer un effectif — ${_importFormation} · année ${_effYear}`;
     document.getElementById('promo-import-file').value = '';
+    const rep = document.getElementById('promo-import-report');
+    rep.style.display = 'none'; rep.innerHTML = '';
     openModal('modal-promo-import');
 }
 
@@ -4793,11 +4806,31 @@ async function submitPromoImport() {
         const r = await fetch(`/api/promotions/${_promoId}/effectif/${_effYear}/import`, { method: 'POST', body: fd });
         if (!r.ok) throw new Error(await r.text());
         _effData = await r.json();
-        closeModal('modal-promo-import');
         renderPromoEffectif();
         const rep = _effData.import_report || {};
-        toast(`Import (année ${_effYear}) : ${rep.imported || 0} ajouté(s), `
-            + `${rep.updated || 0} profil(s) mis à jour, ${rep.skipped || 0} inchangé(s)`);
+        const parts = [`${rep.imported || 0} ajouté(s)`];
+        if (rep.entrees) parts.push(`${rep.entrees} réintégré(s) dans l'année`);
+        if (rep.recales) parts.push(`${rep.recales} recalé(s) en ${rep.formation || ''}`);
+        if (rep.updated) parts.push(`${rep.updated} profil(s) mis à jour`);
+        parts.push(`${rep.skipped || 0} inchangé(s)`);
+        const resume = `Import (année ${_effYear}) sur ${rep.total_fichier || 0} lu(s) : ${parts.join(', ')}`;
+        // Aucune fiche existante touchée : le message fugace suffit.
+        if (!rep.recales && !rep.entrees) { closeModal('modal-promo-import'); toast(resume); return; }
+        // Sinon la fenêtre reste ouverte : ce qui a bougé y est nommé.
+        const bloc = (titre, noms) => (noms && noms.length)
+            ? `<div style="margin-top:8px">${esc(titre)}</div>
+               <ul style="margin:2px 0 0;padding-left:18px">${noms.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`
+            : '';
+        const box = document.getElementById('promo-import-report');
+        box.style.display = 'block';
+        box.innerHTML = `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;
+                    padding:10px 12px;font-size:.85rem;color:#92400e">
+                <div style="font-weight:600">${esc(resume)}</div>
+                ${bloc(`Présents au fichier mais entrant plus tard : année d'entrée ramenée à ${_effYear}`,
+                       rep.entrees_noms)}
+                ${bloc(`Sous-cohorte du fichier appliquée à partir de l'année ${_effYear}`,
+                       rep.recales_noms)}
+            </div>`;
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
     finally { btn.disabled = false; btn.textContent = 'Importer'; }
 }
