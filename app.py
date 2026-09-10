@@ -1100,6 +1100,24 @@ def _apply_promotions_migrations(db):
         db.execute("ALTER TABLE student_marks ADD COLUMN mention TEXT")
     except sqlite3.OperationalError:
         pass
+    # UE validée par acquis (VAQ), par étudiant et par SEMESTRE. L'UE ne vaut
+    # alors aucune moyenne pour ce semestre : seule celle de l'autre semestre
+    # entre dans la moyenne annuelle de la compétence — même mécanique que la
+    # mobilité internationale, avec un autre motif.
+    # L'UE est repérée par son NOM et non par son rang : l'ordre des compétences
+    # peut changer quand les coefficients sont réédités.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS student_ue_vaq (
+            promotion_id INTEGER NOT NULL,
+            semester     TEXT NOT NULL,
+            student_id   INTEGER NOT NULL,
+            competence   TEXT NOT NULL,
+            updated_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (promotion_id, semester, student_id, competence),
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
     # Coefficients (matières + compétences) propres à chaque promotion : copie JSON,
     # initialisée depuis la référence globale puis éditable indépendamment.
     db.execute('''
@@ -5010,6 +5028,22 @@ def _semester_competence_averages(pdb, pid, semester, competences, components=No
                     row[str(ci)] = ov
                     if kept_out is not None:
                         kept_out[f'{sid}_{ci}'] = ov
+    # Validation par acquis : l'UE est acquise sans être évaluée ce semestre-là.
+    # Elle ne vaut donc aucune moyenne, et seule celle de l'autre semestre entre
+    # dans l'annuelle. Posée APRÈS l'arbitrage redoublant : une UE validée par
+    # acquis n'a pas à reprendre la note d'un passage précédent.
+    _vaq = _ue_vaq_map(pdb, pid, semester)
+    if _vaq:
+        _noms = [(c.get('name') or '').strip() for c in competences]
+        for _sid, _ues in _vaq.items():
+            _row = averages.get(str(_sid))
+            if _row is None:
+                continue
+            for _ci, _nom in enumerate(_noms):
+                if _nom and _nom in _ues:
+                    _row[str(_ci)] = None
+                    if kept_out is not None:
+                        kept_out.pop(f'{_sid}_{_ci}', None)
     # Mobilité internationale : semestre validé PAR ÉQUIVALENCE, sans note. Ses UE
     # ne valent aucune moyenne, donc seul l'autre semestre entre dans l'annuelle.
     for _sid in _mobility_map(pdb, pid, semester):
@@ -5675,9 +5709,20 @@ _STUDENT_LEFT_STATUSES = ('Abandon',)
 
 # Mentions saisissables à la place d'une note, dans la grille des bulletins :
 #   ABI = absence injustifiée → comptée 0 dans la moyenne ;
-#   VAQ = validation par acquis → aucune note, donc retirée du calcul comme une
-#         case vide (le coefficient de la matière sort de la moyenne d'UE).
-_MARK_MENTIONS = ('ABI', 'VAQ')
+#   N   = matière neutralisée (pas d'enseignant) → aucune note, donc retirée du
+#         calcul exactement comme une case vide (son coefficient quitte la
+#         moyenne d'UE), la mention disant pourquoi la case est vide.
+# La validation par acquis (VAQ) ne se pose PAS ici : elle porte sur une UE
+# entière d'un semestre, pas sur une matière — voir student_ue_vaq.
+_MARK_MENTIONS = ('ABI', 'N')
+
+def _ue_vaq_map(pdb, pid, semester):
+    """UE validées par acquis pour ce semestre : {student_id: {noms d'UE}}."""
+    out = {}
+    for r in pdb.execute('''SELECT student_id, competence FROM student_ue_vaq
+                            WHERE promotion_id=? AND semester=?''', (pid, semester)):
+        out.setdefault(r['student_id'], set()).add((r['competence'] or '').strip())
+    return out
 
 def _year_formation_map(pdb, pid, year):
     """Sous-cohorte (FTP/ALT) de chaque étudiant POUR une année d'étude donnée : le
@@ -5933,6 +5978,15 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     red_kept = {}
     averages = _semester_competence_averages(pdb, pid, semester, competences, components,
                                              kept_out=red_kept)
+    # UE validées par acquis : renvoyées par RANG de compétence, la grille ne
+    # connaissant que des colonnes. Le stockage garde le nom (l'ordre des
+    # compétences peut changer si les coefficients sont réédités).
+    _vaq_noms = [(c.get('name') or '').strip() for c in competences]
+    ue_vaq = {}
+    for _sid, _ues in _ue_vaq_map(pdb, pid, semester).items():
+        rangs = [ci for ci, nom in enumerate(_vaq_noms) if nom and nom in _ues]
+        if rangs:
+            ue_vaq[str(_sid)] = rangs
     sem_num = int(semester[1:])
     year = (sem_num + 1) // 2   # 1,1,2,2,3,3
     # Décisions de jury par année (ADM/ADMJ/AJAC/AJ/RED) — servent de « statut » dans la grille
@@ -6004,6 +6058,8 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
                          _mobility_map(pdb, pid, semester).items()},
             # UE dont la note vient du passage précédent d'un redoublant (meilleure des deux)
             'red_kept': red_kept,
+            # UE validées par acquis ce semestre : {sid: [rangs de compétence]}
+            'ue_vaq': ue_vaq,
             'students': students, 'marks': marks, 'averages': averages, 'previous': previous,
             'year_semesters': [s_odd, s_even], 'year_competences': year_competences,
             'year_averages': year_averages, 'year_gim': year_gim,
@@ -6062,9 +6118,9 @@ def save_promotion_notes(pid, semester):
                            AND student_id=? AND matiere_code=?''', (pid, semester, sid, code))
             continue
         if isinstance(note, str) and note.strip().upper() in _MARK_MENTIONS:
-            # ABI : absence injustifiée, comptée 0. VAQ : matière validée par
-            # acquis — aucune note, donc hors moyenne, comme une case vide ;
-            # la mention reste affichée pour dire pourquoi la case est vide.
+            # ABI : absence injustifiée, comptée 0. N : matière neutralisée —
+            # aucune note, donc hors moyenne comme une case vide ; la mention
+            # reste affichée pour dire POURQUOI la case est vide.
             mention = note.strip().upper()
             note_num = 0.0 if mention == 'ABI' else None
         else:
@@ -6083,6 +6139,48 @@ def save_promotion_notes(pid, semester):
     payload = _promo_notes_payload(pdb, pid, semester, formation)
     payload['readonly_skipped'] = locked
     return jsonify(payload)
+
+@app.route('/api/promotions/<int:pid>/notes/<semester>/ue-vaq', methods=['PUT'])
+def set_ue_vaq(pid, semester):
+    """Pose ou retire la validation par acquis (VAQ) sur UNE UE d'un semestre.
+    Body : {student_id, competence (rang), vaq}. L'UE cesse alors de valoir une
+    moyenne pour ce semestre : seule celle de l'autre semestre entre dans la
+    moyenne annuelle de la compétence."""
+    err = _require_admin()
+    if err:
+        return err
+    if semester not in _PROMO_SEMESTERS:
+        return error_response('Semestre invalide', 400)
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    data = request.get_json() or {}
+    try:
+        sid = int(data.get('student_id'))
+        ci = int(data.get('competence'))
+    except (TypeError, ValueError):
+        return error_response('Étudiant ou UE manquant')
+    if not pdb.execute('SELECT 1 FROM promotion_students WHERE id=? AND promotion_id=?',
+                       (sid, pid)).fetchone():
+        return error_response('Étudiant hors de cette promotion', 404)
+    competences = ((_promo_coeffs(pdb, pid) or {}).get(semester) or {}).get('competences', [])
+    if not (0 <= ci < len(competences)):
+        return error_response('UE inconnue pour ce semestre', 404)
+    nom = (competences[ci].get('name') or '').strip()
+    if not nom:
+        return error_response("Cette UE n'a pas de nom : impossible de l'identifier", 400)
+    if data.get('vaq'):
+        pdb.execute('''INSERT INTO student_ue_vaq(promotion_id, semester, student_id, competence)
+                       VALUES(?,?,?,?)
+                       ON CONFLICT(promotion_id, semester, student_id, competence)
+                       DO UPDATE SET updated_at=CURRENT_TIMESTAMP''', (pid, semester, sid, nom))
+    else:
+        pdb.execute('''DELETE FROM student_ue_vaq WHERE promotion_id=? AND semester=?
+                       AND student_id=? AND competence=?''', (pid, semester, sid, nom))
+    pdb.commit()
+    _reconcile_red_transfers(pdb, pid)   # une UE validée peut changer une décision
+    formation = (request.args.get('formation') or '').strip().upper() or None
+    return jsonify(_promo_notes_payload(pdb, pid, semester, formation))
 
 @app.route('/api/promotions/<int:pid>/notes/<semester>', methods=['DELETE'])
 def delete_promotion_notes(pid, semester):
@@ -6240,7 +6338,9 @@ def _saisie_payload(pdb, pid, semester, formation, teacher_name=None):
             marks[f"{r['student_id']}_{r['code']}"] = r['mention'] if r['mention'] else r['note']
     keys = {grp['key'] for grp in out_groups}
     official = {}   # note matière actuelle (Bulletins) — affichée à côté de la moyenne calculée
-    for r in _marks_rows(pdb, pid, semester):
+    # with_mentions : une matière portée VAQ / N doit se lire ici aussi, sinon la
+    # colonne paraîtrait vide alors qu'un choix a bien été posé au bulletin.
+    for r in _marks_rows(pdb, pid, semester, with_mentions=True):
         if r['student_id'] in sids and r['matiere_code'] in keys:
             official[f"{r['student_id']}_{r['matiere_code']}"] = r['mention'] if r['mention'] else r['note']
     return {**base, 'available': True, 'groups': out_groups, 'students': students,
@@ -6843,7 +6943,10 @@ def export_promotion_notes(pid, semester):
         '''SELECT id, numero, nom, prenom, naissance FROM promotion_students
            WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,)).fetchall()
     marks = {}
-    for r in _marks_rows(pdb, pid, semester):
+    # with_mentions : ABI, VAQ et N sont écrits tels quels dans la colonne Note —
+    # une case vide ne dirait pas si la matière est non notée, validée par acquis
+    # ou neutralisée.
+    for r in _marks_rows(pdb, pid, semester, with_mentions=True):
         marks[(r['student_id'], r['matiere_code'])] = r['mention'] if r['mention'] else r['note']
 
     formation = (promo['formation'] or '').upper()

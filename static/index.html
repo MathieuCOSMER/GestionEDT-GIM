@@ -5682,12 +5682,16 @@ function renderNotesGrid() {
         }).join('') : '';
         const prevSemCells = cg.prevSem ? prevSems.map(g => prevCell(g, '#818cf8')).join('') : '';
         const mi = (d.mobility || {})[s.id];      // semestre en mobilité internationale
+        const semMiss = _liveSemMissing(d, s.id);   // notes manquantes, par UE
+        const semVaq = _ueVaqList(d, s.id);         // UE validées par acquis
         const avgCells = cg.ue ? comps.map((c, ci) => {
             if (mi !== undefined) return _miUeCell(mi, ci);
+            if (semVaq.includes(ci)) return _vaqUeCell(s.id, ci);
             const st = _ueStatus(avg[ci], ya[ci]);
             // ↺ : redoublant dont cette UE garde la note du passage précédent (meilleure des deux)
             const rk = (d.red_kept || {})[s.id + '_' + ci];
-            return `<td class="nz-avg" data-sid="${s.id}" data-ci="${ci}" title="${_UE_TITLE[st]}${rk === undefined ? '' : ' — note conservée du passage précédent (redoublant : meilleure des deux)'}" style="text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}">${_fmtAvg(avg[ci])}${rk === undefined ? '' : ' <span style="font-size:.7rem;color:#7c3aed">↺</span>'}</td>`;
+            const miss = (semMiss[ci] || []);
+            return `<td class="nz-avg" data-sid="${s.id}" data-ci="${ci}" onclick="toggleUeVaq(${s.id}, ${ci})" title="${esc(_UE_TITLE[st] + (rk === undefined ? '' : ' — note conservée du passage précédent (redoublant : meilleure des deux)') + _ueMissTitle(d, avg[ci], miss) + ' — cliquez pour marquer cette UE validée par acquis (VAQ)')}" style="cursor:pointer;text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}">${_fmtAvg(avg[ci])}${rk === undefined ? '' : ' <span style="font-size:.7rem;color:#7c3aed">↺</span>'}${_ueMissMark(avg[ci], miss)}</td>`;
         }).join('') : '';
         const cells = cg.notes ? mats.map((m, mi2) => {
             const v = d.marks[s.id + '_' + m.code];
@@ -5733,9 +5737,12 @@ function renderNotesGrid() {
             ${fbox('ue', 'UE du semestre', true)}
             ${fbox('notes', 'Notes (matières)', true)}
         </div>
-        <div style="font-size:.8rem;color:#6b7280;margin-bottom:10px">Notes sur 20, ou <strong>ABI</strong> (absence injustifiée : comptée 0, l'absence reste affichée),
-            ou <strong>VAQ</strong> (validée par acquis : aucune note, la matière sort du calcul comme une case vide — la mention reste affichée pour dire pourquoi).
-            Case vide = note absente (le coefficient correspondant est retiré du calcul).
+        <div style="font-size:.8rem;color:#6b7280;margin-bottom:10px">Notes sur 20, ou une mention :
+            <strong>ABI</strong> (absence injustifiée : comptée 0) ou <strong>N</strong> (matière neutralisée, faute d'enseignant :
+            aucune note, la matière sort du calcul comme une case vide — la mention reste affichée pour dire pourquoi).
+            Case vide = note attendue mais absente : le coefficient est retiré du calcul et la moyenne d'UE est signalée <strong style="color:#b45309">⚠</strong> comme incomplète.
+            <strong>Cliquez sur une moyenne d'UE</strong> du semestre pour la marquer <strong style="color:#0e7490">VAQ</strong> (validée par acquis) :
+            elle ne compte alors plus, seule l'autre semestre entre dans la moyenne annuelle de cette UE.
             Colonne <strong>Pénalité</strong> = nombre d'<strong>heures</strong> d'absences injustifiées (le malus est calculé selon le barème IUT&nbsp;Toulon
             et retranché de chaque UE du semestre) — <strong>cliquez sur une case</strong> pour saisir les heures
             <em>ou</em> directement le malus en points. Colonne <strong>Bonus</strong> = meilleure note sport/art <strong>/20</strong>
@@ -5749,10 +5756,50 @@ function renderNotesGrid() {
             <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:13px;height:13px;border-radius:3px;background:#fee2e2;border:1px solid #fca5a5"></span>non acquise (&lt;&nbsp;10)</span>
             <span style="color:#6b7280">— L'<strong>année est validée</strong> si <strong>≥ 3 compétences</strong> sont validées (moyenne annuelle ≥ 10 ; valider un niveau supérieur valide l'inférieur).</span>
         </div>
+        <div id="notes-incomplete"></div>
         <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px;width:90vw;margin-left:calc(50% - 45vw)">
             <table class="nz-table"><thead>${groupRow}${head}</thead><tbody>${body}</tbody></table>
         </div>`;
+    refreshIncompleteBanner();
     applyPromoReadOnly();
+}
+
+// ===== Bandeau « moyennes incomplètes » =====
+// Une moyenne d'UE calculée alors qu'il manque des notes n'est pas fausse, elle
+// est PROVISOIRE : décider d'un jury dessus serait une erreur. Le bandeau la
+// rend visible sans avoir à survoler chaque cellule, et se remet à jour à chaque
+// frappe. VAQ et N n'y comptent pas : elles sortent du calcul volontairement.
+function refreshIncompleteBanner() {
+    const el = document.getElementById('notes-incomplete');
+    const d = _notesData;
+    if (!el || !d) return;
+    const shown = (d.students || []).filter(s => (d.mobility || {})[s.id] === undefined);
+    let nUe = 0, parMat = {};
+    const eleves = new Set();
+    shown.forEach(s => {
+        const avg = (d.averages || {})[s.id] || {};
+        _liveSemMissing(d, s.id).forEach((miss, ci) => {
+            const v = avg[ci];
+            if (v === null || v === undefined || !miss.length) return;
+            nUe++;
+            eleves.add(s.id);
+            miss.forEach(c => { parMat[c] = (parMat[c] || 0) + 1; });
+        });
+    });
+    if (!nUe) { el.innerHTML = ''; return; }
+    // Les matières les plus souvent absentes : c'est par là qu'il faut commencer
+    const top = Object.entries(parMat).sort((a, b) => b[1] - a[1]).slice(0, 6)
+        .map(([c, n]) => `<span style="white-space:nowrap"><strong>${esc(_matLabel(d, c))}</strong> (${n})</span>`)
+        .join(' · ');
+    const reste = Object.keys(parMat).length - Math.min(6, Object.keys(parMat).length);
+    el.innerHTML = `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;
+                padding:8px 12px;margin-bottom:10px;font-size:.83rem;color:#92400e">
+            <strong>⚠ ${nUe} moyenne(s) d'UE calculée(s) avec des notes manquantes</strong>
+            — ${eleves.size} étudiant(s) concerné(s). Ces moyennes sont provisoires : le coefficient
+            des matières sans note est retiré du calcul. Les cellules concernées portent
+            <strong>⚠</strong> (survolez pour le détail).
+            <div style="margin-top:4px">Matières le plus souvent sans note : ${top}${reste > 0 ? ` <span>+${reste} autre(s)</span>` : ''}</div>
+        </div>`;
 }
 
 // Barème bonus/pénalité (miroir du backend) pour l'affichage en direct des points
@@ -5794,16 +5841,96 @@ function _noteNum(v) {
     if (typeof v === 'number') return v;
     const t = String(v).trim().toUpperCase();
     if (t === 'ABI') return 0;                       // absence : comptée 0
-    if (t === 'VAQ') return null;                    // validée par acquis : hors calcul
+    if (t === 'N') return null;                      // matière neutralisée : hors calcul
     const n = parseFloat(t.replace(',', '.'));
     return isNaN(n) ? null : n;
+}
+
+// Mentions saisissables à la place d'une note. ABI compte 0 ; N ne compte pas —
+// la matière quitte la moyenne d'UE comme une case vide, mais pour une raison
+// affichée : elle n'a pas été assurée, faute d'enseignant.
+// La validation par acquis (VAQ) ne se pose pas ici : elle porte sur une UE
+// entière du semestre — un clic sur sa cellule de moyenne.
+const NOTE_MENTIONS = ['ABI', 'N'];
+
+// Matières SANS AUCUNE valeur qui pèsent dans chaque UE : ce sont les notes
+// manquantes, celles qui font qu'une moyenne d'UE ne porte pas sur tout ce
+// qu'elle devrait. VAQ et N n'en font pas partie — leur mise hors calcul est
+// voulue, pas un oubli. Retourne un tableau [ci] -> [codes de matières].
+function _liveSemMissing(d, sid) {
+    const vaq = _ueVaqList(d, sid);
+    return (d.competences || []).map((c, ci) =>
+        vaq.includes(ci) ? [] :
+        Object.entries(c.coeffs || {})
+            .filter(([code, coeff]) => {
+                if (!coeff) return false;
+                const v = d.marks[sid + '_' + code];
+                return v === undefined || v === null || String(v).trim() === '';
+            })
+            .map(([code]) => code));
+}
+
+// UE validées par acquis pour un étudiant, en rangs de compétence
+function _ueVaqList(d, sid) {
+    return ((d.ue_vaq || {})[sid] || (d.ue_vaq || {})[String(sid)] || []);
+}
+
+// Cellule d'une UE validée par acquis : elle ne porte pas de moyenne, et
+// l'indique. Même traitement visuel que la mobilité internationale, dont elle
+// partage la mécanique (l'UE sort du calcul annuel pour ce semestre).
+function _vaqUeCell(sid, ci) {
+    return `<td class="nz-avg nz-vaq" data-sid="${sid}" data-ci="${ci}" onclick="toggleUeVaq(${sid}, ${ci})"
+        title="UE validée par acquis — elle ne compte pas ce semestre : seule la moyenne de l'autre semestre entre dans la moyenne annuelle. Cliquez pour retirer."
+        style="cursor:pointer;text-align:center;font-weight:700;font-size:.8rem;background:#cffafe;color:#0e7490${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}">VAQ</td>`;
+}
+
+// Bascule la validation par acquis d'une UE. Enregistrement immédiat (comme la
+// mobilité) : ce n'est pas une note, le bouton « Enregistrer les notes » ne la
+// concerne pas.
+async function toggleUeVaq(sid, ci) {
+    const d = _notesData;
+    if (!d) return;
+    const pid = document.getElementById('promo-select').value;
+    const sem = document.getElementById('notes-sem-select').value;
+    const sub = (document.getElementById('notes-sub-select') || {}).value || 'FTP';
+    const on = _ueVaqList(d, sid).includes(ci);
+    const nom = ((d.competences || [])[ci] || {}).name || ('UE ' + (ci + 1));
+    try {
+        _notesData = await api(`/promotions/${pid}/notes/${sem}/ue-vaq?formation=${encodeURIComponent(sub)}`,
+            { method: 'PUT', body: JSON.stringify({ student_id: sid, competence: ci, vaq: !on }) });
+        renderNotesGrid();
+        toast(on ? `${nom} : validation par acquis retirée`
+                 : `${nom} : validée par acquis (hors moyenne de ce semestre)`);
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// Libellé d'une matière pour l'infobulle des moyennes incomplètes
+function _matLabel(d, code) {
+    const m = (d.components || []).find(x => x.code === code);
+    return (m && (m.short_label || m.label)) || code;
+}
+
+// Marque « moyenne incomplète » posée dans la cellule d'UE, et son explication.
+// Une moyenne nulle (aucune note du tout) n'est pas « incomplète » : elle est
+// simplement non évaluée, ce que la cellule dit déjà.
+function _ueMissMark(avg, miss) {
+    return (avg !== null && avg !== undefined && miss && miss.length)
+        ? ` <span style="font-size:.7rem;color:#b45309;font-weight:700">⚠${miss.length}</span>` : '';
+}
+
+function _ueMissTitle(d, avg, miss) {
+    if (avg === null || avg === undefined || !miss || !miss.length) return '';
+    return ` — ATTENTION : moyenne calculée sans ${miss.length} note(s) manquante(s) : `
+        + miss.map(c => _matLabel(d, c)).join(', ');
 }
 
 // Moyennes d'UE du semestre affiché (miroir de _semester_competence_averages)
 function _liveSemAverages(d, sid) {
     const pen = (d.components || []).find(m => m.kind === 'PEN');
     const malus = pen ? notesPenaltyPoints(_noteNum(d.marks[sid + '_' + pen.code])) : 0;
+    const vaq = _ueVaqList(d, sid);
     return (d.competences || []).map((c, ci) => {
+        if (vaq.includes(ci)) return null;    // validée par acquis : hors moyenne annuelle
         let num = 0, den = 0;
         Object.entries(c.coeffs || {}).forEach(([code, coeff]) => {
             const w = coeff || 0;
@@ -5840,14 +5967,18 @@ function refreshStudentAverages(sid) {
     _harvestNotesEdits();                 // les notes tapées comptent dans le calcul
     const sem = _liveSemAverages(d, sid);
     const { year, gim } = _liveYearAverages(d, sid, sem);
+    const miss = _liveSemMissing(d, sid);
     document.querySelectorAll(`#notes-content td.nz-avg[data-sid="${sid}"]`).forEach(td => {
         if (td.classList.contains('nz-mi')) return;     // UE validée par équivalence
+        if (td.classList.contains('nz-vaq')) return;    // UE validée par acquis
         const ci = +td.dataset.ci;
         const rk = (d.red_kept || {})[sid + '_' + ci];
         const st = _ueStatus(sem[ci], year[ci]);
         td.style.cssText = `text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}`;
-        td.title = _UE_TITLE[st] + (rk === undefined ? '' : ' — note conservée du passage précédent (redoublant : meilleure des deux)');
-        td.innerHTML = _fmtAvg(sem[ci]) + (rk === undefined ? '' : ' <span style="font-size:.7rem;color:#7c3aed">↺</span>');
+        td.title = _UE_TITLE[st] + (rk === undefined ? '' : ' — note conservée du passage précédent (redoublant : meilleure des deux)')
+            + _ueMissTitle(d, sem[ci], miss[ci] || []);
+        td.innerHTML = _fmtAvg(sem[ci]) + (rk === undefined ? '' : ' <span style="font-size:.7rem;color:#7c3aed">↺</span>')
+            + _ueMissMark(sem[ci], miss[ci] || []);
     });
     document.querySelectorAll(`#notes-content td.nz-yavg[data-sid="${sid}"]`).forEach(td => {
         const ci = +td.dataset.ci, st = _yearUeStatus(year[ci]);
@@ -5864,6 +5995,7 @@ function refreshStudentAverages(sid) {
     if (d.averages) d.averages[sid] = obj(sem);
     if (d.year_averages) d.year_averages[sid] = obj(year);
     (d.year_gim || (d.year_gim = {}))[sid] = gim;
+    refreshIncompleteBanner();
 }
 
 // ===== Éditeur de pénalité d'assiduité (colonne PEN des Bulletins) =====
@@ -6188,10 +6320,10 @@ async function saveNotesMarks() {
         const kind = inp.dataset.kind || '';
         let mark = null;
         if (raw !== '') {
-            // ABI (comptée 0) et VAQ (validée par acquis, hors calcul) : mentions
-            // acceptées partout sauf sur la colonne Pénalité, qui compte des heures.
+            // ABI (comptée 0) et N (matière neutralisée) : mentions acceptées
+            // partout sauf sur la colonne Pénalité, qui compte des heures.
             const men = raw.toUpperCase();
-            if ((men === 'ABI' || men === 'VAQ') && kind !== 'PEN') {
+            if (NOTE_MENTIONS.includes(men) && kind !== 'PEN') {
                 mark = men; inp.style.borderColor = '#d1d5db';
             } else {
                 const note = parseFloat(raw.replace(',', '.'));
@@ -6205,7 +6337,8 @@ async function saveNotesMarks() {
         marks.push({ student_id: +inp.dataset.sid, matiere_code: inp.dataset.code, note: mark });
     });
     if (invalid) {
-        toast('Notes invalides : une note de 0 à 20, ABI (absence injustifiée) ou VAQ (validée par acquis).', 'error');
+        toast('Notes invalides : une note de 0 à 20, ou ABI (absence injustifiée) '
+            + 'ou N (matière neutralisée).', 'error');
         return false;
     }
     try {
