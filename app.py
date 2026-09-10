@@ -4887,20 +4887,29 @@ def _origin_links(pdb, pid, reason=None):
         out[r['id']] = (r['origin_student_id'], r['origin_promotion_id'], r['entry_year'] or 1)
     return out
 
-def _marks_rows(pdb, pid, semester):
+def _marks_rows(pdb, pid, semester, with_mentions=False):
     """Notes d'un semestre pour une promotion, sous forme de dicts
     {student_id, matiere_code, note, mention}.
+
+    Par défaut, seules les lignes PORTANT UNE NOTE sont rendues : c'est ce que
+    consomment tous les calculs de moyenne. Une matière validée par acquis (VAQ)
+    n'a pas de note — elle est donc naturellement hors calcul, exactement comme
+    une case vide. `with_mentions=True` ajoute ces lignes sans note mais avec
+    mention, pour les affichages qui doivent les montrer (grille des bulletins)
+    ou les protéger (import « ne remplir que les cases vides »).
 
     Un étudiant transféré d'une cohorte à l'autre (césure, redoublement) reprend
     les notes de sa fiche d'origine pour les semestres des années ANTÉRIEURES à
     son entrée : son parcours reste continu (bulletin complet, compensation et
     AJAC possibles) sans recopier la donnée — la fiche d'origine reste la seule
     source de vérité. Ses propres notes priment si elles existent."""
+    garde = ('(note IS NOT NULL OR mention IS NOT NULL)' if with_mentions
+             else 'note IS NOT NULL')
     rows = [{'student_id': r['student_id'], 'matiere_code': r['matiere_code'],
              'note': r['note'], 'mention': r['mention']}
             for r in pdb.execute("""SELECT student_id, matiere_code, note, mention
                                     FROM student_marks
-                                    WHERE promotion_id=? AND semester=? AND note IS NOT NULL""",
+                                    WHERE promotion_id=? AND semester=? AND %s""" % garde,
                                  (pid, semester))]
     links = _origin_links(pdb, pid)
     if not links:
@@ -4912,7 +4921,7 @@ def _marks_rows(pdb, pid, semester):
             continue
         for r in pdb.execute("""SELECT matiere_code, note, mention FROM student_marks
                                 WHERE promotion_id=? AND semester=? AND student_id=?
-                                  AND note IS NOT NULL""", (opid, semester, osid)):
+                                  AND %s""" % garde, (opid, semester, osid)):
             rows.append({'student_id': sid, 'matiere_code': r['matiere_code'],
                          'note': r['note'], 'mention': r['mention']})
     return rows
@@ -5664,6 +5673,12 @@ def _jury_failed_before(comp, year):
 
 _STUDENT_LEFT_STATUSES = ('Abandon',)
 
+# Mentions saisissables à la place d'une note, dans la grille des bulletins :
+#   ABI = absence injustifiée → comptée 0 dans la moyenne ;
+#   VAQ = validation par acquis → aucune note, donc retirée du calcul comme une
+#         case vide (le coefficient de la matière sort de la moyenne d'UE).
+_MARK_MENTIONS = ('ABI', 'VAQ')
+
 def _year_formation_map(pdb, pid, year):
     """Sous-cohorte (FTP/ALT) de chaque étudiant POUR une année d'étude donnée : le
     dernier changement de cohorte d'une année <= `year`, sinon la formation de base.
@@ -5913,7 +5928,7 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     # → masquées de la grille de notes.
     components = _visible_note_components(ref.get('components', []), competences)
     marks = {}
-    for r in _marks_rows(pdb, pid, semester):
+    for r in _marks_rows(pdb, pid, semester, with_mentions=True):
         marks[f"{r['student_id']}_{r['matiere_code']}"] = r['mention'] if r['mention'] else r['note']
     red_kept = {}
     averages = _semester_competence_averages(pdb, pid, semester, competences, components,
@@ -6046,8 +6061,12 @@ def save_promotion_notes(pid, semester):
             pdb.execute('''DELETE FROM student_marks WHERE promotion_id=? AND semester=?
                            AND student_id=? AND matiere_code=?''', (pid, semester, sid, code))
             continue
-        if isinstance(note, str) and note.strip().upper() == 'ABI':
-            note_num, mention = 0.0, 'ABI'
+        if isinstance(note, str) and note.strip().upper() in _MARK_MENTIONS:
+            # ABI : absence injustifiée, comptée 0. VAQ : matière validée par
+            # acquis — aucune note, donc hors moyenne, comme une case vide ;
+            # la mention reste affichée pour dire pourquoi la case est vide.
+            mention = note.strip().upper()
+            note_num = 0.0 if mention == 'ABI' else None
         else:
             try:
                 note_num, mention = float(note), None
@@ -6702,7 +6721,8 @@ def import_promotion_notes(pid, semester):
         return error_response("Mode d'import inconnu", 400)
     srcs = {f: _matiere_sources(pdb, pid, semester, f) for f in _SUBCOHORTS}
     defs = {f: _saisie_status(pdb, pid, semester, f) for f in _SUBCOHORTS}
-    filled = {(r['student_id'], r['matiere_code']) for r in _marks_rows(pdb, pid, semester)
+    filled = {(r['student_id'], r['matiere_code'])
+              for r in _marks_rows(pdb, pid, semester, with_mentions=True)
               if r['note'] is not None or r['mention']}
     plan, switched = [], set()
     matched = unmatched = conflits = skip_def = skip_filled = 0

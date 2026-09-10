@@ -5733,7 +5733,8 @@ function renderNotesGrid() {
             ${fbox('ue', 'UE du semestre', true)}
             ${fbox('notes', 'Notes (matières)', true)}
         </div>
-        <div style="font-size:.8rem;color:#6b7280;margin-bottom:10px">Notes sur 20, ou <strong>ABI</strong> (absence injustifiée : comptée 0, l'absence reste affichée).
+        <div style="font-size:.8rem;color:#6b7280;margin-bottom:10px">Notes sur 20, ou <strong>ABI</strong> (absence injustifiée : comptée 0, l'absence reste affichée),
+            ou <strong>VAQ</strong> (validée par acquis : aucune note, la matière sort du calcul comme une case vide — la mention reste affichée pour dire pourquoi).
             Case vide = note absente (le coefficient correspondant est retiré du calcul).
             Colonne <strong>Pénalité</strong> = nombre d'<strong>heures</strong> d'absences injustifiées (le malus est calculé selon le barème IUT&nbsp;Toulon
             et retranché de chaque UE du semestre) — <strong>cliquez sur une case</strong> pour saisir les heures
@@ -5793,6 +5794,7 @@ function _noteNum(v) {
     if (typeof v === 'number') return v;
     const t = String(v).trim().toUpperCase();
     if (t === 'ABI') return 0;                       // absence : comptée 0
+    if (t === 'VAQ') return null;                    // validée par acquis : hors calcul
     const n = parseFloat(t.replace(',', '.'));
     return isNaN(n) ? null : n;
 }
@@ -6186,8 +6188,11 @@ async function saveNotesMarks() {
         const kind = inp.dataset.kind || '';
         let mark = null;
         if (raw !== '') {
-            if (raw.toUpperCase() === 'ABI' && kind !== 'PEN') {
-                mark = 'ABI'; inp.style.borderColor = '#d1d5db';
+            // ABI (comptée 0) et VAQ (validée par acquis, hors calcul) : mentions
+            // acceptées partout sauf sur la colonne Pénalité, qui compte des heures.
+            const men = raw.toUpperCase();
+            if ((men === 'ABI' || men === 'VAQ') && kind !== 'PEN') {
+                mark = men; inp.style.borderColor = '#d1d5db';
             } else {
                 const note = parseFloat(raw.replace(',', '.'));
                 // PEN = heures d'absence (pas de plafond à 20) ; autres = note /20
@@ -6199,7 +6204,10 @@ async function saveNotesMarks() {
         }
         marks.push({ student_id: +inp.dataset.sid, matiere_code: inp.dataset.code, note: mark });
     });
-    if (invalid) { toast('Notes invalides : une note de 0 à 20, ou ABI (absence injustifiée).', 'error'); return false; }
+    if (invalid) {
+        toast('Notes invalides : une note de 0 à 20, ABI (absence injustifiée) ou VAQ (validée par acquis).', 'error');
+        return false;
+    }
     try {
         _notesData = await api(`/promotions/${pid}/notes/${sem}?formation=${encodeURIComponent(sub)}`, { method: 'PUT', body: JSON.stringify({ marks }) });
         renderNotesGrid();
