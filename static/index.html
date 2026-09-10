@@ -5831,6 +5831,70 @@ function onNotesSpecialInput(inp) {
     refreshStudentAverages(inp.dataset.sid);
 }
 
+// ===== Position de défilement conservée au travers d'un re-rendu =====
+// Réécrire l'intérieur d'une zone (innerHTML) remet ses ascenseurs à zéro : la
+// moindre action renvoyait donc en haut du tableau, à chercher la ligne qu'on
+// venait de modifier. On relève la position avant, on la repose après.
+//
+// Les conteneurs sont repérés par leur `id` quand ils en ont un, sinon par leur
+// rang parmi LES SEULS conteneurs défilants : un bloc qui apparaît ou disparaît
+// entre deux rendus (bandeau d'alerte, message vide) ne décale donc pas le
+// repère, alors qu'un simple rang parmi tous les éléments l'aurait fait.
+function _scrollBoxes() {
+    const out = [];
+    document.querySelectorAll('div, section, main').forEach(n => {
+        if (n.scrollHeight > n.clientHeight + 1 || n.scrollWidth > n.clientWidth + 1) {
+            const st = getComputedStyle(n);
+            if (/(auto|scroll)/.test(st.overflowY) || /(auto|scroll)/.test(st.overflowX)) out.push(n);
+        }
+    });
+    return out;
+}
+
+function keepScroll(fn) {
+    const pageX = window.scrollX, pageY = window.scrollY;
+    const saved = [];
+    _scrollBoxes().forEach((n, i) => {
+        if (n.scrollTop || n.scrollLeft) saved.push([n.id || null, i, n.scrollTop, n.scrollLeft]);
+    });
+    const restore = () => {
+        if (!saved.length && !pageX && !pageY) return;
+        const boxes = _scrollBoxes();
+        saved.forEach(([id, i, top, left]) => {
+            const n = (id && document.getElementById(id)) || boxes[i];
+            if (!n) return;
+            n.scrollTop = top;
+            n.scrollLeft = left;
+        });
+        window.scrollTo(pageX, pageY);
+    };
+    let out;
+    try {
+        out = fn();
+    } catch (e) {
+        restore();
+        throw e;
+    }
+    if (out && typeof out.then === 'function') return out.then(v => { restore(); return v; }, e => { restore(); throw e; });
+    restore();
+    return out;
+}
+
+// Toutes les vues qui se redessinent après une action passent par là. Enrober
+// les fonctions de rendu elles-mêmes évite d'avoir à y penser à chaque appel —
+// et il y en a beaucoup (tri de colonne, repli, enregistrement, bascule…).
+[
+    'renderNotesGrid', 'renderJuryGrid', 'renderSaisieGrid', 'renderPromoEffectif',
+    'renderRedoublants', 'renderTuteurs', 'renderRepJour', 'renderRepartition',
+    'renderTeacherRepartition', 'renderCourses', 'renderSessions', 'renderRooms',
+    'renderTeachers', 'renderService', 'renderStats', 'renderJournal',
+    'renderPromoCoeffTables', 'renderProgMatieres', 'renderProgCoeffs',
+    'renderCalendrierPage', 'renderChecksPanel', 'renderPromotionGroups',
+].forEach(nom => {
+    const f = window[nom];
+    if (typeof f === 'function') window[nom] = function (...args) { return keepScroll(() => f.apply(this, args)); };
+});
+
 // ===== Recalcul immédiat des moyennes d'un étudiant (bonus / pénalité) =====
 // Mêmes formules que le serveur (barème IUT Toulon) : le malus se retranche de
 // chaque UE du semestre, la bonification s'ajoute à la moyenne ANNUELLE de chaque
@@ -5895,6 +5959,17 @@ async function toggleUeVaq(sid, ci) {
     const sub = (document.getElementById('notes-sub-select') || {}).value || 'FTP';
     const on = _ueVaqList(d, sid).includes(ci);
     const nom = ((d.competences || [])[ci] || {}).name || ('UE ' + (ci + 1));
+    // La cellule d'UE est aussi celle qu'on survole pour lire la moyenne : sans
+    // confirmation, un clic de trop changerait une moyenne annuelle en silence.
+    const eleve = ((d.students || []).find(x => String(x.id) === String(sid)) || {});
+    const qui = ((eleve.nom || '') + ' ' + (eleve.prenom || '')).trim() || 'cet étudiant';
+    const question = on
+        ? `Retirer la validation par acquis de « ${nom} » pour ${qui} ?\n\n`
+          + `La moyenne de cette UE au semestre ${sem} comptera de nouveau dans la moyenne annuelle.`
+        : `Marquer « ${nom} » validée par acquis pour ${qui} ?\n\n`
+          + `Cette UE ne comptera plus pour le semestre ${sem} : seule la moyenne de l'autre `
+          + `semestre entrera dans sa moyenne annuelle.`;
+    if (!confirm(question)) return;
     try {
         _notesData = await api(`/promotions/${pid}/notes/${sem}/ue-vaq?formation=${encodeURIComponent(sub)}`,
             { method: 'PUT', body: JSON.stringify({ student_id: sid, competence: ci, vaq: !on }) });
