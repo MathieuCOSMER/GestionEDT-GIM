@@ -7227,6 +7227,17 @@ def public_external_hours():
 # QR code : un seul réglage vaut pour tous les CM / TD / TP / PT du module, faces
 # FTP et ALT comprises. Le choix est porté par le couple (matière, enseignant) :
 # une matière partagée entre plusieurs enseignants laisse à chacun le sien.
+# Le réglage appartient à l'enseignant : l'ADMIN ne fait que le consulter, il ne
+# coche jamais à sa place.
+
+def _connected_teacher_row(db):
+    """Fiche de l'enseignant connecté, qu'il ait ou non les droits d'admin.
+    Le compte Admin, qui n'est l'enseignant de personne, n'en a pas : il reste
+    en lecture seule sur ce réglage."""
+    name = session.get('teacher_name')
+    if not name:
+        return None
+    return db.execute('SELECT * FROM teachers WHERE LOWER(name) = LOWER(?)', (name,)).fetchone()
 
 def _teacher_teaches_course(db, course_id, teacher_id):
     """Vrai si l'enseignant intervient dans la matière, en titre ou pour un groupe."""
@@ -7252,8 +7263,8 @@ def get_qr_attendance():
 @app.route('/api/qr-attendance', methods=['PUT'])
 def set_qr_attendance():
     """Active / désactive l'appel par QR code d'une sous-matière (tous ses types).
-    Body : {course_id, teacher_id, enabled}. Un enseignant ne peut régler que SES
-    propres matières ; l'admin peut régler celles de n'importe qui."""
+    Body : {course_id, teacher_id, enabled}. Seul l'enseignant concerné règle ses
+    propres matières : l'admin consulte le choix mais ne le modifie pas."""
     db = get_db()
     data = request.get_json() or {}
     try:
@@ -7263,12 +7274,13 @@ def set_qr_attendance():
         return error_response('Matière ou enseignant manquant')
     enabled = 1 if data.get('enabled') else 0
 
-    if session.get('role') != 'admin':
-        me = _my_teacher_row(db)
-        if not me:
-            return error_response('Réservé aux enseignants connectés', 403)
-        if me['id'] != tid:
-            return error_response('Vous ne pouvez régler que vos propres matières', 403)
+    me = _connected_teacher_row(db)
+    if not me:
+        return error_response(
+            "L'appel par QR code se règle par l'enseignant lui-même : "
+            "l'administration ne fait que le consulter.", 403)
+    if me['id'] != tid:
+        return error_response('Vous ne pouvez régler que vos propres matières', 403)
     if not _teacher_teaches_course(db, cid, tid):
         return error_response('Cet enseignant n\'intervient pas dans cette matière', 404)
 

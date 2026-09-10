@@ -7807,6 +7807,13 @@ function renderTeacherRepartition() {
         : null;
     const isSelfBlock = (tid) => !!meRec && String(meRec.id) === String(tid);
 
+    // Appel par QR code : réglé par l'enseignant lui-même, jamais par l'admin,
+    // qui n'en voit que l'état. Un enseignant ayant les droits d'admin garde la
+    // main sur SES matières — d'où une recherche indépendante du rôle.
+    const meQrRec = state.teacherName
+        ? (state.teachers||[]).find(t => (t.name||'').toLowerCase() === state.teacherName.toLowerCase())
+        : null;
+
     const blocks = teacherIds.map(tid => {
         const data = byTeacher[tid];
         // Tri : semestre, code cours, type (CM-TD-TP-PT), formation
@@ -7821,7 +7828,7 @@ function renderTeacherRepartition() {
         const sumByType = { CM:0, TD:0, TP:0, PT:0 };
         // Bloc de l'enseignant connecté : lui seul (et l'admin) règle l'appel QR
         const isSelf = isSelfBlock(tid);
-        const canQr = state.role === 'admin' || isSelf;
+        const canQr = !!meQrRec && String(meQrRec.id) === String(tid);
 
         // Appel par QR code : réglé UNE fois par sous-matière, pour tous ses
         // CM / TD / TP / PT (faces FTP et ALT comprises). La case vit donc sur la
@@ -7947,7 +7954,7 @@ function renderTeacherRepartition() {
                     <th style="text-align:right">H. pondérées</th>
                     <th style="text-align:right">Coef.</th>
                     <th style="text-align:right">HETD</th>
-                    <th style="text-align:center" title="Appel des étudiants par QR code : une case par sous-matière, valable pour tous ses CM, TD, TP et PT">Appel QR</th>
+                    <th style="text-align:center" title="Appel des étudiants par QR code : une case par sous-matière, valable pour tous ses CM, TD, TP et PT. Chaque enseignant coche les siennes ; l'administration ne fait que les consulter.">Appel QR</th>
                 </tr></thead>
                 <tbody>${rows}${extRowsHtml}</tbody>
             </table></div>
