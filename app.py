@@ -6771,17 +6771,92 @@ def _pv_marks_ws(ws):
                      'notes': notes})
     return elps, rows
 
-def _parse_notes_file(path):
-    """Lit un fichier de notes (Apogée ou PV de jury), auto-détection.
-    Retourne ([elps {note_col, kind}], [rows {numero, notes:{note_col:val}}])."""
+def _load_notes_workbook(path):
     import openpyxl
     is_xlsm = path.lower().endswith('.xlsm')
-    wb = openpyxl.load_workbook(path, data_only=True, keep_vba=is_xlsm)
-    ws = wb.active
-    # PV de jury : présence d'une ligne de codes matière T3IS../T3IR.. (position variable)
+    return openpyxl.load_workbook(path, data_only=True, keep_vba=is_xlsm)
+
+def _parse_notes_ws(ws):
+    """Notes d'UNE feuille, format auto-détecté : PV de jury si une ligne de codes
+    matière T3IS../T3IR.. y figure (position variable), sinon layout Apogée."""
     if _find_pv_code_row(ws):
         return _pv_marks_ws(ws)
     return _apogee_marks_ws(ws)
+
+def _parse_notes_file(path, sheet=None):
+    """Lit un fichier de notes (Apogée ou PV de jury), auto-détection du format.
+    `sheet` = nom de la feuille à lire ; à défaut la feuille active du classeur
+    (les PV de jury en comptent plusieurs : provisoires, définitive, brouillons).
+    Retourne ([elps {note_col, kind}], [rows {numero, notes:{note_col:val}}])."""
+    wb = _load_notes_workbook(path)
+    if sheet:
+        if sheet not in wb.sheetnames:
+            raise ValueError(f'Feuille « {sheet} » introuvable dans le fichier')
+        ws = wb[sheet]
+    else:
+        ws = wb.active
+    return _parse_notes_ws(ws)
+
+def _notes_sheets_info(path):
+    """Inventaire des feuilles d'un classeur de notes : pour chacune, le format
+    détecté et le volume lisible (matières, étudiants notés). Permet à l'utilisateur
+    de choisir la feuille à importer — un PV de jury contient souvent plusieurs
+    versions (provisoire, définitive) dont la feuille active n'est pas la bonne."""
+    wb = _load_notes_workbook(path)
+    active = wb.active.title if wb.active is not None else None
+    sheets = []
+    for ws in wb.worksheets:
+        info = {'name': ws.title, 'hidden': ws.sheet_state != 'visible',
+                'format': None, 'matieres': 0, 'etudiants': 0, 'notes': 0}
+        try:
+            fmt = 'PV' if _find_pv_code_row(ws) else 'Apogée'
+            elps, rows = _parse_notes_ws(ws)
+            noted = [r for r in rows if r['notes']]
+            if elps and noted:
+                info.update(format=fmt, matieres=len(elps), etudiants=len(noted),
+                            notes=sum(len(r['notes']) for r in noted))
+        except Exception:
+            pass          # feuille illisible (mise en page libre) : simplement non proposée
+        sheets.append(info)
+    # Proposition par défaut : la feuille active si elle porte des notes, sinon la
+    # feuille visible la mieux remplie. Le choix final reste à l'utilisateur.
+    cands = [s for s in sheets if s['format'] and not s['hidden']]
+    cur = next((s for s in cands if s['name'] == active), None)
+    default = (cur or max(cands, key=lambda s: (s['etudiants'], s['notes'])))['name'] if cands else None
+    return {'sheets': sheets, 'active': active, 'default': default}
+
+def _save_grade_upload(f):
+    """Valide le classeur de notes reçu et l'écrit dans un fichier temporaire.
+    Retourne (chemin, None) ou (None, réponse d'erreur)."""
+    if not f or not f.filename:
+        return None, error_response('Aucun fichier reçu', 400)
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in _ALLOWED_GRADE_EXT:
+        return None, error_response('Type de fichier non autorisé (.xlsm/.xlsx)', 400)
+    if request.content_length and request.content_length > _MAX_GRADE_FILE:
+        return None, error_response('Fichier trop volumineux (max 15 Mo)', 400)
+    import tempfile
+    tmp = os.path.join(tempfile.gettempdir(), secure_filename(f.filename) or ('notes' + ext))
+    f.save(tmp)
+    return tmp, None
+
+@app.route('/api/notes/import/sheets', methods=['POST'])
+def notes_import_sheets():
+    """Feuilles du classeur de notes déposé, avec le format détecté sur chacune :
+    l'écran d'import s'en sert pour faire choisir la feuille à reprendre."""
+    err = _require_admin()
+    if err:
+        return err
+    tmp, err = _save_grade_upload(request.files.get('file'))
+    if err:
+        return err
+    try:
+        return jsonify(_notes_sheets_info(tmp))
+    except Exception as e:
+        return error_response(f'Lecture impossible : {e}', 400)
+    finally:
+        try: os.remove(tmp)
+        except OSError: pass
 
 @app.route('/api/promotions/<int:pid>/notes/<semester>/import', methods=['POST'])
 def import_promotion_notes(pid, semester):
@@ -6791,7 +6866,9 @@ def import_promotion_notes(pid, semester):
 
     `preview=1` renvoie le rapport de ce que ferait l'import SANS rien écrire
     (notamment le nombre de notes qui écraseraient une note calculée depuis la
-    saisie enseignante). `mode` = all | keep_definitive | fill_empty."""
+    saisie enseignante). `mode` = all | keep_definitive | fill_empty.
+    `sheet` = feuille du classeur à lire (cf. /api/notes/import/sheets) ; à défaut
+    la feuille active."""
     err = _require_admin()
     if err:
         return err
@@ -6800,26 +6877,21 @@ def import_promotion_notes(pid, semester):
     pdb = get_promotions_db()
     if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
         return error_response('Promotion introuvable', 404)
-    f = request.files.get('file')
-    if not f or not f.filename:
-        return error_response('Aucun fichier reçu', 400)
-    ext = os.path.splitext(f.filename)[1].lower()
-    if ext not in _ALLOWED_GRADE_EXT:
-        return error_response('Type de fichier non autorisé (.xlsm/.xlsx)', 400)
-    if request.content_length and request.content_length > _MAX_GRADE_FILE:
-        return error_response('Fichier trop volumineux (max 15 Mo)', 400)
-    import tempfile
-    tmp = os.path.join(tempfile.gettempdir(), secure_filename(f.filename) or ('notes' + ext))
-    f.save(tmp)
+    tmp, err = _save_grade_upload(request.files.get('file'))
+    if err:
+        return err
+    sheet = (request.form.get('sheet') or '').strip() or None
     try:
-        elps, rows = _parse_notes_file(tmp)
+        elps, rows = _parse_notes_file(tmp, sheet)
     except Exception as e:
         return error_response(f'Lecture impossible : {e}', 400)
     finally:
         try: os.remove(tmp)
         except OSError: pass
     if not elps:
-        return error_response('Aucune colonne de note détectée (fichier Apogée attendu)', 400)
+        return error_response(
+            f'Aucune colonne de note détectée dans la feuille « {sheet} »' if sheet
+            else 'Aucune colonne de note détectée (fichier Apogée attendu)', 400)
 
     # Mapping colonne note (fichier) -> code matière (référence du semestre).
     # Priorité à la correspondance EXACTE par code Apogée (T3IR202, …) ; repli
@@ -6893,7 +6965,7 @@ def import_promotion_notes(pid, semester):
             plan.append((sid, code, val))
             if calc:
                 switched.add((f, code))
-    report = {'notes': len(plan), 'etudiants_rapproches': matched,
+    report = {'notes': len(plan), 'feuille': sheet, 'etudiants_rapproches': matched,
               'etudiants_non_trouves': unmatched, 'matieres_mappees': len(col2code),
               'mode': mode, 'conflits_saisie': conflits,
               'ignorees_definitives': skip_def, 'ignorees_deja_notees': skip_filled,
@@ -6915,7 +6987,7 @@ def import_promotion_notes(pid, semester):
     pdb.commit()
     _audit('NOTES_IMPORT', ip=_client_ip(), user=session.get('user'),
            promo=pid, semester=semester, notes=len(plan), mode=mode,
-           bascules=len(switched))
+           feuille=sheet, bascules=len(switched))
     formation = (request.form.get('formation') or '').strip().upper() or None
     payload = _promo_notes_payload(pdb, pid, semester, formation)
     payload['import_report'] = report

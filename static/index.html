@@ -1330,12 +1330,19 @@
         <p style="color:#6b7280;font-size:.9rem;margin-top:0">
             Fichier <code>.xlsm</code>/<code>.xlsx</code> — format <strong>Apogée</strong> (colonnes de notes
             remplies) ou <strong>PV de jury</strong> (export des juris précédents), détecté automatiquement.
-            Les notes sont rattachées aux étudiants par <strong>n° Apogée</strong>. L'analyse indique ce que
-            l'import changerait — <strong>rien n'est écrit avant votre confirmation</strong>.
+            Si le classeur comporte plusieurs feuilles (PV provisoires, PV définitif…),
+            <strong>choisissez celle qui porte les notes à reprendre</strong>. Les notes sont rattachées aux étudiants par
+            <strong>n° Apogée</strong>. L'analyse indique ce que l'import changerait —
+            <strong>rien n'est écrit avant votre confirmation</strong>.
         </p>
         <div class="form-group">
             <label>Fichier *</label>
-            <input type="file" id="notes-import-file" accept=".xlsm,.xlsx" onchange="resetNotesImportPreview()">
+            <input type="file" id="notes-import-file" accept=".xlsm,.xlsx" onchange="onNotesImportFile()">
+        </div>
+        <div class="form-group" id="notes-import-sheet-group" style="display:none">
+            <label>Feuille à importer *</label>
+            <select id="notes-import-sheet" onchange="resetNotesImportPreview()"></select>
+            <div id="notes-import-sheet-hint" style="color:#6b7280;font-size:.8rem;margin-top:4px"></div>
         </div>
         <div class="form-group">
             <label>Notes déjà présentes</label>
@@ -5295,8 +5302,64 @@ function openNotesImport() {
     document.getElementById('notes-import-file').value = '';
     const m = document.querySelector('input[name="notes-import-mode"][value="all"]');
     if (m) m.checked = true;
+    _clearNotesImportSheets();
     resetNotesImportPreview();
     openModal('modal-notes-import');
+}
+
+function _clearNotesImportSheets() {
+    const g = document.getElementById('notes-import-sheet-group');
+    const s = document.getElementById('notes-import-sheet');
+    const h = document.getElementById('notes-import-sheet-hint');
+    if (g) g.style.display = 'none';
+    if (s) s.innerHTML = '';
+    if (h) h.textContent = '';
+}
+
+// Feuille choisie pour l'import ('' = classeur mono-feuille ou liste indisponible :
+// le serveur retombe alors sur la feuille active du classeur).
+function _notesImportSheet() {
+    const s = document.getElementById('notes-import-sheet');
+    return (s && s.value) || '';
+}
+
+// Un PV de jury contient plusieurs feuilles (versions provisoires, PV définitif,
+// onglet Import Apogée…) : on inventorie le classeur dès le dépôt du fichier et on
+// laisse choisir, en affichant ce que chaque feuille contient réellement.
+async function onNotesImportFile() {
+    resetNotesImportPreview();
+    _clearNotesImportSheets();
+    const f = document.getElementById('notes-import-file').files[0];
+    if (!f) return;
+    const grp = document.getElementById('notes-import-sheet-group');
+    const sel = document.getElementById('notes-import-sheet');
+    const hint = document.getElementById('notes-import-sheet-hint');
+    grp.style.display = 'block';
+    hint.textContent = 'Lecture des feuilles du classeur…';
+    try {
+        const fd = new FormData(); fd.append('file', f);
+        const r = await fetch('/api/notes/import/sheets', { method: 'POST', body: fd });
+        if (!r.ok) throw new Error(await r.text());
+        const d = await r.json();
+        const sheets = d.sheets || [];
+        if (!sheets.length) throw new Error('Aucune feuille lisible dans ce fichier');
+        const opt = s => `<option value="${esc(s.name)}">${esc(s.name)}`
+            + (s.format ? ` — ${esc(s.format)} · ${s.matieres} matière(s) · ${s.etudiants} étudiant(s) noté(s)`
+                        : ' — aucune note détectée')
+            + (s.hidden ? ' (feuille masquée)' : '') + '</option>';
+        const withNotes = sheets.filter(s => s.format), others = sheets.filter(s => !s.format);
+        sel.innerHTML =
+            (withNotes.length ? `<optgroup label="Feuilles contenant des notes">${withNotes.map(opt).join('')}</optgroup>` : '')
+            + (others.length ? `<optgroup label="Autres feuilles">${others.map(opt).join('')}</optgroup>` : '');
+        sel.value = d.default || (sheets[0] || {}).name || '';
+        hint.innerHTML = withNotes.length
+            ? `${sheets.length} feuille(s) dans le classeur, ${withNotes.length} avec des notes.`
+              + (d.active ? ` Feuille active à l'ouverture d'Excel : <strong>${esc(d.active)}</strong>.` : '')
+            : `<span style="color:#b91c1c">Aucune feuille reconnue (Apogée ou PV de jury) — vérifiez le fichier.</span>`;
+    } catch (e) {
+        _clearNotesImportSheets();
+        toast('Lecture des feuilles impossible : ' + e.message, 'error');
+    }
 }
 
 // L'import n'est autorisé qu'après une analyse portant sur le fichier et le mode
@@ -5315,6 +5378,7 @@ function _notesImportMode() {
 
 function _notesImportReport(rep) {
     const li = [];
+    if (rep.feuille) li.push(`<li>Feuille lue : <strong>${esc(rep.feuille)}</strong></li>`);
     li.push(`<li><strong>${rep.notes || 0}</strong> note(s) seraient écrites — ${rep.matieres_mappees || 0} matière(s) reconnue(s) dans le fichier</li>`);
     li.push(`<li>${rep.etudiants_rapproches || 0} étudiant(s) rapproché(s)`
         + (rep.etudiants_non_trouves ? `, <strong style="color:#b91c1c">${rep.etudiants_non_trouves} non trouvé(s)</strong> (n° Apogée absent de l'effectif)` : '') + '</li>');
@@ -5343,6 +5407,8 @@ async function submitNotesImport(preview) {
     try {
         const fd = new FormData(); fd.append('file', f); fd.append('formation', sub);
         fd.append('mode', _notesImportMode());
+        const sheet = _notesImportSheet();
+        if (sheet) fd.append('sheet', sheet);
         if (preview) fd.append('preview', '1');
         const r = await fetch(`/api/promotions/${pid}/notes/${sem}/import`, { method: 'POST', body: fd });
         if (!r.ok) throw new Error(await r.text());
