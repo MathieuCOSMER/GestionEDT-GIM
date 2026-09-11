@@ -4323,7 +4323,8 @@ function renderPromoEffectif() {
             return tag(`→ césure ${y + 1}`, '#e0e7ff',
                        `Césure sur l'année ${y + 1} — reprise en ${devTarget}`);
         if (x.decision === 'AUTRE') {
-            const t = ((_effDev.autres_formations || {})[x.detail] || 'autre formation');
+            const t = (((_effDev.autres_formations || []).find(o => o.value === x.detail) || {}).label
+                || 'autre formation');
             return tag('→ ' + esc(t), '#fde68a', 'Parti pour une autre formation'
                 + (x.libelle ? ' : ' + x.libelle : ''));
         }
@@ -4455,8 +4456,9 @@ function _renderDevenirLink(y) {
 // ===== SOUS-ONGLET DEVENIR =====
 // La suite du jury, au même endroit pour tout le monde : ce que chaque étudiant jugé
 // fait l'année d'après — poursuite en FTP/ALT, redoublement dans la cohorte suivante,
-// césure, départ sans raison connue, ou départ pour une autre formation (BTS, école
-// d'ingénieur, licence pro…). S'y ajoutent les césures à programmer (en quoi
+// césure, insertion professionnelle, départ sans raison connue, ou départ pour une
+// autre formation (école d'ingénieur, master, école de commerce, licence pro, BTS,
+// autre). S'y ajoutent les césures à programmer (en quoi
 // reprennent-elles ?) et les redoublants accueillis ici, avec l'arbitrage de leurs
 // notes — c'est le même mouvement d'une cohorte à l'autre, vu des deux côtés.
 function onDevYearChange() {
@@ -4510,7 +4512,7 @@ function _devSection(d) {
         ${kpi('à décider', c.a_decider || 0, '#fef3c7', 'Aucun devenir renseigné pour le moment')}
         ${kpi('poursuivent', (c.FTP || 0) + (c.ALT || 0), '#dcfce7', 'Inscrits en année ' + (y + 1))}
         ${kpi('césures', c.CESURE || 0, '#e0e7ff')}
-        ${kpi('autre formation', c.AUTRE || 0, '#fde68a', "BTS, école d'ingénieur, licence pro…")}
+        ${kpi('autre formation', c.AUTRE || 0, '#fde68a', "École d'ingénieur, master, école de commerce, licence pro, BTS…")}
         ${kpi('insertion pro', c.INSERTION || 0, '#ccfbf1', 'Entrée dans la vie active')}
         ${kpi('départs', (c.DEPART || 0) + (c.ABANDON || 0), '#fee2e2', 'Quittent la formation, raison inconnue')}
     </div>`;
@@ -4536,7 +4538,7 @@ function _devSection(d) {
         return `<span title="UE${u.num} — ${u.code ? _JURY_CODE_TITLE[u.code] : 'non évaluée'}"
             style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:.68rem;font-weight:700;margin-right:3px;${st}">UE${u.num} ${_fmtAvg(u.avg)}</span>`;
     };
-    const autres = d.autres_formations || {};
+    const autres = d.autres_formations || [];      // liste ordonnée [{value, label}]
     const champLibre = (st, ph, titre) => `<input value="${esc(st.libelle || '')}" placeholder="${ph}"
         onchange="setDevenirDetail(${st.student_id}, 'libelle', this.value)" title="${titre}"
         style="width:180px;font-size:.78rem;padding:3px 5px">`;
@@ -4549,12 +4551,12 @@ function _devSection(d) {
             return champLibre(st, 'employeur, poste…',
                 "Employeur et/ou poste occupé (ex. « Naval Group — technicien méthodes »)");
         if (st.decision !== 'AUTRE') return '<span style="color:#d1d5db">—</span>';
-        const opts = ['<option value="">— type —</option>'].concat(Object.keys(autres).map(k =>
-            `<option value="${k}"${k === st.detail ? ' selected' : ''}>${esc(autres[k])}</option>`)).join('');
+        const opts = ['<option value="">— type —</option>'].concat(autres.map(o =>
+            `<option value="${o.value}"${o.value === st.detail ? ' selected' : ''}>${esc(o.label)}</option>`)).join('');
         return `<select onchange="setDevenirDetail(${st.student_id}, 'detail', this.value)"
                 style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:.8rem">${opts}</select>
             <span style="margin-left:6px">${champLibre(st, 'nom de la formation',
-                "Nom de l'établissement ou de la formation d'accueil (ex. « INSA Toulon », « BTS CRSA — lycée Bonaparte »)")}</span>`;
+                "Nom de l'établissement ou de la formation d'accueil (ex. « SeaTech Toulon », « Master EEA — Aix-Marseille »)")}</span>`;
     };
     const bg = st => st.decision === 'AUTRE' ? '#fef3c7'
         : st.decision === 'INSERTION' ? '#ccfbf1'

@@ -4609,9 +4609,13 @@ def import_year_parcoursup(pid, year):
 # fiche créée dans la cohorte cible) ; les autres sont dans `promotion_devenir`.
 _DEVENIR_DECISIONS = ('FTP', 'ALT', 'CESURE', 'INSERTION', 'DEPART', 'AUTRE')
 # Formation d'accueil de celui qui part ailleurs. `libelle` en donne le nom exact
-# (« INSA Toulon », « BTS CRSA lycée Bonaparte »…), saisi librement.
-_AUTRE_FORMATIONS = {'BTS': 'BTS', 'EI': "École d'ingénieur",
-                     'LP': 'Licence professionnelle', 'AUTRE': 'Autre formation'}
+# (« INSA Toulon », « BTS CRSA lycée Bonaparte »…), saisi librement. L'ordre est celui
+# de la liste déroulante : les poursuites d'études d'un diplômé de BUT d'abord.
+# L'école de commerce n'est PAS codée « EC » : ce code désigne déjà eCandidat dans le
+# recrutement (_STUDENT_RECRUT), le relire ailleurs prêterait à confusion.
+_AUTRE_FORMATIONS = {'EI': "École d'ingénieur", 'MASTER': 'Master',
+                     'COM': 'École de commerce', 'LP': 'Licence professionnelle',
+                     'BTS': 'BTS', 'AUTRE': 'Autre formation'}
 # Devenirs qui emportent un `libelle` libre : la formation d'accueil pour AUTRE,
 # l'employeur ou le poste pour INSERTION (entrée dans la vie active — le cas
 # majoritaire à la sortie du BUT3, qu'il fallait pouvoir nommer).
@@ -4620,7 +4624,7 @@ _DEVENIR_AVEC_LIBELLE = ('AUTRE', 'INSERTION')
 _DEVENIR_DEPARTS = ('DEPART', 'AUTRE', 'INSERTION')
 
 def _autre_detail(v):
-    """Type de formation d'accueil (BTS / EI / LP / AUTRE), ou None si non renseigné."""
+    """Type de formation d'accueil (clé de `_AUTRE_FORMATIONS`), ou None si non renseigné."""
     v = (v or '').strip().upper()
     return v if v in _AUTRE_FORMATIONS else None
 
@@ -5066,7 +5070,9 @@ def _devenir_payload(pdb, pid, year):
             'target_promo_id': target_id, 'target_promo_name': target_name,
             'target_exists': target_id is not None,
             'students': rows, 'counts': counts,
-            'autres_formations': _AUTRE_FORMATIONS,
+            # Liste ORDONNÉE (jsonify trie les clés d'un dict : l'ordre de la liste
+            # déroulante se perdrait à passer _AUTRE_FORMATIONS tel quel).
+            'autres_formations': [{'value': k, 'label': v} for k, v in _AUTRE_FORMATIONS.items()],
             # Césures déjà posées : il reste à dire en quoi (FTP/ALT) elles reprennent
             'cesure': (_cesure_payload(pdb, pid) or {}).get('students', []),
             # Redoublants accueillis ici, avec l'arbitrage de leurs notes
