@@ -4998,9 +4998,6 @@ def _devenir_options(jury, year, target_name):
                 {'value': 'ALT', 'label': "Réinscrit en %s · ALT (refait l'année %d)" % (target_name, year)},
                 dict(depart, value='ABANDON'),      # la bascule RED nomme ce départ 'ABANDON'
                 autre]
-    if jury == 'AJ':
-        # Ajourné que le jury n'a pas fait redoubler : il s'en va, reste à dire où.
-        return [depart, autre]
     if year >= 3:
         # Diplômé : plus d'année suivante ici, mais un devenir à suivre — c'est tout
         # l'intérêt du suivi des sortants (poursuite d'études, insertion).
@@ -5033,8 +5030,12 @@ def _devenir_payload(pdb, pid, year):
                             WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''',
                          (pid,)):
         sid, jury = r['id'], comp['decisions'].get((year, str(r['id'])))
-        if sid not in roster or not jury:
-            continue        # hors effectif de l'année, ou année pas encore jugée
+        if sid not in roster or not jury or jury == 'AJ':
+            # Hors effectif de l'année, année pas encore jugée — ou AJOURNÉ : celui-là
+            # quitte la formation du fait même de sa décision de jury, il n'y a pas de
+            # devenir à lui renseigner. S'il redouble, le jury le passe en RED et il
+            # revient dans ce tableau.
+            continue
         formation = fm.get(sid, r['formation'] or 'FTP')
         d = red_t.get(sid, {}) if jury == 'RED' else dev.get((sid, year), {})
         codes = comp['ue_codes'].get((year, str(sid))) or {}
@@ -5087,15 +5088,16 @@ def _revert_devenir(db, pid, sid, year):
 
 def _reconcile_devenirs(db, pid, comp=None):
     """Annule les devenirs devenus incohérents : celui dont l'étudiant n'a plus de
-    décision de jury sur l'année concernée (notes reprises, UE rouverte) ou dont la
-    décision est passée à RED — son sort se traite alors dans la table des
-    redoublants. Idempotent : appelé à chaque lecture de l'onglet."""
+    décision de jury sur l'année concernée (notes reprises, UE rouverte), dont la
+    décision est passée à RED — son sort se traite alors dans la table des redoublants
+    — ou à AJ, l'ajourné n'ayant pas de devenir à renseigner. Idempotent : appelé à
+    chaque lecture de l'onglet."""
     comp = comp or _jury_compute(db, pid)
     n = 0
     for r in db.execute('SELECT student_id, year FROM promotion_devenir WHERE promotion_id=?',
                         (pid,)).fetchall():
         dec = comp['decisions'].get((r['year'], str(r['student_id'])))
-        if dec is None or dec == 'RED':
+        if dec is None or dec in ('RED', 'AJ'):
             _revert_devenir(db, pid, r['student_id'], r['year'])
             n += 1
     if n:
@@ -5160,6 +5162,9 @@ def set_devenir(pid, year, sid):
         return jsonify(_devenir_payload(db, pid, year))
     if not jury:
         return error_response("L'année %d de cet étudiant n'est pas encore jugée" % year, 400)
+    if jury == 'AJ':
+        return error_response("Un ajourné n'a pas de devenir à renseigner : il quitte la "
+                              "formation, sauf si le jury le fait redoubler (RED)", 400)
     _revert_devenir(db, pid, sid, year)
     if decision in ('', 'NONE'):
         db.commit()

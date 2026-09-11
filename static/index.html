@@ -4517,10 +4517,13 @@ function _devSection(d) {
         formation, ou <strong>partent pour une autre formation</strong> — précisez alors laquelle.
         Les <strong>RED</strong> (redoublants désignés par le jury, onglet Jury) se réinscrivent dans la cohorte
         <strong>${target}</strong> à l'année qu'ils refont, ou s'en vont.
+        Les <strong>ajournés (AJ)</strong> n'y figurent pas : ils quittent la formation du fait même de leur
+        décision de jury, il n'y a rien à renseigner pour eux — s'ils redoublent, le jury les passe en RED et
+        ils reviennent dans ce tableau.
         Tant qu'aucun devenir n'est posé, l'effectif de l'année suivante se compose tout seul depuis le jury :
         le renseigner sert à dire ce qui s'écarte de cette poursuite par défaut — et à savoir où sont partis les autres.</div>`;
     if (!d.students || !d.students.length) {
-        return totaux + head + `<div class="empty" style="margin:6px 0">Aucune décision de jury sur l'année ${y} — les moyennes ne sont pas encore arrêtées.</div>`;
+        return totaux + head + `<div class="empty" style="margin:6px 0">Personne à traiter sur l'année ${y} : soit les moyennes ne sont pas encore arrêtées, soit les seules décisions prononcées sont des ajournements.</div>`;
     }
     const ueChip = u => {
         const st = u.code ? (_JURY_CODE_STYLE[u.code] || '') : 'background:#e5e7eb;color:#6b7280';
@@ -4546,7 +4549,7 @@ function _devSection(d) {
         : st.decision === 'CESURE' ? '#e0e7ff' : (st.decision ? '#dbeafe' : '#fff');
     // Placeholder : pour un ADM/AJAC, ne rien décider vaut poursuite dans sa cohorte
     // actuelle — le dire évite de croire qu'une ligne vide est une ligne oubliée.
-    const vide = st => (st.jury === 'RED' || st.jury === 'AJ' || y >= 3)
+    const vide = st => (st.jury === 'RED' || y >= 3)
         ? '— à décider —' : `— à décider (par défaut : poursuit en ${esc(st.formation)}) —`;
     const rows = d.students.map((st, i) => `<tr>
         <td style="color:#9ca3af">${i + 1}</td>
