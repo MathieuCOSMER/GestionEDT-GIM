@@ -1041,10 +1041,16 @@
             <label style="margin-left:12px">Semaine :</label>
             <select id="repj-week" onchange="onRepJourWeek()"></select>
             <label class="admin-only" style="margin-left:12px;display:inline-flex;align-items:center;gap:5px;cursor:pointer"
-                   title="Cocher une fois la semaine posée à l'emploi du temps : les semaines restantes se lisent alors d'un coup d'œil">
-                <input type="checkbox" id="repj-planned" onchange="toggleRepJourPlanned()"
+                   title="Les cours de la semaine sont déposés à l'emploi du temps, sans organisation : les semaines restantes se lisent alors d'un coup d'œil">
+                <input type="checkbox" id="repj-planned" onchange="toggleRepJourStatus('planned')"
                        style="cursor:pointer;width:15px;height:15px">
                 Posée à l'EDT
+            </label>
+            <label class="admin-only" style="margin-left:10px;display:inline-flex;align-items:center;gap:5px;cursor:pointer"
+                   title="Le placement des cours de la semaine est optimisé : contraintes respectées, emploi du temps bon à garder. Une semaine optimisée est forcément posée.">
+                <input type="checkbox" id="repj-optimized" onchange="toggleRepJourStatus('optimized')"
+                       style="cursor:pointer;width:15px;height:15px">
+                Optimisée
             </label>
         </div>
         <div class="filters" id="rep-filters-annuelle">
@@ -1332,7 +1338,9 @@
             remplies) ou <strong>PV de jury</strong> (export des juris précédents), détecté automatiquement.
             Si le classeur comporte plusieurs feuilles (PV provisoires, PV définitif…),
             <strong>choisissez celle qui porte les notes à reprendre</strong>. Les notes sont rattachées aux étudiants par
-            <strong>n° Apogée</strong>. L'analyse indique ce que l'import changerait —
+            <strong>n° Apogée</strong>. Les colonnes <strong>bonus</strong> et <strong>pénalité
+            d'assiduité</strong> sont reprises, converties depuis les points du PV.
+            L'analyse indique ce que l'import changerait —
             <strong>rien n'est écrit avant votre confirmation</strong>.
         </p>
         <div class="form-group">
@@ -5380,6 +5388,9 @@ function _notesImportReport(rep) {
     const li = [];
     if (rep.feuille) li.push(`<li>Feuille lue : <strong>${esc(rep.feuille)}</strong></li>`);
     li.push(`<li><strong>${rep.notes || 0}</strong> note(s) seraient écrites — ${rep.matieres_mappees || 0} matière(s) reconnue(s) dans le fichier</li>`);
+    if (rep.bonus || rep.penalites)
+        li.push(`<li>dont <strong>${rep.bonus || 0}</strong> bonus et <strong>${rep.penalites || 0}</strong> pénalité(s) d'assiduité`
+            + ` <span style="color:#6b7280">— le fichier les porte en points, convertis en note /20 et en heures d'absence</span></li>`);
     li.push(`<li>${rep.etudiants_rapproches || 0} étudiant(s) rapproché(s)`
         + (rep.etudiants_non_trouves ? `, <strong style="color:#b91c1c">${rep.etudiants_non_trouves} non trouvé(s)</strong> (n° Apogée absent de l'effectif)` : '') + '</li>');
     if (rep.conflits_saisie)
@@ -9262,30 +9273,39 @@ function _autoRepJourCohorte() {
 // Changement de semaine : on repropose la cohorte adaptée avant d'afficher
 function onRepJourWeek() {
     _autoRepJourCohorte();
-    syncRepJourPlannedBox();
+    syncRepJourStatusBoxes();
     renderRepJour();
 }
 
-// ----- Suivi des semaines posées à l'emploi du temps (année de promotion) -----
-// Une semaine cochée est planifiée : ce qui reste dans la liste est le travail
-// à finir. L'état vit dans la base de l'année consultée, par année de promo.
+// ----- Suivi des semaines à l'emploi du temps (année de promotion) -----
+// Deux niveaux d'avancement : POSÉE = les cours de la semaine sont déposés à
+// l'EDT, sans organisation ; OPTIMISÉE = leur placement est fait, contraintes
+// respectées (une semaine optimisée est forcément posée). Ce qui manque dans la
+// liste est le travail à finir. L'état vit dans la base de l'année consultée,
+// par année de promo.
 let _repJourPlanned = new Set();
+let _repJourOptimized = new Set();
 
-// Libellé d'une semaine dans la liste déroulante : ✓ si elle est déjà posée
+// Libellé d'une semaine dans la liste déroulante : ✓ posée, ✓✓ optimisée
 function repJourWeekLabel(w) {
-    return (_repJourPlanned.has(w) ? '✓ ' : '') + 'Semaine ' + w;
+    const mark = _repJourOptimized.has(w) ? '✓✓ ' : _repJourPlanned.has(w) ? '✓ ' : '';
+    return mark + 'Semaine ' + w;
 }
 
-// Remet la case « Posée à l'EDT » en accord avec la semaine affichée
-function syncRepJourPlannedBox() {
-    const cb = document.getElementById('repj-planned');
-    if (!cb) return;
+// Remet les cases « Posée à l'EDT » et « Optimisée » en accord avec la semaine
+// affichée (et les réactive)
+function syncRepJourStatusBoxes() {
     const w = parseInt(document.getElementById('repj-week').value);
-    cb.checked = _repJourPlanned.has(w);
-    cb.disabled = !w;
+    [['repj-planned', _repJourPlanned], ['repj-optimized', _repJourOptimized]]
+        .forEach(([id, set]) => {
+            const cb = document.getElementById(id);
+            if (!cb) return;
+            cb.checked = set.has(w);
+            cb.disabled = !w;
+        });
 }
 
-// Va directement à une semaine (chips « reste à poser » du bandeau de suivi)
+// Va directement à une semaine (chips « reste à poser » / « à optimiser »)
 function gotoRepJourWeek(w) {
     const sel = document.getElementById('repj-week');
     if (!sel) return;
@@ -9293,59 +9313,80 @@ function gotoRepJourWeek(w) {
     onRepJourWeek();
 }
 
-// Coche / décoche la semaine affichée. La case revient à son état précédent si
-// le serveur refuse, sans recharger toute la répartition.
-async function toggleRepJourPlanned() {
-    const cb = document.getElementById('repj-planned');
+// Coche / décoche « posée » ou « optimisée » pour la semaine affichée. Optimisée
+// implique posée ; retirer « posée » sort la semaine du suivi, son optimisation
+// comprise. Les cases reprennent l'état réel si le serveur refuse, sans
+// recharger toute la répartition.
+async function toggleRepJourStatus(kind) {
+    const cbP = document.getElementById('repj-planned');
+    const cbO = document.getElementById('repj-optimized');
     const w = parseInt(document.getElementById('repj-week').value);
     const yg = parseInt(document.getElementById('repj-annee').value) || 1;
-    const wanted = cb.checked;
-    cb.disabled = true;
+    const body = { year_group: yg, week_number: w, planned: cbP.checked, optimized: cbO.checked };
+    if (kind === 'optimized' && cbO.checked) body.planned = true;      // optimisée ⇒ posée
+    if (kind === 'planned' && !cbP.checked) body.optimized = false;    // plus posée ⇒ plus optimisée
+    cbP.disabled = cbO.disabled = true;
     try {
-        await api('/edt-planned-weeks' + svcQ(), {
+        const res = await api('/edt-planned-weeks' + svcQ(), {
             method: 'PUT',
-            body: JSON.stringify({ year_group: yg, week_number: w, planned: wanted }),
+            body: JSON.stringify(body),
         });
-        if (wanted) _repJourPlanned.add(w); else _repJourPlanned.delete(w);
+        if (res.planned) _repJourPlanned.add(w); else _repJourPlanned.delete(w);
+        if (res.optimized) _repJourOptimized.add(w); else _repJourOptimized.delete(w);
         // Met à jour le ✓ de la liste sans la reconstruire (la sélection tient)
         const opt = [...document.getElementById('repj-week').options]
             .find(o => parseInt(o.value) === w);
         if (opt) opt.textContent = repJourWeekLabel(w);
         renderRepJour();
     } catch (e) {
-        cb.checked = !wanted;
         toast('Erreur : ' + e.message, 'error');
     } finally {
-        cb.disabled = false;
+        syncRepJourStatusBoxes();
     }
 }
 
-// Bandeau d'avancement : combien de semaines posées sur celles qui portent des
-// cours, et lesquelles restent. Les semaines sans aucune séance (vacances,
-// stages, entreprise) ne comptent pas : il n'y a rien à y poser.
+// Bandeau d'avancement : combien de semaines posées puis optimisées parmi celles
+// qui portent des cours, et lesquelles restent à faire. Les semaines sans aucune
+// séance (vacances, stages, entreprise) ne comptent pas : il n'y a rien à y poser.
 function repJourProgressHtml() {
     if (!_repJourData) return '';
     const { weeks, rows } = _repJourData;
     const todo = weeks.filter(w => rows.some(r => (r.by_week || {})[w] > 0));
     if (!todo.length) return '';
-    const rest = todo.filter(w => !_repJourPlanned.has(w));
-    const done = todo.length - rest.length;
-    const pct = Math.round(done / todo.length * 100);
+    const aPoser = todo.filter(w => !_repJourPlanned.has(w));
+    const aOptimiser = todo.filter(w => _repJourPlanned.has(w) && !_repJourOptimized.has(w));
+    const nPosees = todo.length - aPoser.length;
+    const nOptim = todo.filter(w => _repJourOptimized.has(w)).length;
+    const pctPosees = Math.round(nPosees / todo.length * 100);
+    const pctOptim = Math.round(nOptim / todo.length * 100);
     const cur = parseInt(document.getElementById('repj-week').value);
-    const shown = rest.slice(0, 14);
-    const chips = shown.map(w => `<button type="button" onclick="gotoRepJourWeek(${w})"
+    // Une ligne de pastilles cliquables (14 semaines au plus, puis « +n »)
+    const chipLine = (label, list, c) => {
+        if (!list.length) return '';
+        const shown = list.slice(0, 14);
+        const chips = shown.map(w => `<button type="button" onclick="gotoRepJourWeek(${w})"
             title="Aller à la semaine ${w}"
-            style="border:1px solid #fcd34d;background:${w === cur ? '#fde68a' : '#fffbeb'};color:#92400e;
+            style="border:1px solid ${c.bd};background:${w === cur ? c.on : c.bg};color:${c.fg};
                    border-radius:999px;padding:1px 8px;font-size:.72rem;font-weight:600;cursor:pointer">S${w}</button>`).join(' ');
-    const more = rest.length > shown.length ? ` <span style="color:#92400e;font-size:.72rem">+${rest.length - shown.length}</span>` : '';
+        const more = list.length > shown.length
+            ? ` <span style="color:${c.fg};font-size:.72rem">+${list.length - shown.length}</span>` : '';
+        return `<span style="display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap">
+                <span style="color:#6b7280">${label}</span> ${chips}${more}</span>`;
+    };
+    const amber = { bd: '#fcd34d', bg: '#fffbeb', on: '#fde68a', fg: '#92400e' };
+    const indigo = { bd: '#a5b4fc', bg: '#eef2ff', on: '#c7d2fe', fg: '#3730a3' };
+    const fini = !aPoser.length && !aOptimiser.length;
     return `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;
                 padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-size:.85rem">
-            <span>Posées à l'EDT : <strong style="color:${rest.length ? '#92400e' : '#059669'}">${done}/${todo.length}</strong> semaines</span>
-            <span style="flex:0 0 120px;height:6px;background:#e5e7eb;border-radius:999px;overflow:hidden">
-                <span style="display:block;height:100%;width:${pct}%;background:${rest.length ? '#f59e0b' : '#10b981'}"></span></span>
-            ${rest.length
-                ? `<span style="color:#6b7280">Reste à poser :</span> ${chips}${more}`
-                : `<span style="color:#059669;font-weight:600">Toutes les semaines de l'année sont posées.</span>`}
+            <span>Posées : <strong style="color:${aPoser.length ? '#92400e' : '#059669'}">${nPosees}/${todo.length}</strong></span>
+            <span>Optimisées : <strong style="color:${aOptimiser.length ? '#3730a3' : '#059669'}">${nOptim}/${todo.length}</strong></span>
+            <span title="${nOptim} optimisée(s), ${nPosees - nOptim} posée(s) à optimiser, ${aPoser.length} à poser"
+                  style="flex:0 0 120px;height:6px;background:#e5e7eb;border-radius:999px;overflow:hidden;display:flex">
+                <span style="height:100%;width:${pctOptim}%;background:#10b981"></span>
+                <span style="height:100%;width:${Math.max(0, pctPosees - pctOptim)}%;background:#f59e0b"></span></span>
+            ${fini
+                ? `<span style="color:#059669;font-weight:600">Toutes les semaines de l'année sont posées et optimisées.</span>`
+                : chipLine('Reste à poser :', aPoser, amber) + chipLine('À optimiser :', aOptimiser, indigo)}
         </div>`;
 }
 
@@ -9363,12 +9404,14 @@ async function loadRepJour() {
         ]);
         state.mutSemesters = sg.mutualized || {};
         state.tpSeparate = sg.tp_separate || {};
-        // Semaines déjà posées à l'EDT pour cette année de promotion (suivi
-        // d'avancement) — absentes = il reste à les planifier.
+        // Semaines déjà posées / optimisées à l'EDT pour cette année de promotion
+        // (suivi d'avancement) — absentes = il reste à les planifier.
         _repJourPlanned = new Set();
+        _repJourOptimized = new Set();
         try {
             const pw = await api('/edt-planned-weeks?year_group=' + yg + svcQ('&'));
             (pw.weeks || []).forEach(w => _repJourPlanned.add(w));
+            (pw.optimized || []).forEach(w => _repJourOptimized.add(w));
         } catch (e) { /* silencieux : le suivi repart simplement à zéro */ }
         // Libellés des matières du programme (facultatif : sans lui on retombe
         // sur les intitulés des sous-matières)
@@ -9387,7 +9430,7 @@ async function loadRepJour() {
         if (weeks.includes(cur)) sel.value = cur;
         else if (weeks.includes(_isoWeekNow())) sel.value = _isoWeekNow();
         _autoRepJourCohorte();
-        syncRepJourPlannedBox();
+        syncRepJourStatusBoxes();
         renderRepJour();
     } catch (e) {
         el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';

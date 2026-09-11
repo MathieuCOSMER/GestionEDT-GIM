@@ -1862,16 +1862,21 @@ def _apply_migrations(db):
     ''')
 
     # Semaines déjà planifiées à l'emploi du temps, par année de promotion
-    # (1A / 2A / 3A). Sert de suivi d'avancement dans la répartition journalière :
-    # une ligne = cette semaine est posée, son absence = elle reste à faire.
+    # (1A / 2A / 3A). Sert de suivi d'avancement dans la répartition journalière,
+    # en deux niveaux : une ligne = la semaine est POSÉE (les cours sont déposés
+    # dans la semaine, sans organisation), optimized=1 = leur placement est en plus
+    # OPTIMISÉ (contraintes respectées). Pas de ligne = la semaine reste à faire.
     db.execute('''
         CREATE TABLE IF NOT EXISTS edt_planned_weeks (
             year_group  INTEGER NOT NULL,
             week_number INTEGER NOT NULL,
+            optimized   INTEGER NOT NULL DEFAULT 0,
             updated_at  TEXT DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (year_group, week_number)
         )
     ''')
+    if 'optimized' not in [r[1] for r in db.execute("PRAGMA table_info(edt_planned_weeks)").fetchall()]:
+        db.execute("ALTER TABLE edt_planned_weeks ADD COLUMN optimized INTEGER NOT NULL DEFAULT 0")
 
     # Appel par QR code : choix de l'enseignant, SOUS-MATIÈRE par sous-matière
     # (Bilan global). Un seul réglage couvre tous les CM / TD / TP / PT du module,
@@ -2213,7 +2218,7 @@ _YEAR_OVERRIDE_PREFIXES = (
     '/api/my-account',           # onglet Mon Compte (contact + heures hors GIM)
     '/api/external-hours',       # heures hors GIM publiques (admin, Bilan Global)
     '/api/qr-attendance',        # appel par QR code, choisi dans le Bilan Global
-    '/api/edt-planned-weeks',    # suivi des semaines posées (répartition journalière)
+    '/api/edt-planned-weeks',    # suivi posées / optimisées (répartition journalière)
     '/api/export/repartition',
     '/api/import/repartition',
 )
@@ -5156,6 +5161,10 @@ def _ensure_bonus_pen(coeffs):
 # Types de matières retenus : SAE, RES, PEN, BONUS. Stage et Portfolio = SAÉ.
 _KIND_REMAP = {'STAGE': 'SAE', 'PORT': 'SAE'}
 
+# Saisies spéciales, hors matières : elles n'ont pas de coefficient et leur valeur
+# n'est pas une note (heures d'absence, note de bonification).
+_SPECIAL_KINDS = ('BONUS', 'PEN')
+
 def _normalize_kinds(coeffs):
     """Convertit les types Stage/Portfolio en SAÉ. Retourne True si modifié."""
     changed = False
@@ -6681,6 +6690,13 @@ def _note_value(v):
 
 def _kind_from_code(code, title=''):
     cu = str(code).upper()
+    key = _profile_key(title)
+    # Bonus et pénalité d'assiduité : colonnes hors matières, repérées d'abord car
+    # leurs codes (T3BONIF2, T3PEN2S) suivent l'année du BUT et non le semestre.
+    if cu.startswith('T3BONIF') or 'bonus' in key:
+        return 'BONUS'
+    if cu.startswith('T3PEN') or 'penalite' in key:
+        return 'PEN'
     if 'portfolio' in str(title).lower():
         return 'PORT'
     if 'IS' in cu:
@@ -6741,6 +6757,23 @@ def _pv_student_cols(ws, hdr_row):
             nom_col = c
     return nom_col or 3, prenom_col or 4
 
+# Colonnes de notes d'un PV : matières (T3IS../T3IR..), bonus et pénalité d'assiduité.
+_PV_ELP_RE = re.compile(r'^(T3I[SR]\d|T3BONIF|T3PEN)', re.I)
+
+# Le PV et Apogée portent le bonus et le malus d'assiduité en POINTS déjà calculés,
+# là où la grille de notes stocke la donnée d'origine (heures d'absence, note de
+# sport/art). L'import applique donc l'inverse du barème — exact, car linéaire par
+# morceaux — comme le fait déjà l'éditeur de pénalité des Bulletins.
+def _pen_hours_from_points(p):
+    """Malus d'assiduité (points) -> heures d'absence injustifiée."""
+    if not p or p <= 0:
+        return 0.0
+    return round(8 + p / 0.05 if p <= 0.5 else 18 + (p - 0.5) / 0.1, 2)
+
+def _bonus_note_from_points(b):
+    """Bonification (points, plafond 0,5) -> note /20 de la matière Bonus."""
+    return round(min(20.0, 10 + b / 0.05), 2)
+
 def _pv_marks_ws(ws):
     """Layout PV de jury : codes matière T3IS../T3IR.. sur une ligne d'en-tête (repérée
     dynamiquement), notes en dessous, n° étudiant en col B, NOM/Prénom en cols C/D.
@@ -6751,7 +6784,7 @@ def _pv_marks_ws(ws):
     elps = []
     for c in range(1, ws.max_column + 1):
         code = _cell_txt(ws.cell(code_row, c).value)
-        if re.match(r'^T3I[SR]\d', code, re.I):
+        if _PV_ELP_RE.match(code):
             elps.append({'note_col': c, 'code': code.upper(),
                          'kind': _kind_from_code(code, ws.cell(code_row - 1, c).value)})
     nom_col, prenom_col = _pv_student_cols(ws, code_row - 1)
@@ -6813,7 +6846,8 @@ def _notes_sheets_info(path):
             elps, rows = _parse_notes_ws(ws)
             noted = [r for r in rows if r['notes']]
             if elps and noted:
-                info.update(format=fmt, matieres=len(elps), etudiants=len(noted),
+                info.update(format=fmt, etudiants=len(noted),
+                            matieres=sum(1 for e in elps if e['kind'] not in _SPECIAL_KINDS),
                             notes=sum(len(r['notes']) for r in noted))
         except Exception:
             pass          # feuille illisible (mise en page libre) : simplement non proposée
@@ -6863,6 +6897,9 @@ def import_promotion_notes(pid, semester):
     """Importe les notes depuis un fichier Apogée OU un PV de jury (auto-détection).
     Les colonnes de notes sont mappées aux matières de la référence (par index SAÉ/Stage/PORT/RES) ;
     les notes sont rattachées aux étudiants de l'effectif via le n° Apogée.
+    Les colonnes bonus et pénalité d'assiduité sont reprises elles aussi : le fichier
+    les porte en points, converties par l'inverse du barème en note /20 et en heures
+    d'absence, unités attendues par la grille.
 
     `preview=1` renvoie le rapport de ce que ferait l'import SANS rien écrire
     (notamment le nombre de notes qui écraseraient une note calculée depuis la
@@ -6898,9 +6935,12 @@ def import_promotion_notes(pid, semester):
     # sur l'appariement par index/type (SAÉ/Stage, Portfolio, Ressource).
     ref = (_promo_coeffs(pdb, pid) or {}).get(semester) or {}
     components = ref.get('components', [])
-    apo2disp = {c['apogee_code']: c['code'] for c in components if c.get('apogee_code')}
+    kind_by_code = {c['code']: c.get('kind') for c in components}
+    mat_elps = [e for e in elps if e['kind'] not in _SPECIAL_KINDS]
+    apo2disp = {c['apogee_code']: c['code'] for c in components
+                if c.get('apogee_code') and c.get('kind') not in _SPECIAL_KINDS}
     col2code = {}
-    for e in elps:
+    for e in mat_elps:
         disp = apo2disp.get(e.get('code'))
         if disp:
             col2code[e['note_col']] = disp
@@ -6910,13 +6950,23 @@ def import_promotion_notes(pid, semester):
         res_codes = [c['code'] for c in components if c.get('kind') == 'RES']
         for grp_kind, codes in (('SAE', is_codes), ('PORT', port_codes), ('RES', res_codes)):
             i = 0
-            for e in elps:
+            for e in mat_elps:
                 if e['kind'] == grp_kind:
                     if i < len(codes):
                         col2code[e['note_col']] = codes[i]
                     i += 1
     if not col2code:
         return error_response('Aucune correspondance matière (vérifiez la référence des coefficients)', 400)
+    mapped_mat = len(col2code)
+
+    # Bonus et pénalité d'assiduité : la référence n'en compte qu'un de chaque par
+    # semestre → appariement par TYPE, les codes Apogée (T3BONIF2, T3PEN2S) suivant
+    # l'année du BUT et non le numéro de semestre.
+    special = {c['kind']: c['code'] for c in components if c.get('kind') in _SPECIAL_KINDS}
+    for e in elps:
+        code = special.get(e['kind'])
+        if code:
+            col2code[e['note_col']] = code
 
     # Index des étudiants (n° Apogée -> id) et face de chacun : l'origine officielle
     # d'une note matière (calculée / importée) se décide par matière × face.
@@ -6941,6 +6991,7 @@ def import_promotion_notes(pid, semester):
               for r in _marks_rows(pdb, pid, semester, with_mentions=True)
               if r['note'] is not None or r['mention']}
     plan, switched = [], set()
+    specials = {'BONUS': 0, 'PEN': 0}
     matched = unmatched = conflits = skip_def = skip_filled = 0
     for row in rows:
         sid = students_by_num.get(row['numero'].lower())
@@ -6953,6 +7004,15 @@ def import_promotion_notes(pid, semester):
             code = col2code.get(note_col)
             if not code:
                 continue
+            kind = kind_by_code.get(code)
+            if kind in _SPECIAL_KINDS:
+                # Le fichier porte des POINTS déjà calculés ; la grille attend la
+                # donnée d'origine (heures d'absence, note de bonus). 0 ou ABI =
+                # ni bonus ni pénalité : rien à reprendre.
+                if isinstance(val, str) or not val:
+                    continue
+                val = (_pen_hours_from_points(val) if kind == 'PEN'
+                       else _bonus_note_from_points(val))
             calc = srcs[f].get(code) == 'saisie'   # note actuellement calculée
             if calc:
                 conflits += 1
@@ -6963,10 +7023,13 @@ def import_promotion_notes(pid, semester):
                 skip_filled += 1
                 continue
             plan.append((sid, code, val))
+            if kind in _SPECIAL_KINDS:
+                specials[kind] += 1
             if calc:
                 switched.add((f, code))
     report = {'notes': len(plan), 'feuille': sheet, 'etudiants_rapproches': matched,
-              'etudiants_non_trouves': unmatched, 'matieres_mappees': len(col2code),
+              'etudiants_non_trouves': unmatched, 'matieres_mappees': mapped_mat,
+              'bonus': specials['BONUS'], 'penalites': specials['PEN'],
               'mode': mode, 'conflits_saisie': conflits,
               'ignorees_definitives': skip_def, 'ignorees_deja_notees': skip_filled,
               'matieres_basculees': sorted({c for _, c in switched})}
@@ -7134,6 +7197,10 @@ def export_promotion_notes(pid, semester):
         for i, m in enumerate(components):
             nc = 5 + 2 * i
             val = marks.get((s['id'], m.get('code')))
+            # Apogée attend le bonus et le malus d'assiduité en POINTS, là où la
+            # grille stocke la donnée d'origine (note /20, heures d'absence).
+            if val is not None and not isinstance(val, str) and m.get('kind') in _SPECIAL_KINDS:
+                val = _penalty_points(val) if m['kind'] == 'PEN' else _bonus_points(val)
             ws.cell(row, nc, val if val is not None else None).alignment = center
             ws.cell(row, nc + 1, 20).alignment = center   # barème toujours 20, prérempli
         row += 1
@@ -10003,9 +10070,12 @@ def get_repartition():
 
 @app.route('/api/edt-planned-weeks', methods=['GET'])
 def get_edt_planned_weeks():
-    """Semaines déjà posées à l'emploi du temps. Sans paramètre : toutes les
-    années, sous la forme {'1': [36, 37…], '2': […]}. Avec ?year_group=n :
-    seulement celle-là."""
+    """Suivi des semaines de la répartition journalière, sur deux niveaux :
+    « posée » (les cours sont déposés dans la semaine, sans organisation) et
+    « optimisée » (leur placement est fait, contraintes respectées) — une semaine
+    optimisée est toujours posée. Sans paramètre : toutes les années, sous la forme
+    {'planned': {'1': [36, 37…]}, 'optimized': {'1': [36…]}}. Avec ?year_group=n :
+    {'year_group': n, 'weeks': [...], 'optimized': [...]} pour celle-là."""
     db = get_db()
     yg = request.args.get('year_group')
     if yg:
@@ -10013,20 +10083,26 @@ def get_edt_planned_weeks():
             yg = int(yg)
         except ValueError:
             return error_response('Année de promotion invalide')
-        rows = db.execute('''SELECT week_number FROM edt_planned_weeks
+        rows = db.execute('''SELECT week_number, optimized FROM edt_planned_weeks
                              WHERE year_group = ? ORDER BY week_number''', (yg,)).fetchall()
-        return jsonify({'year_group': yg, 'weeks': [r['week_number'] for r in rows]}), 200
-    out = {}
-    for r in db.execute('SELECT year_group, week_number FROM edt_planned_weeks '
+        return jsonify({'year_group': yg,
+                        'weeks': [r['week_number'] for r in rows],
+                        'optimized': [r['week_number'] for r in rows if r['optimized']]}), 200
+    planned, optimized = {}, {}
+    for r in db.execute('SELECT year_group, week_number, optimized FROM edt_planned_weeks '
                         'ORDER BY year_group, week_number').fetchall():
-        out.setdefault(str(r['year_group']), []).append(r['week_number'])
-    return jsonify(out), 200
+        planned.setdefault(str(r['year_group']), []).append(r['week_number'])
+        if r['optimized']:
+            optimized.setdefault(str(r['year_group']), []).append(r['week_number'])
+    return jsonify({'planned': planned, 'optimized': optimized}), 200
 
 @app.route('/api/edt-planned-weeks', methods=['PUT'])
 def set_edt_planned_week():
-    """Marque une semaine comme posée (ou non) à l'emploi du temps.
-    Body : {year_group, week_number, planned}. Réservé à l'admin, comme tout le
-    sous-onglet Répartition journalière."""
+    """Met à jour le suivi d'une semaine : posée et/ou optimisée.
+    Body : {year_group, week_number, planned, optimized}. « Optimisée » implique
+    « posée » ; retirer « posée » sort la semaine du suivi, optimisation comprise.
+    Le champ optimized absent laisse l'optimisation en l'état. Réservé à l'admin,
+    comme tout le sous-onglet Répartition journalière."""
     data = request.get_json() or {}
     try:
         yg = int(data.get('year_group'))
@@ -10037,18 +10113,25 @@ def set_edt_planned_week():
         return error_response('Année de promotion invalide (1, 2 ou 3)')
     if not (1 <= wk <= 53):
         return error_response('Numéro de semaine invalide (1 à 53)')
+    # opt = None : le client ne parle pas d'optimisation, on garde celle en base
+    opt = bool(data.get('optimized')) if 'optimized' in data else None
     db = get_db()
-    if data.get('planned'):
-        db.execute('''INSERT INTO edt_planned_weeks (year_group, week_number)
-                      VALUES (?, ?)
+    if data.get('planned') or opt:
+        db.execute('''INSERT INTO edt_planned_weeks (year_group, week_number, optimized)
+                      VALUES (?, ?, ?)
                       ON CONFLICT(year_group, week_number) DO UPDATE SET
-                          updated_at = CURRENT_TIMESTAMP''', (yg, wk))
+                          optimized  = COALESCE(?, optimized),
+                          updated_at = CURRENT_TIMESTAMP''',
+                   (yg, wk, 1 if opt else 0, None if opt is None else int(opt)))
     else:
         db.execute('DELETE FROM edt_planned_weeks WHERE year_group = ? AND week_number = ?',
                    (yg, wk))
     db.commit()
+    row = db.execute('SELECT optimized FROM edt_planned_weeks '
+                     'WHERE year_group = ? AND week_number = ?', (yg, wk)).fetchone()
     return jsonify({'year_group': yg, 'week_number': wk,
-                    'planned': bool(data.get('planned'))}), 200
+                    'planned': row is not None,
+                    'optimized': bool(row and row['optimized'])}), 200
 
 @app.route('/api/checks/repartition', methods=['GET'])
 def checks_repartition():
