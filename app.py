@@ -3907,8 +3907,8 @@ def update_promotion_student(pid, sid):
     # laisser afficher l'inverse de ce que montre la fiche. Repasser en « Actif »
     # est justement la façon d'annuler un départ depuis cet écran.
     if new_statut is not None:
-        caducs = [d for d in ('CESURE', 'DEPART', 'AUTRE')
-                  if not (new_statut == 'Abandon' and d in ('DEPART', 'AUTRE'))]
+        caducs = [d for d in ('CESURE',) + _DEVENIR_DEPARTS
+                  if not (new_statut == 'Abandon' and d in _DEVENIR_DEPARTS)]
         db.execute('DELETE FROM promotion_devenir WHERE promotion_id=? AND student_id=? '
                    'AND decision IN (%s)' % ','.join('?' * len(caducs)), [pid, sid] + caducs)
     if fields:
@@ -4037,7 +4037,7 @@ def _hors_annee_raison(r, year, comp, manuel=None, devenir=None):
     if entry > year:
         return ('entrant_futur', "entre en année %d" % entry)
     if r['statut'] == 'Abandon':
-        if devenir and devenir.get('decision') in ('DEPART', 'AUTRE'):
+        if devenir and devenir.get('decision') in _DEVENIR_DEPARTS:
             return ('abandon', "%s (année %d)" % (_devenir_resume(devenir), devenir['year']))
         lib = _abandon_libelle(r)
         return ('abandon', "abandon" + (" " + lib if lib else ""))
@@ -4607,11 +4607,17 @@ def import_year_parcoursup(pid, year):
 #   • AJ    — départ (avec ou sans formation d'accueil connue).
 # Les redoublants ont leur propre table (promotion_red_transfer, qui porte en plus la
 # fiche créée dans la cohorte cible) ; les autres sont dans `promotion_devenir`.
-_DEVENIR_DECISIONS = ('FTP', 'ALT', 'CESURE', 'DEPART', 'AUTRE')
+_DEVENIR_DECISIONS = ('FTP', 'ALT', 'CESURE', 'INSERTION', 'DEPART', 'AUTRE')
 # Formation d'accueil de celui qui part ailleurs. `libelle` en donne le nom exact
 # (« INSA Toulon », « BTS CRSA lycée Bonaparte »…), saisi librement.
 _AUTRE_FORMATIONS = {'BTS': 'BTS', 'EI': "École d'ingénieur",
                      'LP': 'Licence professionnelle', 'AUTRE': 'Autre formation'}
+# Devenirs qui emportent un `libelle` libre : la formation d'accueil pour AUTRE,
+# l'employeur ou le poste pour INSERTION (entrée dans la vie active — le cas
+# majoritaire à la sortie du BUT3, qu'il fallait pouvoir nommer).
+_DEVENIR_AVEC_LIBELLE = ('AUTRE', 'INSERTION')
+# … et ceux qui font quitter la formation, quelle qu'en soit la raison.
+_DEVENIR_DEPARTS = ('DEPART', 'AUTRE', 'INSERTION')
 
 def _autre_detail(v):
     """Type de formation d'accueil (BTS / EI / LP / AUTRE), ou None si non renseigné."""
@@ -4817,10 +4823,10 @@ def _red_decide(db, pid, sid, decision, detail=None, libelle=None):
     if decision in ('', 'NONE'):
         db.commit()
         return None
-    if decision not in ('FTP', 'ALT', 'ABANDON', 'AUTRE'):
+    if decision not in ('FTP', 'ALT', 'ABANDON', 'AUTRE', 'INSERTION'):
         return 'Décision invalide'
     target_student_id = None
-    if decision in ('ABANDON', 'AUTRE'):
+    if decision in ('ABANDON', 'AUTRE', 'INSERTION'):
         # Départ prononcé à l'issue du jury : il clôt l'année qui vient d'être jugée.
         db.execute("UPDATE promotion_students SET statut='Abandon', abandon_annee=? WHERE id=?",
                    (year, sid))
@@ -4844,7 +4850,7 @@ def _red_decide(db, pid, sid, decision, detail=None, libelle=None):
                   VALUES(?,?,?,?,?,?)''',
                (pid, sid, decision, target_student_id,
                 detail if decision == 'AUTRE' else None,
-                libelle if decision == 'AUTRE' else None))
+                libelle if decision in _DEVENIR_AVEC_LIBELLE else None))
     db.commit()
     _audit('RED_DECIDE', ip=_client_ip(), user=session.get('user'),
            promo=pid, student=sid, decision=decision, year=year)
@@ -4981,6 +4987,8 @@ def _devenir_resume(d, target_name=None):
         return 'a quitté la formation — raison inconnue'
     if dec == 'AUTRE':
         return 'parti en ' + _autre_texte(d.get('detail'), d.get('libelle'))
+    if dec == 'INSERTION':
+        return 'insertion professionnelle' + (' — ' + d['libelle'] if d.get('libelle') else '')
     if dec == 'ABANDON':
         return 'abandon'
     return ''
@@ -4993,20 +5001,22 @@ def _devenir_options(jury, year, target_name):
     nxt = year + 1
     depart = {'value': 'DEPART', 'label': 'Quitte la formation — raison inconnue'}
     autre = {'value': 'AUTRE', 'label': 'Parti pour une autre formation…'}
+    emploi = {'value': 'INSERTION', 'label': 'Insertion professionnelle…'}
     if jury == 'RED':
         return [{'value': 'FTP', 'label': "Réinscrit en %s · FTP (refait l'année %d)" % (target_name, year)},
                 {'value': 'ALT', 'label': "Réinscrit en %s · ALT (refait l'année %d)" % (target_name, year)},
-                dict(depart, value='ABANDON'),      # la bascule RED nomme ce départ 'ABANDON'
-                autre]
+                autre, emploi,
+                dict(depart, value='ABANDON')]      # la bascule RED nomme ce départ 'ABANDON'
     if year >= 3:
         # Diplômé : plus d'année suivante ici, mais un devenir à suivre — c'est tout
         # l'intérêt du suivi des sortants (poursuite d'études, insertion).
-        return [dict(depart, label='Devenir inconnu'),
-                dict(autre, label="Poursuite d'études dans une autre formation…")]
+        return [dict(autre, label="Poursuite d'études dans une autre formation…"),
+                dict(emploi, label='Insertion professionnelle — entrée dans la vie active…'),
+                dict(depart, label='Devenir inconnu')]
     return [{'value': 'FTP', 'label': 'Inscrit en année %d · FTP' % nxt},
             {'value': 'ALT', 'label': 'Inscrit en année %d · ALT' % nxt},
             {'value': 'CESURE', 'label': "Césure sur l'année %d — reprise en %s" % (nxt, target_name)},
-            depart, autre]
+            autre, emploi, depart]
 
 def _devenir_payload(pdb, pid, year):
     """Suite du jury pour l'année `year` : un étudiant par ligne, avec sa décision de
@@ -5071,7 +5081,7 @@ def _revert_devenir(db, pid, sid, year):
     if not prev:
         return
     dec = prev['decision']
-    if dec in ('DEPART', 'AUTRE'):
+    if dec in _DEVENIR_DEPARTS:
         if year < 3:        # en 3e année le départ n'avait pas touché au statut
             db.execute('''UPDATE promotion_students SET statut='Actif', abandon_semaine=NULL,
                           abandon_annee=NULL WHERE id=?''', (sid,))
@@ -5179,7 +5189,7 @@ def set_devenir(pid, year, sid):
                   VALUES(?,?,?,?,?,?)''',
                (pid, sid, year, decision,
                 detail if decision == 'AUTRE' else None,
-                libelle if decision == 'AUTRE' else None))
+                libelle if decision in _DEVENIR_AVEC_LIBELLE else None))
     db.commit()
     _audit('DEVENIR', ip=_client_ip(), user=session.get('user'), promo=pid, student=sid,
            year=year, decision=decision + (' ' + _autre_texte(detail, libelle) if decision == 'AUTRE' else ''))
@@ -11862,15 +11872,18 @@ def _stats_academique(pdb):
         # Sortants : ceux qui quittent la formation à l'issue d'un jury, et vers quoi
         # (onglet Devenir). Un départ sans formation d'accueil connue compte à part.
         'sorties': pdb.execute('''SELECT COUNT(*) c FROM (
-                SELECT 1 FROM promotion_devenir      WHERE decision IN ('DEPART','AUTRE')
+                SELECT 1 FROM promotion_devenir      WHERE decision IN ('DEPART','AUTRE','INSERTION')
                 UNION ALL
-                SELECT 1 FROM promotion_red_transfer WHERE decision IN ('ABANDON','AUTRE'))''').fetchone()['c'],
-        'destinations': [[_AUTRE_FORMATIONS.get(r['detail'] or '', 'Autre formation'), r['n']]
-                         for r in pdb.execute('''SELECT detail, COUNT(*) AS n FROM (
-                SELECT detail FROM promotion_devenir      WHERE decision='AUTRE'
+                SELECT 1 FROM promotion_red_transfer WHERE decision IN ('ABANDON','AUTRE','INSERTION'))''').fetchone()['c'],
+        # Destination des sortants : le type de formation d'accueil, et l'emploi à part
+        # (l'insertion professionnelle n'a pas de type — elle EST la destination).
+        'destinations': [[('Insertion professionnelle' if r['dec'] == 'INSERTION'
+                           else _AUTRE_FORMATIONS.get(r['detail'] or '', 'Autre formation')), r['n']]
+                         for r in pdb.execute('''SELECT dec, detail, COUNT(*) AS n FROM (
+                SELECT decision AS dec, detail FROM promotion_devenir      WHERE decision IN ('AUTRE','INSERTION')
                 UNION ALL
-                SELECT detail FROM promotion_red_transfer WHERE decision='AUTRE')
-                GROUP BY detail ORDER BY n DESC''')],
+                SELECT decision AS dec, detail FROM promotion_red_transfer WHERE decision IN ('AUTRE','INSERTION'))
+                GROUP BY dec, detail ORDER BY n DESC''')],
     }
     return {'promotions': promos, 'profil': profil, 'cohortes': cohortes,
             'resultats': resultats, 'jury': jury, 'encadrement': encadrement,

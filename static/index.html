@@ -4327,6 +4327,9 @@ function renderPromoEffectif() {
             return tag('→ ' + esc(t), '#fde68a', 'Parti pour une autre formation'
                 + (x.libelle ? ' : ' + x.libelle : ''));
         }
+        if (x.decision === 'INSERTION')
+            return tag('→ insertion pro', '#ccfbf1', 'Entré dans la vie active'
+                + (x.libelle ? ' : ' + x.libelle : ''));
         return tag('→ départ', '#fee2e2', 'Quitte la formation — raison inconnue');
     };
 
@@ -4508,13 +4511,16 @@ function _devSection(d) {
         ${kpi('poursuivent', (c.FTP || 0) + (c.ALT || 0), '#dcfce7', 'Inscrits en année ' + (y + 1))}
         ${kpi('césures', c.CESURE || 0, '#e0e7ff')}
         ${kpi('autre formation', c.AUTRE || 0, '#fde68a', "BTS, école d'ingénieur, licence pro…")}
+        ${kpi('insertion pro', c.INSERTION || 0, '#ccfbf1', 'Entrée dans la vie active')}
         ${kpi('départs', (c.DEPART || 0) + (c.ABANDON || 0), '#fee2e2', 'Quittent la formation, raison inconnue')}
     </div>`;
     const head = `<h3 style="margin:0 0 4px;color:#374151">Suite du jury — année ${y}${warn}</h3>
         <div style="font-size:.82rem;color:#6b7280;margin-bottom:10px">Pour chaque étudiant jugé en année ${y},
         ce qu'il fait <strong>ensuite</strong>. Les <strong>ADM / ADMJ / AJAC</strong> poursuivent en année ${y + 1}
-        (en <strong>FTP</strong> ou en <strong>ALT</strong>), prennent une <strong>césure</strong>, quittent la
-        formation, ou <strong>partent pour une autre formation</strong> — précisez alors laquelle.
+        (en <strong>FTP</strong> ou en <strong>ALT</strong>), prennent une <strong>césure</strong>, partent pour une
+        <strong>autre formation</strong>, entrent dans la vie active (<strong>insertion professionnelle</strong>)
+        ou quittent la formation sans raison connue. Dans les deux cas de départ nommé, la colonne
+        <strong>Destination</strong> recueille le détail — la formation d'accueil, ou l'employeur et le poste.
         Les <strong>RED</strong> (redoublants désignés par le jury, onglet Jury) se réinscrivent dans la cohorte
         <strong>${target}</strong> à l'année qu'ils refont, ou s'en vont.
         Les <strong>ajournés (AJ)</strong> n'y figurent pas : ils quittent la formation du fait même de leur
@@ -4531,20 +4537,27 @@ function _devSection(d) {
             style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:.68rem;font-weight:700;margin-right:3px;${st}">UE${u.num} ${_fmtAvg(u.avg)}</span>`;
     };
     const autres = d.autres_formations || {};
-    // Formation d'accueil : visible seulement quand l'étudiant part ailleurs. Le type
-    // cadre la statistique, le nom (libre) dit précisément où il est allé.
-    const autreCell = st => {
+    const champLibre = (st, ph, titre) => `<input value="${esc(st.libelle || '')}" placeholder="${ph}"
+        onchange="setDevenirDetail(${st.student_id}, 'libelle', this.value)" title="${titre}"
+        style="width:180px;font-size:.78rem;padding:3px 5px">`;
+    // Destination : visible seulement quand l'étudiant s'en va. Pour une autre
+    // formation, le type cadre la statistique et le nom (libre) dit précisément où il
+    // est allé ; pour une insertion professionnelle il n'y a pas de type à choisir —
+    // l'emploi EST la destination, seul son intitulé se saisit.
+    const destinationCell = st => {
+        if (st.decision === 'INSERTION')
+            return champLibre(st, 'employeur, poste…',
+                "Employeur et/ou poste occupé (ex. « Naval Group — technicien méthodes »)");
         if (st.decision !== 'AUTRE') return '<span style="color:#d1d5db">—</span>';
         const opts = ['<option value="">— type —</option>'].concat(Object.keys(autres).map(k =>
             `<option value="${k}"${k === st.detail ? ' selected' : ''}>${esc(autres[k])}</option>`)).join('');
         return `<select onchange="setDevenirDetail(${st.student_id}, 'detail', this.value)"
                 style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:.8rem">${opts}</select>
-            <input value="${esc(st.libelle || '')}" placeholder="nom de la formation"
-                onchange="setDevenirDetail(${st.student_id}, 'libelle', this.value)"
-                title="Nom de l'établissement ou de la formation d'accueil (ex. « INSA Toulon », « BTS CRSA — lycée Bonaparte »)"
-                style="width:170px;margin-left:6px;font-size:.78rem;padding:3px 5px">`;
+            <span style="margin-left:6px">${champLibre(st, 'nom de la formation',
+                "Nom de l'établissement ou de la formation d'accueil (ex. « INSA Toulon », « BTS CRSA — lycée Bonaparte »)")}</span>`;
     };
     const bg = st => st.decision === 'AUTRE' ? '#fef3c7'
+        : st.decision === 'INSERTION' ? '#ccfbf1'
         : (st.decision === 'DEPART' || st.decision === 'ABANDON') ? '#fee2e2'
         : st.decision === 'CESURE' ? '#e0e7ff' : (st.decision ? '#dbeafe' : '#fff');
     // Placeholder : pour un ADM/AJAC, ne rien décider vaut poursuite dans sa cohorte
@@ -4565,13 +4578,13 @@ function _devSection(d) {
             ${(st.options || []).map(o =>
                 `<option value="${o.value}"${o.value === st.decision ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
         </select></td>
-        <td>${autreCell(st)}</td></tr>`).join('');
+        <td>${destinationCell(st)}</td></tr>`).join('');
     return totaux + head + `<div style="overflow:auto;max-height:52vh;border:1px solid #e5e7eb;border-radius:8px">
         <table class="pn-table" style="table-layout:auto;width:100%">
         <thead><tr><th style="width:36px">#</th><th>Étudiant</th><th>N° Apogée</th><th>Sous-cohorte</th>
             <th title="Décision d'année prononcée par le jury">Jury</th>
             <th style="min-width:205px">Résultat de l'année ${y}</th><th style="width:250px">Devenir</th>
-            <th style="width:280px" title="Renseignée quand l'étudiant part pour une autre formation">Formation d'accueil</th></tr></thead>
+            <th style="width:290px" title="Renseignée quand l'étudiant s'en va : la formation qui l'accueille, ou l'emploi qu'il occupe">Destination</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`;
 }
 
@@ -4581,9 +4594,11 @@ async function setDevenir(sid, decision) {
     await _postDevenir(sid, decision, st.detail || '', st.libelle || '');
 }
 
+// Le détail (type de formation, nom, employeur) se saisit sans retoucher la décision
+// de la ligne : on la renvoie telle quelle, c'est elle qui dit ce que le champ décrit.
 async function setDevenirDetail(sid, champ, valeur) {
     const st = ((_devData || {}).students || []).find(x => x.student_id === sid) || {};
-    await _postDevenir(sid, 'AUTRE',
+    await _postDevenir(sid, st.decision || 'AUTRE',
         champ === 'detail' ? valeur : (st.detail || ''),
         champ === 'libelle' ? valeur : (st.libelle || ''));
 }
