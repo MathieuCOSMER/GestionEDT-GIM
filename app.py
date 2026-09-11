@@ -764,10 +764,12 @@ def close_db(exception):
 # Stockée à part car une promotion suit ses étudiants/résultats d'année en année.
 _PROMOTIONS_DB = os.environ.get('EDT_PROMOTIONS_DB') or os.path.join(_DB_DIR, 'promotions.db')
 _STUDENT_STATUSES = ['Actif', 'RED', 'Césure', 'Abandon']
-# Statuts que l'admin peut poser à la main dans l'effectif. « RED » en est exclu :
-# il découle de la décision de jury (RED sur un ajourné) et est posé par le
-# flux jury lui-même — le proposer ici ferait doublon et pourrait le désynchroniser.
-_STUDENT_STATUS_CHOICES = ['Actif', 'Césure', 'Abandon']
+# Statuts que l'admin peut poser à la main dans l'effectif. En sont exclus ceux qui
+# découlent d'une décision prise ailleurs, et que saisir ici désynchroniserait :
+#   • « RED »    — décision de jury (RED sur un ajourné), posée par le flux jury ;
+#   • « Césure » — devenir choisi à l'issue du jury, posé dans l'onglet Devenir
+#                  (c'est lui qui sait de quelle année l'étudiant s'absente).
+_STUDENT_STATUS_CHOICES = ['Actif', 'Abandon']
 _PROMO_SEMESTERS = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6']
 # Profil d'entrée de l'étudiant (valeurs autorisées ; '' = non renseigné)
 _STUDENT_SEXE = ['M', 'F']
@@ -1302,6 +1304,33 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
         )
     ''')
+
+    # DEVENIR : ce que l'étudiant fait APRÈS l'année que le jury vient de juger —
+    # poursuite en FTP/ALT, césure, départ sans raison connue, ou départ vers une
+    # autre formation (BTS, école d'ingénieur, licence pro…). Une ligne par
+    # (étudiant, année jugée) : le devenir se rejoue d'une année sur l'autre.
+    # Les REDOUBLANTS n'y sont pas : leur devenir est une réinscription dans la
+    # cohorte suivante, gérée par `promotion_red_transfer` — même onglet, autre table.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS promotion_devenir (
+            promotion_id INTEGER NOT NULL,
+            student_id   INTEGER NOT NULL,
+            year         INTEGER NOT NULL,      -- année jugée ; le devenir porte sur la suite
+            decision     TEXT NOT NULL,         -- FTP / ALT / CESURE / DEPART / AUTRE
+            detail       TEXT,                  -- AUTRE : BTS / EI / LP / AUTRE
+            libelle      TEXT,                  -- AUTRE : nom de la formation d'accueil
+            PRIMARY KEY (promotion_id, student_id, year),
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
+    # Un redoublant peut lui aussi partir ailleurs plutôt que se réinscrire : on note
+    # la formation d'accueil à côté de sa décision, comme pour les autres étudiants.
+    for _col in ('detail', 'libelle'):
+        try:
+            db.execute('ALTER TABLE promotion_red_transfer ADD COLUMN %s TEXT' % _col)
+        except sqlite3.OperationalError:
+            pass
 
     # Saisie des notes PAR SOUS-MATIÈRE (onglet Saisie Notes, enseignants).
     # La note matière (student_marks) = moyenne pondérée des sous-notes,
@@ -3873,6 +3902,15 @@ def update_promotion_student(pid, sid):
         except (TypeError, ValueError):
             cy = 0
         fields.append('cesure_year=?'); params.append(cy if cy in (1, 2, 3) else None)
+    # Reprendre la main sur le statut depuis l'effectif contredit le devenir posé à
+    # l'issue du jury (césure / départ) : on efface la décision plutôt que de la
+    # laisser afficher l'inverse de ce que montre la fiche. Repasser en « Actif »
+    # est justement la façon d'annuler un départ depuis cet écran.
+    if new_statut is not None:
+        caducs = [d for d in ('CESURE', 'DEPART', 'AUTRE')
+                  if not (new_statut == 'Abandon' and d in ('DEPART', 'AUTRE'))]
+        db.execute('DELETE FROM promotion_devenir WHERE promotion_id=? AND student_id=? '
+                   'AND decision IN (%s)' % ','.join('?' * len(caducs)), [pid, sid] + caducs)
     if fields:
         params += [sid, pid]
         db.execute(f'UPDATE promotion_students SET {", ".join(fields)} WHERE id=? AND promotion_id=?', params)
@@ -3982,20 +4020,25 @@ def _abandon_semaine(v):
         return None
     return n if 1 <= n <= 53 else None
 
-def _hors_annee_raison(r, year, comp, manuel=None):
+def _hors_annee_raison(r, year, comp, manuel=None, devenir=None):
     """Pourquoi une fiche n'est pas dans l'effectif de l'année affichée, sous la
     forme (motif, libellé). Le motif code la CAUSE, le libellé l'explique à
     l'écran : une fiche visible sans motif serait plus déroutante qu'utile.
 
     Le motif sert aussi à trier ce qui mérite d'être listé. Un ajourné, par
     exemple, quitte de lui-même les années suivantes et reste consultable sur
-    l'année qu'il a faite : le rappeler ailleurs n'apprend rien."""
+    l'année qu'il a faite : le rappeler ailleurs n'apprend rien.
+
+    `devenir` — la décision prise dans l'onglet Devenir, quand il y en a une :
+    « parti en école d'ingénieur — INSA » dit bien plus qu'« abandon »."""
     if manuel == 'remove':
         return ('retire', "retiré à partir de l'année %d" % year)
     entry = r['entry_year'] or 1
     if entry > year:
         return ('entrant_futur', "entre en année %d" % entry)
     if r['statut'] == 'Abandon':
+        if devenir and devenir.get('decision') in ('DEPART', 'AUTRE'):
+            return ('abandon', "%s (année %d)" % (_devenir_resume(devenir), devenir['year']))
         lib = _abandon_libelle(r)
         return ('abandon', "abandon" + (" " + lib if lib else ""))
     if r['cesure_year']:
@@ -4040,6 +4083,10 @@ def _year_effectif_payload(pdb, pid, year):
     nb_notes = {r['student_id']: r['n'] for r in pdb.execute(
         '''SELECT student_id, COUNT(*) AS n FROM student_marks
            WHERE promotion_id=? GROUP BY student_id''', (pid,))}
+    # Devenir décidé à l'issue du jury (onglet Devenir) : affiché en badge sur
+    # l'année jugée, et repris comme motif de sortie sur les années suivantes.
+    devenirs = _devenir_map(pdb, pid)
+    dernier_devenir = _devenir_last(pdb, pid)
     students = []
     for r in pdb.execute('''SELECT id, numero, nom, prenom, naissance, statut,
                                    abandon_semaine, abandon_annee,
@@ -4058,9 +4105,12 @@ def _year_effectif_payload(pdb, pid, year):
         # Dossier ParcourSup abrégé pour l'affichage ; la valeur complète reste
         # dans le champ d'origine, que le tableau donne en infobulle.
         d['ps_court'] = {f: _ps_court(f, d.get(f)) for f in _PS_FIELDS}
+        dv = devenirs.get((r['id'], year))
+        d['devenir'] = dict(dv, year=year, resume=_devenir_resume(dict(dv, year=year))) if dv else None
         d['hors_annee'] = not (r['id'] in roster or r['id'] in cesure_ids)
         if d['hors_annee']:
-            d['hors_motif'], d['raison'] = _hors_annee_raison(r, year, comp, d['manual'])
+            d['hors_motif'], d['raison'] = _hors_annee_raison(
+                r, year, comp, d['manual'], dernier_devenir.get(r['id']))
         students.append(d)
     dans_annee = [s for s in students if not s['hors_annee']]
     sub_counts = {f: {st: 0 for st in _STUDENT_STATUSES} for f in _SUBCOHORTS}
@@ -4362,6 +4412,18 @@ def remove_year_student(pid, year, sid):
            promo=pid, student=sid, year=year)
     return jsonify(_year_effectif_payload(db, pid, year))
 
+def _set_year_formation(db, pid, year, sid, formation):
+    """Pose la sous-cohorte (FTP/ALT) d'un étudiant À PARTIR de l'année `year`. Si
+    elle est déjà celle héritée de l'année précédente, aucun override n'est écrit
+    (la table ne garde que les vrais changements). Ne committe pas."""
+    inherited = _year_formation_map(db, pid, year - 1).get(sid, 'FTP')
+    if formation == inherited:
+        db.execute('DELETE FROM promotion_year_formation WHERE promotion_id=? AND year=? AND student_id=?',
+                   (pid, year, sid))
+    else:
+        db.execute('''INSERT OR REPLACE INTO promotion_year_formation(promotion_id, year, student_id, formation)
+                      VALUES(?,?,?,?)''', (pid, year, sid, formation))
+
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>/students/<int:sid>/cohorte', methods=['POST'])
 def set_year_cohorte(pid, year, sid):
     """Change la sous-cohorte (FTP/ALT) d'un étudiant À PARTIR de l'année `year` (les
@@ -4378,14 +4440,7 @@ def set_year_cohorte(pid, year, sid):
     formation = ((request.get_json() or {}).get('formation') or '').strip().upper()
     if formation not in _SUBCOHORTS:
         return error_response('Sous-cohorte invalide', 400)
-    # Formation héritée (année précédente / base) : si identique, pas d'override (nettoyage).
-    inherited = _year_formation_map(db, pid, year - 1).get(sid, 'FTP')
-    if formation == inherited:
-        db.execute('DELETE FROM promotion_year_formation WHERE promotion_id=? AND year=? AND student_id=?',
-                   (pid, year, sid))
-    else:
-        db.execute('''INSERT OR REPLACE INTO promotion_year_formation(promotion_id, year, student_id, formation)
-                      VALUES(?,?,?,?)''', (pid, year, sid, formation))
+    _set_year_formation(db, pid, year, sid, formation)
     db.commit()
     return jsonify(_year_effectif_payload(db, pid, year))
 
@@ -4544,7 +4599,35 @@ def import_year_parcoursup(pid, year):
                             'sans_correspondance': sorted(sans_correspondance)}
     return jsonify(payload)
 
-# ---- Redoublants (RED) : bascule vers la promo cible (année +1) ou Abandon ----
+# ===== DEVENIR : ce que chaque étudiant fait après l'année que le jury a jugée =====
+# Un seul écran (onglet « Devenir ») pour toute la suite du jury :
+#   • RED   — réinscription dans la cohorte suivante (FTP/ALT), ou départ ;
+#   • ADM / ADMJ / AJAC — poursuite en année suivante (FTP/ALT), césure, départ sans
+#     raison connue, ou départ vers une autre formation (BTS, école d'ingénieur…) ;
+#   • AJ    — départ (avec ou sans formation d'accueil connue).
+# Les redoublants ont leur propre table (promotion_red_transfer, qui porte en plus la
+# fiche créée dans la cohorte cible) ; les autres sont dans `promotion_devenir`.
+_DEVENIR_DECISIONS = ('FTP', 'ALT', 'CESURE', 'DEPART', 'AUTRE')
+# Formation d'accueil de celui qui part ailleurs. `libelle` en donne le nom exact
+# (« INSA Toulon », « BTS CRSA lycée Bonaparte »…), saisi librement.
+_AUTRE_FORMATIONS = {'BTS': 'BTS', 'EI': "École d'ingénieur",
+                     'LP': 'Licence professionnelle', 'AUTRE': 'Autre formation'}
+
+def _autre_detail(v):
+    """Type de formation d'accueil (BTS / EI / LP / AUTRE), ou None si non renseigné."""
+    v = (v or '').strip().upper()
+    return v if v in _AUTRE_FORMATIONS else None
+
+def _autre_libelle(v):
+    """Nom de la formation d'accueil, saisi librement (borné pour l'affichage)."""
+    return (v or '').strip()[:120] or None
+
+def _autre_texte(detail, libelle):
+    """« École d'ingénieur — INSA Toulon » : le type et, s'il est connu, le nom."""
+    t = _AUTRE_FORMATIONS.get(detail or '', 'autre formation')
+    return t + (' — ' + libelle if libelle else '')
+
+# ---- Redoublants (RED) : bascule vers la promo cible (année +1) ou départ ----
 
 def _red_students(pdb, pid, comp=None):
     """{student_id(int): année} des redoublants (décision de jury RED) d'une promotion."""
@@ -4714,39 +4797,37 @@ def _reconcile_red_transfers(db, pid, comp=None):
         db.commit()
     return n
 
-@app.route('/api/promotions/<int:pid>/red/<int:sid>/decide', methods=['POST'])
-def decide_red_student(pid, sid):
-    """Décision pour un redoublant : 'FTP'/'ALT' (réinscription dans la promo cible à
-    l'année redoublée) ou 'ABANDON' (statut Abandon). Vide/'NONE' efface la décision."""
-    err = _require_admin()
-    if err:
-        return err
-    db = get_promotions_db()
+def _red_decide(db, pid, sid, decision, detail=None, libelle=None):
+    """Pose (ou efface, sur '' / 'NONE') la décision d'un redoublant. Retourne un
+    message d'erreur, ou None si la décision est enregistrée. Committe lui-même.
+
+    Décisions : 'FTP'/'ALT' (réinscription dans la promo cible à l'année redoublée),
+    'ABANDON' (quitte, raison inconnue) ou 'AUTRE' (parti pour une autre formation,
+    `detail` + `libelle` disant laquelle) — ces deux dernières closent l'année jugée."""
     s = db.execute('SELECT * FROM promotion_students WHERE id=? AND promotion_id=?', (sid, pid)).fetchone()
     if not s:
-        return error_response('Étudiant introuvable', 404)
+        return 'Étudiant introuvable'
     red = _red_students(db, pid)
     if sid not in red:
-        return error_response("Cet étudiant n'est pas redoublant (RED)", 400)
+        return "Cet étudiant n'est pas redoublant (RED)"
     year = red[sid]
-    decision = ((request.get_json() or {}).get('decision') or '').strip().upper()
     prev = db.execute('SELECT decision, target_student_id FROM promotion_red_transfer '
                       'WHERE promotion_id=? AND student_id=?', (pid, sid)).fetchone()
     _revert_red_transfer(db, pid, sid, prev)
     if decision in ('', 'NONE'):
         db.commit()
-        return jsonify(_red_payload(db, pid))
-    if decision not in ('FTP', 'ALT', 'ABANDON'):
-        return error_response('Décision invalide', 400)
+        return None
+    if decision not in ('FTP', 'ALT', 'ABANDON', 'AUTRE'):
+        return 'Décision invalide'
     target_student_id = None
-    if decision == 'ABANDON':
-        # Abandon prononcé par le jury : il clôt l'année qui vient d'être jugée.
+    if decision in ('ABANDON', 'AUTRE'):
+        # Départ prononcé à l'issue du jury : il clôt l'année qui vient d'être jugée.
         db.execute("UPDATE promotion_students SET statut='Abandon', abandon_annee=? WHERE id=?",
                    (year, sid))
     else:
         target_id = _ensure_target_promo(db, pid)   # crée la promo cible si absente
         if not target_id:
-            return error_response('Promotion cible introuvable', 400)
+            return 'Promotion cible introuvable'
         cur = db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance,
                                                           statut, formation, entry_year)
                             VALUES(?,?,?,?,?,'Actif',?,?)''',
@@ -4758,11 +4839,30 @@ def decide_red_student(pid, sid):
                           (student_id, origin_student_id, origin_promotion_id, reason)
                       VALUES(?,?,?,'RED')''', (target_student_id, sid, pid))
         db.execute("UPDATE promotion_students SET statut='RED' WHERE id=?", (sid,))
-    db.execute('''INSERT OR REPLACE INTO promotion_red_transfer(promotion_id, student_id, decision, target_student_id)
-                  VALUES(?,?,?,?)''', (pid, sid, decision, target_student_id))
+    db.execute('''INSERT OR REPLACE INTO promotion_red_transfer
+                      (promotion_id, student_id, decision, target_student_id, detail, libelle)
+                  VALUES(?,?,?,?,?,?)''',
+               (pid, sid, decision, target_student_id,
+                detail if decision == 'AUTRE' else None,
+                libelle if decision == 'AUTRE' else None))
     db.commit()
     _audit('RED_DECIDE', ip=_client_ip(), user=session.get('user'),
            promo=pid, student=sid, decision=decision, year=year)
+    return None
+
+@app.route('/api/promotions/<int:pid>/red/<int:sid>/decide', methods=['POST'])
+def decide_red_student(pid, sid):
+    """Décision pour un redoublant : 'FTP'/'ALT' (réinscription dans la promo cible à
+    l'année redoublée), 'ABANDON' ou 'AUTRE'. Vide/'NONE' efface la décision."""
+    err = _require_admin()
+    if err:
+        return err
+    db = get_promotions_db()
+    data = request.get_json() or {}
+    msg = _red_decide(db, pid, sid, (data.get('decision') or '').strip().upper(),
+                      _autre_detail(data.get('detail')), _autre_libelle(data.get('libelle')))
+    if msg:
+        return error_response(msg, 404 if msg == 'Étudiant introuvable' else 400)
     return jsonify(_red_payload(db, pid))
 
 # ---- Césure : une année entière d'absence, reprise dans la cohorte suivante ----
@@ -4852,6 +4952,233 @@ def decide_cesure(pid, sid):
     _audit('CESURE_DECIDE', ip=_client_ip(), user=session.get('user'),
            promo=pid, student=sid, formation=formation, year=year)
     return jsonify(_cesure_payload(db, pid))
+
+# ---- Devenir : la suite du jury, année par année ----
+
+def _devenir_map(pdb, pid):
+    """{(student_id, année jugée): {decision, detail, libelle}} des devenirs posés."""
+    return {(r['student_id'], r['year']): {'decision': r['decision'], 'detail': r['detail'],
+                                           'libelle': r['libelle']}
+            for r in pdb.execute('''SELECT student_id, year, decision, detail, libelle
+                                    FROM promotion_devenir WHERE promotion_id=?''', (pid,))}
+
+def _devenir_last(pdb, pid):
+    """Dernier devenir posé pour chaque étudiant — celui qui explique où il en est.
+    {student_id: {year, decision, detail, libelle}}."""
+    out = {}
+    for (sid, y), d in sorted(_devenir_map(pdb, pid).items(), key=lambda kv: kv[0][1]):
+        out[sid] = dict(d, year=y)
+    return out
+
+def _devenir_resume(d, target_name=None):
+    """Résumé d'un devenir en une ligne, pour un badge ou un motif de sortie."""
+    dec, y = d.get('decision'), d.get('year')
+    if dec in _SUBCOHORTS:
+        return 'poursuit en année %s · %s' % ((y or 0) + 1, dec)
+    if dec == 'CESURE':
+        return 'césure en année %s%s' % ((y or 0) + 1, ' — reprise en ' + target_name if target_name else '')
+    if dec == 'DEPART':
+        return 'a quitté la formation — raison inconnue'
+    if dec == 'AUTRE':
+        return 'parti en ' + _autre_texte(d.get('detail'), d.get('libelle'))
+    if dec == 'ABANDON':
+        return 'abandon'
+    return ''
+
+def _devenir_options(jury, year, target_name):
+    """Devenirs proposés à un étudiant selon sa décision de jury et l'année jugée.
+    Liste de {value, label} : c'est le serveur qui dit ce qui est possible, pour que
+    l'écran n'ait pas à rejouer les règles (un BUT3 n'a pas d'année suivante ; un
+    redoublant, lui, refait SON année dans la cohorte d'après)."""
+    nxt = year + 1
+    depart = {'value': 'DEPART', 'label': 'Quitte la formation — raison inconnue'}
+    autre = {'value': 'AUTRE', 'label': 'Parti pour une autre formation…'}
+    if jury == 'RED':
+        return [{'value': 'FTP', 'label': "Réinscrit en %s · FTP (refait l'année %d)" % (target_name, year)},
+                {'value': 'ALT', 'label': "Réinscrit en %s · ALT (refait l'année %d)" % (target_name, year)},
+                dict(depart, value='ABANDON'),      # la bascule RED nomme ce départ 'ABANDON'
+                autre]
+    if jury == 'AJ':
+        # Ajourné que le jury n'a pas fait redoubler : il s'en va, reste à dire où.
+        return [depart, autre]
+    if year >= 3:
+        # Diplômé : plus d'année suivante ici, mais un devenir à suivre — c'est tout
+        # l'intérêt du suivi des sortants (poursuite d'études, insertion).
+        return [dict(depart, label='Devenir inconnu'),
+                dict(autre, label="Poursuite d'études dans une autre formation…")]
+    return [{'value': 'FTP', 'label': 'Inscrit en année %d · FTP' % nxt},
+            {'value': 'ALT', 'label': 'Inscrit en année %d · ALT' % nxt},
+            {'value': 'CESURE', 'label': "Césure sur l'année %d — reprise en %s" % (nxt, target_name)},
+            depart, autre]
+
+def _devenir_payload(pdb, pid, year):
+    """Suite du jury pour l'année `year` : un étudiant par ligne, avec sa décision de
+    jury et son devenir. S'y ajoutent les reprises de césure à programmer et les
+    redoublants accueillis, pour que tout le circuit tienne dans un seul écran."""
+    promo = pdb.execute('SELECT * FROM promotions WHERE id=?', (pid,)).fetchone()
+    if not promo:
+        return None
+    comp = _jury_compute(pdb, pid)
+    _reconcile_red_transfers(pdb, pid, comp)      # nettoie les bascules RED caduques
+    _reconcile_devenirs(pdb, pid, comp)           # et les devenirs devenus incohérents
+    roster = _year_rosters(pdb, pid, comp).get(year, set())
+    target_id, target_name = _red_target_promo(pdb, pid)
+    red_t = {r['student_id']: dict(r) for r in pdb.execute(
+        '''SELECT student_id, decision, detail, libelle FROM promotion_red_transfer
+           WHERE promotion_id=?''', (pid,))}
+    dev = _devenir_map(pdb, pid)
+    fm = _year_formation_map(pdb, pid, year)
+    rows = []
+    for r in pdb.execute('''SELECT id, numero, nom, prenom, formation FROM promotion_students
+                            WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''',
+                         (pid,)):
+        sid, jury = r['id'], comp['decisions'].get((year, str(r['id'])))
+        if sid not in roster or not jury:
+            continue        # hors effectif de l'année, ou année pas encore jugée
+        formation = fm.get(sid, r['formation'] or 'FTP')
+        d = red_t.get(sid, {}) if jury == 'RED' else dev.get((sid, year), {})
+        codes = comp['ue_codes'].get((year, str(sid))) or {}
+        avgs = (comp['year_avgs'].get(year) or {}).get(str(sid)) or {}
+        rows.append({'student_id': sid, 'numero': r['numero'], 'nom': r['nom'], 'prenom': r['prenom'],
+                     'formation': formation, 'jury': jury,
+                     'decision': d.get('decision'), 'detail': d.get('detail'),
+                     'libelle': d.get('libelle'),
+                     'options': _devenir_options(jury, year, target_name),
+                     'ues': [{'num': u, 'code': codes.get(u), 'avg': avgs.get(u)}
+                             for u in (comp['ue_by_year'].get(year) or [])]})
+    rows.sort(key=lambda x: ((x['formation'] or ''), (x['nom'] or '').lower(), (x['prenom'] or '').lower()))
+    counts = {'total': len(rows), 'a_decider': sum(1 for x in rows if not x['decision'])}
+    for x in rows:
+        if x['decision']:
+            counts[x['decision']] = counts.get(x['decision'], 0) + 1
+    return {'promo_name': promo['name'], 'year': year,
+            'target_promo_id': target_id, 'target_promo_name': target_name,
+            'target_exists': target_id is not None,
+            'students': rows, 'counts': counts,
+            'autres_formations': _AUTRE_FORMATIONS,
+            # Césures déjà posées : il reste à dire en quoi (FTP/ALT) elles reprennent
+            'cesure': (_cesure_payload(pdb, pid) or {}).get('students', []),
+            # Redoublants accueillis ici, avec l'arbitrage de leurs notes
+            'incoming': _red_incoming(pdb, pid)}
+
+def _revert_devenir(db, pid, sid, year):
+    """Défait l'effet du devenir posé sur (étudiant, année) : le statut, l'année de
+    césure et la sous-cohorte de l'année suivante reviennent à leur état d'avant.
+    Idempotent, ne committe pas."""
+    prev = db.execute('''SELECT decision FROM promotion_devenir
+                         WHERE promotion_id=? AND student_id=? AND year=?''', (pid, sid, year)).fetchone()
+    if not prev:
+        return
+    dec = prev['decision']
+    if dec in ('DEPART', 'AUTRE'):
+        if year < 3:        # en 3e année le départ n'avait pas touché au statut
+            db.execute('''UPDATE promotion_students SET statut='Actif', abandon_semaine=NULL,
+                          abandon_annee=NULL WHERE id=?''', (sid,))
+    elif dec == 'CESURE':
+        c = db.execute('SELECT formation, target_student_id FROM promotion_cesure_transfer '
+                       'WHERE promotion_id=? AND student_id=?', (pid, sid)).fetchone()
+        _revert_cesure_transfer(db, pid, sid, c)   # la fiche créée dans la cohorte suivante
+        db.execute("UPDATE promotion_students SET statut='Actif', cesure_year=NULL WHERE id=?", (sid,))
+    elif dec in _SUBCOHORTS:
+        db.execute('''DELETE FROM promotion_year_formation
+                      WHERE promotion_id=? AND year=? AND student_id=?''', (pid, year + 1, sid))
+    db.execute('DELETE FROM promotion_devenir WHERE promotion_id=? AND student_id=? AND year=?',
+               (pid, sid, year))
+
+def _reconcile_devenirs(db, pid, comp=None):
+    """Annule les devenirs devenus incohérents : celui dont l'étudiant n'a plus de
+    décision de jury sur l'année concernée (notes reprises, UE rouverte) ou dont la
+    décision est passée à RED — son sort se traite alors dans la table des
+    redoublants. Idempotent : appelé à chaque lecture de l'onglet."""
+    comp = comp or _jury_compute(db, pid)
+    n = 0
+    for r in db.execute('SELECT student_id, year FROM promotion_devenir WHERE promotion_id=?',
+                        (pid,)).fetchall():
+        dec = comp['decisions'].get((r['year'], str(r['student_id'])))
+        if dec is None or dec == 'RED':
+            _revert_devenir(db, pid, r['student_id'], r['year'])
+            n += 1
+    if n:
+        db.commit()
+    return n
+
+def _apply_devenir(db, pid, sid, year, decision):
+    """Pose l'effet d'un devenir. La table `promotion_devenir` garde la décision ;
+    l'effectif, lui, se calcule à partir du statut / de l'année de césure / de la
+    sous-cohorte — c'est ce que l'on met à jour ici pour que l'année suivante en
+    tienne compte sans traitement particulier."""
+    if decision in _SUBCOHORTS:
+        _set_year_formation(db, pid, year + 1, sid, decision)
+        db.execute('''UPDATE promotion_students SET statut='Actif', cesure_year=NULL,
+                      abandon_semaine=NULL, abandon_annee=NULL WHERE id=?''', (sid,))
+    elif decision == 'CESURE':
+        # Il s'absente l'année SUIVANTE et la refera dans la cohorte d'après.
+        db.execute('''UPDATE promotion_students SET statut='Césure', cesure_year=?,
+                      abandon_semaine=NULL, abandon_annee=NULL WHERE id=?''', (year + 1, sid))
+    elif year < 3:
+        # Départ (connu ou non) : il clôt l'année jugée et sort des suivantes.
+        db.execute('''UPDATE promotion_students SET statut='Abandon', abandon_annee=?,
+                      cesure_year=NULL WHERE id=?''', (year, sid))
+    # En 3e année, partir n'est pas abandonner : l'étudiant a fini son cursus et il
+    # n'y a pas d'année suivante dont le sortir. Seul le devenir est enregistré —
+    # marquer « Abandon » un diplômé parti en école d'ingénieur serait un contresens.
+
+@app.route('/api/promotions/<int:pid>/devenir/<int:year>', methods=['GET'])
+def get_devenir(pid, year):
+    err = _require_promo_read()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    payload = _devenir_payload(get_promotions_db(), pid, year)
+    if payload is None:
+        return error_response('Promotion introuvable', 404)
+    return jsonify(payload)
+
+@app.route('/api/promotions/<int:pid>/devenir/<int:year>/students/<int:sid>', methods=['POST'])
+def set_devenir(pid, year, sid):
+    """Devenir d'un étudiant à l'issue de l'année `year` :
+    {decision, detail, libelle}. Vide efface la décision (retour au report auto).
+    Un redoublant est routé vers sa propre bascule — même geste à l'écran."""
+    err = _require_admin()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    db = get_promotions_db()
+    if not db.execute('SELECT 1 FROM promotion_students WHERE id=? AND promotion_id=?',
+                      (sid, pid)).fetchone():
+        return error_response('Étudiant introuvable', 404)
+    data = request.get_json() or {}
+    decision = (data.get('decision') or '').strip().upper()
+    detail, libelle = _autre_detail(data.get('detail')), _autre_libelle(data.get('libelle'))
+    jury = _jury_compute(db, pid)['decisions'].get((year, str(sid)))
+    if jury == 'RED':
+        msg = _red_decide(db, pid, sid, decision, detail, libelle)
+        if msg:
+            return error_response(msg, 400)
+        return jsonify(_devenir_payload(db, pid, year))
+    if not jury:
+        return error_response("L'année %d de cet étudiant n'est pas encore jugée" % year, 400)
+    _revert_devenir(db, pid, sid, year)
+    if decision in ('', 'NONE'):
+        db.commit()
+        return jsonify(_devenir_payload(db, pid, year))
+    if decision not in _DEVENIR_DECISIONS:
+        return error_response('Devenir invalide', 400)
+    if decision in ('FTP', 'ALT', 'CESURE') and year >= 3:
+        return error_response("La 3e année n'a pas de suite dans la cohorte", 400)
+    _apply_devenir(db, pid, sid, year, decision)
+    db.execute('''INSERT OR REPLACE INTO promotion_devenir
+                      (promotion_id, student_id, year, decision, detail, libelle)
+                  VALUES(?,?,?,?,?,?)''',
+               (pid, sid, year, decision,
+                detail if decision == 'AUTRE' else None,
+                libelle if decision == 'AUTRE' else None))
+    db.commit()
+    _audit('DEVENIR', ip=_client_ip(), user=session.get('user'), promo=pid, student=sid,
+           year=year, decision=decision + (' ' + _autre_texte(detail, libelle) if decision == 'AUTRE' else ''))
+    return jsonify(_devenir_payload(db, pid, year))
 
 # ---- Notes d'une promotion pour un semestre (matières/compétences = référence) ----
 
@@ -11527,6 +11854,18 @@ def _stats_academique(pdb):
         'redoublants': pdb.execute('SELECT COUNT(*) c FROM promotion_red_transfer').fetchone()['c'],
         'cesures': pdb.execute('SELECT COUNT(*) c FROM promotion_cesure_transfer').fetchone()['c'],
         'transferts': pdb.execute('SELECT COUNT(*) c FROM student_origin').fetchone()['c'],
+        # Sortants : ceux qui quittent la formation à l'issue d'un jury, et vers quoi
+        # (onglet Devenir). Un départ sans formation d'accueil connue compte à part.
+        'sorties': pdb.execute('''SELECT COUNT(*) c FROM (
+                SELECT 1 FROM promotion_devenir      WHERE decision IN ('DEPART','AUTRE')
+                UNION ALL
+                SELECT 1 FROM promotion_red_transfer WHERE decision IN ('ABANDON','AUTRE'))''').fetchone()['c'],
+        'destinations': [[_AUTRE_FORMATIONS.get(r['detail'] or '', 'Autre formation'), r['n']]
+                         for r in pdb.execute('''SELECT detail, COUNT(*) AS n FROM (
+                SELECT detail FROM promotion_devenir      WHERE decision='AUTRE'
+                UNION ALL
+                SELECT detail FROM promotion_red_transfer WHERE decision='AUTRE')
+                GROUP BY detail ORDER BY n DESC''')],
     }
     return {'promotions': promos, 'profil': profil, 'cohortes': cohortes,
             'resultats': resultats, 'jury': jury, 'encadrement': encadrement,
