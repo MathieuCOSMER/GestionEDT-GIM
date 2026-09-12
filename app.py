@@ -7735,6 +7735,32 @@ def _apogee_marks_ws(ws):
         r += 1
     return elps, rows
 
+def _is_apogee_ws(ws):
+    """Feuille au format d'export Apogée, reconnue à ce qu'elle annonce d'elle-même :
+    les identifiants internes de la ligne 6 (apoL_a01_code…) ou les intitulés de ses
+    lignes d'en-tête, en colonne A (« Type Objet », « Code », « Type Rés. », « Numéro »).
+
+    Sans ce test, un export Apogée passait pour un PV de jury : ses codes matière
+    figurent eux aussi sur une ligne d'en-tête (la 8e), que le détecteur de PV
+    repérait d'abord. Il lisait alors les colonnes « Barème » comme des notes et
+    cherchait les étudiants dans la colonne des noms — aucun n'était trouvé, et
+    l'écran d'import annonçait une feuille sans rien à reprendre."""
+    if _cell_txt(ws.cell(6, 1).value).lower().startswith('apol_'):
+        return True
+    attendus = {'typeobjet', 'code', 'typeres', 'numero'}
+    return len({_profile_key(ws.cell(r, 1).value) for r in (7, 8, 13, 17)} & attendus) >= 3
+
+def _is_apogee_import_ws(ws):
+    """Feuille « Import » d'Apogée : les mêmes données, TRANSPOSÉES — un étudiant
+    par colonne, les rubriques en lignes ('Etud / Numéro', 'Etud / Nom',
+    'Result / Code'…). Ce n'est pas une grille de notes et rien n'y est lisible
+    comme tel, mais ses lignes portent par hasard de quoi faire croire à un export
+    (un code en ligne 8, des « N » en ligne 13) : sans ce test, l'écran d'import
+    proposait une feuille pleine de promesses — « 8 matières, 44 étudiants » — dont
+    aucune matière ne pouvait être appariée."""
+    return (_profile_key(ws.cell(1, 1).value) == 'etud'
+            and _profile_key(ws.cell(2, 2).value) == 'nom')
+
 def _find_pv_code_row(ws, max_scan=30):
     """Ligne des codes ELP (T3IS.../T3IR...) d'un PV de jury. Repérée dynamiquement
     car sa position varie selon le modèle (ligne 6 sur un PV « matière », ligne 13
@@ -7818,12 +7844,23 @@ def _load_notes_workbook(path):
     is_xlsm = path.lower().endswith('.xlsm')
     return openpyxl.load_workbook(path, data_only=True, keep_vba=is_xlsm)
 
+def _notes_format(ws):
+    """Format d'une feuille de notes : None si elle n'en est pas une (feuille
+    « Import » transposée), 'Apogée' si elle s'annonce comme un export (cf
+    `_is_apogee_ws`), 'PV' si des codes matière y tiennent une ligne d'en-tête,
+    'Apogée' à défaut — c'est la mise en page la plus courante."""
+    if _is_apogee_import_ws(ws):
+        return None
+    if _is_apogee_ws(ws):
+        return 'Apogée'
+    return 'PV' if _find_pv_code_row(ws) else 'Apogée'
+
 def _parse_notes_ws(ws):
-    """Notes d'UNE feuille, format auto-détecté : PV de jury si une ligne de codes
-    matière T3IS../T3IR.. y figure (position variable), sinon layout Apogée."""
-    if _find_pv_code_row(ws):
-        return _pv_marks_ws(ws)
-    return _apogee_marks_ws(ws)
+    """Notes d'UNE feuille, format auto-détecté (cf `_notes_format`)."""
+    fmt = _notes_format(ws)
+    if fmt is None:
+        return [], []
+    return _pv_marks_ws(ws) if fmt == 'PV' else _apogee_marks_ws(ws)
 
 def _parse_notes_file(path, sheet=None):
     """Lit un fichier de notes (Apogée ou PV de jury), auto-détection du format.
@@ -7851,7 +7888,7 @@ def _notes_sheets_info(path):
         info = {'name': ws.title, 'hidden': ws.sheet_state != 'visible',
                 'format': None, 'matieres': 0, 'etudiants': 0, 'notes': 0}
         try:
-            fmt = 'PV' if _find_pv_code_row(ws) else 'Apogée'
+            fmt = _notes_format(ws)
             elps, rows = _parse_notes_ws(ws)
             noted = [r for r in rows if r['notes']]
             if elps and noted:
