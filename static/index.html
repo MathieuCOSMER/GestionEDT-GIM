@@ -457,6 +457,7 @@
     <button onclick="showPage('programme')" id="nav-programme">Programme</button>
     <button onclick="showPage('mon-compte')" id="nav-mon-compte" style="display:none">Mon Compte</button>
     <button onclick="showPage('promotions')" id="nav-promotions">Promotions</button>
+    <button onclick="showPage('etudiants')" id="nav-etudiants">Étudiants</button>
     <button onclick="showPage('statistiques')" id="nav-statistiques">Statistiques</button>
     <button onclick="showPage('parametres')" id="nav-parametres" class="admin-only">Paramètres</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
@@ -1129,6 +1130,30 @@
     </div>
 </div>
 
+<!-- ===== ÉTUDIANTS (registre) ===== -->
+<!-- Le registre vu de face : tous les étudiants qu'au moins une cohorte a connus,
+     cherchables et triables, et la fiche de chacun — son dossier de candidature,
+     son parcours d'une cohorte à l'autre et ses résultats année par année. -->
+<div class="page" id="page-etudiants">
+    <div class="toolbar">
+        <h1>Étudiants</h1>
+        <div class="filters" id="etu-filtres">
+            <input id="etu-q" type="search" oninput="renderEtudiants()" placeholder="Nom, prénom, n° Apogée…"
+                   title="Recherche sur le nom, le prénom et le n° Apogée"
+                   style="min-width:230px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+            <select id="etu-promo" onchange="renderEtudiants()" title="Cohorte fréquentée"></select>
+            <select id="etu-formation" onchange="renderEtudiants()" title="Sous-cohorte de l'année en cours"></select>
+            <select id="etu-annee" onchange="renderEtudiants()" title="Année d'étude où il en est"></select>
+            <select id="etu-statut" onchange="renderEtudiants()" title="Statut dans sa dernière cohorte"></select>
+            <select id="etu-sexe" onchange="renderEtudiants()"></select>
+            <select id="etu-recrut" onchange="renderEtudiants()" title="Voie de recrutement"></select>
+            <select id="etu-decision" onchange="renderEtudiants()" title="Dernière décision de jury"></select>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="resetEtuFiltres()">Réinitialiser</button>
+        </div>
+    </div>
+    <div id="etu-content"><div class="spinner">Chargement…</div></div>
+</div>
+
 <!-- ===== STATISTIQUES ===== -->
 <div class="page" id="page-statistiques">
     <div class="toolbar">
@@ -1260,6 +1285,26 @@
         <div class="form-actions">
             <button type="button" class="btn btn-secondary" onclick="closeModal('modal-add-student')">Annuler</button>
             <button type="button" class="btn btn-primary" onclick="submitAddStudent()">Ajouter</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL FICHE ÉTUDIANT (registre) ===== -->
+<div class="modal-backdrop" id="modal-student-card">
+    <div class="modal modal-wide">
+        <h2 id="student-card-title">Fiche étudiant</h2>
+        <p style="color:#6b7280;font-size:.85rem;margin-top:0">
+            Ce qui est saisi ici décrit <strong>l'étudiant</strong>, pas l'année qu'il passe dans une
+            cohorte : son état civil, son sexe, sa voie de recrutement et son dossier ParcourSup le
+            suivent d'une cohorte à l'autre — <strong>une seule saisie vaut pour toutes</strong>,
+            redoublement et reprise après césure compris.
+        </p>
+        <div id="student-card-body"></div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="ouvrirFicheComplete()"
+                title="Ouvrir sa fiche dans l'onglet Étudiants : mêmes informations, avec ses résultats">
+                Fiche complète et résultats →</button>
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-student-card')">Fermer</button>
         </div>
     </div>
 </div>
@@ -1958,7 +2003,7 @@ function applyRole(role, user, teacher, status, promoAccess) {
     // Contraintes), Programme (consultation) et Mon Compte.
     const teacherTabs = ['nav-service', 'nav-programme', 'nav-mon-compte'];
     // Connexion avec mot de passe : Promotions en lecture seule (Effectifs/Notes/Jury)
-    if (role === 'teacher' && state.promoAccess) teacherTabs.push('nav-promotions');
+    if (role === 'teacher' && state.promoAccess) teacherTabs.push('nav-promotions', 'nav-etudiants');
     document.querySelectorAll('nav button[id^="nav-"]').forEach(b => {
         let show;
         if (b.id === 'nav-mon-compte') show = role === 'teacher';            // enseignants seuls
@@ -2194,6 +2239,7 @@ async function loadPage(name, forceReload) {
             if (_progTab === 'contenu') await showProgTab('contenu');
         }
         else if (name === 'promotions') { await loadPromotions(); }
+        else if (name === 'etudiants') { await loadEtudiants(); }
         else if (name === 'statistiques') { await loadStats(); }
         else if (name === 'parametres') { await loadParametres(); }
         else if (name === 'repartition-enseignant') {
@@ -4225,6 +4271,8 @@ function renderPromoEffectif() {
     // Profil d'entrée saisissable (sexe / recrutement) : listes déroulantes.
     // La série de bac et le cursus ne se saisissent plus : ils se lisent dans les
     // colonnes ParcourSup ci-dessous, alimentées par l'import du classement.
+    // Ces colonnes décrivent l'ÉTUDIANT et non son année : ce qu'on y saisit part
+    // au registre et vaut aussitôt pour toutes les cohortes où il est inscrit.
     const profOpts = d.profile_options || { sexe: [], recrutement: [] };
     // Signification des codes (Recrutement) : rappelée en légende au-dessus
     // de chaque tableau et en infobulle sur chaque liste.
@@ -4238,7 +4286,9 @@ function renderPromoEffectif() {
                 return `<option${o === cur ? ' selected' : ''}${lab ? ` title="${esc(lab)}"` : ''}>${esc(o)}</option>`;
             })).join('');
         const curLab = profLabel(field, cur);
-        return `<select onchange="changeStudentField(${s.id}, '${field}', this.value)"${curLab ? ` title="${esc(curLab)}"` : ''}
+        const astuce = esc((curLab ? curLab + ' — ' : '')
+            + "appartient à l'étudiant : vaut pour toutes les cohortes où il est inscrit");
+        return `<select onchange="changeStudentField(${s.id}, '${field}', this.value)" title="${astuce}"
             style="padding:3px 4px;border:1px solid #d1d5db;border-radius:4px;font-size:.8rem">${opts}</select>`;
     };
     // Légende : un code = son libellé, pour les colonnes qui en ont un
@@ -4355,7 +4405,8 @@ function renderPromoEffectif() {
         }
         const rows = studs.map((s, i) => `<tr${s.cesure ? ' style="opacity:.55" title="En césure cette année — hors effectif, hors notes et hors jury"' : ''}>
             <td style="color:#9ca3af">${i + 1}</td>
-            <td><strong>${esc(s.nom || '')}</strong>${
+            <td><span onclick="openStudentCard(${s.person_id})" title="Fiche de l'étudiant : son dossier et son parcours d'une cohorte à l'autre"
+                style="cursor:pointer;color:#1d4ed8;text-decoration:underline dotted"><strong>${esc(s.nom || '')}</strong></span>${
                 s.origin ? tag(s.origin.reason === 'CESURE' ? 'reprise césure' : 'redoublant', '#ddd6fe',
                     (s.origin.reason === 'CESURE' ? 'Reprise après césure — venu de la promotion ' : 'Redoublant — venu de la promotion ') + s.origin.promo)
                 : ((s.entrant && y > 1) ? tag('entrant', '#ddd6fe', 'Entré directement en année ' + y + ' (redoublant)') : '')}${s.manual === 'add' ? tag('ajouté', '#dbeafe', 'Ajouté manuellement à cette année') : ''}${devBadge(s)}${
@@ -4364,7 +4415,8 @@ function renderPromoEffectif() {
                     'Mobilité internationale en ' + s.mobility.semester
                     + (s.mobility.etablissement ? ' — ' + s.mobility.etablissement : '')
                     + ' : UE validées par équivalence') : ''}</td>
-            <td>${esc(s.prenom || '')}</td>
+            <td><span onclick="openStudentCard(${s.person_id})" title="Fiche de l'étudiant"
+                style="cursor:pointer;color:#1d4ed8;text-decoration:underline dotted">${esc(s.prenom || '')}</span></td>
             <td>${esc(s.numero || '')}</td>
             <td>${esc(s.naissance || '')}</td>
             <td>${profSelect(s, 'sexe')}</td>
@@ -4788,7 +4840,8 @@ function _renderHorsAnnee(d, y) {
     if (!studs.length) return '';
     const rows = studs.map((s, i) => `<tr>
         <td style="color:#9ca3af">${i + 1}</td>
-        <td><strong>${esc(s.nom || '')}</strong></td>
+        <td><span onclick="openStudentCard(${s.person_id})" title="Fiche de l'étudiant : son dossier et son parcours d'une cohorte à l'autre"
+            style="cursor:pointer;color:#1d4ed8;text-decoration:underline dotted"><strong>${esc(s.nom || '')}</strong></span></td>
         <td>${esc(s.prenom || '')}</td>
         <td>${esc(s.numero || '')}</td>
         <td>${esc(s.naissance || '')}</td>
@@ -4909,6 +4962,394 @@ function toggleAddStudentSem() {
 
 let _studentFormation = 'FTP';   // sous-cohorte cible pour l'ajout / l'import
 let _importFormation = 'FTP';
+
+// ===== ONGLET ÉTUDIANTS =====
+// Les cohortes rangent les étudiants par année ; cet onglet les prend par l'autre
+// bout — l'étudiant d'abord, ses cohortes ensuite. On y cherche quelqu'un sans
+// savoir dans quelle promotion il est, et sa fiche raconte tout son passage :
+// dossier de candidature, cohortes traversées, résultats année par année.
+let _etuData = null;              // liste du registre (payload /api/students)
+let _etuSort = { col: 'nom', dir: 1 };
+let _etuSelected = null;          // étudiant ouvert en fiche, null = la liste
+
+async function loadEtudiants() {
+    const el = document.getElementById('etu-content');
+    try {
+        _etuData = await api('/students');
+    } catch (e) {
+        el.innerHTML = `<div class="empty">Chargement impossible : ${esc(e.message)}</div>`;
+        return;
+    }
+    remplirEtuFiltres();
+    renderEtudiants();
+}
+
+// Les listes de filtres ne sont remplies qu'au chargement : elles ne changent pas
+// d'un rendu à l'autre, et les redessiner ferait perdre le focus de la recherche.
+function remplirEtuFiltres() {
+    const d = _etuData || {};
+    const opts = (id, vide, valeurs, libelle) => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        const garde = sel.value;
+        sel.innerHTML = `<option value="">${esc(vide)}</option>` + valeurs.map(v => {
+            const [val, lab] = Array.isArray(v) ? v : [v, libelle ? libelle(v) : v];
+            return `<option value="${esc(val)}">${esc(lab)}</option>`;
+        }).join('');
+        sel.value = garde;
+    };
+    opts('etu-promo', 'Toutes les cohortes', (d.promotions || []).map(p => [p.name, p.name]));
+    opts('etu-formation', 'FTP + ALT', d.subcohorts || []);
+    opts('etu-annee', 'Toutes les années', (d.years || []).map(y => [y, 'Année ' + y]));
+    opts('etu-statut', 'Tous les statuts', d.statuses || []);
+    opts('etu-sexe', 'Sexe (M/F)', (d.profile_options || {}).sexe || []);
+    opts('etu-recrut', 'Recrutement', ((d.profile_options || {}).recrutement || []).map(
+        v => [v, v + ' — ' + (((d.profile_labels || {}).recrutement || {})[v] || v)]));
+    opts('etu-decision', 'Tout jury', (d.decisions || []).map(v => [v, _JURY_LIB[v] || v]));
+}
+
+function resetEtuFiltres() {
+    ['etu-q', 'etu-promo', 'etu-formation', 'etu-annee', 'etu-statut', 'etu-sexe',
+     'etu-recrut', 'etu-decision'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    renderEtudiants();
+}
+
+// Recherche insensible à la casse ET aux accents : « leger » doit trouver « LÉGER ».
+function _sansAccent(s) {
+    return String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+const _JURY_LIB = { ADM: 'admis', ADMJ: 'admis par jury', AJAC: 'AJAC', AJ: 'ajourné', RED: 'redoublant' };
+const _JURY_COUL = { ADM: '#dcfce7', ADMJ: '#e0e7ff', CMP: '#dbeafe', AJAC: '#fef3c7', AJ: '#fee2e2', RED: '#fed7aa' };
+
+function _etuFiltres() {
+    const v = id => (document.getElementById(id) || {}).value || '';
+    return { q: _sansAccent(v('etu-q')).trim(), promo: v('etu-promo'), formation: v('etu-formation'),
+             annee: v('etu-annee'), statut: v('etu-statut'), sexe: v('etu-sexe'),
+             recrut: v('etu-recrut'), decision: v('etu-decision') };
+}
+
+function _etuListe() {
+    const f = _etuFiltres();
+    const mots = f.q ? f.q.split(/\s+/) : [];
+    return (_etuData.students || []).filter(e => {
+        // Chaque mot tapé doit se retrouver quelque part : « bau mor » trouve BAUDIN MORGANE.
+        const champ = _sansAccent([e.nom, e.prenom, e.numero].join(' '));
+        if (mots.some(m => !champ.includes(m))) return false;
+        if (f.promo && !(e.promos || []).includes(f.promo)) return false;
+        if (f.formation && e.formation !== f.formation) return false;
+        if (f.annee && String(e.annee || '') !== f.annee) return false;
+        if (f.statut && e.statut !== f.statut) return false;
+        if (f.sexe && e.sexe !== f.sexe) return false;
+        if (f.recrut && e.recrutement !== f.recrut) return false;
+        if (f.decision && e.decision !== f.decision) return false;
+        return true;
+    });
+}
+
+function triEtudiants(col) {
+    _etuSort = { col, dir: (_etuSort.col === col ? -_etuSort.dir : 1) };
+    renderEtudiants();
+}
+
+function renderEtudiants() {
+    if (!_etuData) return;
+    const filtres = document.getElementById('etu-filtres');
+    if (filtres) filtres.style.display = _etuSelected ? 'none' : '';
+    if (_etuSelected) return renderEtudiantFiche();
+    const liste = _etuListe();
+    const { col, dir } = _etuSort;
+    // Tri : les cases vides finissent toujours en bas, dans un sens comme dans l'autre.
+    const cle = e => {
+        const v = e[col];
+        if (v === null || v === undefined || v === '') return null;
+        return typeof v === 'number' ? v : _sansAccent(v);
+    };
+    liste.sort((a, b) => {
+        const va = cle(a), vb = cle(b);
+        if (va === null && vb === null) return 0;
+        if (va === null) return 1;
+        if (vb === null) return -1;
+        if (va < vb) return -dir;
+        if (va > vb) return dir;
+        return _sansAccent(a.nom).localeCompare(_sansAccent(b.nom));
+    });
+    const th = (col2, label, titre) => `<th onclick="triEtudiants('${col2}')" title="${esc(titre || 'Trier')}"
+        style="cursor:pointer;white-space:nowrap">${esc(label)}${col === col2 ? (dir > 0 ? ' ▲' : ' ▼') : ''}</th>`;
+    const pill = (txt, bg, titre) => `<span title="${esc(titre || '')}" style="display:inline-block;padding:1px 7px;
+        border-radius:6px;font-size:.7rem;font-weight:700;background:${bg}">${esc(txt)}</span>`;
+    const rows = liste.map((e, i) => `<tr onclick="openEtudiant(${e.id})" style="cursor:pointer"
+            title="Ouvrir la fiche de ${esc((e.nom || '') + ' ' + (e.prenom || ''))}">
+        <td style="color:#9ca3af">${i + 1}</td>
+        <td><strong>${esc(e.nom || '')}</strong>${(e.promos || []).length > 1
+            ? ' ' + pill(e.promos.length + ' cohortes', '#ddd6fe', 'A changé de cohorte : ' + e.promos.join(' → ')) : ''}</td>
+        <td>${esc(e.prenom || '')}</td>
+        <td style="color:#6b7280">${esc(e.numero || '')}</td>
+        <td style="text-align:center">${esc(e.sexe || '—')}</td>
+        <td style="text-align:center">${esc(e.bac || '—')}</td>
+        <td style="text-align:center">${esc(e.recrutement || '—')}</td>
+        <td style="text-align:center;color:#6b7280">${e.ps_classement == null ? '—' : e.ps_classement}</td>
+        <td>${esc(e.promotion || '—')}</td>
+        <td style="text-align:center">${esc(e.formation || '—')}</td>
+        <td style="text-align:center" title="${e.en_cours ? esc('Année en cours (' + (e.annee_univ || '') + ')')
+            : 'Dernière année suivie — sa cohorte est sortie ou il l\'a quittée'}">${e.annee
+            ? (e.en_cours ? '' : '<span style="color:#9ca3af">·</span> ') + 'A' + e.annee : '—'}</td>
+        <td>${e.statut ? pill(e.statut, _statutColor(e.statut)) : ''}</td>
+        <td style="text-align:center">${e.decision ? pill(e.decision, _JURY_COUL[e.decision] || '#f3f4f6',
+            _JURY_LIB[e.decision] || '') : '<span style="color:#d1d5db">—</span>'}</td>
+        <td style="text-align:center;font-weight:600">${e.gim == null ? '<span style="color:#d1d5db">—</span>'
+            : e.gim.toFixed(2)}</td>
+        <td style="text-align:center;color:#9ca3af">${e.nb_notes || 0}</td>
+    </tr>`).join('');
+    const total = (_etuData.students || []).length;
+    document.getElementById('etu-content').innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+            <span style="font-size:.9rem"><strong>${liste.length}</strong> étudiant(s)${
+                liste.length < total ? ` <span style="color:#9ca3af">sur ${total}</span>` : ''}</span>
+            <span style="font-size:.8rem;color:#6b7280">— cliquez une ligne pour ouvrir sa fiche
+                (dossier, parcours, résultats)</span>
+            <button class="btn btn-secondary btn-sm" style="margin-left:auto" onclick="exportEtudiants()">Exporter (CSV)</button>
+        </div>
+        ${liste.length ? `<div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px">
+            <table class="pn-table" style="table-layout:auto;width:100%">
+                <thead><tr><th style="width:38px">#</th>
+                    ${th('nom', 'Nom')}${th('prenom', 'Prénom')}${th('numero', 'Apogée', 'Trier par n° Apogée')}
+                    ${th('sexe', 'Sexe')}${th('bac', 'Bac', 'Série du baccalauréat')}
+                    ${th('recrutement', 'Recrut.', 'Voie de recrutement')}
+                    ${th('ps_classement', 'Rang PS', 'Rang au classement ParcourSup')}
+                    ${th('promotion', 'Cohorte', 'Sa dernière cohorte')}
+                    ${th('formation', 'FTP/ALT')}${th('annee', 'Année', "Année d'étude où il en est")}
+                    ${th('statut', 'Statut')}${th('decision', 'Jury', 'Dernière décision de jury')}
+                    ${th('gim', 'Moyenne', 'Dernière moyenne générale annuelle connue')}
+                    ${th('nb_notes', 'Notes', 'Nombre de notes saisies')}</tr></thead>
+                <tbody>${rows}</tbody></table></div>`
+        : '<div class="empty">Aucun étudiant ne correspond à ces critères.</div>'}`;
+}
+
+// Export de ce qui est affiché (filtres et tri compris) : le tableau part tel quel
+// dans un tableur, sans repasser par un écran d'export.
+function exportEtudiants() {
+    const cols = [['nom', 'Nom'], ['prenom', 'Prénom'], ['numero', 'N° Apogée'], ['naissance', 'Naissance'],
+                  ['sexe', 'Sexe'], ['bac', 'Bac'], ['cursus', 'Cursus'], ['recrutement', 'Recrutement'],
+                  ['ps_classement', 'Rang PS'], ['ps_note', 'Note PS'], ['promotion', 'Cohorte'],
+                  ['formation', 'FTP/ALT'], ['annee', 'Année'], ['statut', 'Statut'],
+                  ['decision', 'Jury'], ['gim', 'Moyenne'], ['nb_notes', 'Notes']];
+    const cell = v => {
+        const s = (v === null || v === undefined) ? '' : String(v);
+        return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const lignes = [cols.map(c => c[1]).join(';')].concat(
+        _etuListe().map(e => cols.map(c => cell(e[c[0]])).join(';')));
+    // BOM : sans lui, Excel lit les accents de travers.
+    const blob = new Blob(['\ufeff' + lignes.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'etudiants.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+async function openEtudiant(personId) {
+    try {
+        _studentCard = await api(`/students/${personId}`);
+        _studentCardHost = 'tab';
+        _etuSelected = personId;
+        renderEtudiants();
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+function fermerEtudiant() {
+    _etuSelected = null;
+    _studentCard = null;
+    renderEtudiants();
+}
+
+function renderEtudiantFiche() {
+    const d = _studentCard;
+    if (!d) return;
+    const s = d.student;
+    const nb = (_etuData.students || []).find(x => x.id === s.id) || {};
+    document.getElementById('etu-content').innerHTML = `
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+            <button class="btn btn-secondary btn-sm" onclick="fermerEtudiant()">← Liste des étudiants</button>
+            <h2 style="margin:0">${esc(s.nom || '')} <span style="font-weight:400">${esc(s.prenom || '')}</span></h2>
+            ${s.numero ? `<span style="color:#6b7280;font-size:.85rem">n° ${esc(s.numero)}</span>` : ''}
+            ${nb.promotion ? `<span style="color:#6b7280;font-size:.85rem">${esc(nb.promotion)}${
+                nb.annee ? ' · année ' + nb.annee : ''}</span>` : ''}
+        </div>
+        ${studentSections(d, { resultats: true })}`;
+}
+
+// ===== FICHE ÉTUDIANT (registre) =====
+// Un étudiant traverse les cohortes : il redouble, part en césure et revient,
+// passe de FTP en ALT. Son dossier, lui, ne change pas — il est au registre
+// (table `students`), et non recopié sur chaque fiche de cohorte. Cette fenêtre
+// est le seul endroit où on le lit en entier, avec le PARCOURS qu'il a suivi :
+// quelles cohortes, quelles années, et ce que le jury en a dit.
+let _studentCard = null;
+let _studentCardHost = 'modal';   // où elle s'affiche : fenêtre d'effectif ou onglet Étudiants
+
+async function openStudentCard(personId) {
+    if (!personId) return;
+    try {
+        _studentCard = await api(`/students/${personId}`);
+        _studentCardHost = 'modal';
+        renderStudentCard();
+        openModal('modal-student-card');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// Depuis l'effectif, passer à la fiche complète (avec les résultats) sans la rouvrir.
+function ouvrirFicheComplete() {
+    const id = _studentCard && _studentCard.student.id;
+    closeModal('modal-student-card');
+    if (id) { showPage('etudiants'); setTimeout(() => openEtudiant(id), 0); }
+}
+
+// Saisie d'un champ du registre : elle vaut pour toutes les inscriptions de
+// l'étudiant, l'effectif affiché derrière est donc rechargé dans la foulée.
+async function changeRegistreField(field, value) {
+    if (!_studentCard) return;
+    try {
+        _studentCard = await api(`/students/${_studentCard.student.id}`,
+            { method: 'PUT', body: JSON.stringify({ [field]: value }) });
+        toast('Enregistré — vaut pour toutes ses cohortes');
+        if (_studentCardHost === 'tab') {
+            // La liste porte le nom, le profil et les cohortes : elle se refait avec.
+            _etuData = await api('/students');
+            renderEtudiants();
+        } else {
+            renderStudentCard();
+            if (_promoId) loadEffectif();
+        }
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+        if (_studentCardHost === 'tab') renderEtudiants(); else renderStudentCard();
+    }
+}
+
+// La fiche est la même des deux côtés : la fenêtre ouverte depuis l'effectif en
+// donne l'essentiel, l'onglet Étudiants y ajoute les résultats — d'où une seule
+// fabrique de sections, et une seule façon de les enregistrer.
+function studentSections(d, opts = {}) {
+    const s = d.student;
+    const dis = state.role !== 'admin' ? ' disabled' : '';
+    const champ = (label, field, aide) => `<div class="form-group" style="margin:0">
+        <label style="font-size:.78rem" title="${esc(aide || '')}">${label}</label>
+        <input value="${esc(s[field] || '')}"${dis} onchange="changeRegistreField('${field}', this.value)"></div>`;
+    const liste = (label, field, aide) => {
+        const cur = s[field] || '';
+        const opts2 = ['<option value="">—</option>'].concat(((d.profile_options || {})[field] || []).map(o => {
+            const lab = ((d.profile_labels || {})[field] || {})[o] || '';
+            return `<option${o === cur ? ' selected' : ''}${lab ? ` title="${esc(lab)}"` : ''}>${esc(o)}</option>`;
+        })).join('');
+        return `<div class="form-group" style="margin:0">
+            <label style="font-size:.78rem" title="${esc(aide || '')}">${label}</label>
+            <select${dis} onchange="changeRegistreField('${field}', this.value)">${opts2}</select></div>`;
+    };
+    const identite = `<div class="section-title">Informations du candidat</div>
+        <div style="display:grid;grid-template-columns:repeat(${opts.resultats ? 4 : 3}, 1fr);gap:10px">
+            ${champ('Nom', 'nom')}${champ('Prénom', 'prenom')}
+            ${champ('N° Apogée', 'numero', "Numéro Apogée de l'étudiant")}
+            ${champ('Naissance', 'naissance', 'Date de naissance (jj/mm/aaaa)')}
+            ${liste('Sexe', 'sexe')}
+            ${liste('Recrutement', 'recrutement', 'PS : ParcourSup · EC : eCandidat · ADIUT : candidats étrangers')}
+            ${liste('Série de bac', 'bac', "Reprise du classement ParcourSup ; à compléter à la main pour qui n'y figure pas")}
+            ${liste('Cursus antérieur', 'cursus', 'Ce que le candidat faisait avant le BUT')}
+        </div>`;
+
+    const etiq = (txt, bg, titre) => `<span title="${esc(titre || '')}" style="display:inline-block;
+        padding:1px 7px;border-radius:6px;font-size:.68rem;font-weight:700;background:${bg};margin-left:6px">${esc(txt)}</span>`;
+    const note = v => (v === null || v === undefined) ? '<span style="color:#d1d5db">—</span>' : Number(v).toFixed(2);
+
+    // Résultats d'une année : les mêmes moyennes que la grille de jury (UE par
+    // semestre, moyenne annuelle, code) — la fiche ne recalcule rien de son côté.
+    const tableauUE = a => {
+        const ues = a.ues || [];
+        const vide = !ues.some(u => u.odd != null || u.even != null || u.annual != null);
+        if (!ues.length || vide)
+            return `<div style="color:#9ca3af;font-size:.8rem;margin:4px 0 0 2px">Pas encore de notes${
+                a.en_cours ? ' — année en cours' : ''}.</div>`;
+        return `<div style="overflow:auto;margin:6px 0 2px"><table class="pn-table" style="width:auto;min-width:340px">
+            <thead><tr><th style="text-align:left">UE</th><th>${esc(a.semestres[0])}</th><th>${esc(a.semestres[1])}</th>
+                <th title="Moyenne de l'année">Année</th><th title="ADM admis · ADMJ admis par jury · CMP compensée · AJ ajournée">Décision</th></tr></thead>
+            <tbody>${ues.map(u => `<tr>
+                <td style="text-align:left"><strong>UE${u.num}</strong> <span style="color:#6b7280">${esc(u.name || '')}</span></td>
+                <td style="text-align:center">${note(u.odd)}</td>
+                <td style="text-align:center">${note(u.even)}</td>
+                <td style="text-align:center;font-weight:600">${note(u.annual)}</td>
+                <td style="text-align:center">${u.code ? `<span style="padding:1px 7px;border-radius:6px;
+                    font-size:.7rem;font-weight:700;background:${_JURY_COUL[u.code] || '#f3f4f6'}">${esc(u.code)}</span>`
+                    : '<span style="color:#d1d5db">—</span>'}</td></tr>`).join('')}</tbody></table></div>`;
+    };
+
+    const ligneAnnee = a => {
+        const tete = `Année ${a.year} <span style="color:#9ca3af">${esc(a.annee_univ || '')}</span>
+            · ${esc(a.formation)}${a.jury ? ` · <strong>${esc(_JURY_LIB[a.jury] || a.jury)}</strong>` : ''}${
+            a.en_cours ? etiq('en cours', '#dcfce7', "Année que suit sa cohorte pendant l'année universitaire active") : ''}${
+            a.gim != null ? ` <span style="color:#6b7280">— moyenne générale <strong>${a.gim.toFixed(2)}</strong></span>` : ''}${
+            a.mobilite ? etiq('MI ' + a.mobilite.semester, '#cffafe', 'Mobilité internationale'
+                + (a.mobilite.etablissement ? ' — ' + a.mobilite.etablissement : '')) : ''}`;
+        return opts.resultats
+            ? `<div style="margin:8px 0 2px">${tete}${tableauUE(a)}</div>`
+            : `<li>${tete}</li>`;
+    };
+
+    const cartes = (d.parcours || []).map(i => {
+        const annees = (i.annees || []).length
+            ? (opts.resultats ? i.annees.map(ligneAnnee).join('')
+               : '<ul style="margin:6px 0 0;padding-left:18px;font-size:.85rem">'
+                 + i.annees.map(ligneAnnee).join('') + '</ul>')
+            : `<div style="color:#9ca3af;font-size:.82rem;margin-top:4px">Hors effectif de cette cohorte.</div>`;
+        const venu = i.origin
+            ? etiq(i.origin.reason === 'CESURE' ? 'reprise après césure' : 'redoublant', '#ddd6fe',
+                   'Fiche ouverte depuis la promotion ' + i.origin.promo)
+              + `<span style="color:#6b7280;font-size:.8rem"> venu de ${esc(i.origin.promo)}</span>` : '';
+        const sortie = [i.abandon ? 'abandon — ' + i.abandon : '',
+                        i.cesure_year ? 'césure en année ' + i.cesure_year : '',
+                        i.devenir ? i.devenir.resume : ''].filter(Boolean).join(' · ');
+        return `<div style="border-left:3px solid #c7d2fe;padding:6px 0 6px 10px;margin-bottom:10px">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <strong>${esc(i.promotion)}</strong>
+                <span style="color:#6b7280;font-size:.82rem">entré en année ${i.entry_year} · ${esc(i.formation)}</span>
+                ${etiq(i.statut, _statutColor(i.statut))}${venu}
+                ${i.nb_notes ? `<span style="margin-left:auto;color:#9ca3af;font-size:.78rem">${i.nb_notes} note(s)</span>` : ''}
+            </div>
+            ${annees}
+            ${sortie ? `<div style="color:#6b7280;font-size:.82rem;margin-top:4px">${esc(sortie)}</div>` : ''}
+        </div>`;
+    }).join('');
+    const parcours = `<div class="section-title" style="margin-top:16px">${
+            opts.resultats ? 'Parcours et résultats' : 'Parcours'}
+            <span style="font-weight:400;color:#9ca3af;font-size:.82rem">— les cohortes qu'il a traversées</span></div>`
+        + (cartes || '<div class="empty">Aucune inscription.</div>');
+
+    // Dossier ParcourSup : il vient de l'import du classement, mais reste saisissable
+    // — un candidat hors ParcourSup (eCandidat, ADIUT) ou qu'un homonyme a fait
+    // manquer au rapprochement n'a aucun autre moyen d'avoir son dossier.
+    const psChamp = c => `<div class="form-group" style="margin:0">
+        <label style="font-size:.74rem;color:#6b7280" title="${esc(c.title || '')}">${esc(c.label)}</label>
+        <input value="${esc(s[c.field] === null || s[c.field] === undefined ? '' : s[c.field])}"${dis}
+            ${c.type === 'INTEGER' || c.type === 'REAL' ? ' style="max-width:110px"' : ''}
+            onchange="changeRegistreField('${c.field}', this.value)"></div>`;
+    const ps = `<div class="section-title" style="margin-top:16px">Dossier ParcourSup
+            <span style="font-weight:400;color:#9ca3af;font-size:.82rem">— repris de l'import du classement, modifiable</span></div>
+        <div style="display:grid;grid-template-columns:repeat(${opts.resultats ? 4 : 2}, 1fr);gap:8px">
+            ${(d.ps_columns || []).map(psChamp).join('')}</div>`;
+
+    return identite + parcours + ps;
+}
+
+function renderStudentCard() {
+    const d = _studentCard;
+    if (!d) return;
+    const titre = document.getElementById('student-card-title');
+    if (titre) titre.textContent = `${d.student.nom || ''} ${d.student.prenom || ''}`.trim() || 'Fiche étudiant';
+    document.getElementById('student-card-body').innerHTML = studentSections(d, { resultats: false });
+}
 
 function openAddStudent(formation) {
     _studentFormation = (formation === 'ALT') ? 'ALT' : 'FTP';

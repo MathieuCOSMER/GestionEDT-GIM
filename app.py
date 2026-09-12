@@ -509,14 +509,19 @@ def _fullbackup_contents():
                             'matieres': _count_rows(p, 'courses'),
                             'salles': _count_rows(p, 'rooms')}
     inv['promotions'] = _count_rows(_PROMOTIONS_DB, 'promotions')
+    # « etudiants » compte les INSCRIPTIONS, comme avant le registre : une
+    # sauvegarde d'alors doit rester comparable à ce qu'on restaure aujourd'hui.
     inv['etudiants'] = _count_rows(_PROMOTIONS_DB, 'promotion_students')
+    inv['registre'] = _count_rows(_PROMOTIONS_DB, 'students')
     inv['notes'] = _count_rows(_PROMOTIONS_DB, 'student_marks')
     inv['programmes'] = _count_rows(_PROGRAMMES_DB, 'programmes')
     inv['fichiers_notes'] = sum(1 for _ in _iter_dir_files(_NOTES_DIR, 'n'))
     inv['fichiers_contraintes'] = sum(1 for _ in _iter_dir_files(_CONSTRAINTS_DIR, 'c'))
     return inv
 
-_CONTENT_LABELS = {'promotions': 'promotions', 'etudiants': 'étudiants',
+_CONTENT_LABELS = {'promotions': 'promotions',
+                   'etudiants': 'inscriptions en cohorte',
+                   'registre': 'étudiants au registre',
                    'notes': 'notes', 'programmes': 'programmes',
                    'fichiers_notes': 'fichiers de notes',
                    'fichiers_contraintes': 'fichiers de contraintes',
@@ -791,6 +796,13 @@ _STUDENT_RECRUT = ['PS', 'EC', 'ADIUT']               # ParcourSup / eCandidat /
 # ParcourSup (colonne « Série », recopiée dans `bac` pour les statistiques) et le
 # cursus antérieur se lit dans les colonnes ParcourSup Profil / Diplôme.
 _STUDENT_PROFILE = {'sexe': _STUDENT_SEXE, 'recrutement': _STUDENT_RECRUT}
+# Profil modifiable sur la FICHE de l'étudiant (onglet Étudiants) : les deux
+# précédents, plus la série de bac et le cursus antérieur. Ceux-là viennent
+# normalement du classement ParcourSup, mais un candidat qui n'y figure pas
+# (eCandidat, ADIUT, dossier non rapproché) les laisserait vides à jamais — et les
+# statistiques avec. La fiche est l'endroit où les compléter à la main.
+_STUDENT_PROFILE_EDIT = {'sexe': _STUDENT_SEXE, 'recrutement': _STUDENT_RECRUT,
+                         'bac': _STUDENT_BAC, 'cursus': _STUDENT_CURSUS}
 # Tous les champs de profil portés par une fiche, saisis à l'écran ou alimentés par
 # un import : les statistiques mesurent la complétude des uns comme des autres.
 _STUDENT_PROFILE_FIELDS = ('sexe', 'bac', 'cursus', 'recrutement')
@@ -1031,6 +1043,131 @@ def _norm_bac(v):
         return 'NBGE'
     return 'Autre'
 
+# ===== REGISTRE DES ÉTUDIANTS (table `students`) =====
+# Un étudiant est une PERSONNE, pas une ligne de cohorte. Son état civil, son sexe,
+# sa voie de recrutement et son dossier ParcourSup ne changent pas parce qu'il redouble,
+# revient de césure ou passe de FTP en ALT : ils appartiennent au registre `students`,
+# une ligne par étudiant, qui traverse les cohortes. Ils s'y saisissent une fois et
+# valent aussitôt partout où l'étudiant est inscrit — auparavant recopiés sur chaque
+# fiche, ils étaient à ressaisir à chaque cohorte traversée quand ils n'étaient pas
+# simplement perdus : la bascule d'un redoublant ne reprenait que l'état civil.
+#
+# `promotion_students` n'est plus que l'INSCRIPTION d'un étudiant dans une cohorte
+# (sous-cohorte, année d'entrée, statut, abandon, césure), qui désigne le registre par
+# `person_id`. Tout ce qui date d'une année précise — notes, jury, tuteurs, mobilité,
+# devenir — reste accroché à l'inscription : ce sont des faits de cohorte, pas des
+# attributs de la personne.
+_PERSON_IDENT = ('numero', 'nom', 'prenom', 'naissance')
+_PERSON_COLS = _PERSON_IDENT + _STUDENT_PROFILE_FIELDS + tuple(_PS_FIELDS)
+# Jointure des requêtes sur les fiches : `s` = l'inscription, `e` = l'étudiant.
+_FICHE_JOIN = 'JOIN students e ON e.id = s.person_id'
+
+def _person_sql(cols=None, alias='e'):
+    """Colonnes du registre lues par une requête sur les fiches, préfixées par
+    l'alias de la table `students` (cf `_FICHE_JOIN`)."""
+    return ', '.join('%s.%s' % (alias, c) for c in (cols or _PERSON_COLS))
+
+def _person_keys(ident):
+    """Les trois clés sous lesquelles un état civil peut désigner quelqu'un : son
+    n° Apogée, son identité complète (nom + prénom + naissance), son seul nom.
+    La dernière ne vaut que faute des deux autres (cf `_person_match`)."""
+    nom = (ident.get('nom') or '').strip().lower()
+    prenom = (ident.get('prenom') or '').strip().lower()
+    naissance = (ident.get('naissance') or '').strip().lower()
+    nom_key = (nom, prenom) if (nom or prenom) else None
+    return {'numero': (ident.get('numero') or '').strip().lower() or None,
+            'ident': (nom, prenom, naissance) if (nom_key and naissance) else None,
+            'nom': nom_key, 'naissance': naissance}
+
+def _person_index(db):
+    """Index du registre pour y rapprocher un état civil : par n° Apogée, par
+    identité complète et par nom seul (avec de quoi écarter un homonyme)."""
+    idx = {'numero': {}, 'ident': {}, 'nom': {}}
+    for r in db.execute('SELECT id, numero, nom, prenom, naissance FROM students'):
+        _person_index_add(idx, r['id'], dict(r))
+    return idx
+
+def _person_index_add(idx, sid, ident):
+    """Ajoute un étudiant à l'index — y compris ceux créés en cours d'import, sans
+    quoi un étudiant listé deux fois dans un fichier entrerait deux fois."""
+    k = _person_keys(ident)
+    if k['numero']:
+        idx['numero'].setdefault(k['numero'], sid)
+    if k['ident']:
+        idx['ident'].setdefault(k['ident'], sid)
+    if k['nom']:
+        idx['nom'].setdefault(k['nom'], []).append((sid, k['numero'], k['naissance']))
+
+def _person_match(idx, ident):
+    """L'étudiant du registre que désigne cet état civil, ou None.
+
+    Le n° Apogée fait foi ; à défaut, l'identité complète (nom + prénom + date de
+    naissance). Le nom seul ne rapproche que s'il ne désigne qu'une personne au
+    registre et que rien ne la contredit (autre n° Apogée, autre date de
+    naissance) : une liste sans date de naissance ne doit jamais fondre deux
+    homonymes en un seul étudiant — une fiche en trop se corrige, une identité
+    fondue par erreur emporterait avec elle un dossier et des notes."""
+    k = _person_keys(ident)
+    if k['numero'] and k['numero'] in idx['numero']:
+        return idx['numero'][k['numero']]
+    if k['ident'] and k['ident'] in idx['ident']:
+        return idx['ident'][k['ident']]
+    if k['nom']:
+        cands = idx['nom'].get(k['nom']) or []
+        if len(cands) == 1:
+            sid, numero, naissance = cands[0]
+            if (not (numero and k['numero'] and numero != k['numero'])
+                    and not (naissance and k['naissance'] and naissance != k['naissance'])):
+                return sid
+    return None
+
+def _person_ensure(db, ident, idx=None):
+    """Id de l'étudiant au registre : retrouvé sur son état civil, créé sinon.
+    Les cases vides du registre sont complétées au passage (un n° Apogée connu plus
+    tard, une date de naissance absente de la première liste) ; une valeur déjà
+    inscrite n'est jamais écrasée."""
+    idx = _person_index(db) if idx is None else idx
+    vals = {c: (ident.get(c) or '').strip() for c in _PERSON_IDENT}
+    sid = _person_match(idx, vals)
+    if sid is None:
+        cur = db.execute('INSERT INTO students(%s) VALUES(%s)'
+                         % (', '.join(_PERSON_IDENT), ', '.join('?' * len(_PERSON_IDENT))),
+                         [vals[c] for c in _PERSON_IDENT])
+        _person_index_add(idx, cur.lastrowid, vals)
+        return cur.lastrowid
+    row = db.execute('SELECT %s FROM students WHERE id=?' % ', '.join(_PERSON_IDENT),
+                     (sid,)).fetchone()
+    manque = {c: v for c, v in vals.items() if v and not (row[c] or '').strip()}
+    if manque:
+        _person_set(db, sid, manque)
+        _person_index_add(idx, sid, dict({c: row[c] for c in _PERSON_IDENT}, **manque))
+    return sid
+
+def _person_set(db, sid, values):
+    """Écrit des champs du registre (état civil, profil, dossier ParcourSup). Ils
+    valent du même coup pour TOUTES les cohortes où l'étudiant est inscrit : c'est
+    le propre du registre, et ce que l'écran d'effectif annonce en les modifiant."""
+    vals = {k: v for k, v in values.items() if k in _PERSON_COLS}
+    if not vals:
+        return False
+    db.execute('UPDATE students SET %s, updated_at=CURRENT_TIMESTAMP WHERE id=?'
+               % ', '.join('%s=?' % k for k in vals), list(vals.values()) + [sid])
+    return True
+
+def _person_prune(db, sid):
+    """Retire du registre un étudiant qui n'est plus inscrit nulle part : le
+    registre liste ceux qu'au moins une cohorte a connus. Appelé après la
+    suppression d'une fiche — supprimer la dernière efface l'étudiant, ses autres
+    inscriptions le gardent."""
+    if sid and not db.execute('SELECT 1 FROM promotion_students WHERE person_id=?',
+                              (sid,)).fetchone():
+        db.execute('DELETE FROM students WHERE id=?', (sid,))
+
+def _fiche_person(db, fid):
+    """L'étudiant (registre) dont la fiche `fid` est une inscription, ou None."""
+    r = db.execute('SELECT person_id FROM promotion_students WHERE id=?', (fid,)).fetchone()
+    return r['person_id'] if r else None
+
 def _open_promotions_db():
     db = sqlite3.connect(_PROMOTIONS_DB, timeout=10)
     db.row_factory = sqlite3.Row
@@ -1059,17 +1196,41 @@ def _apply_promotions_migrations(db):
             updated_at TEXT
         )
     ''')
+    # Registre des étudiants : une ligne par PERSONNE, qui traverse les cohortes.
+    # Tout ce qui la décrit y est écrit une fois pour toutes ses inscriptions.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS students (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero      TEXT,                  -- n° Apogée
+            nom         TEXT,
+            prenom      TEXT,
+            naissance   TEXT,
+            sexe        TEXT,
+            bac         TEXT,                  -- série du bac (reprise du classement)
+            cursus      TEXT,                  -- cursus antérieur
+            recrutement TEXT,                  -- ParcourSup / eCandidat / ADIUT
+            created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at  TEXT
+        )
+    ''')
+    # Dossier ParcourSup du candidat, déclaré une seule fois (_PS_COLUMNS).
+    for _f, _lbl, _pfx, _sql, _t in _PS_COLUMNS:
+        try:
+            db.execute('ALTER TABLE students ADD COLUMN %s %s' % (_f, _sql))
+        except sqlite3.OperationalError:
+            pass
+    # Inscription d'un étudiant du registre dans une cohorte : ce que la cohorte
+    # sait de lui (statut, sous-cohorte, année d'entrée…) et rien de ce qui le
+    # décrit, lui — c'est `person_id` qui va le chercher au registre.
     db.execute('''
         CREATE TABLE IF NOT EXISTS promotion_students (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             promotion_id INTEGER NOT NULL,
-            numero       TEXT,
-            nom          TEXT,
-            prenom       TEXT,
-            naissance    TEXT,
+            person_id    INTEGER,
             statut       TEXT DEFAULT 'Actif',
             created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+            FOREIGN KEY (person_id) REFERENCES students(id)
         )
     ''')
     # Semestre d'abandon (S1..S6), renseigné quand statut = 'Abandon'
@@ -1157,22 +1318,22 @@ def _apply_promotions_migrations(db):
         db.execute("ALTER TABLE promotion_students ADD COLUMN entry_year INTEGER DEFAULT 1")
     except sqlite3.OperationalError:
         pass
-    # Profil d'entrée : sexe, BAC obtenu, cursus antérieur, méthode de recrutement.
-    for _col in ('sexe', 'bac', 'cursus', 'recrutement'):
-        try:
-            db.execute(f"ALTER TABLE promotion_students ADD COLUMN {_col} TEXT")
-        except sqlite3.OperationalError:
-            pass
-    # Codes cursus renommés : on remet les anciennes valeurs au nouveau format.
-    for _old, _new in _STUDENT_CURSUS_RENAMES.items():
-        db.execute("UPDATE promotion_students SET cursus=? WHERE cursus=?", (_new, _old))
-    # Classement ParcourSup : rang, note et éléments de dossier du candidat, repris
-    # de l'export « dossier_AD_… » et affichés dans le tableau d'effectif.
-    for _f, _lbl, _pfx, _sql, _t in _PS_COLUMNS:
-        try:
-            db.execute(f"ALTER TABLE promotion_students ADD COLUMN {_f} {_sql}")
-        except sqlite3.OperationalError:
-            pass
+    # Profil d'entrée (sexe, BAC, cursus antérieur, voie de recrutement) et dossier
+    # ParcourSup : ils ont d'abord vécu sur la fiche, ils vivent maintenant au
+    # registre (_migrate_student_registry les y transporte, plus bas). Les ajouter
+    # ici n'a donc de sens que sur une base d'AVANT le registre : les remettre
+    # ensuite recréerait des colonnes mortes que plus rien ne lit.
+    if 'person_id' not in {r[1] for r in db.execute('PRAGMA table_info(promotion_students)')}:
+        for _col in _STUDENT_PROFILE_FIELDS:
+            try:
+                db.execute(f"ALTER TABLE promotion_students ADD COLUMN {_col} TEXT")
+            except sqlite3.OperationalError:
+                pass
+        for _f, _lbl, _pfx, _sql, _t in _PS_COLUMNS:
+            try:
+                db.execute(f"ALTER TABLE promotion_students ADD COLUMN {_f} {_sql}")
+            except sqlite3.OperationalError:
+                pass
     # Ajustements manuels de l'effectif d'une année (par-dessus le calcul auto) :
     # action='remove' (retiré de l'année) ou 'add' (réintégré / ajouté à l'année).
     db.execute('''
@@ -1234,10 +1395,6 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
         )
     ''')
-    # Séries de bac alignées sur les codes des PV de jury : reprise des fiches
-    # saisies avec les anciens codes, qui ne sont plus des valeurs autorisées.
-    for _old, _new in _STUDENT_BAC_RENAMES.items():
-        db.execute("UPDATE promotion_students SET bac=? WHERE bac=?", (_new, _old))
     # Le « retrait d'une année » (action='remove') avait été supprimé parce qu'il
     # rendait la fiche invisible partout, sans moyen de la remettre. Il est de
     # nouveau posé — mais la fiche retirée reste listée dans « Autres fiches de la
@@ -1403,8 +1560,110 @@ def _apply_promotions_migrations(db):
         db.execute("ALTER TABLE student_marks ADD COLUMN source TEXT")
     except sqlite3.OperationalError:
         pass
+    # Ce qui décrit l'étudiant quitte la fiche de cohorte pour le registre
+    # (cf « REGISTRE DES ÉTUDIANTS ») : une seule source de vérité, partagée par
+    # toutes les cohortes qu'il traverse.
+    _migrate_student_registry(db)
+    # Codes renommés au fil des versions, rejoués sur le registre : les valeurs
+    # saisies sous les anciens codes doivent rester des valeurs autorisées.
+    for _old, _new in _STUDENT_CURSUS_RENAMES.items():
+        db.execute('UPDATE students SET cursus=? WHERE cursus=?', (_new, _old))
+    for _old, _new in _STUDENT_BAC_RENAMES.items():
+        db.execute('UPDATE students SET bac=? WHERE bac=?', (_new, _old))
     db.commit()
     _merge_formation_promotions(db)
+
+def _migrate_student_registry(db):
+    """Sort de la fiche de cohorte ce qui appartient à l'étudiant lui-même.
+
+    Les fiches d'avant le registre portaient l'état civil, le sexe, le profil et le
+    dossier ParcourSup. Ces colonnes passent dans `students` (une ligne par
+    étudiant), la fiche n'en garde que le lien `person_id`, puis elles sont
+    supprimées de la fiche : à les laisser des deux côtés, les deux divergeraient
+    dès le premier import. Migration rejouable : elle ne reprend que les fiches
+    qui ne désignent pas encore d'étudiant."""
+    cols = {r[1] for r in db.execute('PRAGMA table_info(promotion_students)')}
+    if 'person_id' not in cols:
+        db.execute('ALTER TABLE promotion_students ADD COLUMN person_id '
+                   'INTEGER REFERENCES students(id)')
+    reprises = [c for c in _PERSON_COLS if c in cols]
+    if reprises:
+        _registry_backfill(db, reprises)
+    # Filet : une fiche sans étudiant au registre ne s'afficherait nulle part,
+    # puisque tous les écrans lisent son identité par la jointure.
+    for r in db.execute('SELECT id FROM promotion_students WHERE person_id IS NULL').fetchall():
+        cur = db.execute('INSERT INTO students DEFAULT VALUES')
+        db.execute('UPDATE promotion_students SET person_id=? WHERE id=?', (cur.lastrowid, r['id']))
+    # Les colonnes reprises quittent la fiche. Si le moteur SQLite est trop ancien
+    # pour les supprimer (< 3.35), elles y restent inertes : plus rien ne les lit.
+    for c in reprises:
+        try:
+            db.execute('ALTER TABLE promotion_students DROP COLUMN %s' % c)
+        except sqlite3.OperationalError:
+            pass
+    db.commit()
+
+def _registry_backfill(db, cols):
+    """Crée un étudiant au registre par personne réelle et y rattache ses fiches.
+
+    Deux fiches sont le même étudiant quand elles sont explicitement liées (le
+    redoublement ou la reprise de césure a créé la seconde depuis la première :
+    `student_origin`), quand elles portent le même n° Apogée, ou quand elles ont
+    mêmes nom, prénom ET date de naissance. Rien d'autre ne les fusionne : deux
+    homonymes sans date de naissance restent deux étudiants distincts, faute de
+    quoi la migration mêlerait en silence deux dossiers et deux parcours.
+
+    Pour chaque champ, la valeur retenue est la plus récente qui soit renseignée :
+    la fiche de la dernière cohorte a le dernier mot, et une case vide n'efface
+    jamais ce qu'une cohorte antérieure savait."""
+    fiches = [dict(r) for r in db.execute(
+        'SELECT s.id, p.start_year, %s FROM promotion_students s '
+        'LEFT JOIN promotions p ON p.id = s.promotion_id WHERE s.person_id IS NULL'
+        % ', '.join('s.%s' % c for c in cols))]
+    if not fiches:
+        return
+    parent = {f['id']: f['id'] for f in fiches}
+
+    def racine(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def unir(a, b):
+        if a in parent and b in parent:
+            ra, rb = racine(a), racine(b)
+            if ra != rb:
+                parent[max(ra, rb)] = min(ra, rb)
+
+    for r in db.execute('SELECT student_id, origin_student_id FROM student_origin'):
+        unir(r['student_id'], r['origin_student_id'])
+    par_cle = {}
+    for f in sorted(fiches, key=lambda x: x['id']):
+        k = _person_keys(f)
+        cles = ([('num', k['numero'])] if k['numero'] else []) \
+            + ([('ident',) + k['ident']] if k['ident'] else [])
+        for cle in cles:
+            if cle in par_cle:
+                unir(par_cle[cle], f['id'])
+            else:
+                par_cle[cle] = f['id']
+    groupes = {}
+    for f in sorted(fiches, key=lambda x: ((x['start_year'] or 0), x['id'])):
+        groupes.setdefault(racine(f['id']), []).append(f)
+    for membres in groupes.values():
+        vals = {}
+        for f in membres:                      # de la plus ancienne cohorte à la plus récente
+            vals.update({c: f[c] for c in cols
+                         if f[c] is not None and str(f[c]).strip() != ''})
+        if vals:
+            cur = db.execute('INSERT INTO students(%s) VALUES(%s)'
+                             % (', '.join(vals), ', '.join('?' * len(vals))), list(vals.values()))
+        else:
+            cur = db.execute('INSERT INTO students DEFAULT VALUES')
+        db.execute('UPDATE promotion_students SET person_id=? WHERE id IN (%s)'
+                   % ', '.join('?' * len(membres)),
+                   [cur.lastrowid] + [f['id'] for f in membres])
 
 def _merge_formation_promotions(db):
     """Migration : fusionne les anciennes promotions « <cohorte>_FTP » et « <cohorte>_ALT »
@@ -3572,20 +3831,31 @@ def _import_students_rows(db, pid, students, formation, year=None):
     {imported, updated, skipped, recales, entrees} où `recales` liste les fiches
     déplacées de sous-cohorte [(nom, prenom, ancienne)] et `entrees` celles dont
     l'année d'entrée a été avancée [(nom, prenom, ancienne_annee)]."""
-    existing = {}
-    for r in db.execute('''SELECT id, numero, nom, prenom, naissance, sexe, entry_year
-                           FROM promotion_students WHERE promotion_id=?''', (pid,)):
+    existing, par_etudiant = {}, {}
+    for r in db.execute('''SELECT s.id, s.person_id, s.entry_year,
+                                  e.numero, e.nom, e.prenom, e.naissance, e.sexe
+                           FROM promotion_students s %s
+                           WHERE s.promotion_id=?''' % _FICHE_JOIN, (pid,)):
         row = dict(r)
         for k in _student_keys(row):
             existing.setdefault(k, row)     # à clé partagée, la 1re fiche l'emporte
+        par_etudiant[row['person_id']] = row
     # Sous-cohorte effective de chaque fiche POUR l'année importée (report auto
     # des changements antérieurs compris) : c'est elle qu'on compare au fichier.
     faces = _year_formation_map(db, pid, year) if year else {}
+    idx = _person_index(db)
     imported = updated = skipped = 0
     recales, entrees = [], []
     for s in students:
         profile = {k: v for k, v in (('sexe', _norm_sexe(s.get('sexe'))),) if v}
         row = next((existing[k] for k in _student_keys(s) if k in existing), None)
+        if row is None:
+            # Aucune fiche rapprochée — mais l'étudiant est peut-être déjà au
+            # registre sous un état civil un peu plus complet (une liste sans date
+            # de naissance, un fichier sans n° Apogée). S'il est déjà inscrit ici,
+            # on complète sa fiche plutôt que d'en ouvrir une seconde pour lui.
+            person_id = _person_ensure(db, s, idx)
+            row = par_etudiant.get(person_id)
         if row is not None:
             touche = False
             # L'étudiant figure au PV de cette année : il y était. Si sa fiche
@@ -3615,23 +3885,24 @@ def _import_students_rows(db, pid, students, formation, year=None):
                 if not touche:
                     skipped += 1        # sinon déjà compté comme recalé / réintégré
                 continue
-            db.execute('UPDATE promotion_students SET %s WHERE id=?'
-                       % ', '.join('%s=?' % k for k in changed),
-                       list(changed.values()) + [row['id']])
+            # Le profil part au registre : le fichier renseigne l'étudiant, pas
+            # l'année qu'il passe ici — la valeur vaut pour toutes ses cohortes.
+            _person_set(db, row['person_id'], changed)
             row.update(changed)
             updated += 1
             continue
-        cols = ['promotion_id', 'numero', 'nom', 'prenom', 'naissance', 'statut', 'formation']
-        vals = [pid, s['numero'], s['nom'], s['prenom'], s['naissance'], 'Actif', formation]
+        cols = ['promotion_id', 'person_id', 'statut', 'formation']
+        vals = [pid, person_id, 'Actif', formation]
         if year is not None:
             cols.append('entry_year'); vals.append(year)
-        for k, v in profile.items():
-            cols.append(k); vals.append(v)
+        if profile:
+            _person_set(db, person_id, profile)
         cur = db.execute('INSERT INTO promotion_students(%s) VALUES(%s)'
                          % (', '.join(cols), ', '.join('?' * len(cols))), vals)
-        new = dict(s, id=cur.lastrowid)
+        new = dict(s, id=cur.lastrowid, person_id=person_id, **profile)
         for k in _student_keys(new):
             existing.setdefault(k, new)
+        par_etudiant[person_id] = new
         # Fiche neuve : sa formation de base est celle du fichier, aucune ligne
         # par année n'est nécessaire (l'absence de ligne = formation de base).
         if year:
@@ -3646,9 +3917,10 @@ def _promotion_payload(db, pid):
     if not promo:
         return None
     students = [dict(r) for r in db.execute(
-        '''SELECT id, numero, nom, prenom, naissance, statut, abandon_semaine, abandon_annee, formation
-           FROM promotion_students WHERE promotion_id=?
-           ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,))]
+        '''SELECT s.id, s.person_id, s.statut, s.abandon_semaine, s.abandon_annee, s.formation, %s
+           FROM promotion_students s %s WHERE s.promotion_id=?
+           ORDER BY e.nom COLLATE NOCASE, e.prenom COLLATE NOCASE'''
+        % (_person_sql(_PERSON_IDENT), _FICHE_JOIN), (pid,))]
     counts = {st: 0 for st in _STUDENT_STATUSES}
     # Compteurs par sous-cohorte : {'FTP': {statut:n,...,total}, 'ALT': {...}}
     sub_counts = {f: {st: 0 for st in _STUDENT_STATUSES} for f in _SUBCOHORTS}
@@ -3819,6 +4091,10 @@ def delete_promotion(pid):
     if not db.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
         return error_response('Promotion introuvable', 404)
     db.execute('DELETE FROM promotions WHERE id=?', (pid,))
+    # Les étudiants que cette cohorte était seule à connaître quittent le registre ;
+    # ceux qui sont inscrits ailleurs y restent, avec leur dossier.
+    db.execute('DELETE FROM students WHERE id NOT IN '
+               '(SELECT person_id FROM promotion_students WHERE person_id IS NOT NULL)')
     db.commit()
     # Les années universitaires ne sont PAS supprimées (partagées entre cohortes).
     return jsonify({'deleted': True})
@@ -3844,11 +4120,14 @@ def add_promotion_student(pid):
     formation = (data.get('formation') or '').strip().upper()
     if formation not in _SUBCOHORTS:
         formation = 'FTP'
-    db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance,
+    # L'étudiant est retrouvé au registre s'il y est déjà (il a pu passer par une
+    # autre cohorte : son sexe, sa voie de recrutement et son dossier ParcourSup
+    # le suivent alors sans avoir à être resaisis), sinon il y entre.
+    person_id = _person_ensure(db, dict(data, nom=nom, prenom=prenom, numero=numero))
+    db.execute('''INSERT INTO promotion_students(promotion_id, person_id,
                                                  statut, abandon_semaine, abandon_annee, formation)
-                  VALUES(?,?,?,?,?,?,?,?,?)''',
-               (pid, numero, nom, prenom, (data.get('naissance') or '').strip(), statut,
-                semaine, 1 if statut == 'Abandon' else None, formation))
+                  VALUES(?,?,?,?,?,?)''',
+               (pid, person_id, statut, semaine, 1 if statut == 'Abandon' else None, formation))
     db.commit()
     return jsonify(_promotion_payload(db, pid))
 
@@ -3858,19 +4137,22 @@ def update_promotion_student(pid, sid):
     if err:
         return err
     db = get_promotions_db()
-    row = db.execute('SELECT 1 FROM promotion_students WHERE id=? AND promotion_id=?', (sid, pid)).fetchone()
+    row = db.execute('SELECT person_id FROM promotion_students WHERE id=? AND promotion_id=?',
+                     (sid, pid)).fetchone()
     if not row:
         return error_response('Étudiant introuvable', 404)
     data = request.get_json() or {}
-    fields, params = [], []
-    for key in ('numero', 'nom', 'prenom', 'naissance'):
-        if key in data:
-            fields.append(f'{key}=?'); params.append((data.get(key) or '').strip())
-    # Profil d'entrée : BAC / cursus / recrutement (valeur autorisée ou vide)
+    # État civil et profil d'entrée (sexe, voie de recrutement) : ils décrivent
+    # l'ÉTUDIANT. Ils s'écrivent au registre et valent du même coup pour ses autres
+    # inscriptions — celle du redoublant dans la cohorte suivante, celle de qui
+    # revient de césure : plus rien à ressaisir d'une cohorte à l'autre.
+    registre = {k: (data.get(k) or '').strip() for k in _PERSON_IDENT if k in data}
     for key, allowed in _STUDENT_PROFILE.items():
         if key in data:
             val = (data.get(key) or '').strip()
-            fields.append(f'{key}=?'); params.append(val if val in allowed else None)
+            registre[key] = val if val in allowed else None
+    _person_set(db, row['person_id'], registre)
+    fields, params = [], []
     new_statut = None
     if 'statut' in data:
         st = (data.get('statut') or 'Actif').strip()
@@ -3914,7 +4196,7 @@ def update_promotion_student(pid, sid):
     if fields:
         params += [sid, pid]
         db.execute(f'UPDATE promotion_students SET {", ".join(fields)} WHERE id=? AND promotion_id=?', params)
-        db.commit()
+    db.commit()
     return jsonify(_promotion_payload(db, pid))
 
 @app.route('/api/promotions/<int:pid>/students/<int:sid>', methods=['DELETE'])
@@ -3923,9 +4205,254 @@ def delete_promotion_student(pid, sid):
     if err:
         return err
     db = get_promotions_db()
+    person_id = _fiche_person(db, sid)
     db.execute('DELETE FROM promotion_students WHERE id=? AND promotion_id=?', (sid, pid))
+    # Supprimer sa dernière inscription retire l'étudiant du registre ; ses autres
+    # cohortes, s'il en a, l'y gardent avec son dossier.
+    _person_prune(db, person_id)
     db.commit()
     return jsonify(_promotion_payload(db, pid))
+
+# ===== FICHE DE REGISTRE : l'étudiant et son parcours d'une cohorte à l'autre =====
+# Le registre ne sert pas qu'à ranger le dossier une fois pour toutes : il rend
+# enfin lisible d'un seul coup le parcours de celui qui a changé de cohorte —
+# redoublement, reprise après césure, passage de FTP en ALT. Chaque cohorte
+# ignorait les autres ; l'écran d'effectif ouvre désormais la fiche de l'étudiant,
+# qui les raconte toutes.
+
+def _student_parcours(pdb, person_id):
+    """Inscriptions d'un étudiant, de la plus ancienne cohorte à la plus récente :
+    ce qu'il y fait (sous-cohorte, statut), les années où il y figure vraiment
+    (effectif calculé), ses RÉSULTATS de chaque année — moyennes d'UE par semestre
+    et à l'année, code UE, moyenne générale, décision de jury — et d'où il vient.
+
+    Les moyennes ne sont pas recalculées ici : elles sortent de `_jury_compute`,
+    le même calcul que la grille de jury, pour que la fiche et le jury ne puissent
+    pas dire deux choses différentes."""
+    fiches = [dict(r) for r in pdb.execute(
+        '''SELECT s.*, p.name AS promo, p.start_year
+           FROM promotion_students s JOIN promotions p ON p.id = s.promotion_id
+           WHERE s.person_id=? ORDER BY p.start_year, p.name''', (person_id,))]
+    origins = {r['student_id']: {'promo': r['promo'], 'reason': r['reason']}
+               for r in pdb.execute('''SELECT o.student_id, o.reason, p.name AS promo
+                                       FROM student_origin o
+                                       JOIN promotions p ON p.id = o.origin_promotion_id''')}
+    out = []
+    for f in fiches:
+        pid = f['promotion_id']
+        comp = _jury_compute(pdb, pid)
+        rosters = _year_rosters(pdb, pid, comp)
+        noms_ue = {v: k for k, v in comp['nums'].items()}
+        mob = _mobility_map(pdb, pid).get(f['id']) or {}
+        nb_notes = pdb.execute('SELECT COUNT(*) FROM student_marks WHERE student_id=?',
+                               (f['id'],)).fetchone()[0]
+        annees = []
+        for y in (1, 2, 3):
+            if f['id'] not in rosters.get(y, set()):
+                continue
+            debut = (f['start_year'] or 0) + y - 1
+            sid, so, se = str(f['id']), 'S%d' % (2 * y - 1), 'S%d' % (2 * y)
+            codes = comp['ue_codes'].get((y, sid)) or {}
+            ues = [{'num': u, 'name': noms_ue.get(u, ''),
+                    'odd': (comp['sem_avgs'].get(so, {}).get(sid) or {}).get(u),
+                    'even': (comp['sem_avgs'].get(se, {}).get(sid) or {}).get(u),
+                    'annual': (comp['year_avgs'][y].get(sid) or {}).get(u),
+                    'code': codes.get(u)} for u in (comp['ue_by_year'].get(y) or [])]
+            moyennes = [u['annual'] for u in ues if u['annual'] is not None]
+            annees.append({'year': y,
+                           'annee_univ': '%d-%d' % (debut, debut + 1) if debut else '',
+                           'en_cours': y == _annee_en_cours(f['start_year']),
+                           'formation': _year_formation_map(pdb, pid, y).get(f['id'],
+                                                                             f['formation'] or 'FTP'),
+                           'jury': comp['decisions'].get((y, str(f['id']))),
+                           'semestres': [so, se], 'ues': ues,
+                           # Moyenne générale de l'année : moyenne des moyennes
+                           # annuelles d'UE, comme dans la grille de jury.
+                           'gim': round(sum(moyennes) / len(moyennes), 2) if moyennes else None,
+                           'mobilite': {'semester': sm, 'etablissement': mob.get(sm)}
+                                       if (sm := next((x for x in (so, se) if x in mob), None)) else None})
+        devenir = _devenir_last(pdb, pid).get(f['id'])
+        out.append({'fiche_id': f['id'], 'promotion_id': pid, 'promotion': f['promo'],
+                    'start_year': f['start_year'], 'statut': f['statut'],
+                    'formation': f['formation'] or 'FTP', 'entry_year': f['entry_year'] or 1,
+                    'cesure_year': f['cesure_year'], 'abandon': _abandon_libelle(f),
+                    'origin': origins.get(f['id']), 'nb_notes': nb_notes, 'annees': annees,
+                    'devenir': dict(devenir, resume=_devenir_resume(devenir)) if devenir else None})
+    return out
+
+def _student_payload(pdb, person_id):
+    """Fiche de registre complète : l'étudiant, son dossier et son parcours."""
+    row = pdb.execute('SELECT * FROM students WHERE id=?', (person_id,)).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    d['ps_court'] = {f: _ps_court(f, d.get(f)) for f in _PS_FIELDS}
+    return {'student': d, 'parcours': _student_parcours(pdb, person_id),
+            'profile_options': {k: list(v) for k, v in _STUDENT_PROFILE_EDIT.items()},
+            'profile_labels': dict({k: dict(v) for k, v in _STUDENT_PROFILE_LABELS.items()},
+                                   bac=dict(_STUDENT_BAC_LABELS), cursus=dict(_STUDENT_CURSUS_LABELS)),
+            'ps_columns': [{'field': f, 'label': lbl, 'title': t, 'type': sql}
+                           for f, lbl, _p, sql, t in _PS_COLUMNS]}
+
+def _ps_saisie(raw, sql):
+    """Valeur saisie à la main dans le dossier ParcourSup, ramenée au type de la
+    colonne (rang entier, note décimale, texte). Illisible ou vide -> None : la
+    case se vide, elle ne garde pas une valeur qu'on n'a pas comprise."""
+    txt = ('' if raw is None else str(raw)).strip()
+    if not txt:
+        return None
+    if sql in ('INTEGER', 'REAL'):
+        try:
+            return int(txt) if sql == 'INTEGER' else round(float(txt.replace(',', '.')), 3)
+        except ValueError:
+            return None
+    return txt[:200]
+
+def _annee_en_cours(start_year):
+    """Année d'étude (1..3) que suit une cohorte pendant l'année universitaire
+    active, ou None si elle n'a pas commencé / est déjà sortie. C'est ce qui
+    permet de dire où en est un étudiant aujourd'hui plutôt que de le montrer en
+    3e année parce que son effectif y est projeté d'avance."""
+    active = get_current_year() or ''
+    try:
+        debut = int(active.split('-')[0])
+    except (ValueError, AttributeError):
+        return None
+    if not start_year:
+        return None
+    y = debut - start_year + 1
+    return y if 1 <= y <= 3 else None
+
+def _students_list(pdb):
+    """Le registre en un tableau : un étudiant par ligne, avec de quoi le chercher,
+    le trier et le filtrer — ses cohortes, l'année où il en est, sa sous-cohorte,
+    son dernier jury et sa dernière moyenne.
+
+    Le calcul de jury d'une cohorte sert à tous ses inscrits : il est fait une fois
+    par cohorte (quatre au total), jamais une fois par étudiant."""
+    etudiants = {r['id']: dict(r, inscriptions=[]) for r in pdb.execute('SELECT * FROM students')}
+    notes = {r['person_id']: r['n'] for r in pdb.execute(
+        '''SELECT s.person_id, COUNT(*) AS n FROM student_marks m
+           JOIN promotion_students s ON s.id = m.student_id GROUP BY s.person_id''')}
+    for p in pdb.execute('SELECT id, name, start_year FROM promotions'):
+        comp = _jury_compute(pdb, p['id'])
+        rosters = _year_rosters(pdb, p['id'], comp)
+        faces = {y: _year_formation_map(pdb, p['id'], y) for y in (1, 2, 3)}
+        for f in pdb.execute('''SELECT id, person_id, statut, formation, entry_year
+                                FROM promotion_students WHERE promotion_id=?''', (p['id'],)):
+            e = etudiants.get(f['person_id'])
+            if not e:
+                continue
+            annees = []
+            for y in (1, 2, 3):
+                if f['id'] not in rosters.get(y, set()):
+                    continue
+                sid = str(f['id'])
+                vals = [v for v in ((comp['year_avgs'][y].get(sid) or {}).get(u)
+                                    for u in (comp['ue_by_year'].get(y) or [])) if v is not None]
+                annees.append({'year': y,
+                               'formation': faces[y].get(f['id'], f['formation'] or 'FTP'),
+                               'decision': comp['decisions'].get((y, sid)),
+                               'gim': round(sum(vals) / len(vals), 2) if vals else None})
+            e['inscriptions'].append({
+                'fiche_id': f['id'], 'promotion_id': p['id'], 'promotion': p['name'],
+                'start_year': p['start_year'], 'statut': f['statut'],
+                'entry_year': f['entry_year'] or 1, 'formation': f['formation'] or 'FTP',
+                'annees': annees})
+    out = []
+    for e in etudiants.values():
+        ins = sorted(e['inscriptions'], key=lambda i: ((i['start_year'] or 0), i['promotion']))
+        e['inscriptions'] = ins
+        e['promos'] = [i['promotion'] for i in ins]
+        e['nb_notes'] = notes.get(e['id'], 0)
+        # « Où il en est » : sa dernière cohorte et la dernière année qu'il y suit.
+        derniere = ins[-1] if ins else None
+        # L'année en cours de sa cohorte s'il y figure ; sinon la dernière qu'il a
+        # suivie — celui qui a abandonné ou qui est sorti reste lisible tel quel.
+        an = None
+        if derniere and derniere['annees']:
+            y = _annee_en_cours(derniere['start_year'])
+            an = next((a for a in derniere['annees'] if a['year'] == y), None)
+            e['en_cours'] = an is not None
+            an = an or derniere['annees'][-1]
+        else:
+            e['en_cours'] = False
+        e['promotion'] = derniere['promotion'] if derniere else None
+        e['promotion_id'] = derniere['promotion_id'] if derniere else None
+        e['statut'] = derniere['statut'] if derniere else None
+        e['formation'] = (an or derniere or {}).get('formation')
+        e['annee'] = an['year'] if an else None
+        e['annee_univ'] = ('%d-%d' % (derniere['start_year'] + an['year'] - 1,
+                                      derniere['start_year'] + an['year'])
+                           if (an and derniere['start_year']) else '')
+        # Dernier jury prononcé et dernière moyenne connue : on remonte le parcours
+        # jusqu'à en trouver — l'année en cours n'est pas encore notée.
+        juges = [a for i in ins for a in i['annees'] if a['decision']]
+        notes_an = [a for i in ins for a in i['annees'] if a['gim'] is not None]
+        e['decision'] = juges[-1]['decision'] if juges else None
+        e['gim'] = notes_an[-1]['gim'] if notes_an else None
+        out.append(e)
+    out.sort(key=lambda e: ((e['nom'] or '').lower(), (e['prenom'] or '').lower()))
+    return out
+
+@app.route('/api/students', methods=['GET'])
+def list_students():
+    """Onglet Étudiants : tout le registre, filtres et tris se faisant à l'écran."""
+    err = _require_promo_read()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    return jsonify({
+        'students': _students_list(pdb),
+        'promotions': [dict(r) for r in pdb.execute(
+            'SELECT id, name, start_year FROM promotions ORDER BY start_year DESC, name')],
+        'statuses': list(_STUDENT_STATUSES),
+        'subcohorts': list(_SUBCOHORTS),
+        'years': [1, 2, 3],
+        # Décisions d'année prononçables par le jury (cf _jury_compute).
+        'decisions': ['ADM', 'ADMJ', 'AJAC', 'AJ', 'RED'],
+        'profile_options': {k: list(v) for k, v in _STUDENT_PROFILE_EDIT.items()},
+        'profile_labels': dict({k: dict(v) for k, v in _STUDENT_PROFILE_LABELS.items()},
+                               bac=dict(_STUDENT_BAC_LABELS), cursus=dict(_STUDENT_CURSUS_LABELS)),
+    })
+
+@app.route('/api/students/<int:person_id>', methods=['GET'])
+def get_student(person_id):
+    err = _require_promo_read()
+    if err:
+        return err
+    payload = _student_payload(get_promotions_db(), person_id)
+    if not payload:
+        return error_response('Étudiant introuvable', 404)
+    return jsonify(payload)
+
+@app.route('/api/students/<int:person_id>', methods=['PUT'])
+def update_student(person_id):
+    """État civil et profil d'entrée d'un étudiant. Ce qui est saisi ici vaut pour
+    toutes les cohortes où il est inscrit : c'est le même étudiant."""
+    err = _require_admin()
+    if err:
+        return err
+    db = get_promotions_db()
+    if not db.execute('SELECT 1 FROM students WHERE id=?', (person_id,)).fetchone():
+        return error_response('Étudiant introuvable', 404)
+    data = request.get_json() or {}
+    vals = {k: (data.get(k) or '').strip() for k in _PERSON_IDENT if k in data}
+    for key, allowed in _STUDENT_PROFILE_EDIT.items():
+        if key in data:
+            v = (data.get(key) or '').strip()
+            vals[key] = v if v in allowed else None
+    # Dossier ParcourSup : il vient de l'import du classement, qui fait foi — mais
+    # il reste rattrapable à la main pour qui n'y figure pas (eCandidat, ADIUT) ou
+    # que le rapprochement par nom a manqué. Une case vidée efface la valeur.
+    for field, _lbl, _pfx, sql, _t in _PS_COLUMNS:
+        if field in data:
+            vals[field] = _ps_saisie(data.get(field), sql)
+    if _person_set(db, person_id, vals):
+        db.commit()
+        _audit('STUDENT_UPDATE', ip=_client_ip(), user=session.get('user'),
+               student=person_id, champs=','.join(sorted(vals)))
+    return jsonify(_student_payload(db, person_id))
 
 @app.route('/api/promotions/<int:pid>/students/import', methods=['POST'])
 def import_promotion_students(pid):
@@ -4088,13 +4615,13 @@ def _year_effectif_payload(pdb, pid, year):
     devenirs = _devenir_map(pdb, pid)
     dernier_devenir = _devenir_last(pdb, pid)
     students = []
-    for r in pdb.execute('''SELECT id, numero, nom, prenom, naissance, statut,
-                                   abandon_semaine, abandon_annee,
-                                   formation, entry_year, cesure_year, sexe, bac, cursus, recrutement,
-                                   %s
-                            FROM promotion_students
-                            WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE'''
-                         % ', '.join(_PS_FIELDS), (pid,)):
+    for r in pdb.execute('''SELECT s.id, s.person_id, s.statut,
+                                   s.abandon_semaine, s.abandon_annee,
+                                   s.formation, s.entry_year, s.cesure_year, %s
+                            FROM promotion_students s %s
+                            WHERE s.promotion_id=?
+                            ORDER BY e.nom COLLATE NOCASE, e.prenom COLLATE NOCASE'''
+                         % (_person_sql(), _FICHE_JOIN), (pid,)):
         d = dict(r)
         d['formation'] = fm.get(r['id'], d.get('formation') or 'FTP')
         d['entrant'] = (r['entry_year'] or 1) == year
@@ -4379,10 +4906,10 @@ def add_year_student(pid, year):
         formation = (data.get('formation') or '').strip().upper()
         if formation not in _SUBCOHORTS:
             formation = 'FTP'
-        db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance,
+        person_id = _person_ensure(db, dict(data, nom=nom, prenom=prenom, numero=numero))
+        db.execute('''INSERT INTO promotion_students(promotion_id, person_id,
                                                      statut, formation, entry_year)
-                      VALUES(?,?,?,?,?,?,?,?)''',
-                   (pid, numero, nom, prenom, (data.get('naissance') or '').strip(), statut, formation, year))
+                      VALUES(?,?,?,?,?)''', (pid, person_id, statut, formation, year))
     db.commit()
     return jsonify(_year_effectif_payload(db, pid, year))
 
@@ -4569,7 +5096,8 @@ def import_year_parcoursup(pid, year):
             par_nom[k] = c
 
     fiches = [dict(r) for r in db.execute(
-        'SELECT id, nom, prenom FROM promotion_students WHERE promotion_id=?', (pid,))]
+        'SELECT s.person_id, e.nom, e.prenom FROM promotion_students s %s '
+        'WHERE s.promotion_id=?' % _FICHE_JOIN, (pid,))]
     matched = updated = 0
     sans_correspondance = []
     for fiche in fiches:
@@ -4586,9 +5114,7 @@ def import_year_parcoursup(pid, year):
         vals = {k: v for k, v in vals.items() if v is not None}
         if not vals:
             continue
-        db.execute('UPDATE promotion_students SET %s WHERE id=?'
-                   % ', '.join(f'{k}=?' for k in vals),
-                   list(vals.values()) + [fiche['id']])
+        _person_set(db, fiche['person_id'], vals)
         updated += 1
     db.commit()
     _audit('PROMO_PARCOURSUP_IMPORT', ip=_client_ip(), user=session.get('user'),
@@ -4689,8 +5215,8 @@ def _red_payload(pdb, pid):
     transfers = {r['student_id']: r['decision'] for r in pdb.execute(
         'SELECT student_id, decision FROM promotion_red_transfer WHERE promotion_id=?', (pid,))}
     info = {r['id']: r for r in pdb.execute(
-        '''SELECT id, numero, nom, prenom, naissance, formation FROM promotion_students
-           WHERE promotion_id=?''', (pid,))}
+        '''SELECT s.id, s.formation, e.numero, e.nom, e.prenom, e.naissance
+           FROM promotion_students s %s WHERE s.promotion_id=?''' % _FICHE_JOIN, (pid,))}
     rows = []
     for sid, year in red.items():
         s = info.get(sid)
@@ -4719,8 +5245,8 @@ def _red_incoming(pdb, pid):
     if not links:
         return []
     info = {r['id']: r for r in pdb.execute(
-        """SELECT id, numero, nom, prenom, formation, entry_year FROM promotion_students
-           WHERE promotion_id=?""", (pid,))}
+        """SELECT s.id, s.formation, s.entry_year, e.numero, e.nom, e.prenom
+           FROM promotion_students s %s WHERE s.promotion_id=?""" % _FICHE_JOIN, (pid,))}
     ref_all = _promo_coeffs(pdb, pid) or {}
     nums = _jury_ue_numbers(ref_all)
     promo_names = {r['id']: r['name'] for r in pdb.execute('SELECT id, name FROM promotions')}
@@ -4814,7 +5340,8 @@ def _red_decide(db, pid, sid, decision, detail=None, libelle=None):
     Décisions : 'FTP'/'ALT' (réinscription dans la promo cible à l'année redoublée),
     'ABANDON' (quitte, raison inconnue) ou 'AUTRE' (parti pour une autre formation,
     `detail` + `libelle` disant laquelle) — ces deux dernières closent l'année jugée."""
-    s = db.execute('SELECT * FROM promotion_students WHERE id=? AND promotion_id=?', (sid, pid)).fetchone()
+    s = db.execute('SELECT s.*, %s FROM promotion_students s %s WHERE s.id=? AND s.promotion_id=?'
+                   % (_person_sql(_PERSON_IDENT), _FICHE_JOIN), (sid, pid)).fetchone()
     if not s:
         return 'Étudiant introuvable'
     red = _red_students(db, pid)
@@ -4838,10 +5365,12 @@ def _red_decide(db, pid, sid, decision, detail=None, libelle=None):
         target_id = _ensure_target_promo(db, pid)   # crée la promo cible si absente
         if not target_id:
             return 'Promotion cible introuvable'
-        cur = db.execute('''INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance,
+        # Même étudiant, nouvelle inscription : son état civil, son sexe, sa voie de
+        # recrutement et son dossier ParcourSup le suivent sans être recopiés.
+        cur = db.execute('''INSERT INTO promotion_students(promotion_id, person_id,
                                                           statut, formation, entry_year)
-                            VALUES(?,?,?,?,?,'Actif',?,?)''',
-                         (target_id, s['numero'], s['nom'], s['prenom'], s['naissance'], decision, year))
+                            VALUES(?,?,'Actif',?,?)''',
+                         (target_id, s['person_id'], decision, year))
         target_student_id = cur.lastrowid
         # Parcours continu : la nouvelle fiche pointe vers celle d'origine, dont
         # le jury/les bulletins reprendront les années antérieures (_marks_rows)
@@ -4889,10 +5418,11 @@ def _cesure_payload(pdb, pid):
     transfers = {r['student_id']: r['formation'] for r in pdb.execute(
         'SELECT student_id, formation FROM promotion_cesure_transfer WHERE promotion_id=?', (pid,))}
     rows = []
-    for r in pdb.execute("""SELECT id, numero, nom, prenom, formation, cesure_year
-                            FROM promotion_students
-                            WHERE promotion_id=? AND statut='Césure'
-                            ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE""", (pid,)):
+    for r in pdb.execute("""SELECT s.id, s.formation, s.cesure_year, e.numero, e.nom, e.prenom
+                            FROM promotion_students s %s
+                            WHERE s.promotion_id=? AND s.statut='Césure'
+                            ORDER BY e.nom COLLATE NOCASE, e.prenom COLLATE NOCASE"""
+                         % _FICHE_JOIN, (pid,)):
         rows.append({'student_id': r['id'], 'numero': r['numero'], 'nom': r['nom'],
                      'prenom': r['prenom'], 'formation': r['formation'] or 'FTP',
                      'year': r['cesure_year'], 'decision': transfers.get(r['id'])})
@@ -4927,8 +5457,8 @@ def decide_cesure(pid, sid):
     if err:
         return err
     db = get_promotions_db()
-    s = db.execute("""SELECT * FROM promotion_students
-                      WHERE id=? AND promotion_id=? AND statut='Césure'""", (sid, pid)).fetchone()
+    s = db.execute("""SELECT s.* FROM promotion_students s
+                      WHERE s.id=? AND s.promotion_id=? AND s.statut='Césure'""", (sid, pid)).fetchone()
     if not s:
         return error_response("Cet étudiant n'est pas en césure", 400)
     year = s['cesure_year']
@@ -4946,11 +5476,11 @@ def decide_cesure(pid, sid):
     target_id = _ensure_target_promo(db, pid)     # crée la cohorte suivante si absente
     if not target_id:
         return error_response('Promotion cible introuvable', 400)
-    # Il reprend l'année de sa césure : entry_year = année de césure
-    cur = db.execute("""INSERT INTO promotion_students(promotion_id, numero, nom, prenom, naissance,
+    # Il reprend l'année de sa césure (entry_year) et sous la même identité : la
+    # fiche d'accueil désigne le même étudiant au registre, dossier compris.
+    cur = db.execute("""INSERT INTO promotion_students(promotion_id, person_id,
                                                        statut, formation, entry_year)
-                        VALUES(?,?,?,?,?,'Actif',?,?)""",
-                     (target_id, s['numero'], s['nom'], s['prenom'], s['naissance'], formation, year))
+                        VALUES(?,?,'Actif',?,?)""", (target_id, s['person_id'], formation, year))
     target_student_id = cur.lastrowid
     db.execute("""INSERT OR REPLACE INTO student_origin
                       (student_id, origin_student_id, origin_promotion_id, reason)
@@ -5040,8 +5570,9 @@ def _devenir_payload(pdb, pid, year):
     dev = _devenir_map(pdb, pid)
     fm = _year_formation_map(pdb, pid, year)
     rows = []
-    for r in pdb.execute('''SELECT id, numero, nom, prenom, formation FROM promotion_students
-                            WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''',
+    for r in pdb.execute('''SELECT s.id, s.formation, e.numero, e.nom, e.prenom
+                            FROM promotion_students s %s WHERE s.promotion_id=?
+                            ORDER BY e.nom COLLATE NOCASE, e.prenom COLLATE NOCASE''' % _FICHE_JOIN,
                          (pid,)):
         sid, jury = r['id'], comp['decisions'].get((year, str(r['id'])))
         if sid not in roster or not jury or jury == 'AJ':
@@ -6212,8 +6743,9 @@ def _jury_payload(pdb, pid, year, formation=None):
     ue_codes, decisions = comp['ue_codes'], comp['decisions']
     names_by_num = {v: k for k, v in nums.items()}
     students = [dict(r) for r in pdb.execute(
-        '''SELECT id, numero, nom, prenom, statut, formation FROM promotion_students
-           WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,))]
+        '''SELECT s.id, s.statut, s.formation, e.numero, e.nom, e.prenom
+           FROM promotion_students s %s WHERE s.promotion_id=?
+           ORDER BY e.nom COLLATE NOCASE, e.prenom COLLATE NOCASE''' % _FICHE_JOIN, (pid,))]
     roster = _year_rosters(pdb, pid, comp).get(year, set())
     fm = _year_formation_map(pdb, pid, year)          # sous-cohorte propre à cette année
     kept = []
@@ -6346,8 +6878,9 @@ def _semester_roster(pdb, pid, semester, formation=None, comp=None):
     l'année, filtre optionnel FTP/ALT. Renvoie (students, comp jury)."""
     year = (int(semester[1:]) + 1) // 2   # 1,1,2,2,3,3
     students = [dict(r) for r in pdb.execute(
-        '''SELECT id, numero, nom, prenom, statut, formation FROM promotion_students
-           WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,))]
+        '''SELECT s.id, s.statut, s.formation, e.numero, e.nom, e.prenom
+           FROM promotion_students s %s WHERE s.promotion_id=?
+           ORDER BY e.nom COLLATE NOCASE, e.prenom COLLATE NOCASE''' % _FICHE_JOIN, (pid,))]
     if comp is None:
         comp = _jury_compute(pdb, pid)
     roster = _year_rosters(pdb, pid, comp).get(year, set())
@@ -7319,7 +7852,8 @@ def import_promotion_notes(pid, semester):
     # Index des étudiants (n° Apogée -> id) et face de chacun : l'origine officielle
     # d'une note matière (calculée / importée) se décide par matière × face.
     students_by_num, faces = {}, {}
-    for s in pdb.execute('SELECT id, numero, formation FROM promotion_students WHERE promotion_id=?', (pid,)):
+    for s in pdb.execute('SELECT s.id, s.formation, e.numero FROM promotion_students s %s '
+                         'WHERE s.promotion_id=?' % _FICHE_JOIN, (pid,)):
         faces[s['id']] = _face(s['formation'])
         num = (s['numero'] or '').strip().lower()
         if num:
@@ -7467,8 +8001,9 @@ def export_promotion_notes(pid, semester):
     # → masquées, cohérent avec la grille de saisie.
     components = _visible_note_components(ref.get('components', []), ref.get('competences', []))
     students = pdb.execute(
-        '''SELECT id, numero, nom, prenom, naissance FROM promotion_students
-           WHERE promotion_id=? ORDER BY nom COLLATE NOCASE, prenom COLLATE NOCASE''', (pid,)).fetchall()
+        '''SELECT s.id, %s FROM promotion_students s %s WHERE s.promotion_id=?
+           ORDER BY e.nom COLLATE NOCASE, e.prenom COLLATE NOCASE'''
+        % (_person_sql(_PERSON_IDENT), _FICHE_JOIN), (pid,)).fetchall()
     marks = {}
     # with_mentions : ABI, VAQ et N sont écrits tels quels dans la colonne Note —
     # une case vide ne dirait pas si la matière est non notée, validée par acquis
@@ -11718,8 +12253,8 @@ def _stats_academique(pdb):
     promos = [dict(r) for r in pdb.execute(
         'SELECT * FROM promotions ORDER BY start_year DESC')]
     students = [dict(r) for r in pdb.execute(
-        '''SELECT s.*, p.name AS promo FROM promotion_students s
-           JOIN promotions p ON p.id = s.promotion_id''')]
+        '''SELECT s.*, %s, p.name AS promo FROM promotion_students s %s
+           JOIN promotions p ON p.id = s.promotion_id''' % (_person_sql(), _FICHE_JOIN))]
     prof = {s['id']: s for s in students}
 
     # --- profil d'entrée
