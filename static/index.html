@@ -5066,13 +5066,28 @@ function _etuListe() {
         // Chaque mot tapé doit se retrouver quelque part : « bau mor » trouve BAUDIN MORGANE.
         const champ = _sansAccent([e.nom, e.prenom, e.numero].join(' '));
         if (mots.some(m => !champ.includes(m))) return false;
-        if (f.promo && !(e.promos || []).includes(f.promo)) return false;
-        if (f.formation && e.formation !== f.formation) return false;
-        if (f.annee && String(e.annee || '') !== f.annee) return false;
-        if (f.statut && e.statut !== f.statut) return false;
+        // Sexe et recrutement décrivent la personne : ils se lisent sur elle.
         if (f.sexe && e.sexe !== f.sexe) return false;
         if (f.recrut && e.recrutement !== f.recrut) return false;
-        if (f.decision && e.decision !== f.decision) return false;
+        if (f.promo && !(e.promos || []).includes(f.promo)) return false;
+        // Cohorte, année, sous-cohorte, statut et jury se lisent sur le PARCOURS et
+        // non sur « où il en est aujourd'hui » : « 23-26, année 1 » doit rendre
+        // l'effectif de cette année-là, exactement comme l'onglet Effectifs — celui
+        // qui l'a suivie puis a poursuivi en fait partie. Sans filtre de parcours,
+        // ces critères portent sur sa situation actuelle.
+        const ins = (e.inscriptions || []).filter(i => !f.promo || i.promotion === f.promo);
+        let annees = ins.reduce((t, i) => t.concat(i.annees || []), []);
+        if (f.annee) {
+            annees = annees.filter(a => String(a.year) === f.annee);
+            if (!annees.length) return false;
+        }
+        const parcours = !!(f.promo || f.annee);
+        if (f.formation && !(parcours ? annees.some(a => a.formation === f.formation)
+                                      : e.formation === f.formation)) return false;
+        if (f.statut && !(parcours ? ins.some(i => i.statut === f.statut)
+                                   : e.statut === f.statut)) return false;
+        if (f.decision && !(parcours ? annees.some(a => a.decision === f.decision)
+                                     : e.decision === f.decision)) return false;
         return true;
     });
 }
@@ -5087,6 +5102,7 @@ function renderEtudiants() {
     const filtres = document.getElementById('etu-filtres');
     if (filtres) filtres.style.display = _etuSelected ? 'none' : '';
     if (_etuSelected) return renderEtudiantFiche();
+    const f = _etuFiltres();
     const liste = _etuListe();
     const { col, dir } = _etuSort;
     // Tri : les cases vides finissent toujours en bas, dans un sens comme dans l'autre.
@@ -5108,6 +5124,23 @@ function renderEtudiants() {
         style="cursor:pointer;white-space:nowrap">${esc(label)}${col === col2 ? (dir > 0 ? ' ▲' : ' ▼') : ''}</th>`;
     const pill = (txt, bg, titre) => `<span title="${esc(titre || '')}" style="display:inline-block;padding:1px 7px;
         border-radius:6px;font-size:.7rem;font-weight:700;background:${bg}">${esc(txt)}</span>`;
+    // Colonne Année : sur une cohorte choisie, les années qu'il y a suivies
+    // (« A1 A2 A3 ») — c'est ce qu'on cherche à lire quand on filtre une
+    // promotion, et cela explique la présence d'un redoublant dans l'effectif
+    // d'une année qu'il a quittée depuis. Sans filtre de cohorte, la colonne dit
+    // où il en est : l'année en cours, ou la dernière qu'il a suivie.
+    const anneeCell = e => {
+        if (!f.promo) return e.annee
+            ? (e.en_cours ? '' : '<span style="color:#9ca3af">·</span> ') + 'A' + e.annee : '—';
+        const ys = (e.inscriptions || []).filter(i => i.promotion === f.promo)
+            .reduce((t, i) => t.concat((i.annees || []).map(a => a.year)), []);
+        return ys.length ? ys.map(y => 'A' + y).join(' ') : '—';
+    };
+    const anneeTitre = e => f.promo
+        ? 'Années suivies dans ' + f.promo + ((e.promos || []).length > 1
+            ? ' — aussi inscrit en ' + e.promos.filter(p => p !== f.promo).join(', ') : '')
+        : (e.en_cours ? 'Année en cours (' + (e.annee_univ || '') + ')'
+                      : "Dernière année suivie — sa cohorte est sortie ou il l'a quittée");
     const rows = liste.map((e, i) => `<tr onclick="openEtudiant(${e.id})" style="cursor:pointer"
             title="Ouvrir la fiche de ${esc((e.nom || '') + ' ' + (e.prenom || ''))}">
         <td style="color:#9ca3af">${i + 1}</td>
@@ -5121,9 +5154,7 @@ function renderEtudiants() {
         <td style="text-align:center;color:#6b7280">${e.ps_classement == null ? '—' : e.ps_classement}</td>
         <td>${esc(e.promotion || '—')}</td>
         <td style="text-align:center">${esc(e.formation || '—')}</td>
-        <td style="text-align:center" title="${e.en_cours ? esc('Année en cours (' + (e.annee_univ || '') + ')')
-            : 'Dernière année suivie — sa cohorte est sortie ou il l\'a quittée'}">${e.annee
-            ? (e.en_cours ? '' : '<span style="color:#9ca3af">·</span> ') + 'A' + e.annee : '—'}</td>
+        <td style="text-align:center" title="${esc(anneeTitre(e))}">${anneeCell(e)}</td>
         <td>${e.statut ? pill(e.statut, _statutColor(e.statut)) : ''}</td>
         <td style="text-align:center">${e.decision ? pill(e.decision, _JURY_COUL[e.decision] || '#f3f4f6',
             _JURY_LIB[e.decision] || '') : '<span style="color:#d1d5db">—</span>'}</td>
@@ -5148,7 +5179,8 @@ function renderEtudiants() {
                     ${th('recrutement', 'Recrut.', 'Voie de recrutement')}
                     ${th('ps_classement', 'Rang PS', 'Rang au classement ParcourSup')}
                     ${th('promotion', 'Cohorte', 'Sa dernière cohorte')}
-                    ${th('formation', 'FTP/ALT')}${th('annee', 'Année', "Année d'étude où il en est")}
+                    ${th('formation', 'FTP/ALT')}${th('annee', 'Année', f.promo ? 'Années suivies dans la cohorte filtrée'
+                        : "Année d'étude où il en est")}
                     ${th('statut', 'Statut')}${th('decision', 'Jury', 'Dernière décision de jury')}
                     ${th('gim', 'Moyenne', 'Dernière moyenne générale annuelle connue')}
                     ${th('nb_notes', 'Notes', 'Nombre de notes saisies')}</tr></thead>
