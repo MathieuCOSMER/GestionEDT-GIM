@@ -1512,6 +1512,14 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
         )
     ''')
+    # Où se trouve l'entreprise d'accueil (alternance) ou le lieu du stage : la
+    # ville et son département. Ils servent à voir d'où viennent les terrains de
+    # l'alternance et des stages, et à retrouver un tuteur sur une carte.
+    for _col in ('ville', 'departement'):
+        try:
+            db.execute('ALTER TABLE student_tutors ADD COLUMN %s TEXT' % _col)
+        except sqlite3.OperationalError:
+            pass
     # Le « retrait d'une année » (action='remove') avait été supprimé parce qu'il
     # rendait la fiche invisible partout, sans moyen de la remettre. Il est de
     # nouveau posé — mais la fiche retirée reste listée dans « Autres fiches de la
@@ -4992,12 +5000,22 @@ def get_year_tuteurs(pid, year):
     if not payload:
         return error_response('Promotion introuvable', 404)
     by_student = {}
-    for r in pdb.execute('''SELECT student_id, year, tuteur_univ, tuteur_entreprise, entreprise
+    for r in pdb.execute('''SELECT student_id, year, tuteur_univ, tuteur_entreprise, entreprise,
+                                   ville, departement
                             FROM student_tutors WHERE promotion_id = ? AND year <= ?''',
                          (pid, year)):
         by_student.setdefault(r['student_id'], {})[r['year']] = r
     students = []
     for s in payload['students']:
+        # L'effectif de l'ANNÉE, et lui seul : `_year_effectif_payload` rend toutes
+        # les fiches de la cohorte — y compris celles qui n'en font plus partie
+        # (abandon, ajourné, entrant d'une année ultérieure) — pour que l'écran
+        # d'effectif puisse les lister à part. Les reprendre ici faisait afficher
+        # des alternants et des stagiaires qui ne sont plus là. Celui qui est en
+        # césure cette année-là n'y est pas non plus : il n'a ni entreprise ni
+        # stage à renseigner.
+        if s.get('hors_annee') or s.get('cesure'):
+            continue
         t = by_student.get(s['id'], {})
         entry, inherited = None, None
         if year in t:
@@ -5011,6 +5029,8 @@ def get_year_tuteurs(pid, year):
             'tuteur_univ': (entry['tuteur_univ'] if entry else '') or '',
             'tuteur_entreprise': (entry['tuteur_entreprise'] if entry else '') or '',
             'entreprise': (entry['entreprise'] if entry else '') or '',
+            'ville': (entry['ville'] if entry else '') or '',
+            'departement': (entry['departement'] if entry else '') or '',
             'inherited_from': inherited,
         })
     return jsonify({'year': year, 'students': students,
@@ -5018,9 +5038,10 @@ def get_year_tuteurs(pid, year):
 
 @app.route('/api/promotions/<int:pid>/tuteurs/<int:year>/<int:sid>', methods=['PUT'])
 def set_year_tuteurs(pid, year, sid):
-    """Enregistre les tuteurs d'un étudiant pour une année d'étude. Tous les
-    champs vides → suppression de la ligne de l'année (un ALT retombe alors sur
-    la valeur héritée de l'année précédente, s'il y en a une)."""
+    """Enregistre les tuteurs d'un étudiant pour une année d'étude, et le lieu de
+    son entreprise ou de son stage (ville, département). Tous les champs vides →
+    suppression de la ligne de l'année (un ALT retombe alors sur la valeur héritée
+    de l'année précédente, s'il y en a une)."""
     err = _require_admin()
     if err:
         return err
@@ -5034,19 +5055,24 @@ def set_year_tuteurs(pid, year, sid):
     tu = (data.get('tuteur_univ') or '').strip()
     te = (data.get('tuteur_entreprise') or '').strip()
     en = (data.get('entreprise') or '').strip()
-    if not (tu or te or en):
+    vi = (data.get('ville') or '').strip()[:60]
+    dp = (data.get('departement') or '').strip()[:30]
+    if not (tu or te or en or vi or dp):
         pdb.execute('DELETE FROM student_tutors WHERE promotion_id = ? AND student_id = ? AND year = ?',
                     (pid, sid, year))
     else:
         pdb.execute('''INSERT INTO student_tutors
-                           (promotion_id, student_id, year, tuteur_univ, tuteur_entreprise, entreprise)
-                       VALUES (?, ?, ?, ?, ?, ?)
+                           (promotion_id, student_id, year, tuteur_univ, tuteur_entreprise,
+                            entreprise, ville, departement)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT (student_id, year) DO UPDATE SET
                            tuteur_univ = excluded.tuteur_univ,
                            tuteur_entreprise = excluded.tuteur_entreprise,
                            entreprise = excluded.entreprise,
+                           ville = excluded.ville,
+                           departement = excluded.departement,
                            updated_at = CURRENT_TIMESTAMP''',
-                    (pid, sid, year, tu, te, en))
+                    (pid, sid, year, tu, te, en, vi, dp))
     pdb.commit()
     return jsonify({'message': 'Tuteurs enregistrés'})
 

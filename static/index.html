@@ -4183,6 +4183,10 @@ function renderTuteurs() {
                 placeholder="Nom du tuteur" style="${inputStyle}"></td>
             <td><input class="tut-soc" value="${esc(s.entreprise)}" onchange="saveTuteurRow(${s.id})"
                 placeholder="Entreprise / organisme" style="${inputStyle}"></td>
+            <td><input class="tut-ville" value="${esc(s.ville || '')}" onchange="saveTuteurRow(${s.id})"
+                placeholder="Ville" style="${inputStyle}"></td>
+            <td><input class="tut-dep" value="${esc(s.departement || '')}" onchange="saveTuteurRow(${s.id})"
+                placeholder="83" title="Département : numéro ou nom" style="${inputStyle};text-align:center"></td>
             <td class="tut-badge" style="font-size:.72rem;color:#6b7280;white-space:nowrap">${
                 s.inherited_from ? `hérité de l'année ${s.inherited_from}` : ''}</td>
         </tr>`).join('');
@@ -4194,6 +4198,8 @@ function renderTuteurs() {
                     <th style="width:190px">Tuteur universitaire</th>
                     <th style="width:190px">Tuteur entreprise</th>
                     <th style="width:190px">Entreprise</th>
+                    <th style="width:130px" title="Ville de l'entreprise ou du lieu de stage">Ville</th>
+                    <th style="width:70px" title="Département : numéro (83) ou nom (Var)">Dép.</th>
                     <th style="width:130px"></th></tr></thead>
                 <tbody>${rows}</tbody>
             </table></div>`;
@@ -4220,12 +4226,14 @@ async function saveTuteurRow(sid) {
         tuteur_univ: row.querySelector('.tut-univ').value,
         tuteur_entreprise: row.querySelector('.tut-ent').value.trim(),
         entreprise: row.querySelector('.tut-soc').value.trim(),
+        ville: row.querySelector('.tut-ville').value.trim(),
+        departement: row.querySelector('.tut-dep').value.trim(),
     };
     try {
         await api(`/promotions/${_promoId}/tuteurs/${_tutYear}/${sid}`,
             { method: 'PUT', body: JSON.stringify(body) });
         const badge = row.querySelector('.tut-badge');
-        if (!body.tuteur_univ && !body.tuteur_entreprise && !body.entreprise) {
+        if (!Object.values(body).some(v => v)) {
             // Tout effacé : un ALT peut retomber sur la valeur héritée → recharger
             loadTuteurs();
         } else if (badge) {
