@@ -4296,7 +4296,8 @@ function renderPromoEffectif() {
         const parts = Object.keys(profLabels).map(field => {
             const codes = (profOpts[field] || []).filter(o => profLabel(field, o));
             if (!codes.length) return '';
-            const head = field === 'recrutement' ? 'Recrut.' : field.charAt(0).toUpperCase() + field.slice(1);
+            const head = { recrutement: 'Recrut.', bac: 'Série', cursus: 'Études ant.' }[field]
+                || field.charAt(0).toUpperCase() + field.slice(1);
             return `<span><span style="color:#6b7280">${head} :</span> ` + codes.map(o =>
                 `<span style="white-space:nowrap"><strong>${esc(o)}</strong> = ${esc(profLabel(field, o))}</span>`
             ).join('<span style="color:#d1d5db"> · </span>') + '</span>';
@@ -4305,19 +4306,42 @@ function renderPromoEffectif() {
         return `<div style="font-size:.78rem;color:#4b5563;background:#f9fafb;border:1px solid #e5e7eb;
             border-radius:8px;padding:7px 12px;margin:8px 0 4px;display:flex;flex-wrap:wrap;gap:4px 20px">${parts.join('')}</div>`;
     };
-    // Colonnes reprises du classement ParcourSup (rang, note, dossier du candidat).
-    // Elles ne se saisissent pas : elles viennent de l'import du classement, seule
-    // source qui fasse foi. Les valeurs sont affichées ABRÉGÉES (sigles usuels
-    // calculés côté serveur, cf. _ps_court) : en toutes lettres, « Ingénierie,
-    // innovation et développement durable » prenait à lui seul plus de large que
-    // le reste de la fiche. L'intitulé complet est en infobulle sur la cellule,
-    // et l'export Excel, lui, garde tout en clair.
-    const psCols = d.ps_columns || [];
+    // ===== Scolarité antérieure : ce que le candidat a fait avant le BUT =====
+    // Un seul bandeau pour tout l'avant-BUT : le pays, la série du bac, le nombre
+    // d'années qui séparent ce bac de l'entrée en BUT, les spécialités, les études
+    // suivies entre-temps, puis le rang et la note du classement.
+    // Trois de ces colonnes se saisissent (pays, série, écart au bac, études
+    // antérieures) ; les autres sont reprises du classement ParcourSup, qui fait
+    // foi — elles se corrigent sur la fiche de l'étudiant (onglet Étudiants).
+    // Les valeurs importées sont affichées ABRÉGÉES (sigles usuels calculés côté
+    // serveur, cf. _ps_court) : en toutes lettres, « Ingénierie, innovation et
+    // développement durable » prenait à lui seul plus de large que le reste de la
+    // fiche. L'intitulé complet est en infobulle, et l'export Excel garde tout.
+    const scolCols = d.scolarite_columns || [];
     // Garde-fou de largeur pour les colonnes composées : une valeur qu'aucune
     // abréviation ne couvre s'affiche en clair et ne doit pas étirer le tableau.
-    const psLarge = { ps_specialites: 135, ps_scolarite: 100, ps_spe_abandon: 90,
-                      ps_spe_bacpro: 90, ps_profil: 80 };
-    const psCell = (s, col) => {
+    const scolLarge = { ps_specialites: 135, ps_spe_abandon: 90, ps_spe_bacpro: 90 };
+    const scolSaisie = (s, col) => {
+        // Les études antérieures n'ont de sens que si le bac date d'avant : pour
+        // qui est entré juste après (0 an), la case reste fermée.
+        if (col.kind === 'liste')
+            return (col.field === 'cursus' && s.bac_ecart === 0)
+                ? `<span title="Entré juste après son bac — pas d'études entre les deux"
+                     style="color:#d1d5db">—</span>`
+                : profSelect(s, col.field);
+        const v = s[col.field];
+        const style = 'padding:2px 4px;border:1px solid #d1d5db;border-radius:4px;font-size:.78rem';
+        if (col.kind === 'entier')
+            return `<input type="number" min="0" max="20" value="${v == null ? '' : v}"
+                title="${esc(col.title || '')}" onchange="changeStudentField(${s.id}, '${col.field}', this.value)"
+                style="${style};width:46px;text-align:center">`;
+        return `<input value="${esc(v == null ? '' : v)}" maxlength="40"
+            title="${esc(col.title || '')}" onchange="changeStudentField(${s.id}, '${col.field}', this.value)"
+            style="${style};width:58px;text-transform:uppercase">`;
+    };
+    const scolCell = (s, col) => {
+        if (col.kind !== 'import')
+            return `<td style="text-align:center">${scolSaisie(s, col)}</td>`;
         const v = s[col.field];
         if (v === null || v === undefined || v === '')
             return '<td style="color:#d1d5db;text-align:center">—</td>';
@@ -4328,20 +4352,20 @@ function renderPromoEffectif() {
         const court = ((s.ps_court || {})[col.field]) || v;
         const plein = String(v);
         const tip = court === plein ? '' : ` title="${esc(plein)}"`;
-        const w = psLarge[col.field];
+        const w = scolLarge[col.field];
         if (!w) return `<td${tip} style="white-space:nowrap">${esc(String(court))}</td>`;
         return `<td><div${tip} style="max-width:${w}px;overflow:hidden;
             text-overflow:ellipsis;white-space:nowrap">${esc(String(court))}</div></td>`;
     };
-    // En-têtes ParcourSup : regroupés sous un bandeau, pour qu'on voie d'un coup
-    // d'œil où s'arrête la fiche de l'étudiant et où commence son dossier d'entrée.
-    // Chaque intitulé court porte en infobulle son sens complet ET la légende des
-    // abréviations de sa colonne — une légende sous le tableau en ferait dix lignes.
-    const psHead = psCols.map(c =>
+    // En-têtes du groupe : un bandeau, pour qu'on voie d'un coup d'œil où s'arrête
+    // la fiche de l'étudiant et où commence sa scolarité d'avant. Chaque intitulé
+    // court porte en infobulle son sens complet ET la légende des abréviations de
+    // sa colonne — une légende sous le tableau en ferait dix lignes.
+    const scolHead = scolCols.map(c =>
         `<th title="${esc(c.title || c.label)}" style="background:#f5f3ff">${esc(c.label)}</th>`).join('');
-    const psGroup = psCols.length
-        ? `<th colspan="${psCols.length}" style="background:#ede9fe;color:#5b21b6;text-align:center"
-             title="Repris du classement ParcourSup — importez le classement pour les remplir">ParcourSup</th>`
+    const scolGroup = scolCols.length
+        ? `<th colspan="${scolCols.length}" style="background:#ede9fe;color:#5b21b6;text-align:center"
+             title="Ce que le candidat a fait avant le BUT. Les colonnes grisées viennent du classement ParcourSup : importez-le pour les remplir.">Scolarité antérieure</th>`
         : '';
 
     // Bascule FTP↔ALT à partir de l'année affichée (années antérieures conservées)
@@ -4420,8 +4444,8 @@ function renderPromoEffectif() {
             <td>${esc(s.numero || '')}</td>
             <td>${esc(s.naissance || '')}</td>
             <td>${profSelect(s, 'sexe')}</td>
-            ${psCols.map(c => psCell(s, c)).join('')}
             <td>${profSelect(s, 'recrutement')}</td>
+            ${scolCols.map(c => scolCell(s, c)).join('')}
             <td style="white-space:nowrap">${miCell(s)}</td>
             <td style="white-space:nowrap"><select onchange="changeStudentStatus(${s.id}, this.value)"${s.statut === 'RED' || s.statut === 'Césure' ? ` title="Statut issu du jury et de son devenir — il se change dans l'onglet Devenir"` : ''}
                 style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${_statutColor(s.statut)}">${optList(s.statut)}</select>${semSelect(s)}${cesSelect(s)}</td>
@@ -4437,12 +4461,12 @@ function renderPromoEffectif() {
                             <th rowspan="2" title="Numéro Apogée de l'étudiant">Apogée</th>
                             <th rowspan="2" title="Date de naissance">Naiss.</th>
                             <th rowspan="2" title="Sexe de l'étudiant (M / F)">Sexe</th>
-                            ${psGroup}
                             <th rowspan="2" title="Voie de recrutement — PS : ParcourSup · EC : eCandidat · ADIUT : candidats étrangers">Recrut.</th>
+                            ${scolGroup}
                             <th rowspan="2" title="Mobilité internationale : semestre effectué dans un établissement partenaire. Ses UE sont validées par équivalence, sans note.">MI</th>
                             <th rowspan="2" style="width:190px">Statut</th>
                             <th rowspan="2" style="width:120px" title="Sous-cohorte FTP / ALT, et suppression de la fiche">Cohorte</th></tr>
-                        <tr>${psHead}</tr>
+                        <tr>${scolHead}</tr>
                     </thead>
                     <tbody>${rows}</tbody>
                 </table>
@@ -4762,12 +4786,15 @@ async function changeStudentStatus(sid, statut) {
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
-// Profil d'entrée (BAC / cursus / recrutement) : mise à jour sans rechargement
+// Profil et scolarité antérieure : enregistrés sans rechargement, sauf quand la
+// saisie en entraîne une autre — un recrutement ParcourSup pose le pays FR, qu'il
+// faut bien relire pour le voir apparaître.
 async function changeStudentField(sid, field, value) {
     try {
         await api(`/promotions/${_promoId}/students/${sid}`, { method: 'PUT', body: JSON.stringify({ [field]: value }) });
         const s = ((_effData && _effData.students) || []).find(x => x.id === sid);
         if (s) s[field] = value;
+        if (field === 'recrutement' || field === 'bac_ecart') loadEffectif();
     } catch (e) { toast('Erreur : ' + e.message, 'error'); loadEffectif(); }
 }
 
@@ -5240,6 +5267,10 @@ function studentSections(d, opts = {}) {
     const champ = (label, field, aide) => `<div class="form-group" style="margin:0">
         <label style="font-size:.78rem" title="${esc(aide || '')}">${label}</label>
         <input value="${esc(s[field] || '')}"${dis} onchange="changeRegistreField('${field}', this.value)"></div>`;
+    const nombre = (label, field, aide) => `<div class="form-group" style="margin:0">
+        <label style="font-size:.78rem" title="${esc(aide || '')}">${label}</label>
+        <input type="number" min="0" max="20" value="${s[field] == null ? '' : s[field]}"${dis}
+            onchange="changeRegistreField('${field}', this.value)"></div>`;
     const liste = (label, field, aide) => {
         const cur = s[field] || '';
         const opts2 = ['<option value="">—</option>'].concat(((d.profile_options || {})[field] || []).map(o => {
@@ -5257,8 +5288,10 @@ function studentSections(d, opts = {}) {
             ${champ('Naissance', 'naissance', 'Date de naissance (jj/mm/aaaa)')}
             ${liste('Sexe', 'sexe')}
             ${liste('Recrutement', 'recrutement', 'PS : ParcourSup · EC : eCandidat · ADIUT : candidats étrangers')}
+            ${champ('Pays', 'pays', "Pays de la scolarité antérieure — FR par défaut pour un recrutement ParcourSup")}
             ${liste('Série de bac', 'bac', "Reprise du classement ParcourSup ; à compléter à la main pour qui n'y figure pas")}
-            ${liste('Cursus antérieur', 'cursus', 'Ce que le candidat faisait avant le BUT')}
+            ${nombre('Ans depuis le bac', 'bac_ecart', "Années entre l'obtention du bac et l'entrée en BUT — 0 : entré juste après")}
+            ${liste('Études antérieures', 'cursus', "Études suivies entre le bac et le BUT — à renseigner dès que « Ans depuis le bac » est supérieur à 0")}
         </div>`;
 
     const etiq = (txt, bg, titre) => `<span title="${esc(titre || '')}" style="display:inline-block;

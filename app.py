@@ -781,31 +781,30 @@ _STUDENT_SEXE = ['M', 'F']
 # Séries de bac : codes tels qu'ils figurent dans la colonne BAC des PV de jury
 # (nomenclature Apogée). « Autre » recueille les séries qui n'y sont pas encore
 # apparues, pour qu'une valeur inconnue reste enregistrable.
-_STUDENT_BAC = ['NBGE', 'TI2D', 'STMG', 'S', 'S-MA', 'ETR', 'Autre']
+_STUDENT_BAC = ['NBGE', 'TI2D', 'STMG', 'S', 'S-MA', 'PRO', 'ETR', 'Autre']
 # Codes de bac renommés (anciens -> nouveaux), rejoués au démarrage sur les
 # lignes déjà saisies pour qu'elles restent des valeurs autorisées.
-_STUDENT_BAC_RENAMES = {'SI2D': 'TI2D', 'STI2D': 'TI2D', 'GEN': 'NBGE',
-                        'PRO': 'Autre', 'STL': 'Autre'}
-_STUDENT_CURSUS = ['ING', 'REP', 'BAC', 'PP', 'BTS']  # École d'ingé / Reprise d'étude / PostBac / PostPrépa / BTS
+# 'PRO' n'y figure plus : le baccalauréat professionnel est une série à part
+# entière (le recrutement en compte, et ses spécialités ont leur colonne).
+_STUDENT_BAC_RENAMES = {'SI2D': 'TI2D', 'STI2D': 'TI2D', 'GEN': 'NBGE', 'STL': 'Autre'}
+# Études suivies ENTRE le bac et l'entrée en BUT. Elles ne se renseignent que
+# pour qui n'est pas entré juste après son bac (cf `bac_ecart`) : « post-bac »
+# n'est plus un cursus, c'est un écart nul.
+_STUDENT_CURSUS = ['PREPA', 'BTS', 'LIC', 'BUT', 'REP']
 # Renommage des codes cursus (anciens -> nouveaux), rejoué au démarrage sur les
-# lignes déjà saisies pour qu'elles restent des valeurs autorisées.
-_STUDENT_CURSUS_RENAMES = {'EI': 'ING', 'RE': 'REP', 'PB': 'BAC', 'PrP': 'PP'}
+# lignes déjà saisies pour qu'elles restent des valeurs autorisées. La chaîne se
+# rejoue dans l'ordre : 'PrP' -> 'PP' -> 'PREPA'.
+_STUDENT_CURSUS_RENAMES = {'EI': 'ING', 'RE': 'REP', 'PB': 'BAC', 'PrP': 'PP', 'PP': 'PREPA'}
 _STUDENT_RECRUT = ['PS', 'EC', 'ADIUT']               # ParcourSup / eCandidat / ADIUT (étrangers)
 # Champs du profil d'entrée SAISISSABLES à l'écran (colonnes du tableau d'effectif).
 # BAC et cursus n'en font plus partie : la série de bac vient désormais du classement
 # ParcourSup (colonne « Série », recopiée dans `bac` pour les statistiques) et le
 # cursus antérieur se lit dans les colonnes ParcourSup Profil / Diplôme.
-_STUDENT_PROFILE = {'sexe': _STUDENT_SEXE, 'recrutement': _STUDENT_RECRUT}
-# Profil modifiable sur la FICHE de l'étudiant (onglet Étudiants) : les deux
-# précédents, plus la série de bac et le cursus antérieur. Ceux-là viennent
-# normalement du classement ParcourSup, mais un candidat qui n'y figure pas
-# (eCandidat, ADIUT, dossier non rapproché) les laisserait vides à jamais — et les
-# statistiques avec. La fiche est l'endroit où les compléter à la main.
-_STUDENT_PROFILE_EDIT = {'sexe': _STUDENT_SEXE, 'recrutement': _STUDENT_RECRUT,
-                         'bac': _STUDENT_BAC, 'cursus': _STUDENT_CURSUS}
+_STUDENT_PROFILE = {'sexe': _STUDENT_SEXE, 'recrutement': _STUDENT_RECRUT,
+                    'bac': _STUDENT_BAC, 'cursus': _STUDENT_CURSUS}
 # Tous les champs de profil portés par une fiche, saisis à l'écran ou alimentés par
 # un import : les statistiques mesurent la complétude des uns comme des autres.
-_STUDENT_PROFILE_FIELDS = ('sexe', 'bac', 'cursus', 'recrutement')
+_STUDENT_PROFILE_FIELDS = ('sexe', 'recrutement', 'pays', 'bac', 'bac_ecart', 'cursus')
 # Signification des codes, rappelée au-dessus du tableau d'effectif (onglet
 # Promotions) et en bas de l'export. Un code sans libellé n'y figure pas : ceux
 # du sexe (M/F) n'en ont pas.
@@ -813,11 +812,43 @@ _STUDENT_PROFILE_LABELS = {
     'recrutement': {'PS': 'ParcourSup', 'EC': 'eCandidat',
                     'ADIUT': 'ADIUT (candidats étrangers)'},
 }
+# Scolarité antérieure : ce que le candidat a fait AVANT le BUT — où, quel bac,
+# combien d'années avant, avec quelles spécialités et quelles études entre-temps.
+# Le groupe est décrit ici une seule fois : l'écran d'effectif rend ses colonnes
+# dans cet ordre et l'export Excel les reprend telles quelles.
+#   (champ, en-tête, saisie, infobulle)
+# saisie : 'texte' / 'liste' (codes de _STUDENT_PROFILE) / 'entier' / 'import'
+# (repris du classement ParcourSup, non saisissable ici — il se corrige sur la
+#  fiche de l'étudiant, onglet Étudiants).
+_SCOLARITE_COLUMNS = [
+    ('pays', 'Pays', 'texte',
+     "Pays de la scolarité antérieure — FR par défaut pour un recrutement ParcourSup, "
+     "à renseigner pour les autres voies"),
+    ('bac', 'Série', 'liste',
+     'Série du baccalauréat obtenu — NBGE : nouveau bac général · TI2D : STI2D · '
+     'PRO : baccalauréat professionnel · ETR : diplôme étranger'),
+    ('bac_ecart', 'Ans', 'entier',
+     "Années écoulées entre l'obtention du bac et l'entrée en BUT — 0 : entré juste après"),
+    ('ps_specialites', 'Spé term.', 'import', None),
+    ('ps_spe_abandon', 'Spé abd.', 'import', None),
+    ('ps_spe_bacpro', 'Spé pro', 'import', None),
+    ('cursus', 'Études ant.', 'liste',
+     "Études suivies entre le bac et le BUT — à renseigner dès que « Ans » est supérieur à 0"),
+    ('ps_classement', 'Rang PS', 'import', None),
+    ('ps_note', 'Note PS', 'import', None),
+]
 # Codes qui ne sont plus saisis mais restent lus (statistiques, fiches anciennes).
-_STUDENT_BAC_LABELS = {'NBGE': 'Nouveau Bac Général', 'TI2D': 'STI2D', 'ETR': 'Étranger'}
-_STUDENT_CURSUS_LABELS = {'ING': "École d'ingénieur", 'REP': "Reprise d'études",
-                          'BAC': 'Post-Bac', 'PP': 'Post-Prépa',
-                          'BTS': 'Brevet de technicien supérieur'}
+_STUDENT_BAC_LABELS = {'NBGE': 'Nouveau Bac Général', 'TI2D': 'STI2D',
+                       'PRO': 'Bac professionnel', 'ETR': 'Étranger'}
+_STUDENT_CURSUS_LABELS = {'PREPA': 'Classe préparatoire', 'BTS': 'BTS',
+                          'LIC': 'Licence', 'BUT': 'BUT (autre spécialité)',
+                          'REP': "Reprise d'études"}
+
+def _profile_labels_all():
+    """Libellés de tous les codes de profil, réunis pour la légende — à l'écran,
+    sur la fiche de l'étudiant et sous l'export."""
+    return dict({k: dict(v) for k, v in _STUDENT_PROFILE_LABELS.items()},
+                bac=dict(_STUDENT_BAC_LABELS), cursus=dict(_STUDENT_CURSUS_LABELS))
 
 def _profile_key(v):
     """Clé de comparaison d'un libellé : minuscules, sans accents ni ponctuation."""
@@ -846,10 +877,6 @@ _PS_COLUMNS = [
      "Scolarité de l'année de candidature — Term. / 1re : lycée · Sup1, Sup2, Sup3 : "
      "1re, 2e, 3e année d'études supérieures, suivie de la filière · Prépa sup : année "
      "préparatoire au supérieur"),
-    ('ps_diplome',     'Dipl.',   'diplome',              'TEXT',
-     'Diplôme — Bac : baccalauréat · Équiv. : diplôme équivalent'),
-    ('ps_obtention',   'État',    'enpreparationobtenu',  'TEXT',
-     'Diplôme préparé ou déjà obtenu — Prép. : en préparation · Obt. : obtenu'),
     ('ps_serie',       'Série',   'seriedelanoteglobale', 'TEXT',
      'Série retenue pour la note globale — GEN : générale · PRO : baccalauréat '
      'professionnel · NC : non codifiée · sinon la série technologique (STI2D, STMG…)'),
@@ -1041,7 +1068,43 @@ def _norm_bac(v):
             return new
     if k.startswith('gen') or 'general' in k:
         return 'NBGE'
+    # Le classement code le bac professionnel « P » ; les autres listes l'écrivent
+    # en toutes lettres. Il a sa propre série depuis que le recrutement en compte.
+    if k == 'p' or k.startswith('pro'):
+        return 'PRO'
     return 'Autre'
+
+def _bac_ecart(v):
+    """Années entre l'obtention du bac et l'entrée en BUT : 0 (entré juste après)
+    à 20, ou None si la case est vide ou illisible."""
+    try:
+        n = int(str(v).strip())
+    except (TypeError, ValueError):
+        return None
+    return n if 0 <= n <= 20 else None
+
+def _ps_parcours(scolarite, profil):
+    """Ce que le dossier ParcourSup dit du parcours antérieur : (années depuis le
+    bac, études suivies entre-temps). Déduit de la scolarité de l'année de
+    candidature — « Terminale » : entré juste après le bac ; « 2e année d'études
+    supérieures - BTS » : deux ans après, en BTS. Ne sert qu'à pré-remplir ces deux
+    cases à l'import, quand elles sont vides ; elles restent corrigeables."""
+    court = _ps_court('ps_scolarite', scolarite or '') or ''
+    ecart = None
+    if court.startswith(('Term.', '1re')):
+        ecart = 0
+    elif court.startswith(('Sup1', 'Prépa')):
+        ecart = 1
+    elif court.startswith('Sup2'):
+        ecart = 2
+    elif court.startswith('Sup3'):
+        ecart = 3
+    etudes = next((code for cle, code in (('CPGE', 'PREPA'), ('Prépa', 'PREPA'),
+                                          ('BTS', 'BTS'), ('Licence', 'LIC'), ('BUT', 'BUT'))
+                   if cle in court), None)
+    if etudes is None and _profile_key(_ps_court('ps_profil', profil or '')) == 'nonscol':
+        etudes = 'REP'          # non scolarisé l'année de sa candidature : reprise d'études
+    return ecart, etudes
 
 # ===== REGISTRE DES ÉTUDIANTS (table `students`) =====
 # Un étudiant est une PERSONNE, pas une ligne de cohorte. Son état civil, son sexe,
@@ -1143,6 +1206,25 @@ def _person_ensure(db, ident, idx=None):
         _person_index_add(idx, sid, dict({c: row[c] for c in _PERSON_IDENT}, **manque))
     return sid
 
+def _person_values(data, avec_ps=False):
+    """Valeurs de registre contenues dans un corps de requête : état civil, profil
+    (listes fermées), pays de scolarité et écart au bac. `avec_ps` y ajoute le
+    dossier ParcourSup, qui ne se saisit que depuis la fiche de l'étudiant."""
+    vals = {k: (data.get(k) or '').strip() for k in _PERSON_IDENT if k in data}
+    for key, allowed in _STUDENT_PROFILE.items():
+        if key in data:
+            v = (data.get(key) or '').strip()
+            vals[key] = v if v in allowed else None
+    if 'pays' in data:
+        vals['pays'] = (data.get('pays') or '').strip()[:40] or None
+    if 'bac_ecart' in data:
+        vals['bac_ecart'] = _bac_ecart(data.get('bac_ecart'))
+    if avec_ps:
+        for field, _lbl, _pfx, sql, _t in _PS_COLUMNS:
+            if field in data:
+                vals[field] = _ps_saisie(data.get(field), sql)
+    return vals
+
 def _person_set(db, sid, values):
     """Écrit des champs du registre (état civil, profil, dossier ParcourSup). Ils
     valent du même coup pour TOUTES les cohortes où l'étudiant est inscrit : c'est
@@ -1152,6 +1234,14 @@ def _person_set(db, sid, values):
         return False
     db.execute('UPDATE students SET %s, updated_at=CURRENT_TIMESTAMP WHERE id=?'
                % ', '.join('%s=?' % k for k in vals), list(vals.values()) + [sid])
+    # Un recrutement ParcourSup dit le pays : la plateforme est française. Le
+    # défaut ne se pose que sur une case vide, jamais sur un pays déjà saisi.
+    if vals.get('recrutement') == 'PS':
+        db.execute("UPDATE students SET pays='FR' WHERE id=? AND (pays IS NULL OR pays='')", (sid,))
+    # Entré juste après son bac : il n'y a pas eu d'études entre les deux. Poser un
+    # écart nul efface donc des études antérieures qui ne peuvent plus être vraies.
+    if vals.get('bac_ecart') == 0:
+        db.execute('UPDATE students SET cursus=NULL WHERE id=?', (sid,))
     return True
 
 def _person_prune(db, sid):
@@ -1206,19 +1296,36 @@ def _apply_promotions_migrations(db):
             prenom      TEXT,
             naissance   TEXT,
             sexe        TEXT,
-            bac         TEXT,                  -- série du bac (reprise du classement)
-            cursus      TEXT,                  -- cursus antérieur
             recrutement TEXT,                  -- ParcourSup / eCandidat / ADIUT
+            pays        TEXT,                  -- pays de la scolarité antérieure
+            bac         TEXT,                  -- série du bac (reprise du classement)
+            bac_ecart   INTEGER,               -- années entre le bac et l'entrée en BUT
+            cursus      TEXT,                  -- études suivies entre les deux
             created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at  TEXT
         )
     ''')
+    # Scolarité antérieure : où le candidat a étudié, et combien d'années séparent
+    # son bac de son entrée en BUT (0 = entré juste après).
+    for _col, _type in (('pays', 'TEXT'), ('bac_ecart', 'INTEGER')):
+        try:
+            db.execute('ALTER TABLE students ADD COLUMN %s %s' % (_col, _type))
+        except sqlite3.OperationalError:
+            pass
     # Dossier ParcourSup du candidat, déclaré une seule fois (_PS_COLUMNS).
     for _f, _lbl, _pfx, _sql, _t in _PS_COLUMNS:
         try:
             db.execute('ALTER TABLE students ADD COLUMN %s %s' % (_f, _sql))
         except sqlite3.OperationalError:
             pass
+    # Le diplôme et son état (préparé / obtenu) quittent le dossier : ils ne
+    # disaient rien que la série du bac et l'écart au bac ne disent déjà.
+    for _t in ('students', 'promotion_students'):
+        for _col in ('ps_diplome', 'ps_obtention'):
+            try:
+                db.execute('ALTER TABLE %s DROP COLUMN %s' % (_t, _col))
+            except sqlite3.OperationalError:
+                pass
     # Inscription d'un étudiant du registre dans une cohorte : ce que la cohorte
     # sait de lui (statut, sous-cohorte, année d'entrée…) et rien de ce qui le
     # décrit, lui — c'est `person_id` qui va le chercher au registre.
@@ -1570,6 +1677,10 @@ def _apply_promotions_migrations(db):
         db.execute('UPDATE students SET cursus=? WHERE cursus=?', (_new, _old))
     for _old, _new in _STUDENT_BAC_RENAMES.items():
         db.execute('UPDATE students SET bac=? WHERE bac=?', (_new, _old))
+    # « Post-Bac » ne décrivait pas des études antérieures : il disait qu'il n'y en
+    # avait pas eu. L'information passe dans l'écart au bac, où elle se compte.
+    db.execute("UPDATE students SET bac_ecart=0 WHERE cursus='BAC' AND bac_ecart IS NULL")
+    db.execute("UPDATE students SET cursus=NULL WHERE cursus='BAC'")
     db.commit()
     _merge_formation_promotions(db)
 
@@ -4146,12 +4257,7 @@ def update_promotion_student(pid, sid):
     # l'ÉTUDIANT. Ils s'écrivent au registre et valent du même coup pour ses autres
     # inscriptions — celle du redoublant dans la cohorte suivante, celle de qui
     # revient de césure : plus rien à ressaisir d'une cohorte à l'autre.
-    registre = {k: (data.get(k) or '').strip() for k in _PERSON_IDENT if k in data}
-    for key, allowed in _STUDENT_PROFILE.items():
-        if key in data:
-            val = (data.get(key) or '').strip()
-            registre[key] = val if val in allowed else None
-    _person_set(db, row['person_id'], registre)
+    _person_set(db, row['person_id'], _person_values(data))
     fields, params = [], []
     new_statut = None
     if 'statut' in data:
@@ -4288,9 +4394,8 @@ def _student_payload(pdb, person_id):
     d = dict(row)
     d['ps_court'] = {f: _ps_court(f, d.get(f)) for f in _PS_FIELDS}
     return {'student': d, 'parcours': _student_parcours(pdb, person_id),
-            'profile_options': {k: list(v) for k, v in _STUDENT_PROFILE_EDIT.items()},
-            'profile_labels': dict({k: dict(v) for k, v in _STUDENT_PROFILE_LABELS.items()},
-                                   bac=dict(_STUDENT_BAC_LABELS), cursus=dict(_STUDENT_CURSUS_LABELS)),
+            'profile_options': {k: list(v) for k, v in _STUDENT_PROFILE.items()},
+            'profile_labels': _profile_labels_all(),
             'ps_columns': [{'field': f, 'label': lbl, 'title': t, 'type': sql}
                            for f, lbl, _p, sql, t in _PS_COLUMNS]}
 
@@ -4411,9 +4516,8 @@ def list_students():
         'years': [1, 2, 3],
         # Décisions d'année prononçables par le jury (cf _jury_compute).
         'decisions': ['ADM', 'ADMJ', 'AJAC', 'AJ', 'RED'],
-        'profile_options': {k: list(v) for k, v in _STUDENT_PROFILE_EDIT.items()},
-        'profile_labels': dict({k: dict(v) for k, v in _STUDENT_PROFILE_LABELS.items()},
-                               bac=dict(_STUDENT_BAC_LABELS), cursus=dict(_STUDENT_CURSUS_LABELS)),
+        'profile_options': {k: list(v) for k, v in _STUDENT_PROFILE.items()},
+        'profile_labels': _profile_labels_all(),
     })
 
 @app.route('/api/students/<int:person_id>', methods=['GET'])
@@ -4437,17 +4541,10 @@ def update_student(person_id):
     if not db.execute('SELECT 1 FROM students WHERE id=?', (person_id,)).fetchone():
         return error_response('Étudiant introuvable', 404)
     data = request.get_json() or {}
-    vals = {k: (data.get(k) or '').strip() for k in _PERSON_IDENT if k in data}
-    for key, allowed in _STUDENT_PROFILE_EDIT.items():
-        if key in data:
-            v = (data.get(key) or '').strip()
-            vals[key] = v if v in allowed else None
-    # Dossier ParcourSup : il vient de l'import du classement, qui fait foi — mais
-    # il reste rattrapable à la main pour qui n'y figure pas (eCandidat, ADIUT) ou
-    # que le rapprochement par nom a manqué. Une case vidée efface la valeur.
-    for field, _lbl, _pfx, sql, _t in _PS_COLUMNS:
-        if field in data:
-            vals[field] = _ps_saisie(data.get(field), sql)
+    # Le dossier ParcourSup est saisissable ici : il vient de l'import du
+    # classement, qui fait foi, mais reste rattrapable pour qui n'y figure pas
+    # (eCandidat, ADIUT) ou que le rapprochement par nom a manqué.
+    vals = _person_values(data, avec_ps=True)
     if _person_set(db, person_id, vals):
         db.commit()
         _audit('STUDENT_UPDATE', ip=_client_ip(), user=session.get('user'),
@@ -4576,6 +4673,10 @@ def _hors_annee_raison(r, year, comp, manuel=None, devenir=None):
             return ('ajourne', "%s en année %d" % ('redoublant' if dec == 'RED' else 'ajourné', y))
     return ('autre', "hors effectif de l'année")
 
+def _ps_title(field):
+    """Infobulle d'une colonne reprise du dossier ParcourSup (_PS_COLUMNS)."""
+    return next((t for f, _l, _p, _s, t in _PS_COLUMNS if f == field), '')
+
 def _year_effectif_payload(pdb, pid, year):
     """Effectif d'une promotion pour une année d'étude (1..3) avec compteurs par
     sous-cohorte. Chaque étudiant est marqué « entrant » (entry_year==année).
@@ -4673,10 +4774,13 @@ def _year_effectif_payload(pdb, pid, year):
             'semesters': _PROMO_SEMESTERS, 'years': [1, 2, 3],
             'abandon_semaines': _promo_year_weeks(pdb, pid, year),
             'profile_options': {k: list(v) for k, v in _STUDENT_PROFILE.items()},
-            'profile_labels': {k: dict(v) for k, v in _STUDENT_PROFILE_LABELS.items()},
-            # Colonnes ParcourSup à afficher : le tableau les rend dans cet ordre,
-            # sans avoir à répéter la liste des champs côté navigateur.
-            'ps_columns': [{'field': f, 'label': lbl, 'title': t} for f, lbl, _p, _s, t in _PS_COLUMNS]}
+            'profile_labels': _profile_labels_all(),
+            # Colonnes du groupe « Scolarité antérieure », dans l'ordre où le
+            # tableau les rend — la liste et le mode de saisie de chacune viennent
+            # d'ici, le navigateur n'a pas à les répéter.
+            'scolarite_columns': [{'field': f, 'label': lbl, 'kind': k,
+                                   'title': t or _ps_title(f)}
+                                  for f, lbl, k, t in _SCOLARITE_COLUMNS]}
 
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>', methods=['GET'])
 def get_year_effectif(pid, year):
@@ -4719,13 +4823,13 @@ def export_year_effectif(pid, year):
     promo_name = payload['promotion'].get('name') or f'promo {pid}'
     # Largeur d'une colonne ParcourSup : les combinaisons de spécialités sont de
     # longues phrases, le rang et la note tiennent en quelques caractères.
-    _ps_width = {'ps_classement': 7, 'ps_numero': 11, 'ps_note': 9,
-                 'ps_specialites': 40, 'ps_spe_abandon': 26, 'ps_spe_bacpro': 26}
+    _scol_width = {'ps_classement': 8, 'ps_note': 9, 'pays': 8, 'bac': 8, 'bac_ecart': 6,
+                   'cursus': 12, 'ps_specialites': 40, 'ps_spe_abandon': 26, 'ps_spe_bacpro': 26}
+    scol = [(fld, lbl) for fld, lbl, _k, _t in _SCOLARITE_COLUMNS]
     cols = ([('#', 5), ('Nom', 22), ('Prénom', 18), ('N° Apogée', 14), ('Naissance', 13),
-             ('Sexe', 6)]
-            + [(lbl, _ps_width.get(fld, 18)) for fld, lbl, _p, _s, _t in _PS_COLUMNS]
-            + [('Recrut.', 10), ('Statut', 11),
-               ('Semaine abandon', 16), ('Cohorte', 9), ('Remarques', 26)])
+             ('Sexe', 6), ('Recrut.', 10)]
+            + [(lbl, _scol_width.get(fld, 14)) for fld, lbl in scol]
+            + [('Statut', 11), ('Semaine abandon', 16), ('Cohorte', 9), ('Remarques', 26)])
 
     wb = Workbook()
     wb.remove(wb.active)
@@ -4750,16 +4854,14 @@ def export_year_effectif(pid, year):
             if s.get('manual') == 'add':
                 notes.append('ajouté manuellement')
             values = ([n, s.get('nom') or '', s.get('prenom') or '', s.get('numero') or '',
-                       s.get('naissance') or '', s.get('sexe') or '']
-                      + [s.get(fld) if s.get(fld) is not None else '' for fld in _PS_FIELDS]
-                      + [s.get('recrutement') or '', s.get('statut') or '',
-                         _abandon_libelle(s), formation, ' ; '.join(notes)])
-            # Colonnes centrées : le numéro de ligne, le sexe, et tout ce qui suit
-            # les spécialités (codes courts et notes) jusqu'à la cohorte.
-            wide = {'ps_profil', 'ps_scolarite', 'ps_diplome', 'ps_specialites',
-                    'ps_spe_abandon', 'ps_spe_bacpro'}
-            centered = {1, 6} | {7 + i for i, f in enumerate(_PS_FIELDS) if f not in wide}
-            centered |= set(range(7 + len(_PS_FIELDS), len(cols)))
+                       s.get('naissance') or '', s.get('sexe') or '', s.get('recrutement') or '']
+                      + [s.get(fld) if s.get(fld) is not None else '' for fld, _l in scol]
+                      + [s.get('statut') or '', _abandon_libelle(s), formation, ' ; '.join(notes)])
+            # Colonnes centrées : tout sauf les noms et les listes de spécialités,
+            # qui sont des phrases et se lisent alignées à gauche.
+            wide = {'ps_specialites', 'ps_spe_abandon', 'ps_spe_bacpro'}
+            centered = {1, 6, 7} | {8 + i for i, (f, _l) in enumerate(scol) if f not in wide}
+            centered |= set(range(8 + len(scol), len(cols)))
             for i, v in enumerate(values, start=1):
                 c = ws.cell(row, i, v)
                 c.border = border
@@ -4775,8 +4877,9 @@ def export_year_effectif(pid, year):
 
         # Rappel des codes de profil (mêmes libellés que la légende à l'écran)
         row += 1
-        for field, labels in _STUDENT_PROFILE_LABELS.items():
-            head = 'Recrut.' if field == 'recrutement' else field.capitalize()
+        _heads = {'recrutement': 'Recrut.', 'bac': 'Série', 'cursus': 'Études ant.'}
+        for field, labels in _profile_labels_all().items():
+            head = _heads.get(field, field.capitalize())
             codes = [c for c in _STUDENT_PROFILE.get(field, []) if c in labels]
             ws.cell(row, 1, f"{head} : " + ' · '.join(f'{c} = {labels[c]}' for c in codes)).font = f_legend
             row += 1
@@ -5096,8 +5199,8 @@ def import_year_parcoursup(pid, year):
             par_nom[k] = c
 
     fiches = [dict(r) for r in db.execute(
-        'SELECT s.person_id, e.nom, e.prenom FROM promotion_students s %s '
-        'WHERE s.promotion_id=?' % _FICHE_JOIN, (pid,))]
+        'SELECT s.person_id, e.nom, e.prenom, e.recrutement, e.pays, e.bac_ecart, e.cursus '
+        'FROM promotion_students s %s WHERE s.promotion_id=?' % _FICHE_JOIN, (pid,))]
     matched = updated = 0
     sans_correspondance = []
     for fiche in fiches:
@@ -5112,6 +5215,21 @@ def import_year_parcoursup(pid, year):
         vals = {fld: c.get(fld) for fld in _PS_FIELDS}
         vals['bac'] = _norm_bac(c.get('ps_serie'))
         vals = {k: v for k, v in vals.items() if v is not None}
+        # Ce que le dossier apprend du parcours antérieur, pour les seules cases
+        # encore vides : il vient de ParcourSup (donc recrutement PS, pays FR), et
+        # sa scolarité de l'année de candidature dit l'écart au bac et les études
+        # suivies entre les deux. Une saisie à la main n'est jamais écrasée.
+        ecart, etudes = _ps_parcours(c.get('ps_scolarite'), c.get('ps_profil'))
+        # L'écart au bac et les études d'entre-deux vont ensemble : on ne renseigne
+        # pas d'études antérieures pour qui est entré juste après son bac — que le
+        # zéro vienne du dossier ou d'une saisie antérieure.
+        effectif_ecart = fiche['bac_ecart'] if fiche['bac_ecart'] is not None else ecart
+        if not effectif_ecart:
+            etudes = None
+        for champ, valeur in (('recrutement', 'PS'), ('pays', 'FR'),
+                              ('bac_ecart', ecart), ('cursus', etudes)):
+            if valeur is not None and fiche[champ] in (None, ''):
+                vals[champ] = valeur
         if not vals:
             continue
         _person_set(db, fiche['person_id'], vals)
@@ -12266,7 +12384,9 @@ def _stats_academique(pdb):
         'formation': _count_by(students, 'formation', list(_SUBCOHORTS)),
         'statut': _count_by(students, 'statut', _STUDENT_STATUSES),
         'promo': _count_by(students, 'promo'),
-        'renseigne': [[k, sum(1 for s in students if s.get(k))] for k in _STUDENT_PROFILE_FIELDS],
+        # « Renseigné » et non « vrai » : un écart au bac de 0 an est une valeur.
+        'renseigne': [[k, sum(1 for s in students if s.get(k) not in (None, ''))]
+                      for k in _STUDENT_PROFILE_FIELDS],
     }
     # Féminisation par promotion (sur les fiches où le sexe est renseigné)
     fem = []
