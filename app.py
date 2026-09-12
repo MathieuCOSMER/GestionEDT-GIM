@@ -4313,7 +4313,14 @@ def update_promotion_student(pid, sid):
         params += [sid, pid]
         db.execute(f'UPDATE promotion_students SET {", ".join(fields)} WHERE id=? AND promotion_id=?', params)
     db.commit()
-    return jsonify(_promotion_payload(db, pid))
+    payload = _promotion_payload(db, pid)
+    # La fiche de registre telle qu'elle est APRÈS écriture : une saisie peut en
+    # entraîner une autre (pays FR pour un recrutement ParcourSup, études
+    # antérieures effacées par un écart nul). L'écran met alors ces cases à jour
+    # sur place, sans recharger l'effectif — et sans perdre le défilement.
+    person = db.execute('SELECT * FROM students WHERE id=?', (row['person_id'],)).fetchone()
+    payload['student'] = dict(person) if person else None
+    return jsonify(payload)
 
 @app.route('/api/promotions/<int:pid>/students/<int:sid>', methods=['DELETE'])
 def delete_promotion_student(pid, sid):

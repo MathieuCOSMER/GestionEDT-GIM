@@ -4278,7 +4278,7 @@ function renderPromoEffectif() {
     // de chaque tableau et en infobulle sur chaque liste.
     const profLabels = d.profile_labels || {};
     const profLabel = (field, code) => (profLabels[field] || {})[code] || '';
-    const profSelect = (s, field) => {
+    const profSelect = (s, field, ferme) => {
         const cur = s[field] || '';
         const opts = ['<option value="">—</option>'].concat(
             (profOpts[field] || []).map(o => {
@@ -4288,7 +4288,9 @@ function renderPromoEffectif() {
         const curLab = profLabel(field, cur);
         const astuce = esc((curLab ? curLab + ' — ' : '')
             + "appartient à l'étudiant : vaut pour toutes les cohortes où il est inscrit");
-        return `<select onchange="changeStudentField(${s.id}, '${field}', this.value)" title="${astuce}"
+        return `<select data-sid="${s.id}" data-champ="${field}"${ferme ? ' disabled' : ''}
+            onchange="changeStudentField(${s.id}, '${field}', this.value)"
+            title="${ferme ? esc(_ETUDES_FERMEES) : astuce}"
             style="padding:3px 4px;border:1px solid #d1d5db;border-radius:4px;font-size:.8rem">${opts}</select>`;
     };
     // Légende : un code = son libellé, pour les colonnes qui en ont un
@@ -4323,19 +4325,19 @@ function renderPromoEffectif() {
     const scolLarge = { ps_specialites: 135, ps_spe_abandon: 90, ps_spe_bacpro: 90 };
     const scolSaisie = (s, col) => {
         // Les études antérieures n'ont de sens que si le bac date d'avant : pour
-        // qui est entré juste après (0 an), la case reste fermée.
+        // qui est entré juste après (0 an), la liste reste grisée — fermée plutôt
+        // que retirée, pour que la case garde sa place et se rouvre sans redessin.
         if (col.kind === 'liste')
-            return (col.field === 'cursus' && s.bac_ecart === 0)
-                ? `<span title="Entré juste après son bac — pas d'études entre les deux"
-                     style="color:#d1d5db">—</span>`
-                : profSelect(s, col.field);
+            return profSelect(s, col.field, col.field === 'cursus' && s.bac_ecart === 0);
         const v = s[col.field];
         const style = 'padding:2px 4px;border:1px solid #d1d5db;border-radius:4px;font-size:.78rem';
         if (col.kind === 'entier')
             return `<input type="number" min="0" max="20" value="${v == null ? '' : v}"
+                data-sid="${s.id}" data-champ="${col.field}"
                 title="${esc(col.title || '')}" onchange="changeStudentField(${s.id}, '${col.field}', this.value)"
                 style="${style};width:46px;text-align:center">`;
         return `<input value="${esc(v == null ? '' : v)}" maxlength="40"
+            data-sid="${s.id}" data-champ="${col.field}"
             title="${esc(col.title || '')}" onchange="changeStudentField(${s.id}, '${col.field}', this.value)"
             style="${style};width:58px;text-transform:uppercase">`;
     };
@@ -4786,15 +4788,40 @@ async function changeStudentStatus(sid, statut) {
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
-// Profil et scolarité antérieure : enregistrés sans rechargement, sauf quand la
-// saisie en entraîne une autre — un recrutement ParcourSup pose le pays FR, qu'il
-// faut bien relire pour le voir apparaître.
+// Cases du profil et de la scolarité antérieure présentes à l'écran.
+const _CASES_PROFIL = ['sexe', 'recrutement', 'pays', 'bac', 'bac_ecart', 'cursus'];
+const _ETUDES_FERMEES = "Entré juste après son bac — pas d'études entre les deux";
+
+// Reporte la fiche de registre telle que le serveur la rend, dans les données ET
+// dans les cases déjà affichées — sans redessiner le tableau. Une saisie peut en
+// entraîner une autre (le pays FR d'un recrutement ParcourSup, les études
+// antérieures qu'un écart nul efface) : il faut que ça se voie, mais redessiner
+// ferait perdre le défilement et la place où l'on en était dans la liste.
+function majProfilAffiche(p) {
+    if (!p) return;
+    ((_effData || {}).students || []).forEach(s => {
+        if (s.person_id !== p.id) return;
+        _CASES_PROFIL.concat(['ps_court']).forEach(f => { if (f in p) s[f] = p[f]; });
+        _CASES_PROFIL.forEach(f => {
+            document.querySelectorAll(`[data-sid="${s.id}"][data-champ="${f}"]`).forEach(el => {
+                el.value = (p[f] === null || p[f] === undefined) ? '' : p[f];
+                if (f === 'cursus') {
+                    el.disabled = (p.bac_ecart === 0);
+                    if (el.disabled) el.title = _ETUDES_FERMEES;
+                }
+            });
+        });
+    });
+}
+
+// Profil et scolarité antérieure : enregistrés sans jamais recharger l'écran.
 async function changeStudentField(sid, field, value) {
     try {
-        await api(`/promotions/${_promoId}/students/${sid}`, { method: 'PUT', body: JSON.stringify({ [field]: value }) });
+        const res = await api(`/promotions/${_promoId}/students/${sid}`,
+            { method: 'PUT', body: JSON.stringify({ [field]: value }) });
         const s = ((_effData && _effData.students) || []).find(x => x.id === sid);
         if (s) s[field] = value;
-        if (field === 'recrutement' || field === 'bac_ecart') loadEffectif();
+        majProfilAffiche(res && res.student);
     } catch (e) { toast('Erreur : ' + e.message, 'error'); loadEffectif(); }
 }
 
@@ -5272,17 +5299,25 @@ function ouvrirFicheComplete() {
 // l'étudiant, l'effectif affiché derrière est donc rechargé dans la foulée.
 async function changeRegistreField(field, value) {
     if (!_studentCard) return;
+    const avant = _studentCard.student;
     try {
-        _studentCard = await api(`/students/${_studentCard.student.id}`,
+        const res = await api(`/students/${_studentCard.student.id}`,
             { method: 'PUT', body: JSON.stringify({ [field]: value }) });
+        const p = res.student;
+        // La fiche ne se redessine que si la saisie en a entraîné une AUTRE (pays
+        // FR, études antérieures effacées) : sinon la valeur est déjà à l'écran, et
+        // redessiner ferait perdre le champ suivant au moment de l'atteindre.
+        const derive = Object.keys(p).some(k => k !== field && p[k] !== avant[k]);
+        _studentCard = res;
         toast('Enregistré — vaut pour toutes ses cohortes');
-        if (_studentCardHost === 'tab') {
-            // La liste porte le nom, le profil et les cohortes : elle se refait avec.
-            _etuData = await api('/students');
-            renderEtudiants();
-        } else {
-            renderStudentCard();
-            if (_promoId) loadEffectif();
+        // L'effectif et la liste des étudiants, s'ils sont chargés derrière, suivent
+        // sans être rechargés : une saisie de profil ne change ni les cohortes ni
+        // les moyennes.
+        majProfilAffiche(p);
+        const e = ((_etuData || {}).students || []).find(x => x.id === p.id);
+        if (e) Object.keys(p).forEach(k => { if (k in e) e[k] = p[k]; });
+        if (derive) {
+            if (_studentCardHost === 'tab') renderEtudiants(); else renderStudentCard();
         }
     } catch (e) {
         toast('Erreur : ' + e.message, 'error');
