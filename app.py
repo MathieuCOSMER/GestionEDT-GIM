@@ -1638,6 +1638,24 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE
         )
     ''')
+    # Note d'UE retenue pour un redoublant, quand le jury ne veut pas de celle que
+    # le règlement retiendrait seul (la meilleure des deux). Absence de ligne =
+    # arbitrage automatique. L'UE est repérée par son NOM et non par son rang,
+    # comme pour la VAQ : l'ordre des compétences change si les coefficients sont
+    # réédités, une ligne posée sur un rang désignerait alors une autre UE.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS student_red_ue (
+            promotion_id INTEGER NOT NULL,
+            semester     TEXT NOT NULL,
+            student_id   INTEGER NOT NULL,
+            competence   TEXT NOT NULL,
+            source       TEXT NOT NULL CHECK (source IN ('ancienne', 'nouvelle')),
+            updated_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (promotion_id, semester, student_id, competence),
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
     # Mobilité sortante : semestre effectué dans un établissement partenaire
     # (CÉGEP de Montréal…). Les UE du semestre sont validées PAR ÉQUIVALENCE :
     # aucune note n'y est saisie, et la moyenne annuelle ne retient que l'autre
@@ -5409,18 +5427,24 @@ def _red_incoming(pdb, pid):
             old_row = old_cache[key].get(str(osid)) or {}
             new_row = new_cache[sem].get(str(sid)) or {}
             started = sid in _graded_students(pdb, pid, sem)
+            choix_sem = _red_ue_choices(pdb, pid, sem).get(str(sid)) or {}
             ues = []
             for ci, c in enumerate(comps):
                 nm = (c.get('name') or '').strip()
                 ov, nv = old_row.get(nm), new_row.get(str(ci))
+                impose = choix_sem.get(nm)
                 if not started or (ov is None and nv is None):
                     kept, src = (nv, 'nouvelle') if nv is not None else (None, None)
+                elif impose in ('ancienne', 'nouvelle'):
+                    kept, src = (ov if impose == 'ancienne' else nv), impose
                 elif nv is None or (ov is not None and ov > nv):
                     kept, src = ov, 'ancienne'
                 else:
                     kept, src = nv, 'nouvelle'
                 ues.append({'num': nums.get(nm), 'name': nm, 'old': ov, 'new': nv,
-                            'kept': kept, 'source': src})
+                            'kept': kept, 'source': src,
+                            # 'auto' = la règle décide ; sinon le choix imposé par le jury
+                            'choice': impose or 'auto'})
             # `started` : le semestre refait est-il déjà noté ? Sinon aucune UE n'est
             # arbitrée (l'étudiant n'a pas encore composé).
             sems.append({'semester': sem, 'started': started, 'ues': ues})
@@ -5430,6 +5454,48 @@ def _red_incoming(pdb, pid):
                     'semesters': sems})
     out.sort(key=lambda r: ((r['nom'] or '').lower(), (r['prenom'] or '').lower()))
     return out
+
+@app.route('/api/promotions/<int:pid>/red-ue', methods=['PUT'])
+def set_red_ue_choice(pid):
+    """Note d'UE retenue pour un redoublant : 'ancienne' (passage précédent),
+    'nouvelle' (année refaite), ou 'auto' pour revenir à la règle — la meilleure
+    des deux. Corps : {student_id, semester, competence, source}.
+
+    Le choix vaut pour UNE UE d'UN semestre : c'est la maille du règlement, et
+    celle qu'affiche le tableau des redoublants accueillis (onglet Devenir)."""
+    err = _require_admin()
+    if err:
+        return err
+    db = get_promotions_db()
+    data = request.get_json() or {}
+    sid = data.get('student_id')
+    semester = (data.get('semester') or '').strip()
+    competence = (data.get('competence') or '').strip()
+    source = (data.get('source') or 'auto').strip()
+    if semester not in _PROMO_SEMESTERS:
+        return error_response('Semestre invalide', 400)
+    if not competence:
+        return error_response('UE non précisée', 400)
+    if source not in ('auto', 'ancienne', 'nouvelle'):
+        return error_response('Choix invalide', 400)
+    # Seul un redoublant accueilli ici, refaisant l'année de ce semestre, est concerné.
+    links = _origin_links(db, pid, reason='RED')
+    if sid not in links or links[sid][2] != _sem_year(semester):
+        return error_response("Cet étudiant ne refait pas cette année ici", 400)
+    if source == 'auto':
+        db.execute('''DELETE FROM student_red_ue
+                      WHERE promotion_id=? AND semester=? AND student_id=? AND competence=?''',
+                   (pid, semester, sid, competence))
+    else:
+        db.execute('''INSERT INTO student_red_ue(promotion_id, semester, student_id, competence, source)
+                      VALUES(?,?,?,?,?)
+                      ON CONFLICT(promotion_id, semester, student_id, competence)
+                      DO UPDATE SET source=excluded.source, updated_at=CURRENT_TIMESTAMP''',
+                   (pid, semester, sid, competence, source))
+    db.commit()
+    _audit('RED_UE_CHOICE', ip=_client_ip(), user=session.get('user'),
+           promo=pid, student=sid, semestre=semester, ue=competence, source=source)
+    return jsonify({'ok': True})
 
 @app.route('/api/promotions/<int:pid>/red', methods=['GET'])
 def get_red_students(pid):
@@ -6038,6 +6104,15 @@ def _red_previous_ue(pdb, pid, semester, year, depth):
             out[sid] = row
     return out
 
+def _red_ue_choices(pdb, pid, semester):
+    """{student_id (texte): {nom d'UE: 'ancienne'|'nouvelle'}} — les arbitrages que
+    le jury a imposés là où le règlement retiendrait la meilleure des deux."""
+    out = {}
+    for r in pdb.execute('''SELECT student_id, competence, source FROM student_red_ue
+                            WHERE promotion_id=? AND semester=?''', (pid, semester)):
+        out.setdefault(str(r['student_id']), {})[(r['competence'] or '').strip()] = r['source']
+    return out
+
 def _semester_competence_averages(pdb, pid, semester, competences, components=None,
                                   _depth=0, kept_out=None, apply_red=True):
     """Moyennes de compétences {student_id: {ci: avg}} pour un semestre donné.
@@ -6047,10 +6122,14 @@ def _semester_competence_averages(pdb, pid, semester, competences, components=No
     Redoublant : pour chaque UE de l'année refaite, le règlement des études impose
     de retenir la MEILLEURE des deux notes (passage précédent / année refaite).
     L'arbitrage est fait ici, donc pour tous les consommateurs à la fois (bulletins,
-    moyennes annuelles, jury). `kept_out` reçoit {sid_ci: {old, new}} pour les UE
-    où l'ancienne l'emporte — les deux valeurs, pour que l'écran puisse dire ce qui
-    a été retenu et contre quoi ; `apply_red=False` rend la note brute de l'année
-    refaite (l'onglet Devenir montre les deux côte à côte)."""
+    moyennes annuelles, jury) — sauf si le jury a imposé l'une des deux
+    (`student_red_ue`, onglet Devenir), auquel cas son choix prime.
+
+    `kept_out` reçoit {sid_ci: {old, new, source, force}} pour CHAQUE UE arbitrée,
+    que ce soit l'ancienne ou la nouvelle qui l'emporte : l'écran peut ainsi dire
+    ce qui est retenu, contre quoi, et si c'est le règlement ou le jury qui l'a
+    décidé. `apply_red=False` rend la note brute de l'année refaite (l'onglet
+    Devenir montre les deux côte à côte)."""
     marks = {}
     for r in _marks_rows(pdb, pid, semester):
         marks[f"{r['student_id']}_{r['matiere_code']}"] = r['note']
@@ -6074,19 +6153,27 @@ def _semester_competence_averages(pdb, pid, semester, competences, components=No
     # `_depth` borne la remontée de cohorte en cohorte (redoublements successifs)
     if apply_red and _depth < 3:
         prev = _red_previous_ue(pdb, pid, semester, _sem_year(semester), _depth)
+        choix = _red_ue_choices(pdb, pid, semester) if prev else {}
         for sid, old in prev.items():
             row = averages.get(str(sid))
             if row is None:
                 continue
             for ci, comp in enumerate(competences):
-                ov = old.get((comp.get('name') or '').strip())
+                nom = (comp.get('name') or '').strip()
+                ov = old.get(nom)
                 if ov is None:
                     continue
                 nv = row.get(str(ci))
-                if nv is None or ov > nv:
+                impose = (choix.get(str(sid)) or {}).get(nom)
+                if impose in ('ancienne', 'nouvelle'):
+                    garde = impose
+                else:
+                    garde = 'ancienne' if (nv is None or ov > nv) else 'nouvelle'
+                if garde == 'ancienne':
                     row[str(ci)] = ov
-                    if kept_out is not None:
-                        kept_out[f'{sid}_{ci}'] = {'old': ov, 'new': nv}
+                if kept_out is not None:
+                    kept_out[f'{sid}_{ci}'] = {'old': ov, 'new': nv, 'source': garde,
+                                               'force': impose in ('ancienne', 'nouvelle')}
     # Validation par acquis : l'UE est acquise sans être évaluée ce semestre-là.
     # Elle ne vaut donc aucune moyenne, et seule celle de l'autre semestre entre
     # dans l'annuelle. Posée APRÈS l'arbitrage redoublant : une UE validée par

@@ -4745,6 +4745,21 @@ async function decideCesure(sid, formation) {
     } catch (e) { toast('Erreur : ' + e.message, 'error'); loadDevenir(); }
 }
 
+// Choix du jury sur une UE d'un redoublant : « auto » (la meilleure des deux,
+// règle par défaut), « précédent » ou « refaite ». Il vaut aussitôt pour toutes
+// les moyennes — bulletins, moyennes annuelles, jury —, d'où la relecture.
+async function setRedUe(sid, semester, competence, source) {
+    try {
+        await api(`/promotions/${_promoId}/red-ue`, {
+            method: 'PUT',
+            body: JSON.stringify({ student_id: sid, semester, competence, source })
+        });
+        await loadDevenir();
+        toast(source === 'auto' ? 'Retour à la règle : la meilleure des deux'
+                                : 'Note ' + (source === 'ancienne' ? 'du passage précédent' : "de l'année refaite") + ' imposée');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); loadDevenir(); }
+}
+
 // C. Les redoublants accueillis ici : quelle note est retenue, UE par UE
 function _devIncomingSection(d) {
     const head = `<div style="margin-top:26px;border-top:2px solid #e5e7eb;padding-top:14px">
@@ -4752,7 +4767,8 @@ function _devIncomingSection(d) {
         <div style="font-size:.82rem;color:#6b7280;margin-bottom:10px">Le règlement des études impose de retenir, pour
         <strong>chaque UE de semestre</strong>, la <strong>meilleure des deux notes</strong> — celle du passage précédent
         ou celle de l'année refaite. L'arbitrage est automatique et s'applique partout (Bulletins, moyennes annuelles, Jury) ;
-        ce tableau montre ce qui est retenu. Les notes de matières, elles, restent celles de l'année refaite.
+        ce tableau montre ce qui est retenu, et la dernière colonne permet au jury d'en <strong>décider autrement</strong>,
+        UE par UE. Les notes de matières, elles, restent celles de l'année refaite.
         Tant qu'un semestre refait n'a <strong>aucune note</strong>, rien n'est repris : l'étudiant n'a pas encore composé,
         et aucune décision de jury n'est prise.</div>`;
     if (!d.incoming || !d.incoming.length) {
@@ -4764,16 +4780,29 @@ function _devIncomingSection(d) {
         const sub = st.semesters.map(() =>
             `<th style="text-align:center;font-size:.7rem;color:#6b7280;border-left:3px solid #8b5cf6">précédent</th>
              <th style="text-align:center;font-size:.7rem;color:#6b7280">année refaite</th>
-             <th style="text-align:center;font-size:.7rem;color:#166534">retenue</th>`).join('');
+             <th title="Ce qui compte dans les moyennes. « Auto » applique le règlement — la meilleure des deux ; le jury peut imposer l'une ou l'autre."
+                 style="text-align:center;font-size:.7rem;color:#166534">retenue</th>`).join('');
         const ues = (st.semesters[0] || { ues: [] }).ues;
         const rows = ues.map((u, ui) => {
             const cells = st.semesters.map(x => {
                 const v = x.ues[ui] || {};
                 const anc = v.source === 'ancienne';
+                const impose = v.choice && v.choice !== 'auto';
+                // Le choix se pose ici, UE par UE et semestre par semestre : « auto »
+                // laisse le règlement trancher (meilleure des deux), les deux autres
+                // imposent la note, même moins bonne — c'est une décision de jury.
+                const choix = `<select onchange="setRedUe(${st.student_id}, '${esc(x.semester)}', '${esc(u.name || '')}', this.value)"
+                    title="Note retenue dans toutes les moyennes de cette UE"
+                    style="margin-top:2px;font-size:.66rem;padding:1px 2px;border:1px solid ${impose ? '#f59e0b' : '#d1d5db'};border-radius:4px;background:${impose ? '#fffbeb' : '#fff'}">
+                    <option value="auto"${v.choice === 'auto' ? ' selected' : ''}>auto</option>
+                    <option value="ancienne"${v.choice === 'ancienne' ? ' selected' : ''}>précédent</option>
+                    <option value="nouvelle"${v.choice === 'nouvelle' ? ' selected' : ''}>refaite</option>
+                </select>`;
                 return `<td style="text-align:center;color:#6b7280;border-left:3px solid #8b5cf6${anc ? ';font-weight:700;color:#7c3aed' : ''}">${_fmtAvg(v.old)}</td>
                     <td style="text-align:center;color:#6b7280${v.source === 'nouvelle' ? ';font-weight:700;color:#374151' : ''}">${_fmtAvg(v.new)}</td>
-                    <td title="${anc ? 'Note conservée du passage précédent (meilleure des deux)' : 'Note de l\'année refaite'}"
-                        style="text-align:center;font-weight:700;background:${anc ? '#f5f3ff' : '#f0fdf4'};color:${anc ? '#5b21b6' : '#166534'}">${_fmtAvg(v.kept)}${anc ? ' ↺' : ''}</td>`;
+                    <td title="${impose ? 'Note imposée par le jury' : (anc ? 'Note conservée du passage précédent (meilleure des deux)' : 'Note de l\'année refaite')}"
+                        style="text-align:center;font-weight:700;background:${impose ? '#fffbeb' : (anc ? '#f5f3ff' : '#f0fdf4')};color:${impose ? '#92400e' : (anc ? '#5b21b6' : '#166534')}">
+                        <div>${_fmtAvg(v.kept)}${anc ? ' ↺' : ''}${impose ? ' ⚖' : ''}</div>${x.started ? choix : ''}</td>`;
             }).join('');
             return `<tr><td style="white-space:nowrap"><strong>UE${u.num || ui + 1}</strong> <span style="color:#6b7280;font-size:.8rem">${esc(u.name || '')}</span></td>${cells}</tr>`;
         }).join('');
@@ -6253,17 +6282,43 @@ function toggleNotesColGroup(key, on) {
 // Numéro canonique d'une UE (Maintenir=1 … Sécuriser=5) depuis son nom
 function _ueNum(d, name, ci) { return (d.ue_numbers || {})[name] || (ci + 1); }
 
+// Arbitrage redoublant d'une UE, seulement s'il se voit : la grille ne marque que
+// les UE dont la note vient du passage précédent, ou que le jury a tranchées.
+function _redSuffix(rk) {
+    if (!rk) return '';
+    return rk.source === 'ancienne'
+        ? " — note du passage précédent retenue" + (rk.force ? ' (imposée par le jury)'
+                                                             : ' (redoublant : meilleure des deux)')
+        : " — note de l'année refaite imposée par le jury";
+}
+
+function _redKept(d, sid, ci) {
+    const rk = (d.red_kept || {})[sid + '_' + ci];
+    return (rk && (rk.source === 'ancienne' || rk.force)) ? rk : undefined;
+}
+
 // Redoublant : le règlement retient, pour chaque UE de semestre, la MEILLEURE des
 // deux moyennes — passage précédent ou année refaite. L'arbitrage est fait au
 // calcul (donc partout à la fois) ; ce repère dit quand c'est l'ancienne qui est
 // affichée, et contre quoi elle a été comparée.
 const _RED_MARK = ' <span style="font-size:.66rem;color:#7c3aed">↺</span>';
+const _RED_MARK_JURY = ' <span style="font-size:.66rem;color:#b45309">⚖</span>';
+// Repère d'une UE arbitrée : ↺ quand c'est la note du passage précédent qui compte,
+// ⚖ quand c'est le jury qui a tranché plutôt que la règle.
+function _redMark(red) {
+    if (!red) return '';
+    return (red.source === 'ancienne' ? _RED_MARK : '') + (red.force ? _RED_MARK_JURY : '');
+}
 function _redTitle(red, sem) {
     if (!red) return '';
-    return `Redoublant — ${sem} : moyenne du passage précédent retenue (${_fmtAvg(red.old)})`
-        + (red.new === null || red.new === undefined
-            ? ", l'année refaite n'ayant pas de note pour cette UE"
-            : `, meilleure que celle de l'année refaite (${_fmtAvg(red.new)})`);
+    const autre = red.source === 'ancienne' ? red.new : red.old;
+    const retenue = red.source === 'ancienne' ? 'du passage précédent' : "de l'année refaite";
+    const contre = (autre === null || autre === undefined)
+        ? (red.source === 'ancienne' ? ", l'année refaite n'ayant pas de note pour cette UE" : '')
+        : ` (l'autre passage vaut ${_fmtAvg(autre)})`;
+    return `Redoublant — ${sem} : moyenne ${retenue} retenue${contre}`
+        + (red.force ? ' — imposée par le jury (onglet Devenir)'
+                     : ' — meilleure des deux, règle appliquée automatiquement');
 }
 
 // ===== Tri des grilles Bulletins et Jury =====
@@ -6482,9 +6537,9 @@ function renderNotesGrid() {
             if (semVaq.includes(ci)) return _vaqUeCell(s.id, ci);
             const st = _ueStatus(avg[ci], ya[ci]);
             // ↺ : redoublant dont cette UE garde la note du passage précédent (meilleure des deux)
-            const rk = (d.red_kept || {})[s.id + '_' + ci];
+            const rk = _redKept(d, s.id, ci);
             const miss = (semMiss[ci] || []);
-            return `<td class="nz-avg" data-sid="${s.id}" data-ci="${ci}" onclick="toggleUeVaq(${s.id}, ${ci})" title="${esc(_UE_TITLE[st] + (rk === undefined ? '' : ' — note conservée du passage précédent (redoublant : meilleure des deux)') + _ueMissTitle(d, avg[ci], miss) + ' — cliquez pour marquer cette UE validée par acquis (VAQ)')}" style="cursor:pointer;text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}">${_fmtAvg(avg[ci])}${rk === undefined ? '' : ' <span style="font-size:.7rem;color:#7c3aed">↺</span>'}${_ueMissMark(avg[ci], miss)}</td>`;
+            return `<td class="nz-avg" data-sid="${s.id}" data-ci="${ci}" onclick="toggleUeVaq(${s.id}, ${ci})" title="${esc(_UE_TITLE[st] + _redSuffix(rk) + _ueMissTitle(d, avg[ci], miss) + ' — cliquez pour marquer cette UE validée par acquis (VAQ)')}" style="cursor:pointer;text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}">${_fmtAvg(avg[ci])}${_redMark(rk)}${_ueMissMark(avg[ci], miss)}</td>`;
         }).join('') : '';
         const cells = cg.notes ? mats.map((m, mi2) => {
             const v = d.marks[s.id + '_' + m.code];
@@ -6806,8 +6861,14 @@ function _liveSemAverages(d, sid) {
             if (w && v !== null) { num += w * v; den += w; }
         });
         let v = den > 0 ? Math.round(Math.max(0, num / den - malus) * 100) / 100 : null;
-        const rk = (d.red_kept || {})[sid + '_' + ci];   // redoublant : meilleure des deux
-        if (rk !== undefined && (v === null || rk.old > v)) v = rk.old;
+        // Redoublant : la note retenue est celle que le serveur a arbitrée — la
+        // meilleure des deux, ou celle que le jury a imposée. Le recalcul à la
+        // volée doit dire la même chose que lui.
+        const rk = (d.red_kept || {})[sid + '_' + ci];
+        if (rk !== undefined) {
+            if (rk.force) v = (rk.source === 'ancienne') ? rk.old : v;
+            else if (v === null || rk.old > v) v = rk.old;
+        }
         return v;
     });
 }
@@ -6840,13 +6901,11 @@ function refreshStudentAverages(sid) {
         if (td.classList.contains('nz-mi')) return;     // UE validée par équivalence
         if (td.classList.contains('nz-vaq')) return;    // UE validée par acquis
         const ci = +td.dataset.ci;
-        const rk = (d.red_kept || {})[sid + '_' + ci];
+        const rk = _redKept(d, sid, ci);
         const st = _ueStatus(sem[ci], year[ci]);
         td.style.cssText = `text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}`;
-        td.title = _UE_TITLE[st] + (rk === undefined ? '' : ' — note conservée du passage précédent (redoublant : meilleure des deux)')
-            + _ueMissTitle(d, sem[ci], miss[ci] || []);
-        td.innerHTML = _fmtAvg(sem[ci]) + (rk === undefined ? '' : ' <span style="font-size:.7rem;color:#7c3aed">↺</span>')
-            + _ueMissMark(sem[ci], miss[ci] || []);
+        td.title = _UE_TITLE[st] + _redSuffix(rk) + _ueMissTitle(d, sem[ci], miss[ci] || []);
+        td.innerHTML = _fmtAvg(sem[ci]) + _redMark(rk) + _ueMissMark(sem[ci], miss[ci] || []);
     });
     document.querySelectorAll(`#notes-content td.nz-yavg[data-sid="${sid}"]`).forEach(td => {
         const ci = +td.dataset.ci, st = _yearUeStatus(year[ci]);
@@ -7099,10 +7158,11 @@ function renderJuryGrid() {
             const miS = (d.mobility || {})[s.id] || {};
             const semCell = (val, sem, extra, red) => (miS[sem] !== undefined)
                 ? `<td title="UE validée par équivalence — mobilité internationale${miS[sem] ? ' : ' + esc(miS[sem]) : ''}" style="text-align:center;font-size:.72rem;font-weight:700;background:#cffafe;color:#0e7490${extra}">MI</td>`
-                : `<td title="${esc(_redTitle(red, sem))}" style="text-align:center;font-size:.82rem;color:${red ? '#7c3aed' : '#6b7280'}${extra}">${_fmtAvg(val)}${red ? _RED_MARK : ''}</td>`;
+                : `<td title="${esc(_redTitle(red, sem))}" style="text-align:center;font-size:.82rem;color:${red ? (red.force ? '#b45309' : '#7c3aed') : '#6b7280'}${extra}">${_fmtAvg(val)}${_redMark(red)}</td>`;
             // La moyenne annuelle hérite du repère : elle est la moyenne des deux
             // semestres, dont l'un au moins garde la note du passage précédent.
-            const reds = [v.odd_red && d.semesters[0], v.even_red && d.semesters[1]].filter(Boolean);
+            const reds = [(v.odd_red && v.odd_red.source === 'ancienne') && d.semesters[0],
+                          (v.even_red && v.even_red.source === 'ancienne') && d.semesters[1]].filter(Boolean);
             const aTitle = reds.length
                 ? `Moyenne annuelle — ${reds.join(' et ')} : note du passage précédent retenue `
                   + `(redoublant : meilleure des deux). Le détail est dans l'onglet Devenir.` : '';
@@ -7131,7 +7191,8 @@ function renderJuryGrid() {
     // Rappel du repère ↺ : seulement quand la grille en porte, pour ne pas allonger
     // la légende des promotions qui n'accueillent aucun redoublant.
     const aDesRed = d.students.some(s => Object.values((d.rows[s.id] || { ues: {} }).ues)
-        .some(v => v.odd_red || v.even_red));
+        .some(v => (v.odd_red && (v.odd_red.source === 'ancienne' || v.odd_red.force))
+                || (v.even_red && (v.even_red.source === 'ancienne' || v.even_red.force))));
     el.innerHTML = `
         <div style="font-size:.8rem;color:#6b7280;margin-bottom:10px">
             <strong>Codes UE :</strong>
@@ -7147,8 +7208,9 @@ function renderJuryGrid() {
             Pour un candidat <strong>AJ</strong>, le jury peut choisir <span style="padding:1px 6px;border-radius:4px;${_JURY_DEC_STYLE.RED}">RED</span> (redoublant) dans la colonne Décision.${aDesRed ? `<br>
             <strong style="color:#7c3aed">↺</strong> moyenne d'UE <strong>conservée du passage précédent</strong> :
             pour un redoublant, le règlement retient la meilleure des deux (passage précédent / année refaite),
-            UE par UE et semestre par semestre. L'infobulle de la cellule donne les deux valeurs, et le tableau
-            complet est dans l'onglet <strong>Devenir</strong>.` : ''}
+            UE par UE et semestre par semestre. <strong style="color:#b45309">⚖</strong> le <strong>jury en a décidé
+            autrement</strong> pour cette UE. L'infobulle de la cellule donne les deux valeurs ; le tableau complet,
+            et le choix, sont dans l'onglet <strong>Devenir</strong>.` : ''}
             Un étudiant <strong>AJ</strong> ou <strong>RED</strong> à une année n'apparaît plus dans les grilles Jury et Notes des années suivantes.
             Les modifications sont prises en compte après <strong>Enregistrer les décisions</strong>.</div>
         <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px">
