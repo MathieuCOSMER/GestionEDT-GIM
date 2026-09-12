@@ -6200,6 +6200,19 @@ function toggleNotesColGroup(key, on) {
 // Numéro canonique d'une UE (Maintenir=1 … Sécuriser=5) depuis son nom
 function _ueNum(d, name, ci) { return (d.ue_numbers || {})[name] || (ci + 1); }
 
+// Redoublant : le règlement retient, pour chaque UE de semestre, la MEILLEURE des
+// deux moyennes — passage précédent ou année refaite. L'arbitrage est fait au
+// calcul (donc partout à la fois) ; ce repère dit quand c'est l'ancienne qui est
+// affichée, et contre quoi elle a été comparée.
+const _RED_MARK = ' <span style="font-size:.66rem;color:#7c3aed">↺</span>';
+function _redTitle(red, sem) {
+    if (!red) return '';
+    return `Redoublant — ${sem} : moyenne du passage précédent retenue (${_fmtAvg(red.old)})`
+        + (red.new === null || red.new === undefined
+            ? ", l'année refaite n'ayant pas de note pour cette UE"
+            : `, meilleure que celle de l'année refaite (${_fmtAvg(red.new)})`);
+}
+
 // ===== Tri des grilles Bulletins et Jury =====
 // État par grille : colonne (`key`) et sens. 'nom' par défaut, comme le serveur.
 // Une colonne de résultat se trie d'abord du meilleur au moins bon ; les valeurs
@@ -6741,7 +6754,7 @@ function _liveSemAverages(d, sid) {
         });
         let v = den > 0 ? Math.round(Math.max(0, num / den - malus) * 100) / 100 : null;
         const rk = (d.red_kept || {})[sid + '_' + ci];   // redoublant : meilleure des deux
-        if (rk !== undefined && (v === null || rk > v)) v = rk;
+        if (rk !== undefined && (v === null || rk.old > v)) v = rk.old;
         return v;
     });
 }
@@ -7031,11 +7044,18 @@ function renderJuryGrid() {
             }
             // MI : semestre effectué en mobilité internationale, UE validée par équivalence
             const miS = (d.mobility || {})[s.id] || {};
-            const semCell = (val, sem, extra) => (miS[sem] !== undefined)
+            const semCell = (val, sem, extra, red) => (miS[sem] !== undefined)
                 ? `<td title="UE validée par équivalence — mobilité internationale${miS[sem] ? ' : ' + esc(miS[sem]) : ''}" style="text-align:center;font-size:.72rem;font-weight:700;background:#cffafe;color:#0e7490${extra}">MI</td>`
-                : `<td style="text-align:center;font-size:.82rem;color:#6b7280${extra}">${_fmtAvg(val)}</td>`;
-            return semCell(v.odd, d.semesters[0], bl) + semCell(v.even, d.semesters[1], '') +
-                `<td style="text-align:center;font-weight:700;font-size:.88rem;${aStl}">${_fmtAvg(v.annual)}</td>` + codeCell;
+                : `<td title="${esc(_redTitle(red, sem))}" style="text-align:center;font-size:.82rem;color:${red ? '#7c3aed' : '#6b7280'}${extra}">${_fmtAvg(val)}${red ? _RED_MARK : ''}</td>`;
+            // La moyenne annuelle hérite du repère : elle est la moyenne des deux
+            // semestres, dont l'un au moins garde la note du passage précédent.
+            const reds = [v.odd_red && d.semesters[0], v.even_red && d.semesters[1]].filter(Boolean);
+            const aTitle = reds.length
+                ? `Moyenne annuelle — ${reds.join(' et ')} : note du passage précédent retenue `
+                  + `(redoublant : meilleure des deux). Le détail est dans l'onglet Devenir.` : '';
+            return semCell(v.odd, d.semesters[0], bl, v.odd_red) +
+                semCell(v.even, d.semesters[1], '', v.even_red) +
+                `<td title="${esc(aTitle)}" style="text-align:center;font-weight:700;font-size:.88rem;${aStl}">${_fmtAvg(v.annual)}${reds.length ? _RED_MARK : ''}</td>` + codeCell;
         }).join('');
         const gimCell = `<td style="text-align:center;font-weight:700;font-size:.88rem;background:#f0fdf4;color:#166534;border-left:3px solid #22c55e">${_fmtAvg(row.gim)}</td>`;
         const dec = row.decision;
@@ -7055,6 +7075,10 @@ function renderJuryGrid() {
         return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || ''))}" style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${ueCells}${gimCell}${decCell}</tr>`;
     }).join('');
     const term = d.ues.filter(u => u.terminal).map(u => 'UE' + u.num).join(' et ');
+    // Rappel du repère ↺ : seulement quand la grille en porte, pour ne pas allonger
+    // la légende des promotions qui n'accueillent aucun redoublant.
+    const aDesRed = d.students.some(s => Object.values((d.rows[s.id] || { ues: {} }).ues)
+        .some(v => v.odd_red || v.even_red));
     el.innerHTML = `
         <div style="font-size:.8rem;color:#6b7280;margin-bottom:10px">
             <strong>Codes UE :</strong>
@@ -7067,7 +7091,11 @@ function renderJuryGrid() {
             <span style="padding:1px 6px;border-radius:4px;${_JURY_DEC_STYLE.ADMJ}">ADMJ</span> validée grâce à un ADMJ d'UE ·
             <span style="padding:1px 6px;border-radius:4px;${_JURY_DEC_STYLE.AJAC}">AJAC</span> ≥ 3 UE validées (années 1 et 2${term ? ' ; en 2ᵉ année ' + term + ' (*) doivent être validées' : ''}) ·
             <span style="padding:1px 6px;border-radius:4px;${_JURY_DEC_STYLE.AJ}">AJ</span> sinon.
-            Pour un candidat <strong>AJ</strong>, le jury peut choisir <span style="padding:1px 6px;border-radius:4px;${_JURY_DEC_STYLE.RED}">RED</span> (redoublant) dans la colonne Décision.
+            Pour un candidat <strong>AJ</strong>, le jury peut choisir <span style="padding:1px 6px;border-radius:4px;${_JURY_DEC_STYLE.RED}">RED</span> (redoublant) dans la colonne Décision.${aDesRed ? `<br>
+            <strong style="color:#7c3aed">↺</strong> moyenne d'UE <strong>conservée du passage précédent</strong> :
+            pour un redoublant, le règlement retient la meilleure des deux (passage précédent / année refaite),
+            UE par UE et semestre par semestre. L'infobulle de la cellule donne les deux valeurs, et le tableau
+            complet est dans l'onglet <strong>Devenir</strong>.` : ''}
             Un étudiant <strong>AJ</strong> ou <strong>RED</strong> à une année n'apparaît plus dans les grilles Jury et Notes des années suivantes.
             Les modifications sont prises en compte après <strong>Enregistrer les décisions</strong>.</div>
         <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px">

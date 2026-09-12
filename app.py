@@ -6040,9 +6040,10 @@ def _semester_competence_averages(pdb, pid, semester, competences, components=No
     Redoublant : pour chaque UE de l'année refaite, le règlement des études impose
     de retenir la MEILLEURE des deux notes (passage précédent / année refaite).
     L'arbitrage est fait ici, donc pour tous les consommateurs à la fois (bulletins,
-    moyennes annuelles, jury). `kept_out` reçoit {sid_ci: ancienne valeur} pour les
-    UE où l'ancienne l'emporte ; `apply_red=False` rend la note brute de l'année
-    refaite (l'onglet Redoublants montre les deux)."""
+    moyennes annuelles, jury). `kept_out` reçoit {sid_ci: {old, new}} pour les UE
+    où l'ancienne l'emporte — les deux valeurs, pour que l'écran puisse dire ce qui
+    a été retenu et contre quoi ; `apply_red=False` rend la note brute de l'année
+    refaite (l'onglet Devenir montre les deux côte à côte)."""
     marks = {}
     for r in _marks_rows(pdb, pid, semester):
         marks[f"{r['student_id']}_{r['matiere_code']}"] = r['note']
@@ -6078,7 +6079,7 @@ def _semester_competence_averages(pdb, pid, semester, competences, components=No
                 if nv is None or ov > nv:
                     row[str(ci)] = ov
                     if kept_out is not None:
-                        kept_out[f'{sid}_{ci}'] = ov
+                        kept_out[f'{sid}_{ci}'] = {'old': ov, 'new': nv}
     # Validation par acquis : l'UE est acquise sans être évaluée ce semestre-là.
     # Elle ne vaut donc aucune moyenne, et seule celle de l'autre semestre entre
     # dans l'annuelle. Posée APRÈS l'arbitrage redoublant : une UE validée par
@@ -6680,16 +6681,27 @@ def _jury_compute(pdb, pid):
       • RED   — override manuel du jury sur un candidat AJ (redoublant), stocké en ue_num=0."""
     ref_all = _promo_coeffs(pdb, pid) or {}
     nums = _jury_ue_numbers(ref_all)
-    sem_avgs, year_avgs, ue_by_year = {}, {}, {}
+    sem_avgs, year_avgs, ue_by_year, sem_kept = {}, {}, {}, {}
     for y in (1, 2, 3):
         so, se = f'S{2 * y - 1}', f'S{2 * y}'
         for s in (so, se):
             d = ref_all.get(s) or {}
             comps = d.get('competences', [])
             cnums = [nums.get((c.get('name') or '').strip()) for c in comps]
-            raw = _semester_competence_averages(pdb, pid, s, comps, d.get('components', []))
+            kept = {}
+            raw = _semester_competence_averages(pdb, pid, s, comps, d.get('components', []),
+                                                kept_out=kept)
             sem_avgs[s] = {sid: {cnums[int(ci)]: v for ci, v in row.items() if cnums[int(ci)]}
                            for sid, row in raw.items()}
+            # UE dont la moyenne vient du passage précédent (redoublant) : repérées
+            # par numéro d'UE, comme les moyennes elles-mêmes, pour que la grille de
+            # jury puisse dire laquelle des deux notes elle affiche.
+            sem_kept[s] = {}
+            for k, pair in kept.items():
+                sid, _, ci = k.rpartition('_')
+                num = cnums[int(ci)] if int(ci) < len(cnums) else None
+                if num:
+                    sem_kept[s]['%s_%s' % (sid, num)] = pair
         yavg, ynames = _year_competence_averages(pdb, pid, so, se, ref_all)
         ynums = [nums.get((n or '').strip()) for n in ynames]
         ue_by_year[y] = [n for n in ynums if n]
@@ -6750,7 +6762,7 @@ def _jury_compute(pdb, pid):
             if base == 'AJ' and (y, sid) in red_overrides:
                 base = 'RED'
             decisions[(y, sid)] = base
-    return {'nums': nums, 'sem_avgs': sem_avgs, 'year_avgs': year_avgs,
+    return {'nums': nums, 'sem_avgs': sem_avgs, 'year_avgs': year_avgs, 'sem_kept': sem_kept,
             'ue_by_year': ue_by_year, 'ue_codes': ue_codes, 'decisions': decisions}
 
 def _jury_failed_before(comp, year):
@@ -6866,7 +6878,7 @@ def _jury_payload(pdb, pid, year, formation=None):
     semestrielles (UExy), la moyenne annuelle (UExNy), le code UE et la décision d'année.
     Les étudiants ajournés (AJ/RED) à une année antérieure sont retirés de la liste."""
     comp = _jury_compute(pdb, pid)
-    nums, sem_avgs = comp['nums'], comp['sem_avgs']
+    nums, sem_avgs, sem_kept = comp['nums'], comp['sem_avgs'], comp['sem_kept']
     year_avgs, ue_by_year = comp['year_avgs'], comp['ue_by_year']
     ue_codes, decisions = comp['ue_codes'], comp['decisions']
     names_by_num = {v: k for k, v in nums.items()}
@@ -6897,7 +6909,11 @@ def _jury_payload(pdb, pid, year, formation=None):
             per_ue[str(ue)] = {'odd': (sem_avgs.get(s_odd, {}).get(sid) or {}).get(ue),
                                'even': (sem_avgs.get(s_even, {}).get(sid) or {}).get(ue),
                                'annual': (year_avgs[year].get(sid) or {}).get(ue),
-                               'code': codes.get(ue), 'admj': codes.get(ue) == 'ADMJ'}
+                               'code': codes.get(ue), 'admj': codes.get(ue) == 'ADMJ',
+                               # Redoublant : {old, new} quand la moyenne affichée est
+                               # celle du passage précédent, absent sinon.
+                               'odd_red': (sem_kept.get(s_odd) or {}).get('%s_%s' % (sid, ue)),
+                               'even_red': (sem_kept.get(s_even) or {}).get('%s_%s' % (sid, ue))}
         vals = [v['annual'] for v in per_ue.values() if v['annual'] is not None]
         gim = round(sum(vals) / len(vals), 2) if vals else None
         dec = decisions.get((year, sid))
