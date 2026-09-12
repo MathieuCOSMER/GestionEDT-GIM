@@ -4029,6 +4029,10 @@ async function onPromoChange() {
         return;
     }
     _promoId = id;
+    // Les vues des sous-onglets appartiennent à la promotion qu'on quitte : les
+    // oublier évite qu'une d'elles reste affichée le temps de la relecture, les
+    // écrans ne se vidant plus quand ils ont déjà quelque chose à montrer.
+    _effData = _devData = _tutData = null;
     document.getElementById('promo-content').innerHTML = '<div class="spinner">Chargement…</div>';
     try { _promoData = await api('/promotions/' + id); }
     catch (e) { toast('Erreur : ' + e.message, 'error'); return; }
@@ -4094,7 +4098,12 @@ async function loadEffectif() {
     }
     if (sel) sel.innerHTML = [1, 2, 3].map(y =>
         `<option value="${y}" ${y === _effYear ? 'selected' : ''}>${_effYearLabel(y)}</option>`).join('');
-    el.innerHTML = '<div class="spinner">Chargement…</div>';
+    // Le tableau n'est effacé que s'il n'y a rien à montrer (premier affichage).
+    // Une relecture après une saisie le garde à l'écran le temps de la requête :
+    // le vider d'abord faisait disparaître la liste et surtout reprendre le
+    // défilement à zéro — `keepScroll` ne peut rien conserver d'un contenu déjà
+    // effacé, puisqu'il relève les positions au moment du redessin.
+    if (!_effData) el.innerHTML = '<div class="spinner">Chargement…</div>';
     try {
         const [eff, dev] = await Promise.all([
             api(`/promotions/${_promoId}/effectif/${_effYear}`),
@@ -4131,7 +4140,7 @@ async function loadTuteurs() {
     }
     if (sel) sel.innerHTML = [1, 2, 3].map(y =>
         `<option value="${y}" ${y === _tutYear ? 'selected' : ''}>${_effYearLabel(y)}</option>`).join('');
-    el.innerHTML = '<div class="spinner">Chargement…</div>';
+    if (!_tutData) el.innerHTML = '<div class="spinner">Chargement…</div>';
     try {
         // Liste des enseignants de l'année active pour le tuteur universitaire :
         // seuls les TITULAIRES peuvent être tuteur universitaire (statut vide =
@@ -4556,7 +4565,9 @@ async function loadDevenir() {
     }
     if (sel) sel.innerHTML = [1, 2, 3].map(y =>
         `<option value="${y}" ${y === _devYear ? 'selected' : ''}>${_effYearLabel(y)}</option>`).join('');
-    el.innerHTML = '<div class="spinner">Chargement…</div>';
+    // Comme l'effectif : on ne vide l'écran que s'il n'y a rien à montrer, sinon
+    // une décision posée en milieu de liste ramènerait la page à son début.
+    if (!_devData) el.innerHTML = '<div class="spinner">Chargement…</div>';
     try { _devData = await api(`/promotions/${_promoId}/devenir/${_devYear}`); }
     catch (e) {
         toast('Erreur : ' + e.message, 'error');
@@ -4781,6 +4792,10 @@ function _devIncomingSection(d) {
 // Seuls « Actif » et « Abandon » se posent ici. Repasser en « Actif » quelqu'un que
 // son devenir avait fait sortir (césure, départ) annule cette décision : c'est le
 // moyen de la défaire sans passer par l'onglet Devenir.
+// Celui-là se relit au serveur, et c'est voulu : le statut déplace l'étudiant
+// entre les sections et « Autres fiches », change les compteurs, et peut annuler
+// un devenir. Le tableau reste à l'écran pendant la relecture, et le défilement
+// est conservé — la relecture ne se voit pas.
 async function changeStudentStatus(sid, statut) {
     try {
         await api(`/promotions/${_promoId}/students/${sid}`, { method: 'PUT', body: JSON.stringify({ statut }) });
@@ -4838,14 +4853,17 @@ async function changeCohorte(sid, formation) {
 // La semaine seule ne dit pas de quelle année d'étude il s'agit : on envoie
 // l'année affichée avec elle, c'est elle qui détermine à partir de quand
 // l'étudiant sort de l'effectif.
+// Rien à redessiner : elle ne retire l'étudiant que des années SUIVANTES, celle
+// qui est affichée le garde. La liste déroulante montre déjà le choix fait.
 async function changeAbandonSemaine(sid, semaine) {
     try {
         await api(`/promotions/${_promoId}/students/${sid}`, {
             method: 'PUT',
             body: JSON.stringify({ abandon_semaine: semaine, abandon_annee: _effYear })
         });
-        loadEffectif();
-    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+        const s = ((_effData && _effData.students) || []).find(x => x.id === sid);
+        if (s) { s.abandon_semaine = semaine ? parseInt(semaine) : null; s.abandon_annee = _effYear; }
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); loadEffectif(); }
 }
 
 // Bandeau de tête : total des deux listes et nombre d'actifs, en un coup d'œil.
