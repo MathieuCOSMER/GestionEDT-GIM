@@ -5290,6 +5290,8 @@ async function openEtudiant(personId) {
         _studentCard = await api(`/students/${personId}`);
         _studentCardHost = 'tab';
         _etuSelected = personId;
+        _etuFicheTab = 'infos';
+        _etuSemestre = '';        // un autre étudiant : on repart de sa scolarité entière
         renderEtudiants();
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
@@ -5300,11 +5302,37 @@ function fermerEtudiant() {
     renderEtudiants();
 }
 
+// La fiche se lit en deux temps : qui il est (état civil, profil, dossier de
+// candidature, cohortes traversées), et ce qu'il a obtenu (le relevé de toute sa
+// scolarité). Deux sous-onglets plutôt qu'une page à dérouler.
+let _etuFicheTab = 'infos';
+
+function showEtuFicheTab(tab) {
+    _etuFicheTab = tab;
+    renderEtudiantFiche();
+}
+
+// La fiche se construit d'un seul bloc : une erreur dans une section effacerait
+// tout le reste, en-tête et sous-onglets compris, et laisserait un panneau vide
+// sans rien dire. On la rattrape donc pour l'afficher.
+function corpsFiche(d) {
+    try {
+        return _etuFicheTab === 'notes' ? studentNotes(d) : studentSections(d, { large: true });
+    } catch (e) {
+        console.error('fiche étudiant :', e);
+        return `<div class="empty">Affichage impossible : ${esc(e.message)}.
+            Rechargez la page (F5) ; si cela persiste, la console du navigateur en dit plus.</div>`;
+    }
+}
+
 function renderEtudiantFiche() {
     const d = _studentCard;
     if (!d) return;
     const s = d.student;
     const nb = (_etuData.students || []).find(x => x.id === s.id) || {};
+    const onglet = (cle, libelle, titre) => `<button type="button" class="subtab${
+        _etuFicheTab === cle ? ' active' : ''}" title="${esc(titre)}"
+        onclick="showEtuFicheTab('${cle}')">${esc(libelle)}</button>`;
     document.getElementById('etu-content').innerHTML = `
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px">
             <button class="btn btn-secondary btn-sm" onclick="fermerEtudiant()">← Liste des étudiants</button>
@@ -5313,7 +5341,11 @@ function renderEtudiantFiche() {
             ${nb.promotion ? `<span style="color:#6b7280;font-size:.85rem">${esc(nb.promotion)}${
                 nb.annee ? ' · année ' + nb.annee : ''}</span>` : ''}
         </div>
-        ${studentSections(d, { resultats: true })}`;
+        <div class="subtabs" style="margin-bottom:12px">
+            ${onglet('infos', 'Informations', "État civil, profil, dossier de candidature et cohortes traversées")}
+            ${onglet('notes', 'Notes et résultats', "Le relevé de toute sa scolarité, matière par matière")}
+        </div>
+        ${corpsFiche(d)}`;
 }
 
 // ===== FICHE ÉTUDIANT (registre) =====
@@ -5372,9 +5404,157 @@ async function changeRegistreField(field, value) {
     }
 }
 
-// La fiche est la même des deux côtés : la fenêtre ouverte depuis l'effectif en
-// donne l'essentiel, l'onglet Étudiants y ajoute les résultats — d'où une seule
-// fabrique de sections, et une seule façon de les enregistrer.
+// Résultats d'une année : les mêmes moyennes que la grille de jury (UE par
+// semestre, moyenne annuelle, code) — la fiche ne recalcule rien de son côté.
+function tableauUEStatique(a) {
+    const note = v => (v === null || v === undefined) ? '<span style="color:#d1d5db">—</span>' : Number(v).toFixed(2);
+    const ues = a.ues || [];
+    const vide = !ues.some(u => u.odd != null || u.even != null || u.annual != null);
+    if (!ues.length || vide)
+        return `<div style="color:#9ca3af;font-size:.8rem;margin:4px 0 0 2px">Pas encore de notes${
+            a.en_cours ? ' — année en cours' : ''}.</div>`;
+    return `<div style="overflow:auto;margin:6px 0 2px"><table class="pn-table" style="width:auto;min-width:340px">
+        <thead><tr><th style="text-align:left">UE</th><th>${esc(a.semestres[0])}</th><th>${esc(a.semestres[1])}</th>
+            <th title="Moyenne de l'année">Année</th><th title="ADM admis · ADMJ admis par jury · CMP compensée · AJ ajournée">Décision</th></tr></thead>
+        <tbody>${ues.map(u => `<tr>
+            <td style="text-align:left"><strong>UE${u.num}</strong> <span style="color:#6b7280">${esc(u.name || '')}</span></td>
+            <td style="text-align:center">${note(u.odd)}</td>
+            <td style="text-align:center">${note(u.even)}</td>
+            <td style="text-align:center;font-weight:600">${note(u.annual)}</td>
+            <td style="text-align:center">${u.code ? `<span style="padding:1px 7px;border-radius:6px;
+                font-size:.7rem;font-weight:700;background:${_JURY_COUL[u.code] || '#f3f4f6'}">${esc(u.code)}</span>`
+                : '<span style="color:#d1d5db">—</span>'}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+// En-tête d'une année : ce qu'elle dit en une ligne — l'année universitaire, la
+// sous-cohorte, la décision de jury, la moyenne générale, la mobilité.
+function teteAnnee(a) {
+    const etiq = (txt, bg, titre) => `<span title="${esc(titre || '')}" style="display:inline-block;
+        padding:1px 7px;border-radius:6px;font-size:.68rem;font-weight:700;background:${bg};margin-left:6px">${esc(txt)}</span>`;
+    return `Année ${a.year} <span style="color:#9ca3af">${esc(a.annee_univ || '')}</span>
+        · ${esc(a.formation)}${a.jury ? ` · <strong>${esc(_JURY_LIB[a.jury] || a.jury)}</strong>` : ''}${
+        a.en_cours ? etiq('en cours', '#dcfce7', "Année que suit sa cohorte pendant l'année universitaire active") : ''}${
+        a.gim != null ? ` <span style="color:#6b7280">— moyenne générale <strong>${a.gim.toFixed(2)}</strong></span>` : ''}${
+        a.mobilite ? etiq('MI ' + a.mobilite.semester, '#cffafe', 'Mobilité internationale'
+            + (a.mobilite.etablissement ? ' — ' + a.mobilite.etablissement : '')) : ''}`;
+}
+
+// ===== Notes de toute la scolarité =====
+// Le relevé complet, cohorte par cohorte, année par année, semestre par semestre :
+// la note de chaque matière, puis les moyennes d'UE de l'année. Les années
+// traversées avant un changement de cohorte y figurent aussi — elles se lisent sur
+// la fiche d'origine, sans recopie.
+// ===== Notes de toute la scolarité, semestre par semestre =====
+// Le bulletin de chaque semestre : ce qui compose chaque UE — les matières qui y
+// pèsent, leur coefficient et leur note — puis la moyenne qui en sort. Une matière
+// compte souvent dans plusieurs UE, avec des poids différents : c'est le modèle du
+// BUT, et c'est ce que le bulletin doit montrer. Les années faites dans une autre
+// cohorte y figurent aussi — elles se lisent sur la fiche d'origine, sans recopie.
+let _etuSemestre = '';        // '' = tous les semestres
+
+function showEtuSemestre(sem) {
+    _etuSemestre = sem;
+    renderEtudiantFiche();
+}
+
+const _KIND_COUL = { SAE: '#ede9fe', STAGE: '#ede9fe', PORT: '#e0e7ff', RES: '#fff',
+                     BONUS: '#dcfce7', PEN: '#fee2e2' };
+
+function _noteCell(m) {
+    if (!m) return '<span style="color:#d1d5db">—</span>';
+    if (m.mention)
+        return `<span title="${m.mention === 'ABI' ? 'Absence injustifiée — comptée 0'
+            : 'Matière neutralisée — hors moyenne, faute d\'enseignant'}"
+            style="font-size:.7rem;font-weight:700;color:${m.mention === 'ABI' ? '#b91c1c' : '#6b7280'}">${esc(m.mention)}</span>`;
+    return (m.note === null || m.note === undefined) ? '<span style="color:#d1d5db">—</span>'
+                                                     : Number(m.note).toFixed(2);
+}
+
+// Bulletin d'un semestre : une table par UE, puis ce qui ne compte dans aucune
+// (bonification, pénalité d'assiduité), qui pèse sur les moyennes autrement.
+function bulletinSemestre(s) {
+    const notes = {};
+    (s.matieres || []).forEach(m => { notes[m.code] = m; });
+    const ues = (s.ues || []).map(u => {
+        const lignes = (u.matieres || []).map(m => {
+            const n = notes[m.code] || {};
+            return `<tr style="background:${_KIND_COUL[n.kind] || '#fff'}">
+                <td style="white-space:nowrap;font-size:.76rem"><strong>${esc(m.code)}</strong></td>
+                <td style="font-size:.76rem;color:#6b7280;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n.label || '')}</td>
+                <td style="text-align:center;font-size:.72rem;color:#9ca3af">${m.coeff}</td>
+                <td style="text-align:center;font-weight:600;font-size:.8rem">${_noteCell(n)}</td></tr>`;
+        }).join('');
+        const moy = (u.moyenne === null || u.moyenne === undefined) ? '—' : Number(u.moyenne).toFixed(2);
+        const stl = (u.moyenne === null || u.moyenne === undefined) ? 'color:#9ca3af'
+            : (u.moyenne >= 10 ? 'background:#f0fdf4;color:#166534' : 'background:#fef2f2;color:#b91c1c');
+        return `<div style="margin:0 12px 10px 0">
+            <table class="pn-table" style="width:auto;min-width:300px;table-layout:auto">
+                <thead><tr><th colspan="2" style="text-align:left;background:#ede9fe;color:#4c1d95">UE${u.num} · ${esc(u.name)}</th>
+                    <th title="Coefficient de la matière dans cette UE" style="background:#ede9fe;color:#4c1d95">coef</th>
+                    <th style="background:#ede9fe;color:#4c1d95">note</th></tr></thead>
+                <tbody>${lignes}</tbody>
+                <tfoot><tr><td colspan="3" style="text-align:right;font-size:.78rem;font-weight:600">Moyenne de l'UE${
+                    u.red ? _redMark(u.red) : ''}</td>
+                    <td title="${esc(u.red ? _redTitle(u.red, s.semester) : '')}"
+                        style="text-align:center;font-weight:700;font-size:.85rem;${stl}">${moy}</td></tr></tfoot>
+            </table></div>`;
+    }).join('');
+    const dans = new Set((s.ues || []).flatMap(u => (u.matieres || []).map(m => m.code)));
+    const hors = (s.matieres || []).filter(m => !dans.has(m.code) && (m.note !== null || m.mention));
+    const horsBloc = hors.length ? `<div style="font-size:.78rem;color:#6b7280;margin:2px 0 8px">
+        <strong>Hors UE :</strong> ${hors.map(m => `${esc(m.label || m.code)} ${_noteCell(m)}${
+            m.kind === 'PEN' ? ' h' : ''}`).join(' · ')}
+        <span style="color:#9ca3af">— la bonification s'ajoute à la moyenne annuelle, la pénalité d'assiduité se retranche de chaque UE</span></div>` : '';
+    return `<div style="margin:0 0 14px">
+        <div style="font-size:.82rem;font-weight:700;color:#4c1d95;margin-bottom:4px">Bulletin ${esc(s.semester)}
+            <span style="font-weight:400;color:#9ca3af">— ${s.notees} note(s) sur ${(s.matieres || []).length} matières</span></div>
+        ${horsBloc}
+        <div style="display:flex;flex-wrap:wrap">${ues}</div></div>`;
+}
+
+function studentNotes(d) {
+    // Semestres réellement suivis : ceux des années où l'étudiant figure.
+    const semestres = [];
+    (d.parcours || []).forEach(i => (i.annees || []).forEach(a =>
+        (a.releves || []).forEach(s => { if (!semestres.includes(s.semester)) semestres.push(s.semester); })));
+    semestres.sort();
+    const bouton = (val, lib, titre) => `<button type="button" class="subtab${_etuSemestre === val ? ' active' : ''}"
+        title="${esc(titre)}" style="font-size:.78rem;padding:3px 10px" onclick="showEtuSemestre('${val}')">${esc(lib)}</button>`;
+    const choix = semestres.length > 1 ? `<div class="subtabs" style="margin-bottom:10px">
+        ${bouton('', 'Toute la scolarité', 'Tous les semestres, année par année')}
+        ${semestres.map(s => bouton(s, s, 'Le bulletin de ' + s)).join('')}</div>` : '';
+
+    const cartes = (d.parcours || []).map(i => {
+        const annees = (i.annees || []).map(a => {
+            const releves = (a.releves || []).filter(s => !_etuSemestre || s.semester === _etuSemestre);
+            if (!releves.length) return '';
+            return `<div style="margin:10px 0 14px">
+                <div style="font-size:.9rem;margin-bottom:6px">${teteAnnee(a)}</div>
+                ${releves.map(bulletinSemestre).join('')}
+                ${_etuSemestre ? '' : tableauUEStatique(a)}</div>`;
+        }).filter(Boolean).join('');
+        if (!annees) return '';
+        return `<div style="border-left:3px solid #c7d2fe;padding:6px 0 6px 10px;margin-bottom:14px">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <strong>${esc(i.promotion)}</strong>
+                <span style="color:#6b7280;font-size:.82rem">entré en année ${i.entry_year} · ${esc(i.formation)}</span>
+                ${i.origin ? `<span style="color:#6b7280;font-size:.8rem">— venu de ${esc(i.origin.promo)}</span>` : ''}
+            </div>${annees}</div>`;
+    }).filter(Boolean).join('');
+    return choix + `<div style="font-size:.82rem;color:#6b7280;margin-bottom:10px">
+            Le bulletin de chaque semestre : les matières qui composent chaque UE, leur coefficient et
+            leur note, puis la moyenne de l'UE. Une matière compte dans plusieurs UE, avec des poids
+            différents. Les années faites dans une autre cohorte y figurent aussi — elles se lisent sur
+            sa fiche d'origine, elles ne sont pas recopiées.</div>`
+        + (cartes || `<div class="empty">${_etuSemestre
+            ? 'Aucune note sur ' + esc(_etuSemestre) + ' pour cet étudiant.'
+            : "Aucune note enregistrée pour cet étudiant."}</div>`);
+}
+
+// Les informations de l'étudiant, rendues à l'identique des deux côtés : la
+// fenêtre ouverte depuis l'effectif et le sous-onglet « Informations » de l'onglet
+// Étudiants. Une seule fabrique, une seule façon d'enregistrer ; `large` dit
+// seulement qu'on a la place d'étaler les champs (pleine page plutôt que fenêtre).
 function studentSections(d, opts = {}) {
     const s = d.student;
     const dis = state.role !== 'admin' ? ' disabled' : '';
@@ -5396,7 +5576,7 @@ function studentSections(d, opts = {}) {
             <select${dis} onchange="changeRegistreField('${field}', this.value)">${opts2}</select></div>`;
     };
     const identite = `<div class="section-title">Informations du candidat</div>
-        <div style="display:grid;grid-template-columns:repeat(${opts.resultats ? 4 : 3}, 1fr);gap:10px">
+        <div style="display:grid;grid-template-columns:repeat(${opts.large ? 4 : 3}, 1fr);gap:10px">
             ${champ('Nom', 'nom')}${champ('Prénom', 'prenom')}
             ${champ('N° Apogée', 'numero', "Numéro Apogée de l'étudiant")}
             ${champ('Naissance', 'naissance', 'Date de naissance (jj/mm/aaaa)')}
@@ -5410,46 +5590,13 @@ function studentSections(d, opts = {}) {
 
     const etiq = (txt, bg, titre) => `<span title="${esc(titre || '')}" style="display:inline-block;
         padding:1px 7px;border-radius:6px;font-size:.68rem;font-weight:700;background:${bg};margin-left:6px">${esc(txt)}</span>`;
-    const note = v => (v === null || v === undefined) ? '<span style="color:#d1d5db">—</span>' : Number(v).toFixed(2);
 
-    // Résultats d'une année : les mêmes moyennes que la grille de jury (UE par
-    // semestre, moyenne annuelle, code) — la fiche ne recalcule rien de son côté.
-    const tableauUE = a => {
-        const ues = a.ues || [];
-        const vide = !ues.some(u => u.odd != null || u.even != null || u.annual != null);
-        if (!ues.length || vide)
-            return `<div style="color:#9ca3af;font-size:.8rem;margin:4px 0 0 2px">Pas encore de notes${
-                a.en_cours ? ' — année en cours' : ''}.</div>`;
-        return `<div style="overflow:auto;margin:6px 0 2px"><table class="pn-table" style="width:auto;min-width:340px">
-            <thead><tr><th style="text-align:left">UE</th><th>${esc(a.semestres[0])}</th><th>${esc(a.semestres[1])}</th>
-                <th title="Moyenne de l'année">Année</th><th title="ADM admis · ADMJ admis par jury · CMP compensée · AJ ajournée">Décision</th></tr></thead>
-            <tbody>${ues.map(u => `<tr>
-                <td style="text-align:left"><strong>UE${u.num}</strong> <span style="color:#6b7280">${esc(u.name || '')}</span></td>
-                <td style="text-align:center">${note(u.odd)}</td>
-                <td style="text-align:center">${note(u.even)}</td>
-                <td style="text-align:center;font-weight:600">${note(u.annual)}</td>
-                <td style="text-align:center">${u.code ? `<span style="padding:1px 7px;border-radius:6px;
-                    font-size:.7rem;font-weight:700;background:${_JURY_COUL[u.code] || '#f3f4f6'}">${esc(u.code)}</span>`
-                    : '<span style="color:#d1d5db">—</span>'}</td></tr>`).join('')}</tbody></table></div>`;
-    };
-
-    const ligneAnnee = a => {
-        const tete = `Année ${a.year} <span style="color:#9ca3af">${esc(a.annee_univ || '')}</span>
-            · ${esc(a.formation)}${a.jury ? ` · <strong>${esc(_JURY_LIB[a.jury] || a.jury)}</strong>` : ''}${
-            a.en_cours ? etiq('en cours', '#dcfce7', "Année que suit sa cohorte pendant l'année universitaire active") : ''}${
-            a.gim != null ? ` <span style="color:#6b7280">— moyenne générale <strong>${a.gim.toFixed(2)}</strong></span>` : ''}${
-            a.mobilite ? etiq('MI ' + a.mobilite.semester, '#cffafe', 'Mobilité internationale'
-                + (a.mobilite.etablissement ? ' — ' + a.mobilite.etablissement : '')) : ''}`;
-        return opts.resultats
-            ? `<div style="margin:8px 0 2px">${tete}${tableauUE(a)}</div>`
-            : `<li>${tete}</li>`;
-    };
+    const ligneAnnee = a => `<li>${teteAnnee(a)}</li>`;
 
     const cartes = (d.parcours || []).map(i => {
         const annees = (i.annees || []).length
-            ? (opts.resultats ? i.annees.map(ligneAnnee).join('')
-               : '<ul style="margin:6px 0 0;padding-left:18px;font-size:.85rem">'
-                 + i.annees.map(ligneAnnee).join('') + '</ul>')
+            ? '<ul style="margin:6px 0 0;padding-left:18px;font-size:.85rem">'
+              + i.annees.map(ligneAnnee).join('') + '</ul>'
             : `<div style="color:#9ca3af;font-size:.82rem;margin-top:4px">Hors effectif de cette cohorte.</div>`;
         const venu = i.origin
             ? etiq(i.origin.reason === 'CESURE' ? 'reprise après césure' : 'redoublant', '#ddd6fe',
@@ -5469,8 +5616,7 @@ function studentSections(d, opts = {}) {
             ${sortie ? `<div style="color:#6b7280;font-size:.82rem;margin-top:4px">${esc(sortie)}</div>` : ''}
         </div>`;
     }).join('');
-    const parcours = `<div class="section-title" style="margin-top:16px">${
-            opts.resultats ? 'Parcours et résultats' : 'Parcours'}
+    const parcours = `<div class="section-title" style="margin-top:16px">Parcours
             <span style="font-weight:400;color:#9ca3af;font-size:.82rem">— les cohortes qu'il a traversées</span></div>`
         + (cartes || '<div class="empty">Aucune inscription.</div>');
 
@@ -5484,7 +5630,7 @@ function studentSections(d, opts = {}) {
             onchange="changeRegistreField('${c.field}', this.value)"></div>`;
     const ps = `<div class="section-title" style="margin-top:16px">Dossier ParcourSup
             <span style="font-weight:400;color:#9ca3af;font-size:.82rem">— repris de l'import du classement, modifiable</span></div>
-        <div style="display:grid;grid-template-columns:repeat(${opts.resultats ? 4 : 2}, 1fr);gap:8px">
+        <div style="display:grid;grid-template-columns:repeat(${opts.large ? 4 : 2}, 1fr);gap:8px">
             ${(d.ps_columns || []).map(psChamp).join('')}</div>`;
 
     return identite + parcours + ps;
@@ -5495,7 +5641,7 @@ function renderStudentCard() {
     if (!d) return;
     const titre = document.getElementById('student-card-title');
     if (titre) titre.textContent = `${d.student.nom || ''} ${d.student.prenom || ''}`.trim() || 'Fiche étudiant';
-    document.getElementById('student-card-body').innerHTML = studentSections(d, { resultats: false });
+    document.getElementById('student-card-body').innerHTML = studentSections(d, {});
 }
 
 function openAddStudent(formation) {

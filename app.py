@@ -4364,12 +4364,16 @@ def delete_promotion_student(pid, sid):
 def _student_parcours(pdb, person_id):
     """Inscriptions d'un étudiant, de la plus ancienne cohorte à la plus récente :
     ce qu'il y fait (sous-cohorte, statut), les années où il y figure vraiment
-    (effectif calculé), ses RÉSULTATS de chaque année — moyennes d'UE par semestre
-    et à l'année, code UE, moyenne générale, décision de jury — et d'où il vient.
+    (effectif calculé), ses RÉSULTATS de chaque année — la note de chaque matière
+    semestre par semestre, les moyennes d'UE, le code UE, la moyenne générale et la
+    décision de jury — et d'où il vient.
 
     Les moyennes ne sont pas recalculées ici : elles sortent de `_jury_compute`,
     le même calcul que la grille de jury, pour que la fiche et le jury ne puissent
-    pas dire deux choses différentes."""
+    pas dire deux choses différentes. Les notes de matière viennent de
+    `_marks_rows`, qui va chercher celles de la fiche d'origine pour les années
+    antérieures à son entrée : la scolarité se lit d'un bout à l'autre, même
+    traversée de cohortes."""
     fiches = [dict(r) for r in pdb.execute(
         '''SELECT s.*, p.name AS promo, p.start_year
            FROM promotion_students s JOIN promotions p ON p.id = s.promotion_id
@@ -4383,6 +4387,7 @@ def _student_parcours(pdb, person_id):
         pid = f['promotion_id']
         comp = _jury_compute(pdb, pid)
         rosters = _year_rosters(pdb, pid, comp)
+        ref_all = _promo_coeffs(pdb, pid) or {}
         noms_ue = {v: k for k, v in comp['nums'].items()}
         mob = _mobility_map(pdb, pid).get(f['id']) or {}
         nb_notes = pdb.execute('SELECT COUNT(*) FROM student_marks WHERE student_id=?',
@@ -4399,8 +4404,47 @@ def _student_parcours(pdb, person_id):
                     'even': (comp['sem_avgs'].get(se, {}).get(sid) or {}).get(u),
                     'annual': (comp['year_avgs'][y].get(sid) or {}).get(u),
                     'code': codes.get(u)} for u in (comp['ue_by_year'].get(y) or [])]
+            # Le relevé de chaque semestre : une ligne par matière notée dans la
+            # référence du semestre (les matières sans coefficient en sont absentes,
+            # comme dans la grille des bulletins), avec sa note ou sa mention.
+            releves = []
+            for sem in (so, se):
+                ref = ref_all.get(sem) or {}
+                comps_sem = _visible_note_components(ref.get('components', []),
+                                                     ref.get('competences', []))
+                notes = {r['matiere_code']: r for r in _marks_rows(pdb, pid, sem, with_mentions=True)
+                         if r['student_id'] == f['id']}
+                lignes = [{'code': c['code'],
+                           'label': c.get('label') or c.get('apogee_name') or c['code'],
+                           'kind': c.get('kind'),
+                           'note': (notes.get(c['code']) or {}).get('note'),
+                           'mention': (notes.get(c['code']) or {}).get('mention')}
+                          for c in comps_sem]
+                # Le bulletin du semestre : ce qui compose chaque UE — les matières
+                # qui y pèsent, avec leur coefficient — et la moyenne qui en sort.
+                # Une matière compte souvent dans plusieurs UE, avec des poids
+                # différents : c'est le modèle du BUT, et c'est ce que le bulletin
+                # doit montrer. Seuls les codes sont répétés ici ; l'intitulé et la
+                # note se lisent une fois pour toutes dans `matieres`.
+                ordre = {c['code']: i for i, c in enumerate(comps_sem)}
+                sid_txt = str(f['id'])
+                ues_sem = []
+                for cpt in (ref.get('competences') or []):
+                    nom_ue = (cpt.get('name') or '').strip()
+                    num_ue = comp['nums'].get(nom_ue)
+                    poids = {k: v for k, v in (cpt.get('coeffs') or {}).items() if v}
+                    ues_sem.append({
+                        'num': num_ue, 'name': nom_ue,
+                        'moyenne': (comp['sem_avgs'].get(sem, {}).get(sid_txt) or {}).get(num_ue),
+                        'red': (comp['sem_kept'].get(sem) or {}).get('%s_%s' % (f['id'], num_ue)),
+                        'matieres': [{'code': c, 'coeff': poids[c]}
+                                     for c in sorted(poids, key=lambda x: ordre.get(x, 999))],
+                    })
+                releves.append({'semester': sem, 'matieres': lignes, 'ues': ues_sem,
+                                'notees': sum(1 for x in lignes
+                                              if x['note'] is not None or x['mention'])})
             moyennes = [u['annual'] for u in ues if u['annual'] is not None]
-            annees.append({'year': y,
+            annees.append({'year': y, 'releves': releves,
                            'annee_univ': '%d-%d' % (debut, debut + 1) if debut else '',
                            'en_cours': y == _annee_en_cours(f['start_year']),
                            'formation': _year_formation_map(pdb, pid, y).get(f['id'],
