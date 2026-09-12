@@ -781,12 +781,18 @@ _STUDENT_SEXE = ['M', 'F']
 # Séries de bac : codes tels qu'ils figurent dans la colonne BAC des PV de jury
 # (nomenclature Apogée). « Autre » recueille les séries qui n'y sont pas encore
 # apparues, pour qu'une valeur inconnue reste enregistrable.
-_STUDENT_BAC = ['NBGE', 'TI2D', 'STMG', 'S', 'S-MA', 'PRO', 'ETR', 'Autre']
+# Séries de bac, dans l'ordre où elles se lisent : les deux générales, les trois
+# technologiques, la professionnelle, puis l'étranger et le reste.
+_STUDENT_BAC = ['NBGE', 'S', 'STI2D', 'STL', 'STMG', 'PRO', 'ETR', 'Autre']
 # Codes de bac renommés (anciens -> nouveaux), rejoués au démarrage sur les
 # lignes déjà saisies pour qu'elles restent des valeurs autorisées.
-# 'PRO' n'y figure plus : le baccalauréat professionnel est une série à part
-# entière (le recrutement en compte, et ses spécialités ont leur colonne).
-_STUDENT_BAC_RENAMES = {'SI2D': 'TI2D', 'STI2D': 'TI2D', 'GEN': 'NBGE', 'STL': 'Autre'}
+# 'PRO' et 'STL' n'y figurent plus : le baccalauréat professionnel et les
+# sciences et technologies de laboratoire sont des séries à part entière (le
+# recrutement en compte, et le bac pro a ses spécialités en colonne).
+# La série s'écrit STI2D partout, y compris sur les fiches saisies « TI2D » comme
+# l'écrivent certains PV de jury. 'S-MA' (S option maths) rejoint 'S' : la
+# distinction ne servait plus, les deux datent d'avant 2021.
+_STUDENT_BAC_RENAMES = {'SI2D': 'STI2D', 'TI2D': 'STI2D', 'GEN': 'NBGE', 'S-MA': 'S'}
 # Études suivies ENTRE le bac et l'entrée en BUT. Elles ne se renseignent que
 # pour qui n'est pas entré juste après son bac (cf `bac_ecart`) : « post-bac »
 # n'est plus un cursus, c'est un écart nul.
@@ -825,8 +831,9 @@ _SCOLARITE_COLUMNS = [
      "Pays de la scolarité antérieure — FR par défaut pour un recrutement ParcourSup, "
      "à renseigner pour les autres voies"),
     ('bac', 'Série', 'liste',
-     'Série du baccalauréat obtenu — NBGE : nouveau bac général · TI2D : STI2D · '
-     'PRO : baccalauréat professionnel · ETR : diplôme étranger'),
+     'Série du baccalauréat obtenu — NBGE : nouveau bac général (depuis 2021) · '
+     'S : bac S, jusqu\'en 2020 · PRO : baccalauréat professionnel · ETR : diplôme '
+     'étranger. Un PV qui écrit « TI2D » est repris en STI2D.'),
     ('bac_ecart', 'Ans', 'entier',
      "Années écoulées entre l'obtention du bac et l'entrée en BUT — 0 : entré juste après"),
     ('ps_specialites', 'Spé term.', 'import', None),
@@ -838,8 +845,11 @@ _SCOLARITE_COLUMNS = [
     ('ps_note', 'Note PS', 'import', None),
 ]
 # Codes qui ne sont plus saisis mais restent lus (statistiques, fiches anciennes).
-_STUDENT_BAC_LABELS = {'NBGE': 'Nouveau Bac Général', 'TI2D': 'STI2D',
-                       'PRO': 'Bac professionnel', 'ETR': 'Étranger'}
+# Seuls les codes qui ne se lisent pas d'eux-mêmes portent un libellé : STI2D,
+# STL et STMG sont les sigles usuels des séries, les rappeler n'apprendrait rien.
+_STUDENT_BAC_LABELS = {'NBGE': 'Nouveau Bac Général (depuis 2021)',
+                       'S': 'Bac S (jusqu\'en 2020)',
+                       'PRO': 'Bac professionnel', 'ETR': 'Diplôme étranger'}
 _STUDENT_CURSUS_LABELS = {'PREPA': 'Classe préparatoire', 'BTS': 'BTS',
                           'LIC': 'Licence', 'BUT': 'BUT (autre spécialité)',
                           'REP': "Reprise d'études"}
@@ -1070,7 +1080,7 @@ def _norm_bac(v):
         return 'NBGE'
     # Le classement code le bac professionnel « P » ; les autres listes l'écrivent
     # en toutes lettres. Il a sa propre série depuis que le recrutement en compte.
-    if k == 'p' or k.startswith('pro'):
+    if k == 'p' or 'pro' in k:
         return 'PRO'
     return 'Autre'
 
