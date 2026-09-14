@@ -11746,6 +11746,31 @@ function stBars(data, opts = {}) {
     }).join('') + '</div>';
 }
 
+// Issue de la 1re année : ordre de lecture et couleurs
+const ST_ISSUES = ['Validée', 'Passage avec dettes (AJAC)', 'Échec (AJ / RED)', 'Abandon'];
+const ST_ISSUE_COL = { 'Validée': '#15803d', 'Passage avec dettes (AJAC)': '#f59e0b',
+                       'Échec (AJ / RED)': '#dc2626', 'Abandon': '#6b7280' };
+
+// Barres empilées à 100 % : [[libellé, {catégorie: effectif}], …], catégories dans
+// l'ordre de `cats`. L'effectif du groupe est rappelé en bout de barre.
+function stStack(rows, cats, colors) {
+    const list = (rows || []).filter(r => r && Object.values(r[1] || {}).some(v => v > 0));
+    if (!list.length) return '<div class="st-none">Aucune donnée</div>';
+    const legende = `<div style="display:flex;flex-wrap:wrap;gap:2px 14px;margin-bottom:8px">${
+        cats.map(c => `<span class="st-lg"><i style="background:${colors[c] || '#64748b'}"></i>${esc(c)}</span>`).join('')}</div>`;
+    return legende + '<div class="st-bars">' + list.map(([lbl, parts]) => {
+        const tot = cats.reduce((a, c) => a + (parts[c] || 0), 0);
+        const segs = cats.filter(c => parts[c]).map(c => {
+            const p = 100 * parts[c] / tot;
+            return `<span title="${esc(String(lbl))} — ${esc(c)} : ${parts[c]} (${Math.round(p)} %)"
+                style="width:${p}%;background:${colors[c] || '#64748b'};border-radius:0"></span>`;
+        }).join('');
+        return `<div class="st-bar"><span class="st-bar-l" title="${esc(String(lbl))}">${esc(String(lbl))}</span>
+            <span class="st-bar-t" style="display:flex">${segs}</span>
+            <span class="st-bar-v">${tot}<em>étud.</em></span></div>`;
+    }).join('') + '</div>';
+}
+
 // Colonnes verticales (histogrammes) : [[libellé, valeur], …]
 function stColumns(data, opts = {}) {
     const rows = (data || []).filter(Boolean);
@@ -12023,7 +12048,8 @@ function statsDossierCandidature(c) {
     if (!c.avec_dossier) {
         return titre + `<div class="st-note-warn" style="margin-bottom:24px">Aucun dossier de candidature importé.
             Importez l'<strong>export CSV complet</strong> de ParcourSup depuis
-            <strong>Promotions → Effectifs → Importer ParcourSup</strong> pour alimenter cette partie.</div>`;
+            <strong>Promotions → Effectifs → Importer ParcourSup</strong> pour alimenter cette partie.</div>`
+            + statsEchecsAnnee1(c);
     }
     const pc = v => v == null ? '—' : stNum(v, 1) + ' %';
     const avisCouleurs = { 'Très satisfaisante': '#15803d', Satisfaisante: '#10b981', 'Assez satisfaisante': '#f59e0b', 'Peu démontrée': '#ef4444' };
@@ -12080,7 +12106,104 @@ function statsDossierCandidature(c) {
             ${croise('Moyenne de BUT par formation l\'année de la candidature', c.reussite_par_formation)}
             ${croise('UE validées par moyenne scientifique de terminale', c.validation_par_lycee, 'part des UE acquises', pourcent)}
         </div></div>`;
-    return titre + kpis + bac + lycee + reussite;
+    // --- Maths de terminale, lues filière par filière
+    const m = c.maths || {};
+    const filieres = (m.par_filiere || []).filter(x => x[1]);
+    const moyFil = f => (filieres.find(x => x[0] === f) || [])[1];
+    const spe = moyFil('Spé maths'), sti = moyFil('STI2D');
+    const mathsSec = `<div class="st-sec"><h2>Maths en terminale
+            <small>une note ne se compare qu'au sein de sa filière : la spécialité maths de la voie générale n'est pas le cours de maths de STI2D</small></h2>
+        <div class="st-kpis">
+            ${stKpi('Spé maths (voie générale)', spe ? stNum(spe.moy, 2) : '—', spe ? `médiane ${stNum(spe.med, 2)} · ${stNum(spe.n)} candidats` : '', '#4f46e5')}
+            ${stKpi('Maths en STI2D', sti ? stNum(sti.moy, 2) : '—', sti ? `médiane ${stNum(sti.med, 2)} · ${stNum(sti.n)} candidats` : '', '#0ea5e9')}
+            ${stKpi('Maths expertes', pc(m.expertes_pct), 'parmi les spé maths', '#8b5cf6')}
+            ${stKpi('Sans spé maths', pc(m.sans_spe_pct), 'voie générale : maths complémentaires ou aucune', '#f59e0b')}
+        </div>
+        <div class="st-grid">
+            ${stCard('Profil maths en terminale', stDonut(m.profil, { unit: 'dossiers' }))}
+            ${stCard('Note de maths par filière', stSummaryTable(filieres, 'Filière', 'Candidats'),
+                     'moyenne des trimestres de la matière de maths principale')}
+        </div>
+        <div class="st-grid wide" style="margin-top:14px">
+            ${(m.hist || []).map(([f, h]) => stCard('Note de maths de terminale — ' + f,
+                stColumns(h, { colorFn: (x, i) => i < 5 ? '#f59e0b' : '#10b981' }), 'tranches de 2 points')).join('')}
+        </div></div>`;
+
+    // --- Maths de terminale × issue de la 1re année
+    const tx = t => t && t.pct != null ? stNum(t.pct, 1) + ' %' : '—';
+    const txSub = t => t && t.n ? `sur ${stNum(t.n)} étudiant(s) jugé(s)` : 'aucun étudiant jugé';
+    const pctBars = { max: 100, dec: 1, fmt: v => stNum(v, 1) + ' %' };
+    const corrCell = (r, n) => r == null
+        ? `— <span style="color:#6b7280">${n ? `(${n} étudiant(s), trop peu)` : ''}</span>`
+        : `<strong>${stNum(r, 2)}</strong> <span style="color:#6b7280">· ${stCorrLib(r)} · ${n} étud.</span>`;
+    const a1 = c.annee1 || {};
+    const vide1 = !m.jugees ? `<div class="st-note-warn" style="margin-bottom:12px">
+            <strong>Pas encore de résultat à croiser.</strong> Il faut des étudiants ayant à la fois un dossier de
+            candidature et une 1re année <strong>terminée et jugée</strong> : ${stNum(c.avec_dossier)} dossier(s) importé(s),
+            ${stNum(a1.jugees)} entrant(s) jugé(s) en 1re année, aucun n'a les deux. Ces graphiques se rempliront à la
+            fin de la 1re année de la promotion recrutée, ou dès l'import des exports ParcourSup des promotions précédentes.</div>` : '';
+    const mathsReussite = `<div class="st-sec"><h2>Maths de terminale × réussite en 1re année
+            <small>cohortes dont la 1re année est terminée · échec = AJ, RED ou abandon</small></h2>
+        ${vide1}
+        <div class="st-kpis">
+            ${stKpi('Échec en 1re année', tx(m.echec), txSub(m.echec), '#dc2626')}
+            ${stKpi('… moins de 10 en maths', tx(m.echec_sous_10), txSub(m.echec_sous_10), '#b91c1c')}
+            ${stKpi('… 12 ou plus en maths', tx(m.echec_12_plus), txSub(m.echec_12_plus), '#15803d')}
+        </div>
+        <div class="st-grid wide">
+            ${stCard('Issue de la 1re année selon la note de maths de terminale', stStack(m.issue_par_note, ST_ISSUES, ST_ISSUE_COL), 'filière · tranche de note')}
+            ${stCard('Taux d\'échec en 1re année selon la note de maths', stBars(m.echec_par_note, Object.assign({ color: '#dc2626' }, pctBars)), 'filière · tranche de note')}
+        </div>
+        <div class="st-grid wide" style="margin-top:14px">
+            ${stCard('Taux d\'échec en 1re année selon le profil maths', stBars(m.echec_par_profil, Object.assign({ color: '#b91c1c' }, pctBars)))}
+            ${stCard('Moyenne de 1re année selon la note de maths', stBars(m.moy1_par_note, { max: 20, dec: 2, color: '#4f46e5' }),
+                     'moyenne des UE de l\'année · groupes d\'au moins 3')}
+        </div>
+        <div class="st-grid wide" style="margin-top:14px">
+            ${stCard('Maths de BUT selon la note de maths de terminale', stBars(m.but_maths_par_note, { max: 20, dec: 2, color: '#0ea5e9' }),
+                     'ressources Mathématiques 1 et 2 · groupes d\'au moins 3')}
+            ${stCard('Moins de 10 en maths de BUT selon la note de maths de terminale', stBars(m.but_maths_sous10_par_note, Object.assign({ color: '#f59e0b' }, pctBars)),
+                     'part des étudiants · groupes d\'au moins 3')}
+        </div>
+        <div style="margin-top:14px">${stCard('La note de maths de terminale annonce-t-elle la 1re année ?', `<table class="st-tbl">
+            <thead><tr><th>Filière</th><th>Avec la moyenne de 1re année</th><th>Avec les maths de BUT</th></tr></thead>
+            <tbody>${(m.correlations || []).map(([f, r1, n1, r2, n2]) => `<tr><td>${esc(f)}</td>
+                <td>${corrCell(r1, n1)}</td><td>${corrCell(r2, n2)}</td></tr>`).join('')}</tbody></table>`,
+            'corrélation calculée à partir de 8 étudiants par filière')}</div>
+    </div>`;
+    return titre + kpis + bac + lycee + mathsSec + mathsReussite + statsEchecsAnnee1(c) + reussite;
+}
+
+// Échecs de 1re année de toutes les cohortes dont l'année est terminée, avec ou sans
+// dossier de candidature : c'est le contexte des croisements, et c'est lisible dès
+// maintenant. Le lien avec les maths de BUT est en partie mécanique (ces notes
+// comptent dans les UE) : il dit le poids des maths dans l'échec, pas une cause.
+function statsEchecsAnnee1(c) {
+    const a = c.annee1 || {};
+    if (!a.jugees) return '';
+    const pctBars = { max: 100, dec: 1, fmt: v => stNum(v, 1) + ' %' };
+    const e = a.echec || {};
+    const part = cle => { const t = (a.issue || []).reduce((s, r) => s + r[1], 0);
+                          const x = (a.issue || []).find(r => r[0] === cle); return t && x ? stNum(100 * x[1] / t, 1) + ' %' : '—'; };
+    return `<div class="st-sec"><h2>Échecs en 1re année — toutes cohortes
+            <small>entrants en 1re année des cohortes dont l'année est terminée, avec ou sans dossier</small></h2>
+        <div class="st-kpis">
+            ${stKpi('Entrants jugés', stNum(a.jugees), `dont ${stNum(a.avec_dossier)} avec dossier de candidature`)}
+            ${stKpi('Taux d\'échec', e.pct != null ? stNum(e.pct, 1) + ' %' : '—', 'AJ, RED ou abandon', '#dc2626')}
+            ${stKpi('Ajournés / redoublants', part('Échec (AJ / RED)'), 'AJ ou RED', '#b91c1c')}
+            ${stKpi('Abandons', part('Abandon'), 'en cours de 1re année', '#6b7280')}
+            ${stKpi('Passage avec dettes', part('Passage avec dettes (AJAC)'), 'AJAC', '#f59e0b')}
+        </div>
+        <div class="st-grid wide">
+            ${stCard('Issue de la 1re année par promotion', stStack(a.par_promo, ST_ISSUES, ST_ISSUE_COL))}
+            ${stCard('Taux d\'échec selon la moyenne en maths de BUT', stBars(a.echec_par_maths_but, Object.assign({ color: '#dc2626' }, pctBars)),
+                     'ressources Mathématiques de 1re année — lien en partie mécanique : ces notes comptent dans les UE')}
+        </div>
+        <div class="st-grid wide" style="margin-top:14px">
+            ${stCard('Issue de la 1re année selon la moyenne en maths de BUT', stStack(a.issue_par_maths_but, ST_ISSUES, ST_ISSUE_COL))}
+            ${stCard('Moyenne en maths de BUT selon l\'issue de l\'année', stBars(a.maths_but_par_issue, { max: 20, dec: 2, colorFn: r => ST_ISSUE_COL[r[0]] || '#64748b' }),
+                     'groupes d\'au moins 3')}
+        </div></div>`;
 }
 
 // ===== Recrutement : le dossier ParcourSup, et ce qu'il annonce des résultats =====
@@ -12094,7 +12217,8 @@ function statsRecrutement(d) {
     if (!p.avec_dossier && !cand.avec_dossier) {
         return `<div class="empty">Aucun dossier ParcourSup enregistré.<br>
             Importez un classement ou l'export CSV complet depuis
-            <strong>Promotions → Effectifs → Importer ParcourSup</strong> pour alimenter cette page.</div>`;
+            <strong>Promotions → Effectifs → Importer ParcourSup</strong> pour alimenter cette page.</div>`
+            + statsEchecsAnnee1(cand);
     }
     const dossier = statsDossierCandidature(cand);
     if (!p.avec_dossier) return dossier;

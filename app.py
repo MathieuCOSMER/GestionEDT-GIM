@@ -13079,6 +13079,16 @@ _CAND_AVIS = ('Très satisfaisante', 'Satisfaisante', 'Assez satisfaisante', 'Pe
 _CAND_POST_BAC = ('Juste après le bac', '1 an après', '2 ans après', '3 ans et plus')
 _CAND_AGES = ('18 ans ou moins', '19 ans', '20 ans', '21 ans et plus')
 _LYCEE_BANDES = ((10, '< 10'), (12, '10–12'), (14, '12–14'), (16, '14–16'), (99, '≥ 16'))
+# Maths de terminale. Une note ne se compare qu'au sein de sa filière : sur la campagne
+# 2026, la spécialité maths de la voie générale fait 10,8 de moyenne, le cours de maths
+# de STI2D 12,5 — les tranches se lisent donc filière par filière.
+_MATHS_PROFILS = ('Spé maths + maths expertes', 'Spé maths', 'Maths complémentaires',
+                  'Sans maths en terminale', 'STI2D', 'Bac pro', 'Autre série')
+_MATHS_FILIERES = ('Spé maths', 'STI2D', 'Maths compl.', 'Bac pro', 'Autre')
+_MATHS_BANDES = ((8, '< 8'), (10, '8–10'), (12, '10–12'), (14, '12–14'), (99, '≥ 14'))
+# Issue de la 1re année ; l'échec regroupe l'ajournement, le redoublement et l'abandon
+_ISSUES_1 = ('Validée', 'Passage avec dettes (AJAC)', 'Échec (AJ / RED)', 'Abandon')
+_ECHECS_1 = ('Échec (AJ / RED)', 'Abandon')
 
 def _age_a(naissance, jour):
     """Âge révolu au `jour` (datetime) d'une naissance jj/mm/aaaa ou aaaa-mm-jj ;
@@ -13158,6 +13168,42 @@ def _cand_lycee(dossier):
             out[m['matiere']] = sum(notes) / len(notes)
     return out
 
+def _cand_maths(lycee, serie):
+    """(profil, filière, note) des maths de terminale, d'après les matières du bulletin
+    ({matière: moyenne}, cf. _cand_lycee) et la série du bac. La note retenue est celle de
+    la matière de maths principale : la spécialité en voie générale (les maths expertes
+    s'y ajoutent sans la remplacer), les maths complémentaires à défaut, le cours de maths
+    en STI2D et en bac pro. Sans bulletin, rien n'est connu."""
+    if not lycee:
+        return None, None, None
+    spe, exp = lycee.get('Mathématiques Spécialité'), lycee.get('Mathématiques Expertes')
+    comp, tronc = lycee.get('Mathématiques Complémentaires'), lycee.get('Mathématiques')
+    if spe is not None or exp is not None:
+        profil = 'Spé maths + maths expertes' if (spe is not None and exp is not None) else 'Spé maths'
+        return profil, 'Spé maths', spe if spe is not None else exp
+    if comp is not None:
+        return 'Maths complémentaires', 'Maths compl.', comp
+    if tronc is not None:
+        if serie == 'STI2D':
+            return 'STI2D', 'STI2D', tronc
+        if serie == 'Bac pro':
+            return 'Bac pro', 'Bac pro', tronc
+        return 'Autre série', 'Autre', tronc
+    return 'Sans maths en terminale', None, None
+
+def _issue_annee1(s, a1):
+    """Issue de la 1re année d'un entrant en 1re année, une fois cette année terminée :
+    validée (ADM/ADMJ), passage avec dettes (AJAC), échec (AJ/RED) ou abandon. None tant
+    que l'année n'est pas finie ou pas jugée, et pour qui est entré directement plus loin."""
+    if not a1.get('terminee') or (s.get('entry_year') or 1) != 1:
+        return None
+    dec = a1.get('decision')
+    if s.get('statut') == 'Abandon' and (s.get('abandon_annee') == 1
+                                         or (s.get('abandon_annee') is None and not dec)):
+        return 'Abandon'
+    return {'ADM': 'Validée', 'ADMJ': 'Validée', 'AJAC': 'Passage avec dettes (AJAC)',
+            'AJ': 'Échec (AJ / RED)', 'RED': 'Échec (AJ / RED)'}.get(dec)
+
 def _ordonner(rows, ordre):
     """Remet [[clé, …], …] dans l'ordre d'une échelle (les clés inconnues à la fin)."""
     if not ordre:
@@ -13165,7 +13211,8 @@ def _ordonner(rows, ordre):
     rang = {k: i for i, k in enumerate(ordre)}
     return sorted(rows, key=lambda r: rang.get(r[0], len(rang)))
 
-def _stats_candidature(pdb, students, promos, moy_etudiant, admis_etudiant):
+def _stats_candidature(pdb, students, promos, moy_etudiant, admis_etudiant,
+                       annee1=None, maths_but=None):
     """Profil des entrants — âge (registre), origine, bourse, bac, parcours, notes de
     lycée, avis du chef d'établissement (dossier de candidature complet) — et ce que
     ce dossier annonce de la réussite en BUT.
@@ -13187,6 +13234,10 @@ def _stats_candidature(pdb, students, promos, moy_etudiant, admis_etudiant):
         d = dossiers.get(s.get('person_id'))
         r = {'sid': s['id'], 'promo': s.get('promo'), 'sexe': s.get('sexe'),
              'age': age, 'age_bande': _age_bande(age), 'dossier': d is not None}
+        a1 = (annee1 or {}).get(s['id']) or {}
+        mb = (maths_but or {}).get(s['id'])
+        r.update({'issue1': _issue_annee1(s, a1), 'moy1': a1.get('moyenne'),
+                  'maths_but': mb, 'maths_but_bande': _ps_bande(mb, _MATHS_BANDES)})
         if d:
             o, b, bo = d.get('origine') or {}, d.get('bac') or {}, d.get('bourse') or {}
             # Recalculé depuis le code postal : suit les corrections de _departement_du_cp
@@ -13205,6 +13256,9 @@ def _stats_candidature(pdb, students, promos, moy_etudiant, admis_etudiant):
             ecart = d.get('annees_post_bac')
             lycee = _cand_lycee(d)
             sci = round(sum(lycee.values()) / len(lycee), 2) if lycee else None
+            serie = _cand_serie(b.get('serie'))
+            maths_profil, maths_filiere, maths_note = _cand_maths(lycee, serie)
+            maths_bande = _ps_bande(maths_note, _MATHS_BANDES)
             r.update({
                 'zone': zone,
                 'departement': f"{dep} — {dep_nom}" if dep else None,
@@ -13216,12 +13270,16 @@ def _stats_candidature(pdb, students, promos, moy_etudiant, admis_etudiant):
                 'echelon': f"Échelon {bo['echelon']}" if bo.get('boursier') and bo.get('echelon') else None,
                 'shn': bool(d.get('shn')), 'artiste': bool(d.get('artiste')),
                 'mention': _cand_mention(b.get('mention')),
-                'serie': _cand_serie(b.get('serie')),
+                'serie': serie,
                 'post_bac': None if ecart is None else _CAND_POST_BAC[min(int(ecart), 3)],
                 'formation': _cand_formation(d),
                 'avis': d.get('avis_ce') or None,
                 'lycee': lycee, 'sci': sci,
                 'lycee_bande': _ps_bande(sci, _LYCEE_BANDES),
+                'maths_profil': maths_profil, 'maths_filiere': maths_filiere,
+                'maths_note': round(maths_note, 2) if maths_note is not None else None,
+                # clé de lecture « filière · tranche » : les tranches ne valent qu'au sein d'une filière
+                'maths_cle': f'{maths_filiere} · {maths_bande}' if maths_filiere and maths_bande else None,
             })
         rows.append(r)
     avec = [r for r in rows if r['dossier']]
@@ -13262,6 +13320,87 @@ def _stats_candidature(pdb, students, promos, moy_etudiant, admis_etudiant):
             'sci_moy': round(sum(sc) / len(sc), 2) if sc else None})
     apparies = [(r['sci'], moy_etudiant[r['sid']])
                 for r in avec if r['sci'] is not None and r['sid'] in moy_etudiant]
+
+    # --- maths de terminale et réussite en 1re année
+    ordre_cles = [f'{f} · {b}' for f in _MATHS_FILIERES for _, b in _MATHS_BANDES]
+    bandes = [b for _, b in _MATHS_BANDES]
+
+    def taux_echec(pop):
+        j = [r for r in pop if r.get('issue1')]
+        return {'pct': pct(sum(1 for r in j if r['issue1'] in _ECHECS_1), len(j)), 'n': len(j)}
+
+    def part_par(pop, champ, test, ordre=None, mini=1):
+        """[[clé, % des étudiants pour qui test(r) est vrai, effectif]] ; test(r) None = hors champ"""
+        g = {}
+        for r in pop:
+            t = test(r)
+            if r.get(champ) and t is not None:
+                g.setdefault(r[champ], []).append(bool(t))
+        return _ordonner([[k, pct(sum(v), len(v)), len(v)] for k, v in g.items() if len(v) >= mini], ordre)
+
+    def echec_par(pop, champ, ordre=None):
+        return part_par(pop, champ, lambda r: (r['issue1'] in _ECHECS_1) if r.get('issue1') else None, ordre)
+
+    def issue_par(pop, champ, ordre=None):
+        g = {}
+        for r in pop:
+            if r.get('issue1') and r.get(champ):
+                c = g.setdefault(r[champ], {})
+                c[r['issue1']] = c.get(r['issue1'], 0) + 1
+        return _ordonner([[k, v] for k, v in g.items()], ordre)
+
+    def moyenne_par(pop, champ, valeur, ordre=None):
+        return _ordonner(_stats_group_avg([r for r in pop if r.get(valeur) is not None],
+                                          lambda r: r.get(champ), valfn=lambda r: r[valeur], mini=3), ordre)
+
+    notes_maths = {f: [r['maths_note'] for r in avec
+                       if r.get('maths_filiere') == f and r.get('maths_note') is not None]
+                   for f in _MATHS_FILIERES}
+    correlations = []
+    for f in ('Spé maths', 'STI2D'):
+        pop = [r for r in avec if r.get('maths_filiere') == f and r.get('maths_note') is not None]
+        p1 = [(r['maths_note'], r['moy1']) for r in pop if r.get('moy1') is not None]
+        p2 = [(r['maths_note'], r['maths_but']) for r in pop if r.get('maths_but') is not None]
+        correlations.append([f, _pearson(p1), len(p1), _pearson(p2), len(p2)])
+    generale = [r for r in avec if r.get('serie') == 'Générale' and r.get('maths_profil')]
+    jugees = [r for r in avec if r.get('issue1')]
+    maths = {
+        'profil': repart('maths_profil', _MATHS_PROFILS),
+        'par_filiere': [[f, _num_stats(v)] for f, v in notes_maths.items() if v],
+        'hist': [[f, _hist20(notes_maths[f], 2)] for f in ('Spé maths', 'STI2D') if notes_maths[f]],
+        'expertes_pct': pct(sum(1 for r in avec if r.get('maths_profil') == 'Spé maths + maths expertes'),
+                            sum(1 for r in avec if r.get('maths_filiere') == 'Spé maths')),
+        'sans_spe_pct': pct(sum(1 for r in generale if r['maths_filiere'] != 'Spé maths'), len(generale)),
+        'jugees': len(jugees),
+        'jugees_maths': sum(1 for r in jugees if r.get('maths_cle')),
+        'echec': taux_echec(avec),
+        'echec_sous_10': taux_echec([r for r in avec if r.get('maths_note') is not None and r['maths_note'] < 10]),
+        'echec_12_plus': taux_echec([r for r in avec if r.get('maths_note') is not None and r['maths_note'] >= 12]),
+        'issue_par_note': issue_par(avec, 'maths_cle', ordre_cles),
+        'echec_par_note': echec_par(avec, 'maths_cle', ordre_cles),
+        'echec_par_profil': echec_par(avec, 'maths_profil', _MATHS_PROFILS),
+        'moy1_par_note': moyenne_par(avec, 'maths_cle', 'moy1', ordre_cles),
+        'but_maths_par_note': moyenne_par(avec, 'maths_cle', 'maths_but', ordre_cles),
+        'but_maths_sous10_par_note': part_par(
+            avec, 'maths_cle', lambda r: None if r.get('maths_but') is None else r['maths_but'] < 10,
+            ordre_cles, mini=3),
+        'moy_but_par_note': croise(moy_etudiant, 'maths_cle', ordre_cles),
+        'validation_par_note': croise(admis_etudiant, 'maths_cle', ordre_cles),
+        'correlations': correlations,
+    }
+    # --- échecs de 1re année, toutes cohortes (avec ou sans dossier de candidature)
+    promos_ordre = sorted({r['promo'] for r in rows if r.get('promo')})
+    annee1_stats = {
+        'jugees': sum(1 for r in rows if r.get('issue1')),
+        'avec_dossier': sum(1 for r in rows if r.get('issue1') and r['dossier']),
+        'issue': repart('issue1', _ISSUES_1, pop=rows),
+        'echec': taux_echec(rows),
+        'par_promo': issue_par(rows, 'promo', promos_ordre),
+        'echec_par_promo': echec_par(rows, 'promo', promos_ordre),
+        'issue_par_maths_but': issue_par(rows, 'maths_but_bande', bandes),
+        'echec_par_maths_but': echec_par(rows, 'maths_but_bande', bandes),
+        'maths_but_par_issue': moyenne_par(rows, 'issue1', 'maths_but', _ISSUES_1),
+    }
     return {
         'entrants': len(rows), 'avec_dossier': len(avec), 'avec_age': len(ages),
         'fiches_avec_dossier': sum(1 for s in students if s.get('person_id') in dossiers),
@@ -13305,6 +13444,7 @@ def _stats_candidature(pdb, students, promos, moy_etudiant, admis_etudiant):
         'reussite_par_formation': croise(moy_etudiant, 'formation'),
         'validation_par_lycee': croise(admis_etudiant, 'lycee_bande', [b for _, b in _LYCEE_BANDES]),
         'validation_par_mention': croise(admis_etudiant, 'mention', _CAND_MENTIONS),
+        'maths': maths, 'annee1': annee1_stats,
     }
 
 def _stats_academique(pdb):
@@ -13341,6 +13481,14 @@ def _stats_academique(pdb):
     cohortes, decisions, ue_reussite, notes = [], {}, {}, []
     annees_avg, sem_avg_rows = [], []
     ue_par_etudiant = {}     # sid -> [UE validées, UE évaluées] (croisement ParcourSup)
+    # Issue de la 1re année (décision, moyenne annuelle) des cohortes dont cette année est
+    # TERMINÉE : l'année universitaire active a commencé après. Une 1re année en cours n'a
+    # pas encore d'issue — ses abandons compteraient seuls et gonfleraient l'échec.
+    annee1, finies = {}, set()
+    try:
+        debut_actif = int(str(get_current_year() or '').split('-')[0])
+    except ValueError:
+        debut_actif = None
     for p in promos:
         pid = p['id']
         comp = _jury_compute(pdb, pid)
@@ -13363,6 +13511,17 @@ def _stats_academique(pdb):
             'abandons_semaine': _abandons_par_semaine(
                 [s for s in ss if s['statut'] == 'Abandon'], _promo_year_weeks(pdb, pid, 1)),
         })
+        if debut_actif and p['start_year'] and int(p['start_year']) < debut_actif:
+            finies.add(pid)
+            for s in ss:
+                annee1.setdefault(s['id'], {})['terminee'] = True
+            for (y, sid), dec in comp['decisions'].items():
+                if y == 1:
+                    annee1.setdefault(int(sid), {})['decision'] = dec
+            for sid, ues in (comp['year_avgs'].get(1) or {}).items():
+                vs = [v for v in ues.values() if v is not None]
+                if vs:
+                    annee1.setdefault(int(sid), {})['moyenne'] = round(sum(vs) / len(vs), 2)
         # décisions de jury par année, toutes promos confondues
         for (y, sid), dec in comp['decisions'].items():
             if dec:
@@ -13442,12 +13601,20 @@ def _stats_academique(pdb):
     moyennes = list(moy_etudiant.values())
     resultats['etudiants'] = _num_stats(moyennes)
     resultats['histogramme_etudiants'] = _hist20(moyennes, 1)
+    # Maths de 1re année de BUT (ressources « Mathématiques 1 / 2 ») des cohortes dont la
+    # 1re année est terminée : moyenne par étudiant, à lire face aux maths du lycée.
+    mb = {}
+    for n in notes:
+        if n['year'] == 1 and n['pid'] in finies and _profile_key(n['label']).startswith('mathematiques'):
+            mb.setdefault(n['sid'], []).append(n['note'])
+    maths_but = {sid: round(sum(v) / len(v), 2) for sid, v in mb.items()}
 
     # --- dossier ParcourSup : niveau du recrutement, et ce qu'il annonce des résultats
     admis_etudiant = {sid: 100.0 * ok / tot for sid, (ok, tot) in ue_par_etudiant.items() if tot}
     parcoursup = _stats_parcoursup(students, moy_etudiant, admis_etudiant)
     # --- dossier de candidature complet : profil des entrants et réussite
-    candidature = _stats_candidature(pdb, students, promos, moy_etudiant, admis_etudiant)
+    candidature = _stats_candidature(pdb, students, promos, moy_etudiant, admis_etudiant,
+                                     annee1, maths_but)
     profil['renseigne'] += [['naissance', sum(1 for s in students if s.get('naissance'))],
                             ['dossier', candidature['fiches_avec_dossier']]]
 
