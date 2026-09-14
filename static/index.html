@@ -456,6 +456,7 @@
     <button onclick="showPage('journal')" id="nav-journal" class="admin-only">Journal</button>
     <button onclick="showPage('programme')" id="nav-programme">Programme</button>
     <button onclick="showPage('mon-compte')" id="nav-mon-compte" style="display:none">Mon Compte</button>
+    <button onclick="showPage('saisie')" id="nav-saisie" style="display:none">Saisie Notes</button>
     <button onclick="showPage('promotions')" id="nav-promotions">Promotions</button>
     <button onclick="showPage('etudiants')" id="nav-etudiants">Étudiants</button>
     <button onclick="showPage('statistiques')" id="nav-statistiques">Statistiques</button>
@@ -601,7 +602,7 @@
 <!-- ===== PROMOTIONS (admin) ===== -->
 <div class="page" id="page-promotions">
     <div class="toolbar">
-        <h1>Promotions</h1>
+        <h1 id="promo-title">Promotions</h1>
         <div class="filters">
             <label for="promo-select">Promotion :</label>
             <select id="promo-select" onchange="guardPromoChange()" style="min-width:230px;font-weight:600">
@@ -2003,10 +2004,12 @@ function applyRole(role, user, teacher, status, promoAccess) {
     // Contraintes), Programme (consultation) et Mon Compte.
     const teacherTabs = ['nav-service', 'nav-programme', 'nav-mon-compte'];
     // Connexion avec mot de passe : Promotions en lecture seule (Effectifs/Notes/Jury)
-    if (role === 'teacher' && state.promoAccess) teacherTabs.push('nav-promotions', 'nav-etudiants');
+    if (role === 'teacher' && state.promoAccess) teacherTabs.push('nav-saisie', 'nav-promotions', 'nav-etudiants');
     document.querySelectorAll('nav button[id^="nav-"]').forEach(b => {
         let show;
         if (b.id === 'nav-mon-compte') show = role === 'teacher';            // enseignants seuls
+        // Admin : la saisie reste un sous-onglet de Promotions
+        else if (b.id === 'nav-saisie') show = role === 'teacher' && state.promoAccess;
         else if (b.id === 'nav-enseignants') show = role === 'admin';        // admin seul
         else show = !(role === 'teacher' && !teacherTabs.includes(b.id));
         b.style.display = show ? '' : 'none';
@@ -2194,7 +2197,8 @@ function showPage(name) {
 function _showPage(name) {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
-    document.getElementById('page-' + name).classList.add('active');
+    // « Saisie Notes » (enseignant) : la page Promotions réduite à ce sous-onglet
+    document.getElementById('page-' + (name === 'saisie' ? 'promotions' : name)).classList.add('active');
     const isService = _servicePages.includes(name);
     if (isService) _serviceTab = name;
     const navBtn = document.getElementById(isService ? 'nav-service' : 'nav-' + name);
@@ -2238,7 +2242,14 @@ async function loadPage(name, forceReload) {
             await loadProgramme();
             if (_progTab === 'contenu') await showProgTab('contenu');
         }
-        else if (name === 'promotions') { await loadPromotions(); }
+        else if (name === 'promotions' || name === 'saisie') {
+            _promoSaisieOnly = name === 'saisie';
+            // Enseignant : Saisie Notes a son propre onglet, Promotions ne la montre plus
+            const tab = _promoSaisieOnly ? 'saisie'
+                      : (_promoTabAllowed(_promoTab) ? _promoTab : 'effectif');
+            if (tab !== _promoTab) _showPromoTab(tab);
+            await loadPromotions();
+        }
         else if (name === 'etudiants') { await loadEtudiants(); }
         else if (name === 'statistiques') { await loadStats(); }
         else if (name === 'parametres') { await loadParametres(); }
@@ -3066,14 +3077,22 @@ let _promoCoeffSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
 let _coeffPromoId = null;   // promotion dont on édite les coefficients
 
 let _promoTab = 'effectif';
-// Enseignant (lecture seule) : seuls Effectifs / Notes / Jury sont accessibles
-const _promoTeacherTabs = ['effectif', 'saisie', 'notes', 'jury'];
+// Enseignant (lecture seule) : seuls Effectifs / Notes / Jury sont accessibles ;
+// la saisie des notes a son propre onglet principal (page Promotions réduite).
+const _promoTeacherTabs = ['effectif', 'notes', 'jury'];
+let _promoSaisieOnly = false;   // page ouverte depuis l'onglet « Saisie Notes »
+function _promoTabAllowed(t) {
+    if (state.role !== 'teacher') return true;
+    return _promoSaisieOnly ? t === 'saisie' : _promoTeacherTabs.includes(t);
+}
 function applyPromoSubtabsForRole() {
-    const teacherView = state.role === 'teacher';
     ['effectif', 'tuteurs', 'groupes', 'calendrier', 'saisie', 'notes', 'jury', 'devenir', 'actions'].forEach(t => {
         const btn = document.getElementById('promo-subtab-' + t);
-        if (btn) btn.style.display = (teacherView && !_promoTeacherTabs.includes(t)) ? 'none' : '';
+        if (btn) btn.style.display = _promoTabAllowed(t) ? '' : 'none';
     });
+    const saisieOnly = state.role === 'teacher' && _promoSaisieOnly;
+    document.getElementById('promo-subtabs').style.display = saisieOnly ? 'none' : '';
+    document.getElementById('promo-title').textContent = saisieOnly ? 'Saisie Notes' : 'Promotions';
 }
 // Enseignant : consultation seule — désactive toute édition dans les grilles
 // Promotions et masque les boutons d'action (appelé après chaque rendu).
@@ -3097,7 +3116,7 @@ function showPromoTab(tab) {
 }
 
 function _showPromoTab(tab) {
-    if (state.role === 'teacher' && !_promoTeacherTabs.includes(tab)) tab = 'effectif';
+    if (!_promoTabAllowed(tab)) tab = _promoSaisieOnly ? 'saisie' : 'effectif';
     _promoTab = tab;
     applyPromoSubtabsForRole();
     ['effectif', 'tuteurs', 'groupes', 'calendrier', 'saisie', 'notes', 'jury', 'devenir', 'actions'].forEach(t => {
