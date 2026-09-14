@@ -1405,7 +1405,7 @@
             Fichier <code>.xlsx</code> dont une feuille porte les colonnes <strong>Nom</strong>, <strong>Prénom</strong>
             et une colonne par famille de groupes (<em>TD, TD SAE, TP12, TP8, Covoiturage…</em>) dont les cases valent
             <code>TD_1</code>, <code>TP12_3</code>… Les étudiants sont rapprochés par <strong>nom et prénom</strong>
-            de l'effectif de l'année affichée ; la cohorte du fichier n'est pas reprise, l'effectif fait foi.
+            de l'effectif du semestre affiché ; la cohorte du fichier n'est pas reprise, l'effectif fait foi.
         </p>
         <p style="color:#6b7280;font-size:.9rem">
             Pour chaque étudiant retrouvé, les familles du fichier <strong>remplacent</strong> ses groupes de ces
@@ -1420,6 +1420,20 @@
         <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
             <button type="button" class="btn btn-secondary" onclick="closeModal('modal-grp-import')">Fermer</button>
             <button type="button" class="btn btn-primary" id="grp-import-apply" onclick="appliquerGroupesImport()" disabled>Importer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL RÉPARTITION AUTOMATIQUE DES GROUPES ===== -->
+<div class="modal-backdrop" id="modal-grp-auto">
+    <div class="modal modal-wide">
+        <h2>Répartition automatique des groupes</h2>
+        <div id="grp-auto-form"><div class="spinner">Chargement…</div></div>
+        <div id="grp-auto-apercu" style="margin-top:12px"></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-grp-auto')">Fermer</button>
+            <button type="button" class="btn btn-secondary" onclick="apercuGroupesAuto()">Calculer l'aperçu</button>
+            <button type="button" class="btn btn-primary" id="grp-auto-apply" onclick="appliquerGroupesAuto()" disabled>Appliquer</button>
         </div>
     </div>
 </div>
@@ -10018,28 +10032,39 @@ async function loadPromoGroups() {
 }
 
 // ===== Répartition des étudiants dans les groupes (onglet Groupes) =====
-// Pour l'année de la cohorte affichée : le groupe de chaque étudiant dans chaque
-// famille (TD, TD SAE, TP12, TP12 SAE, TP8, et toute famille ajoutée). L'admin
-// importe une liste et corrige case par case (enregistrement immédiat) ; les
-// enseignants consultent et téléchargent.
-let _grpRep = null;               // répartition de l'année affichée
+// Pour un SEMESTRE de l'année de la cohorte affichée (comme le nombre de groupes) : le
+// groupe de chaque étudiant dans chaque famille (TD, TP12, TP8 ; TD SAE et TP12 SAE au S1
+// seulement ; toute famille ajoutée). Un semestre mutualisé a un seul tableau pour la
+// promo ; sinon FTP et ALT ont chacun le leur, avec des groupes indépendants. L'admin
+// importe, répartit automatiquement, reprend le semestre impair et corrige case par case
+// (enregistrement immédiat) ; les enseignants consultent et téléchargent. Chaque tableau
+// se trie et se filtre colonne par colonne, comme un tableau Excel ; ses filtres valent
+// aussi pour la vue par groupe.
+let _grpRep = null;               // répartition du semestre affiché
+let _grpSem = null;               // semestre affiché (S1…S6)
 let _grpVue = 'tableau';          // 'tableau' | 'groupes'
 let _grpFamille = 'TD';           // famille affichée dans la vue par groupe
 let _grpRecherche = '';
 let _grpFamillesAjoutees = [];    // familles créées à l'écran, sans affectation encore
 let _grpImportFichier = null;
+let _grpTri = {};                 // tri de chaque tableau : {table: {col, sens: 1 | -1}}
+let _grpFiltres = {};             // filtres de chaque tableau : {table: {col: [valeurs retenues]}}
 
-const _grpNorm = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const _grpNorm = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const _grpCompare = (a, b) => String(a || '').localeCompare(String(b || ''), 'fr', { numeric: true, sensitivity: 'base' });
+const _grpSemestres = () => [`S${2 * _grpYG - 1}`, `S${2 * _grpYG}`];
 
 async function loadGroupesRepartition() {
     const el = document.getElementById('grp-repartition');
     if (!el || !_promoId) return;
-    if (!_grpRep || _grpRep._pid !== _promoId || _grpRep.year !== _grpYG) {
+    if (!_grpSemestres().includes(_grpSem)) _grpSem = _grpSemestres()[0];
+    if (!_grpRep || _grpRep._pid !== _promoId || _grpRep.semestre !== _grpSem) {
+        if (!_grpRep || _grpRep._pid !== _promoId) { _grpFiltres = {}; _grpTri = {}; }
         _grpFamillesAjoutees = [];
         el.innerHTML = '<div class="spinner">Chargement de la répartition…</div>';
     }
     try {
-        _grpRep = Object.assign(await api(`/promotions/${_promoId}/groupes/${_grpYG}`), { _pid: _promoId });
+        _grpRep = Object.assign(await api(`/promotions/${_promoId}/groupes/${_grpSem}`), { _pid: _promoId });
     } catch (e) {
         el.innerHTML = `<div class="empty">Répartition indisponible — ${esc(e.message)}</div>`;
         return;
@@ -10047,12 +10072,22 @@ async function loadGroupesRepartition() {
     renderGroupesRepartition();
 }
 
+function setGrpSem(sem) {
+    if (sem === _grpSem) return;
+    _grpSem = sem;
+    loadGroupesRepartition();
+}
+
 function _grpFamilles() {
     const base = (_grpRep && _grpRep.familles) || [];
     return base.concat(_grpFamillesAjoutees.filter(f => !base.includes(f)));
 }
 
+const _grpTable = cle => ((_grpRep && _grpRep.tables) || []).find(t => t.cle === cle);
+const _grpMembres = t => _grpRep.students.filter(s => !t.face || s.formation === t.face);
+
 function renderGroupesRepartition() {
+    fermerFiltreGroupe();
     const el = document.getElementById('grp-repartition');
     const d = _grpRep;
     if (!el || !d) return;
@@ -10060,10 +10095,16 @@ function renderGroupesRepartition() {
     const familles = _grpFamilles();
     if (!familles.includes(_grpFamille)) _grpFamille = familles[0];
     const actifs = d.students.filter(s => s.actif).length;
+    const [sImpair, sPair] = _grpSemestres();
+    const plusieurs = d.tables.length > 1;
     el.innerHTML = `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;text-align:left">
-        <div class="toolbar" style="margin-bottom:8px;flex-wrap:wrap;gap:8px">
-            <h3 style="margin:0;color:#374151">Répartition des étudiants — année ${d.year}
-                <span style="font-weight:400;color:#6b7280;font-size:.85rem">· ${actifs} étudiant(s) actif(s)</span></h3>
+        <div class="toolbar" style="margin-bottom:6px;flex-wrap:wrap;gap:8px">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                <h3 style="margin:0;color:#374151">Répartition des étudiants</h3>
+                <div class="sem-toggle">${_grpSemestres().map(sm => `<button type="button" class="sem-btn ${sm === _grpSem ? 'active' : ''}"
+                    onclick="setGrpSem('${sm}')" title="Répartition du ${sm}">${sm}</button>`).join('')}</div>
+                <span style="color:#6b7280;font-size:.85rem">${actifs} étudiant(s) actif(s)</span>
+            </div>
             <div class="filters" style="gap:6px;flex-wrap:wrap">
                 <div class="sem-toggle">
                     <button type="button" class="sem-btn ${_grpVue === 'tableau' ? 'active' : ''}" onclick="setGrpVue('tableau')">Tableau</button>
@@ -10075,100 +10116,287 @@ function renderGroupesRepartition() {
                     oninput="_grpRecherche = this.value; renderGroupesCorps()"
                     style="padding:5px 9px;border:1px solid #d1d5db;border-radius:6px;min-width:170px">
                 <button class="btn btn-secondary btn-sm" onclick="exportGroupes()"
-                    title="Télécharger la répartition au format Excel : la liste complète et une feuille par famille de groupes">⤓ Télécharger</button>
+                    title="Télécharger la répartition du semestre au format Excel : la liste complète et une feuille par famille de groupes">⤓ Télécharger</button>
                 ${admin ? `<button class="btn btn-secondary btn-sm" onclick="openGroupesImport()"
-                    title="Importer une liste de groupes (.xlsx) — aperçu avant écriture">⤒ Importer</button>
+                    title="Importer une liste de groupes (.xlsx) pour ce semestre — aperçu avant écriture">⤒ Importer</button>
+                ${_grpSem === sPair ? `<button class="btn btn-secondary btn-sm" onclick="copierGroupesSemestre()"
+                    title="Reprendre pour le ${sPair} la répartition du ${sImpair} (sans les groupes de SAÉ)">⧉ Reprendre le ${sImpair}</button>` : ''}
                 <button class="btn btn-secondary btn-sm" onclick="ajouterFamilleGroupe()"
-                    title="Ajouter une famille de groupes (covoiturage, langue…)">+ Famille</button>` : ''}
+                    title="Ajouter une famille de groupes (covoiturage, langue…)">+ Famille</button>
+                <button class="btn btn-primary btn-sm" onclick="openGroupesAuto()"
+                    title="Répartir automatiquement les étudiants actifs selon les règles — aperçu avant écriture">⚙ Répartition automatique</button>` : ''}
             </div>
         </div>
-        <div id="grp-resume"></div>
-        <div id="grp-corps"></div>
-        <div id="grp-listes" hidden></div>
+        <div style="font-size:.8rem;color:#6b7280;margin-bottom:4px">${d.mutualise
+            ? `${esc(_grpSem)} mutualisé : une seule répartition pour la promotion (FTP + ALT).`
+            : `${esc(_grpSem)} non mutualisé : FTP et ALT ont chacun leur répartition, avec des groupes indépendants.`}
+            ${d.sae ? '' : ' Pas de groupes de SAÉ après le S1.'}
+            <span style="color:#9ca3af">(Le réglage « Semestre mutualisé » se fait plus haut.)</span></div>
+        ${d.tables.map(t => `<div style="margin-top:12px${plusieurs ? ';border-top:2px solid #f3f4f6;padding-top:10px' : ''}">
+            ${plusieurs ? `<h4 style="margin:0 0 6px;color:${t.face === 'ALT' ? '#9a3412' : '#0369a1'}">${esc(t.titre)}
+                <span style="font-weight:400;color:#6b7280;font-size:.82rem">· ${t.actifs} étudiant(s) actif(s)</span></h4>` : ''}
+            <div id="grp-resume-${t.cle}"></div>
+            <div id="grp-corps-${t.cle}"></div>
+            <div id="grp-listes-${t.cle}" hidden></div>
+        </div>`).join('')}
     </div>`;
     renderGroupesResume();
     renderGroupesCorps();
 }
 
 // Effectif de chaque groupe, famille par famille (étudiants actifs), et listes de
-// suggestions des cases de saisie
+// suggestions des cases de saisie — pour chaque tableau
 function renderGroupesResume() {
-    const el = document.getElementById('grp-resume');
     const d = _grpRep;
-    if (!el || !d) return;
+    if (!d) return;
     const admin = state.role === 'admin';
     const familles = _grpFamilles();
-    el.innerHTML = familles.map(f => {
-        const gs = d.groupes[f] || [];
-        const sans = (d.sans_groupe || {})[f] || 0;
-        const puces = gs.map(g => `<span class="st-pill" style="background:#eef2ff;color:#3730a3"
-            title="${g.FTP} FTP · ${g.ALT} ALT">${esc(g.groupe)} <span style="font-weight:400">${g.FTP + g.ALT}</span></span>`).join(' ');
-        return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:3px 0;border-bottom:1px solid #f3f4f6">
-            <strong style="min-width:96px;font-size:.84rem">${esc(f)}</strong>
-            ${puces || '<span style="color:#9ca3af;font-size:.8rem">aucun groupe</span>'}
-            ${gs.length && sans ? `<span class="st-pill" style="background:#fef3c7;color:#92400e">${sans} sans groupe</span>` : ''}
-            ${admin && gs.length ? `<button type="button" class="btn btn-secondary btn-sm" data-famille="${esc(f)}"
-                style="margin-left:auto;padding:1px 7px;font-size:.72rem;color:#b91c1c"
-                title="Retirer tous les étudiants des groupes de cette famille pour l'année"
-                onclick="supprimerFamilleGroupe(this.dataset.famille)">🗑</button>` : ''}
-        </div>`;
-    }).join('');
-    const listes = document.getElementById('grp-listes');
-    if (listes) listes.innerHTML = familles.map((f, i) => `<datalist id="grp-dl-${i}">${
-        (d.groupes[f] || []).map(g => `<option value="${esc(g.groupe)}">`).join('')}</datalist>`).join('');
+    d.tables.forEach(t => {
+        const el = document.getElementById('grp-resume-' + t.cle);
+        if (!el) return;
+        el.innerHTML = familles.map(f => {
+            const gs = t.groupes[f] || [];
+            const sans = (t.sans_groupe || {})[f] || 0;
+            const puces = gs.map(g => `<span class="st-pill" style="background:#eef2ff;color:#3730a3"
+                title="${g.FTP} FTP · ${g.ALT} ALT">${esc(g.groupe)} <span style="font-weight:400">${g.FTP + g.ALT}</span></span>`).join(' ');
+            return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:3px 0;border-bottom:1px solid #f3f4f6">
+                <strong style="min-width:96px;font-size:.84rem">${esc(f)}</strong>
+                ${puces || '<span style="color:#9ca3af;font-size:.8rem">aucun groupe</span>'}
+                ${gs.length && sans ? `<span class="st-pill" style="background:#fef3c7;color:#92400e">${sans} sans groupe</span>` : ''}
+                ${admin && gs.length ? `<button type="button" class="btn btn-secondary btn-sm" data-famille="${esc(f)}"
+                    style="margin-left:auto;padding:1px 7px;font-size:.72rem;color:#b91c1c"
+                    title="Retirer tous les étudiants (FTP et ALT) des groupes de cette famille pour le semestre"
+                    onclick="supprimerFamilleGroupe(this.dataset.famille)">🗑</button>` : ''}
+            </div>`;
+        }).join('');
+        const listes = document.getElementById('grp-listes-' + t.cle);
+        if (listes) listes.innerHTML = familles.map((f, i) => `<datalist id="grp-dl-${t.cle}-${i}">${
+            (t.groupes[f] || []).map(g => `<option value="${esc(g.groupe)}">`).join('')}</datalist>`).join('');
+    });
+}
+
+// Colonnes d'un tableau : identité (la cohorte seulement si FTP et ALT y sont mêlés),
+// puis une colonne par famille de groupes
+function _grpColonnes(t) {
+    return [
+        { cle: 'nom', titre: 'Nom', val: s => s.nom || '' },
+        { cle: 'prenom', titre: 'Prénom', val: s => s.prenom || '' },
+    ].concat(t.face ? [] : [{ cle: 'formation', titre: 'Cohorte', val: s => s.formation || '' }], [
+        { cle: 'sexe', titre: 'Sexe', val: s => s.sexe || '' },
+        { cle: 'statut', titre: 'Statut', val: s => s.statut || 'Actif' },
+    ], _grpFamilles().map(f => ({ cle: 'g:' + f, titre: f, famille: f, val: s => s.groupes[f] || '' })));
+}
+
+// Étudiants d'un tableau retenus par la recherche et les filtres de colonnes (sauf celui
+// de la colonne `sauf`, pour proposer ses valeurs comme le fait Excel), triés
+function _grpLignes(t, sauf) {
+    const cols = _grpColonnes(t);
+    const q = _grpNorm(_grpRecherche).trim();
+    let rows = _grpMembres(t).filter(s => !q || _grpNorm(`${s.nom} ${s.prenom}`).includes(q));
+    Object.entries(_grpFiltres[t.cle] || {}).forEach(([cle, vals]) => {
+        const col = cols.find(c => c.cle === cle);
+        if (cle === sauf || !col) return;
+        const ok = new Set(vals);
+        rows = rows.filter(s => ok.has(col.val(s)));
+    });
+    const tri = _grpTri[t.cle];
+    const colTri = tri && cols.find(c => c.cle === tri.col);
+    if (colTri) rows = rows.slice().sort((a, b) =>
+        (_grpCompare(colTri.val(a), colTri.val(b)) * tri.sens) || _grpCompare(a.nom, b.nom) || _grpCompare(a.prenom, b.prenom));
+    return rows;
 }
 
 function renderGroupesCorps() {
-    const el = document.getElementById('grp-corps');
+    fermerFiltreGroupe();
+    ((_grpRep && _grpRep.tables) || []).forEach(renderGroupesCorpsTable);
+}
+
+function renderGroupesCorpsTable(t) {
+    const el = document.getElementById('grp-corps-' + t.cle);
     const d = _grpRep;
     if (!el || !d) return;
-    if (!d.students.length) {
-        el.innerHTML = `<div class="empty">Aucun étudiant dans l'effectif de l'année ${d.year}.</div>`;
+    if (!_grpMembres(t).length) {
+        el.innerHTML = `<div class="empty">Aucun étudiant ${t.face ? t.face + ' ' : ''}dans l'effectif de l'année ${d.year}.</div>`;
         return;
     }
     const admin = state.role === 'admin';
     const familles = _grpFamilles();
-    const q = _grpNorm(_grpRecherche).trim();
-    const studs = d.students.filter(s => !q || _grpNorm(`${s.nom} ${s.prenom}`).includes(q));
-    const alt = s => s.formation === 'ALT' ? ' <span class="st-pill" style="background:#ffedd5;color:#9a3412">ALT</span>' : '';
+    const cols = _grpColonnes(t);
+    const lignes = _grpLignes(t);
+    const filtres = _grpFiltres[t.cle] || {};
+    const tri = _grpTri[t.cle];
+    const alt = s => !t.face && s.formation === 'ALT' ? ' <span class="st-pill" style="background:#ffedd5;color:#9a3412">ALT</span>' : '';
     const inactif = s => s.actif ? '' : ` <span class="st-pill" style="background:#f3f4f6;color:#6b7280">${esc(s.statut || 'inactif')}</span>`;
+    const titreCol = cle => esc((cols.find(c => c.cle === cle) || {}).titre || cle.replace(/^g:/, ''));
+    const nbFiltres = Object.keys(filtres).length;
+    const bandeau = (nbFiltres || tri) ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:.8rem;color:#4b5563;margin-top:10px">
+        <span><strong>${lignes.length}</strong> étudiant(s) affiché(s) sur ${_grpMembres(t).length}</span>
+        ${nbFiltres ? `<span>· filtre(s) : ${Object.keys(filtres).map(titreCol).join(', ')}</span>` : ''}
+        ${tri && _grpVue === 'tableau' ? `<span>· tri : ${titreCol(tri.col)} ${tri.sens > 0 ? '↑' : '↓'}</span>` : ''}
+        <button type="button" class="btn btn-secondary btn-sm" style="padding:1px 8px" onclick="effacerFiltresGroupes('${t.cle}')">✕ Effacer filtres et tri</button>
+    </div>` : '';
     if (_grpVue === 'groupes') {
         const f = _grpFamille;
+        const parNom = lignes.slice().sort((a, b) => _grpCompare(a.nom, b.nom) || _grpCompare(a.prenom, b.prenom));
         const carte = (titre, membres, couleur) => {
             const nAlt = membres.filter(s => s.formation === 'ALT').length;
             return `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;flex:1 1 220px;max-width:340px">
                 <div style="font-weight:700;color:${couleur};margin-bottom:6px">${esc(titre)}
-                    <span style="font-weight:400;color:#6b7280;font-size:.8rem">· ${membres.filter(s => s.actif).length} étudiant(s)${nAlt ? ` dont ${nAlt} ALT` : ''}</span></div>
+                    <span style="font-weight:400;color:#6b7280;font-size:.8rem">· ${membres.filter(s => s.actif).length} étudiant(s)${!t.face && nAlt ? ` dont ${nAlt} ALT` : ''}</span></div>
                 <ol style="margin:0;padding-left:22px;font-size:.84rem;line-height:1.55">${membres.length
                     ? membres.map(s => `<li${s.actif ? '' : ' style="color:#9ca3af"'}>${esc(s.nom || '')} ${esc(s.prenom || '')}${alt(s)}${inactif(s)}</li>`).join('')
                     : '<li style="list-style:none;color:#9ca3af">—</li>'}</ol></div>`;
         };
-        const cartes = (d.groupes[f] || []).map(g => carte(g.groupe, studs.filter(s => s.groupes[f] === g.groupe), '#4f46e5'));
-        const sans = studs.filter(s => s.actif && !s.groupes[f]);
+        const cartes = (t.groupes[f] || []).map(g => carte(g.groupe, parNom.filter(s => s.groupes[f] === g.groupe), '#4f46e5'));
+        const sans = parNom.filter(s => s.actif && !s.groupes[f]);
         if (sans.length && cartes.length) cartes.push(carte('Sans groupe', sans, '#b45309'));
-        el.innerHTML = cartes.length
+        el.innerHTML = bandeau + (cartes.length
             ? `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:10px">${cartes.join('')}</div>`
-            : `<div class="empty">Aucun groupe « ${esc(f)} » pour cette année.</div>`;
+            : `<div class="empty">Aucun groupe « ${esc(f)} » pour ce semestre.</div>`);
         return;
     }
-    const cellule = (s, f, i) => {
-        const v = s.groupes[f] || '';
+    const entete = cols.map((c, i) => {
+        const filtre = !!filtres[c.cle];
+        const fleche = tri && tri.col === c.cle ? (tri.sens > 0 ? ' ↑' : ' ↓') : '';
+        return `<th style="text-align:${c.famille ? 'center' : 'left'};white-space:nowrap">
+            <span onclick="basculerTriGroupes('${t.cle}', ${i})" style="cursor:pointer" title="Trier (cliquer à nouveau pour inverser)">${esc(c.titre)}${fleche}</span>
+            <button type="button" onclick="ouvrirFiltreGroupe(event, '${t.cle}', ${i})" title="Trier et filtrer cette colonne"
+                style="border:1px solid ${filtre ? '#4f46e5' : '#d1d5db'};background:${filtre ? '#e0e7ff' : '#fff'};color:${filtre ? '#4338ca' : '#6b7280'};border-radius:4px;padding:0 4px;margin-left:3px;font-size:.7rem;line-height:1.35;cursor:pointer">${filtre ? '⏷' : '▾'}</button></th>`;
+    }).join('');
+    const cellule = (s, c) => {
+        if (!c.famille) {
+            if (c.cle === 'nom') return `<td><strong>${esc(s.nom || '')}</strong>${alt(s)}</td>`;
+            const v = c.val(s);
+            return `<td${c.cle === 'prenom' ? '' : ' style="color:#4b5563"'}>${v ? esc(v) : '<span style="color:#d1d5db">—</span>'}</td>`;
+        }
+        const v = s.groupes[c.famille] || '';
         if (!admin) return `<td style="text-align:center">${v ? esc(v) : '<span style="color:#d1d5db">—</span>'}</td>`;
-        return `<td style="text-align:center;padding:2px 4px"><input list="grp-dl-${i}" value="${esc(v)}"
-            data-sid="${s.id}" data-famille="${esc(f)}" onchange="setGroupe(this)"
+        return `<td style="text-align:center;padding:2px 4px"><input list="grp-dl-${t.cle}-${familles.indexOf(c.famille)}" value="${esc(v)}"
+            data-sid="${s.id}" data-famille="${esc(c.famille)}" onchange="setGroupe(this)"
             style="width:96px;padding:2px 4px;font-size:.8rem;text-align:center;border:1px solid #d1d5db;border-radius:4px"></td>`;
     };
-    el.innerHTML = `<div style="overflow:auto;max-height:62vh;border:1px solid #e5e7eb;border-radius:8px;margin-top:10px">
+    el.innerHTML = bandeau + `<div style="overflow:auto;max-height:62vh;border:1px solid #e5e7eb;border-radius:8px;margin-top:10px">
         <table class="pn-table" style="width:100%;table-layout:auto">
-            <thead><tr><th style="width:34px">#</th><th>Nom</th><th>Prénom</th><th>Cohorte</th>${
-                familles.map(f => `<th style="text-align:center">${esc(f)}</th>`).join('')}</tr></thead>
-            <tbody>${studs.map((s, n) => `<tr${s.actif ? '' : ' style="opacity:.55"'}>
-                <td style="color:#9ca3af">${n + 1}</td><td><strong>${esc(s.nom || '')}</strong>${inactif(s)}</td>
-                <td>${esc(s.prenom || '')}</td><td>${esc(s.formation)}</td>
-                ${familles.map((f, i) => cellule(s, f, i)).join('')}</tr>`).join('')}</tbody>
+            <thead><tr><th style="width:34px">#</th>${entete}</tr></thead>
+            <tbody>${lignes.length ? lignes.map((s, n) => `<tr${s.actif ? '' : ' style="opacity:.55"'}>
+                <td style="color:#9ca3af">${n + 1}</td>${cols.map(c => cellule(s, c)).join('')}</tr>`).join('')
+                : `<tr><td colspan="${cols.length + 1}" style="text-align:center;color:#9ca3af;padding:14px">Aucun étudiant ne correspond aux filtres</td></tr>`}</tbody>
         </table></div>
-        ${admin ? `<div style="font-size:.78rem;color:#6b7280;margin-top:6px">Chaque case s'enregistre dès qu'on la quitte ;
-            une case vidée retire l'étudiant du groupe. La liste propose les groupes existants, un nom nouveau crée le groupe.</div>` : ''}`;
+        <div style="font-size:.78rem;color:#6b7280;margin-top:6px">${admin
+            ? "Chaque case s'enregistre dès qu'on la quitte ; une case vidée retire l'étudiant du groupe. La liste propose les groupes existants, un nom nouveau crée le groupe. "
+            : ''}Cliquez sur un en-tête pour trier, sur ▾ pour trier et filtrer.</div>`;
+}
+
+// ----- Tri et filtres des tableaux, à la manière d'Excel -----
+function basculerTriGroupes(cle, i) {
+    const col = _grpColonnes(_grpTable(cle))[i].cle;
+    const tri = _grpTri[cle];
+    if (!tri || tri.col !== col) _grpTri[cle] = { col, sens: 1 };
+    else if (tri.sens === 1) tri.sens = -1;
+    else delete _grpTri[cle];
+    renderGroupesCorps();
+}
+
+function trierGroupes(cle, i, sens) {
+    _grpTri[cle] = { col: _grpColonnes(_grpTable(cle))[i].cle, sens };
+    renderGroupesCorps();
+}
+
+function ouvrirFiltreGroupe(ev, cle, i) {
+    ev.stopPropagation();
+    const bouton = ev.currentTarget;
+    fermerFiltreGroupe();
+    const t = _grpTable(cle);
+    const col = _grpColonnes(t)[i];
+    // Valeurs proposées : celles des étudiants retenus par les AUTRES filtres du tableau
+    const compte = new Map();
+    _grpLignes(t, col.cle).forEach(s => { const v = col.val(s); compte.set(v, (compte.get(v) || 0) + 1); });
+    const valeurs = [...compte.keys()].sort(_grpCompare);
+    const actuel = (_grpFiltres[cle] || {})[col.cle] ? new Set(_grpFiltres[cle][col.cle]) : null;
+    const menu = document.createElement('div');
+    menu.id = 'grp-filtre-menu';
+    menu.style.cssText = 'position:absolute;z-index:2000;background:#fff;border:1px solid #d1d5db;border-radius:8px;'
+        + 'box-shadow:0 8px 24px rgba(0,0,0,.14);padding:8px;width:240px;font-size:.84rem;text-align:left';
+    const action = (txt, js) => `<button type="button" onclick="${js}" style="display:block;width:100%;text-align:left;border:none;background:none;padding:5px 6px;border-radius:5px;cursor:pointer"
+        onmouseover="this.style.background='#f3f4f6'" onmouseout="this.style.background='none'">${txt}</button>`;
+    menu.innerHTML = `
+        ${action('↑ Trier de A à Z', `trierGroupes('${cle}', ${i}, 1)`)}
+        ${action('↓ Trier de Z à A', `trierGroupes('${cle}', ${i}, -1)`)}
+        <div style="border-top:1px solid #e5e7eb;margin:6px 0"></div>
+        <input type="text" placeholder="Rechercher…" oninput="filtrerListeGroupe(this.value)"
+            style="width:100%;box-sizing:border-box;padding:4px 7px;border:1px solid #d1d5db;border-radius:5px;margin-bottom:6px">
+        <label style="display:block;padding:2px 4px;cursor:pointer"><input type="checkbox" ${!actuel ? 'checked' : ''}
+            onchange="toutCocherFiltreGroupe(this.checked)"> <em>(Tout sélectionner)</em></label>
+        <div id="grp-flt-valeurs" style="max-height:220px;overflow:auto;border:1px solid #f3f4f6;border-radius:5px;padding:2px 4px">${
+            valeurs.map(v => `<label data-txt="${esc(_grpNorm(v || '(vides)'))}" style="display:flex;gap:6px;align-items:center;padding:2px 0;cursor:pointer">
+                <input type="checkbox" value="${esc(v)}" ${!actuel || actuel.has(v) ? 'checked' : ''}>
+                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v === '' ? '<em style="color:#9ca3af">(Vides)</em>' : esc(v)}</span>
+                <span style="color:#9ca3af;font-size:.74rem">${compte.get(v)}</span></label>`).join('')
+            || '<div style="color:#9ca3af;padding:4px">Aucune valeur</div>'}</div>
+        <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px">
+            ${actuel ? `<button type="button" class="btn btn-secondary btn-sm" onclick="effacerFiltreGroupe('${cle}', ${i})">Effacer</button>` : ''}
+            <button type="button" class="btn btn-secondary btn-sm" onclick="fermerFiltreGroupe()">Annuler</button>
+            <button type="button" class="btn btn-primary btn-sm" onclick="appliquerFiltreGroupe('${cle}', ${i})">OK</button>
+        </div>`;
+    document.body.appendChild(menu);
+    const r = bouton.getBoundingClientRect();
+    const gauche = Math.min(window.scrollX + r.left, window.scrollX + document.documentElement.clientWidth - menu.offsetWidth - 8);
+    menu.style.left = Math.max(window.scrollX + 8, gauche) + 'px';
+    menu.style.top = (window.scrollY + r.bottom + 4) + 'px';
+    setTimeout(() => {
+        document.addEventListener('mousedown', _grpFermerSiDehors);
+        document.addEventListener('keydown', _grpFermerSurEchap);
+    }, 0);
+}
+
+function _grpFermerSiDehors(e) {
+    const m = document.getElementById('grp-filtre-menu');
+    if (m && !m.contains(e.target)) fermerFiltreGroupe();
+}
+
+function _grpFermerSurEchap(e) {
+    if (e.key === 'Escape') fermerFiltreGroupe();
+}
+
+function fermerFiltreGroupe() {
+    const m = document.getElementById('grp-filtre-menu');
+    if (m) m.remove();
+    document.removeEventListener('mousedown', _grpFermerSiDehors);
+    document.removeEventListener('keydown', _grpFermerSurEchap);
+}
+
+function filtrerListeGroupe(txt) {
+    const q = _grpNorm(txt).trim();
+    document.querySelectorAll('#grp-flt-valeurs label').forEach(l => {
+        l.style.display = !q || l.dataset.txt.includes(q) ? '' : 'none';
+    });
+}
+
+function toutCocherFiltreGroupe(on) {
+    document.querySelectorAll('#grp-flt-valeurs label').forEach(l => {
+        if (l.style.display !== 'none') l.querySelector('input').checked = on;
+    });
+}
+
+function appliquerFiltreGroupe(cle, i) {
+    const col = _grpColonnes(_grpTable(cle))[i];
+    const boites = [...document.querySelectorAll('#grp-flt-valeurs input[type=checkbox]')];
+    const retenues = boites.filter(b => b.checked).map(b => b.value);
+    const filtres = _grpFiltres[cle] = _grpFiltres[cle] || {};
+    if (retenues.length === boites.length) delete filtres[col.cle];
+    else filtres[col.cle] = retenues;
+    renderGroupesCorps();
+}
+
+function effacerFiltreGroupe(cle, i) {
+    delete (_grpFiltres[cle] || {})[_grpColonnes(_grpTable(cle))[i].cle];
+    renderGroupesCorps();
+}
+
+function effacerFiltresGroupes(cle) {
+    delete _grpFiltres[cle];
+    delete _grpTri[cle];
+    renderGroupesCorps();
 }
 
 function setGrpVue(v) {
@@ -10179,7 +10407,7 @@ function setGrpVue(v) {
 async function setGroupe(inp) {
     const groupe = inp.value.trim();
     try {
-        const d = await api(`/promotions/${_promoId}/groupes/${_grpYG}`, {
+        const d = await api(`/promotions/${_promoId}/groupes/${_grpSem}`, {
             method: 'PUT',
             body: JSON.stringify({ student_id: parseInt(inp.dataset.sid), famille: inp.dataset.famille, groupe })
         });
@@ -10202,6 +10430,10 @@ function ajouterFamilleGroupe() {
         toast('Cette famille existe déjà', 'error');
         return;
     }
+    if (!_grpRep.sae && ['td sae', 'tp12 sae'].includes(nom.toLowerCase())) {
+        toast("Il n'y a de groupes de SAÉ qu'au S1", 'error');
+        return;
+    }
     _grpFamillesAjoutees.push(nom);
     _grpVue = 'tableau';
     renderGroupesRepartition();
@@ -10209,22 +10441,40 @@ function ajouterFamilleGroupe() {
 }
 
 async function supprimerFamilleGroupe(f) {
-    if (!confirm(`Retirer tous les étudiants des groupes « ${f} » pour l'année ${_grpYG} ?`)) return;
+    if (!confirm(`Retirer tous les étudiants des groupes « ${f} » pour le ${_grpSem} ?`)) return;
     try {
-        const d = await api(`/promotions/${_promoId}/groupes/${_grpYG}/famille?famille=${encodeURIComponent(f)}`,
+        const d = await api(`/promotions/${_promoId}/groupes/${_grpSem}/famille?famille=${encodeURIComponent(f)}`,
                             { method: 'DELETE' });
         _grpRep = Object.assign(d, { _pid: _promoId });
         _grpFamillesAjoutees = _grpFamillesAjoutees.filter(x => x !== f);
+        Object.values(_grpFiltres).forEach(filtres => delete filtres['g:' + f]);
         renderGroupesRepartition();
-        toast(`Groupes « ${f} » vidés pour l'année ${_grpYG}`);
+        toast(`Groupes « ${f} » vidés pour le ${_grpSem}`);
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+async function copierGroupesSemestre() {
+    const [sImpair, sPair] = _grpSemestres();
+    if (_grpSem !== sPair) return;
+    if (!confirm(`Remplacer la répartition du ${sPair} par celle du ${sImpair} ?\n\nPour chaque étudiant présent dans les deux semestres, ses groupes du ${sImpair} sont repris (sans les groupes de SAÉ, propres au S1).`)) return;
+    try {
+        const d = await api(`/promotions/${_promoId}/groupes/${sPair}/copier`, {
+            method: 'POST', body: JSON.stringify({ depuis: sImpair })
+        });
+        _grpRep = Object.assign(d, { _pid: _promoId });
+        renderGroupesRepartition();
+        const ch = d.copie.changements;
+        toast(`Répartition du ${sImpair} reprise : ${ch.ajouts + ch.modifications + ch.retraits} changement(s)`);
     } catch (e) {
         toast('Erreur : ' + e.message, 'error');
     }
 }
 
 function exportGroupes() {
-    if (!_promoId) return;
-    window.location.href = `/api/promotions/${_promoId}/groupes/${_grpYG}/export`;
+    if (!_promoId || !_grpSem) return;
+    window.location.href = `/api/promotions/${_promoId}/groupes/${_grpSem}/export`;
 }
 
 function openGroupesImport() {
@@ -10240,7 +10490,7 @@ async function _envoyerGroupesImport(appliquer) {
     const fd = new FormData();
     fd.append('file', _grpImportFichier);
     if (appliquer) fd.append('apply', '1');
-    const r = await fetch(`/api/promotions/${_promoId}/groupes/${_grpYG}/import`, { method: 'POST', body: fd });
+    const r = await fetch(`/api/promotions/${_promoId}/groupes/${_grpSem}/import`, { method: 'POST', body: fd });
     const body = await r.text();
     if (r.status === 401) { showLogin(); throw new Error('Session expirée — reconnectez-vous'); }
     if (!r.ok) {
@@ -10266,10 +10516,11 @@ async function analyserGroupesImport() {
         const total = ch.ajouts + ch.modifications + ch.retraits;
         const liste = (arr, max = 12) => esc(arr.slice(0, max).join(' · ')) + (arr.length > max ? ` … (+${arr.length - max})` : '');
         rep.innerHTML = `<div style="font-size:.86rem;border:1px solid #c7d2fe;background:#eef2ff;border-radius:8px;padding:10px 12px">
-            Feuille <strong>${esc(r.feuille)}</strong> · familles : <strong>${esc(r.familles.join(', '))}</strong><br>
-            <strong>${r.retrouves}</strong> étudiant(s) retrouvé(s) sur ${r.lignes} ligne(s), pour ${r.effectif} étudiant(s) dans l'effectif de l'année ${_grpYG}.
+            Import dans le <strong>${esc(_grpSem)}</strong> · feuille <strong>${esc(r.feuille)}</strong> · familles : <strong>${esc(r.familles.join(', '))}</strong><br>
+            <strong>${r.retrouves}</strong> étudiant(s) retrouvé(s) sur ${r.lignes} ligne(s), pour ${r.effectif} étudiant(s) dans l'effectif du semestre.
             <ul style="margin:6px 0 0 18px;padding:0">
                 <li>${ch.ajouts} affectation(s) ajoutée(s) · ${ch.modifications} modifiée(s) · ${ch.retraits} retirée(s)</li>
+                ${(r.familles_ignorees || []).length ? `<li style="color:#6b7280">Colonnes ignorées : ${esc(r.familles_ignorees.join(', '))} (pas de groupes de SAÉ après le S1)</li>` : ''}
                 ${r.non_retrouves.length ? `<li style="color:#b91c1c">${r.non_retrouves.length} ligne(s) sans étudiant correspondant : ${liste(r.non_retrouves)}</li>` : ''}
                 ${r.sans_ligne.length ? `<li style="color:#92400e">${r.sans_ligne.length} étudiant(s) actif(s) absent(s) du fichier, groupes inchangés : ${liste(r.sans_ligne)}</li>` : ''}
                 ${r.cohorte_differente ? `<li style="color:#6b7280">${r.cohorte_differente} étudiant(s) dont la cohorte du fichier diffère de l'effectif (l'effectif fait foi)</li>` : ''}
@@ -10294,12 +10545,204 @@ async function appliquerGroupesImport() {
         closeModal('modal-grp-import');
         renderGroupesRepartition();
         const ch = d.rapport.changements;
-        toast(`Groupes importés : ${ch.ajouts + ch.modifications + ch.retraits} changement(s)`);
+        toast(`Groupes importés dans le ${_grpSem} : ${ch.ajouts + ch.modifications + ch.retraits} changement(s)`);
     } catch (e) {
         btn.disabled = false;
         toast('Erreur : ' + e.message, 'error');
     } finally {
         btn.textContent = 'Importer';
+    }
+}
+
+// ----- Répartition automatique (règles du département) -----
+// Les réglages sont proposés par le serveur (d'après le nombre de groupes du semestre)
+// ou repris de la dernière répartition appliquée. Semestre mutualisé : une répartition
+// pour la promo, alternants dans les derniers groupes (mélangés ou dédiés). Sinon, FTP et
+// ALT sont répartis séparément. « Appliquer » n'agit que sur les réglages de l'aperçu
+// affiché : toute modification le désactive jusqu'au recalcul.
+let _grpAuto = null;          // réglages, mutualisation, effectif et alternants
+let _grpAutoRegles = null;    // réglages (normalisés) de l'aperçu affiché
+
+async function openGroupesAuto() {
+    if (!_promoId) return;
+    _grpAuto = null;
+    _grpAutoRegles = null;
+    document.getElementById('grp-auto-form').innerHTML = '<div class="spinner">Chargement…</div>';
+    document.getElementById('grp-auto-apercu').innerHTML = '';
+    document.getElementById('grp-auto-apply').disabled = true;
+    openModal('modal-grp-auto');
+    try {
+        _grpAuto = await api(`/promotions/${_promoId}/groupes/${_grpSem}/auto`);
+    } catch (e) {
+        document.getElementById('grp-auto-form').innerHTML = `<div class="st-note-warn">${esc(e.message)}</div>`;
+        return;
+    }
+    renderGroupesAutoForm();
+}
+
+function renderGroupesAutoForm() {
+    const d = _grpAuto, r = d.regles, e = d.effectif || {};
+    const eff = f => {
+        const x = e[f] || {};
+        return `<strong>${x.total || 0}</strong> ${f} (${x.F || 0} F · ${x.M || 0} M${
+            x.inconnu ? ` · <span style="color:#b45309">${x.inconnu} sexe inconnu</span>` : ''})`;
+    };
+    const inconnus = ((e.FTP || {}).inconnu || 0) + ((e.ALT || {}).inconnu || 0);
+    const nombre = (cle, v, min, max) => `<input type="number" min="${min}" max="${max}" value="${v}"
+        data-auto="${cle}" oninput="grpAutoModifie()" style="width:62px;text-align:center">`;
+    const mode = f => `<select data-auto="alt.${f}" onchange="grpAutoModifie()">
+        <option value="melange"${r.alt[f] === 'melange' ? ' selected' : ''}>mélangés avec les FTP</option>
+        <option value="dedie"${r.alt[f] === 'dedie' ? ' selected' : ''}>groupes dédiés</option></select>`;
+    const principe = d.mutualise
+        ? `Le <strong>${esc(_grpSem)}</strong> est mutualisé : une seule répartition pour la promo, les alternants
+           toujours dans les derniers groupes (mélangés avec les FTP ou dans des groupes dédiés).`
+        : `Le <strong>${esc(_grpSem)}</strong> n'est pas mutualisé : les FTP et les ALT sont répartis
+           <strong>séparément</strong>, chacun avec ses groupes.`;
+    const tableau = d.mutualise
+        ? `<table class="st-tbl" style="width:auto">
+            <thead><tr><th>Famille</th><th>Capacité</th><th>Alternants</th><th>Groupes ALT si dédiés</th></tr></thead>
+            <tbody>${['TD', 'TP12', 'TP8'].map(f => `<tr><td>${f}</td>
+                <td>${nombre('capacites.' + f, r.capacites[f], 2, 60)}</td>
+                <td>${mode(f)}</td><td>${nombre('alt_groupes.' + f, r.alt_groupes[f], 1, 10)}</td></tr>`).join('')}</tbody>
+          </table>`
+        : `<table class="st-tbl" style="width:auto">
+            <thead><tr><th>Famille</th><th>Capacité FTP</th><th>Capacité ALT</th></tr></thead>
+            <tbody>${['TD', 'TP12', 'TP8'].map(f => `<tr><td>${f}</td>
+                <td>${nombre('capacites_faces.FTP.' + f, r.capacites_faces.FTP[f], 2, 60)}</td>
+                <td>${nombre('capacites_faces.ALT.' + f, r.capacites_faces.ALT[f], 2, 60)}</td></tr>`).join('')}</tbody>
+          </table>`;
+    const nbTd = d.mutualise
+        ? `<label>Nombre de TD de la promotion : ${nombre('td_groupes', r.td_groupes, 1, 20)}</label>`
+        : `<label>Nombre de TD FTP : ${nombre('td_faces.FTP', r.td_faces.FTP, 1, 20)}</label>
+           <label>Nombre de TD ALT : ${nombre('td_faces.ALT', r.td_faces.ALT, 1, 20)}</label>`;
+    document.getElementById('grp-auto-form').innerHTML = `
+        <p style="color:#6b7280;font-size:.86rem;margin-top:0">
+            ${principe} On remplit d'abord les <strong>TP8</strong> (les filles au moins par deux), on trie chaque TP8 par
+            ordre alphabétique, puis on découpe cet ordre en <strong>TP12</strong>, puis en <strong>TD</strong> : un TD de 24
+            contient 2 TP12 et 3 TP8, au-delà il prend sur le TP suivant.
+            ${d.sae ? 'Les groupes de SAÉ reprennent le numéro de TD / TP12.' : "Pas de groupes de SAÉ après le S1."}
+            Les autres familles (covoiturage…) ne sont pas touchées.
+        </p>
+        <div style="font-size:.86rem;margin-bottom:10px">Effectif : ${eff('FTP')} · ${eff('ALT')}</div>
+        ${inconnus ? `<div class="st-note-warn" style="margin-bottom:10px">Sexe non renseigné pour ${inconnus} étudiant(s) :
+            la règle des filles ne peut pas s'appliquer à eux. Renseignez-le sur les fiches, ou réimportez l'export
+            ParcourSup complet dans l'effectif.</div>` : ''}
+        <div style="display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start">
+            ${tableau}
+            <div style="font-size:.86rem;display:flex;flex-direction:column;gap:8px;max-width:380px">
+                ${nbTd}
+                <label style="cursor:pointer"><input type="checkbox" data-auto="filles" ${r.filles ? 'checked' : ''}
+                    onchange="grpAutoModifie()"> Éviter qu'une fille soit seule dans un groupe</label>
+                <span style="color:#6b7280;font-size:.78rem">${d.enregistrees
+                    ? 'Réglages de la dernière répartition appliquée à ce semestre.'
+                    : (d.service ? `Réglages proposés d'après le nombre de groupes du ${esc(d.service.semestre)} ${esc(d.service.annee)}.` : 'Réglages proposés par défaut.')}</span>
+            </div>
+        </div>
+        ${d.sae ? `<div style="margin-top:12px;font-size:.86rem">
+            <strong>Alternants qui suivent les SAÉ</strong> <span style="color:#6b7280">(groupes TD SAE et TP12 SAE${d.mutualise ? ', avec les FTP' : ''})</span>
+            <div style="display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:6px">${(d.alternants || []).map(a => `<label style="cursor:pointer">
+                <input type="checkbox" data-sae="${a.id}" ${r.alt_sae.includes(a.id) ? 'checked' : ''} onchange="grpAutoModifie()">
+                ${esc(a.nom || '')} ${esc(a.prenom || '')}${a.sexe === 'F' ? ' <span class="st-pill" style="background:#fce7f3;color:#9d174d">F</span>' : ''}</label>`).join('')
+                || '<span style="color:#9ca3af">aucun alternant actif</span>'}</div>
+        </div>` : ''}`;
+}
+
+function _lireReglesAuto() {
+    const r = JSON.parse(JSON.stringify(_grpAuto.regles));
+    document.querySelectorAll('#grp-auto-form [data-auto]').forEach(el => {
+        const chemin = el.dataset.auto.split('.');
+        const v = el.type === 'checkbox' ? el.checked : (el.type === 'number' ? parseInt(el.value) : el.value);
+        let o = r;
+        chemin.slice(0, -1).forEach(k => { o = o[k]; });
+        o[chemin[chemin.length - 1]] = v;
+    });
+    if (_grpAuto.sae) {
+        r.alt_sae = [...document.querySelectorAll('#grp-auto-form [data-sae]')].filter(c => c.checked)
+            .map(c => parseInt(c.dataset.sae));
+    }
+    return r;
+}
+
+// Un réglage a changé : l'aperçu affiché ne correspond plus, « Appliquer » attend un recalcul
+function grpAutoModifie() {
+    document.getElementById('grp-auto-apply').disabled = true;
+    const ap = document.getElementById('grp-auto-apercu');
+    if (ap && ap.innerHTML) ap.style.opacity = '.45';
+}
+
+async function apercuGroupesAuto() {
+    if (!_grpAuto) return;
+    const el = document.getElementById('grp-auto-apercu');
+    const btn = document.getElementById('grp-auto-apply');
+    btn.disabled = true;
+    el.style.opacity = '';
+    el.innerHTML = '<div class="spinner">Calcul de la répartition…</div>';
+    try {
+        const d = await api(`/promotions/${_promoId}/groupes/${_grpSem}/auto`, {
+            method: 'POST', body: JSON.stringify({ regles: _lireReglesAuto(), apply: false })
+        });
+        _grpAutoRegles = d.regles;
+        renderGroupesAutoApercu(d);
+        const ch = d.changements;
+        btn.disabled = !(ch.ajouts + ch.modifications + ch.retraits);
+    } catch (e) {
+        el.innerHTML = `<div class="st-note-warn">${esc(e.message)}</div>`;
+    }
+}
+
+function renderGroupesAutoApercu(d) {
+    const ch = d.changements, total = ch.ajouts + ch.modifications + ch.retraits;
+    const carte = (ap, fam) => {
+        const lignes = (ap[fam] || []).map(c => {
+            const seule = c.F === 1;
+            const contenu = fam === 'TD'
+                ? `<div style="font-size:.7rem;color:#6b7280;font-weight:400">${['TP12', 'TP8'].map(sous =>
+                    (c[sous] || []).map(([g, n]) => `${esc(g)} (${n})`).join(', ')).join('<br>')}</div>` : '';
+            return `<tr${seule ? ' style="background:#fef2f2"' : ''}><td>${esc(c.groupe)}${contenu}</td><td>${c.n}</td>
+                ${d.mutualise ? `<td>${c.FTP}</td><td>${c.ALT}</td>` : ''}
+                <td style="${seule ? 'color:#b91c1c;font-weight:700' : ''}">${c.F}${c.inconnu ? ` <span style="color:#9ca3af" title="sexe non renseigné">+${c.inconnu} ?</span>` : ''}</td></tr>`;
+        }).join('');
+        return `<div style="flex:1 1 250px;min-width:230px">${stCard(fam, lignes
+            ? `<table class="st-tbl"><thead><tr><th>Groupe</th><th>Eff.</th>${d.mutualise ? '<th>FTP</th><th>ALT</th>' : ''}<th>Filles</th></tr></thead><tbody>${lignes}</tbody></table>`
+            : '<div class="st-none">Aucun groupe</div>')}</div>`;
+    };
+    const titres = { PROMO: '', FTP: 'FTP — formation initiale', ALT: 'ALT — alternance' };
+    const blocs = Object.entries(d.apercu).map(([cle, ap]) => `
+        ${titres[cle] ? `<h4 style="margin:12px 0 6px;color:${cle === 'ALT' ? '#9a3412' : '#0369a1'}">${titres[cle]}</h4>` : ''}
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start">${
+            ['TD', 'TP12', 'TP8', 'TD SAE', 'TP12 SAE'].filter(fam => ap[fam]).map(fam => carte(ap, fam)).join('')}</div>`).join('');
+    const el = document.getElementById('grp-auto-apercu');
+    el.style.opacity = '';
+    el.innerHTML = `
+        <div style="font-size:.88rem;margin-bottom:8px"><strong>Aperçu</strong> — ${total
+            ? `${ch.ajouts} affectation(s) ajoutée(s) · ${ch.modifications} modifiée(s) · ${ch.retraits} retirée(s). Rien n'est écrit avant « Appliquer ».`
+            : 'la répartition actuelle est déjà celle-ci.'}</div>
+        ${d.alertes.length ? `<div class="st-note-warn" style="margin-bottom:10px"><ul style="margin:0;padding-left:18px">${
+            d.alertes.map(a => `<li>${esc(a)}</li>`).join('')}</ul></div>` : ''}
+        ${blocs}`;
+}
+
+async function appliquerGroupesAuto() {
+    if (!_grpAuto || !_grpAutoRegles) return;
+    const familles = _grpAuto.sae ? 'TD, TD SAE, TP12, TP12 SAE et TP8' : 'TD, TP12 et TP8';
+    if (!confirm(`Remplacer les groupes ${familles} des étudiants actifs du ${_grpSem} par cette répartition ?`)) return;
+    const btn = document.getElementById('grp-auto-apply');
+    btn.disabled = true;
+    btn.textContent = 'Application…';
+    try {
+        const d = await api(`/promotions/${_promoId}/groupes/${_grpSem}/auto`, {
+            method: 'POST', body: JSON.stringify({ regles: _grpAutoRegles, apply: true })
+        });
+        _grpRep = Object.assign(d.repartition, { _pid: _promoId });
+        closeModal('modal-grp-auto');
+        renderGroupesRepartition();
+        const ch = d.changements;
+        toast(`Répartition automatique appliquée au ${_grpSem} : ${ch.ajouts + ch.modifications + ch.retraits} changement(s)`);
+    } catch (e) {
+        btn.disabled = false;
+        toast('Erreur : ' + e.message, 'error');
+    } finally {
+        btn.textContent = 'Appliquer';
     }
 }
 

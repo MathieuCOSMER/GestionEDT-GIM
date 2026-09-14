@@ -1340,16 +1340,41 @@ def _apply_promotions_migrations(db):
             imported_at TEXT DEFAULT CURRENT_TIMESTAMP
         )''')
     # Répartition des étudiants dans les groupes (Promotions › Groupes) : pour une
-    # inscription et une année d'étude, le groupe de chaque famille (TD, TP12, TP8,
-    # TD SAE, covoiturage…). Supprimer la fiche supprime ses groupes.
+    # inscription et un SEMESTRE — comme le nombre de groupes du service —, le groupe de
+    # chaque famille (TD, TP12, TP8, TD SAE, covoiturage…). Supprimer la fiche supprime ses
+    # groupes. La première version rangeait la répartition par année d'étude : elle est
+    # reportée sur le semestre impair de l'année (S1 pour la 1re année).
+    _anc = [r[1] for r in db.execute('PRAGMA table_info(student_groupes)').fetchall()]
+    if 'year' in _anc:
+        db.execute('ALTER TABLE student_groupes RENAME TO student_groupes_annee')
     db.execute('''
         CREATE TABLE IF NOT EXISTS student_groupes (
             student_id INTEGER NOT NULL REFERENCES promotion_students(id) ON DELETE CASCADE,
-            year       INTEGER NOT NULL,           -- année d'étude (1..3)
+            semestre   TEXT NOT NULL,              -- S1..S6
             famille    TEXT NOT NULL,
             groupe     TEXT NOT NULL,
-            PRIMARY KEY (student_id, year, famille)
+            PRIMARY KEY (student_id, semestre, famille)
         )''')
+    if 'year' in _anc:
+        db.execute('''INSERT OR IGNORE INTO student_groupes(student_id, semestre, famille, groupe)
+                      SELECT student_id, 'S' || (2 * year - 1), famille, groupe FROM student_groupes_annee''')
+        db.execute('DROP TABLE student_groupes_annee')
+    # Réglages de la répartition automatique d'une promotion pour un semestre (capacités,
+    # alternants dédiés ou mélangés, alternants suivant les SAÉ…).
+    _anc = [r[1] for r in db.execute('PRAGMA table_info(groupes_regles)').fetchall()]
+    if 'year' in _anc:
+        db.execute('ALTER TABLE groupes_regles RENAME TO groupes_regles_annee')
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS groupes_regles (
+            promotion_id INTEGER NOT NULL REFERENCES promotions(id) ON DELETE CASCADE,
+            semestre     TEXT NOT NULL,
+            data         TEXT NOT NULL,
+            PRIMARY KEY (promotion_id, semestre)
+        )''')
+    if 'year' in _anc:
+        db.execute('''INSERT OR IGNORE INTO groupes_regles(promotion_id, semestre, data)
+                      SELECT promotion_id, 'S' || (2 * year - 1), data FROM groupes_regles_annee''')
+        db.execute('DROP TABLE groupes_regles_annee')
     # Le diplôme et son état (préparé / obtenu) quittent le dossier : ils ne
     # disaient rien que la série du bac et l'écart au bac ne disent déjà.
     for _t in ('students', 'promotion_students'):
@@ -5650,13 +5675,16 @@ def import_year_parcoursup(pid, year):
     return jsonify(payload)
 
 # ===== GROUPES : répartition des étudiants (onglet Promotions › Groupes) =====
-# Pour une année d'étude, chaque étudiant appartient à un groupe par FAMILLE : TD, TP12
-# et TP8 (les groupes du service), et toute autre famille dont la formation a besoin
-# (TD SAE, TP12 SAE, covoiturage…). Celles de base sont toujours proposées, les autres
-# naissent d'un import ou d'une saisie. L'admin importe et corrige ; les enseignants
-# autorisés consultent et téléchargent. Une répartition automatique pourra, plus tard,
-# écrire dans la même table.
-_GROUPE_FAMILLES_BASE = ('TD', 'TD SAE', 'TP12', 'TP12 SAE', 'TP8')
+# Pour un SEMESTRE — comme le nombre de groupes TD / TP / PT du service —, chaque
+# étudiant appartient à un groupe par FAMILLE : TD, TP12 et TP8 (les groupes du service),
+# TD SAE et TP12 SAE au S1 seulement (il n'y a plus de groupes de SAÉ ensuite), et toute
+# autre famille dont la formation a besoin (covoiturage…), née d'un import ou d'une
+# saisie. Un semestre MUTUALISÉ a une seule répartition pour la promo (FTP + ALT) ; sinon
+# FTP et ALT ont chacun la leur : deux tableaux, des groupes indépendants (« TD_1 » des
+# FTP n'est pas « TD_1 » des ALT). Les étudiants sont ceux de l'effectif de l'année du
+# semestre. L'admin importe, répartit automatiquement, reprend un autre semestre et
+# corrige ; les enseignants autorisés consultent et téléchargent.
+_GROUPES_SAE = ('TD SAE', 'TP12 SAE')
 # Colonnes d'une liste importée qui décrivent l'étudiant, et non un groupe
 _GROUPE_COLONNES_ETUDIANT = {'nom', 'prenom', 'cohorte', 'formation', 'souscohorte', 'abandon',
                              'statut', 'numero', 'netudiant', 'numeroetudiant', 'codeetudiant',
@@ -5666,6 +5694,10 @@ _GROUPE_COLONNES_NUMERO = ('numero', 'netudiant', 'numeroetudiant', 'codeetudian
 # Case de groupe : un code suivi d'un numéro (TD_1, TP12_3, TP12SAE_4, Covoit 2)
 _GROUPE_VALEUR = re.compile(r'^[A-Za-zÀ-ÿ][\wÀ-ÿ ]*?[_ -]?\d+$')
 
+def _groupe_familles_base(semestre):
+    """Familles toujours proposées : TD, TP12, TP8, et les groupes de SAÉ au S1 seulement."""
+    return ('TD', 'TD SAE', 'TP12', 'TP12 SAE', 'TP8') if semestre == 'S1' else ('TD', 'TP12', 'TP8')
+
 def _groupe_famille(txt):
     """Nom d'une famille à partir d'un en-tête : « TP12_SAE » -> « TP12 SAE », «  TP12 » -> « TP12 »."""
     return re.sub(r'\s+', ' ', str(txt or '').replace('_', ' ')).strip()[:40]
@@ -5674,71 +5706,141 @@ def _groupe_tri(nom):
     """Tri naturel des groupes : TP12_2 avant TP12_10."""
     return [int(x) if x.isdigit() else x.lower() for x in re.split(r'(\d+)', nom or '')]
 
-def _groupes_payload(pdb, pid, year):
-    """Répartition d'une année : étudiants de l'effectif de l'année (les abandons et
-    césures restent listés, marqués inactifs), familles, et groupes de chaque famille
-    avec leurs effectifs FTP / ALT (étudiants actifs seulement)."""
+def _groupes_service(pdb, pid, semestre):
+    """Réglage des groupes du service pour le semestre (base de l'année universitaire
+    correspondante) : mutualisation, TP distincts, nombre de groupes par face. None si la
+    base de l'année n'existe pas."""
+    label = _promo_semester_year(pdb, pid, semestre)
+    path = db_path_for_year(label) if label else None
+    if not (path and os.path.isfile(path)):
+        return None
+    ydb = _open_connection(path)
+    try:
+        sm = ydb.execute('SELECT mutualized, tp_separate FROM semesters WHERE code=?', (semestre,)).fetchone()
+        g = {r['formation_type']: dict(r) for r in ydb.execute(
+            'SELECT * FROM semester_groups WHERE semester_code=?', (semestre,))}
+    except sqlite3.Error:
+        return None
+    finally:
+        ydb.close()
+    return {'semestre': semestre, 'annee': label, 'mutualise': bool(sm and sm['mutualized']),
+            'tp_distincts': not sm or sm['tp_separate'] is None or bool(sm['tp_separate']),
+            'groupes': g}
+
+def _groupes_tables(students, familles, mutualise):
+    """Tableaux de la répartition : un pour la promo si le semestre est mutualisé, sinon un
+    par sous-cohorte, chacun avec ses groupes (effectifs FTP / ALT des étudiants actifs)."""
+    faces = ([('PROMO', 'Promotion (FTP + ALT)', None)] if mutualise
+             else [('FTP', 'FTP — formation initiale', 'FTP'), ('ALT', 'ALT — alternance', 'ALT')])
+    tables = []
+    for cle, titre, face in faces:
+        membres = [st for st in students if face is None or st['formation'] == face]
+        groupes = {}
+        for f in familles:
+            compte = {}
+            for st in membres:
+                g = st['groupes'].get(f)
+                if g:
+                    c = compte.setdefault(g, {'FTP': 0, 'ALT': 0})
+                    if st['actif']:
+                        c[st['formation']] += 1
+            groupes[f] = [dict(groupe=g, **compte[g]) for g in sorted(compte, key=_groupe_tri)]
+        tables.append({'cle': cle, 'titre': titre, 'face': face, 'groupes': groupes,
+                       'effectif': len(membres), 'actifs': sum(1 for st in membres if st['actif']),
+                       'sans_groupe': {f: sum(1 for st in membres if st['actif'] and not st['groupes'].get(f))
+                                       for f in familles}})
+    return tables
+
+def _groupes_payload(pdb, pid, semestre, svc=None):
+    """Répartition d'un semestre : étudiants de l'effectif de l'année du semestre (les
+    abandons et césures restent listés, marqués inactifs), familles, et tableaux (la promo
+    si le semestre est mutualisé, sinon FTP et ALT)."""
+    year = _sem_year(semestre)
     eff = _year_effectif_payload(pdb, pid, year)
     if not eff:
         return None
+    if svc is None:
+        svc = _groupes_service(pdb, pid, semestre)
+    mutualise = svc['mutualise'] if svc else True
     affect = {}
     for r in pdb.execute('''SELECT g.student_id, g.famille, g.groupe FROM student_groupes g
                             JOIN promotion_students s ON s.id = g.student_id
-                            WHERE s.promotion_id=? AND g.year=?''', (pid, year)):
+                            WHERE s.promotion_id=? AND g.semestre=?''', (pid, semestre)):
         affect.setdefault(r['student_id'], {})[r['famille']] = r['groupe']
-    familles = list(_GROUPE_FAMILLES_BASE)
+    familles = list(_groupe_familles_base(semestre))
     for gs in affect.values():
         for f in sorted(gs):
             if f not in familles:
                 familles.append(f)
     students = [{'id': s['id'], 'person_id': s.get('person_id'), 'numero': s.get('numero'),
-                 'nom': s.get('nom'), 'prenom': s.get('prenom'),
+                 'nom': s.get('nom'), 'prenom': s.get('prenom'), 'sexe': s.get('sexe'),
                  'formation': _face(s.get('formation')), 'statut': s.get('statut'),
                  'actif': s.get('statut') not in ('Abandon', 'Césure') and not s.get('cesure'),
                  'groupes': affect.get(s['id'], {})}
                 for s in eff['students'] if not s.get('hors_annee')]
-    groupes = {}
-    for f in familles:
-        compte = {}
-        for st in students:
-            g = st['groupes'].get(f)
-            if g:
-                c = compte.setdefault(g, {'FTP': 0, 'ALT': 0})
-                if st['actif']:
-                    c[st['formation']] += 1
-        groupes[f] = [dict(groupe=g, **compte[g]) for g in sorted(compte, key=_groupe_tri)]
-    return {'year': year, 'promotion': eff['promotion'].get('name'), 'familles': familles,
-            'groupes': groupes, 'students': students,
-            'sans_groupe': {f: sum(1 for st in students if st['actif'] and not st['groupes'].get(f))
-                            for f in familles}}
+    return {'semestre': semestre, 'year': year, 'promotion': eff['promotion'].get('name'),
+            'mutualise': mutualise, 'sae': semestre == 'S1',
+            'service': {k: svc[k] for k in ('semestre', 'annee', 'mutualise', 'tp_distincts')} if svc else None,
+            'familles': familles, 'students': students,
+            'tables': _groupes_tables(students, familles, mutualise)}
 
-def _groupes_promo_check(pdb, pid, year):
-    if year not in (1, 2, 3):
-        return error_response('Année invalide', 400)
+def _groupes_promo_check(pdb, pid, semestre):
+    if semestre not in _PROMO_SEMESTERS:
+        return error_response('Semestre invalide', 400)
     if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
         return error_response('Promotion introuvable', 404)
     return None
 
-@app.route('/api/promotions/<int:pid>/groupes/<int:year>', methods=['GET'])
-def get_promotion_groupes(pid, year):
+def _groupes_ecrire(pdb, semestre, ecritures):
+    """Écrit des affectations [(étudiant, famille, groupe)] ; un groupe vide retire."""
+    for sid, fam, g in ecritures:
+        if g:
+            pdb.execute('''INSERT INTO student_groupes(student_id, semestre, famille, groupe) VALUES(?,?,?,?)
+                           ON CONFLICT(student_id, semestre, famille) DO UPDATE SET groupe=excluded.groupe''',
+                        (sid, semestre, fam, g))
+        else:
+            pdb.execute('DELETE FROM student_groupes WHERE student_id=? AND semestre=? AND famille=?',
+                        (sid, semestre, fam))
+
+def _groupes_changements(students, nouveaux, familles=None):
+    """Compare une répartition proposée {étudiant: {famille: groupe}} à l'actuelle, pour
+    les étudiants de la proposition. `familles` : celles à comparer (par défaut, toutes
+    celles de la proposition et de l'actuel). Renvoie (compteurs, écritures)."""
+    changements = {'ajouts': 0, 'modifications': 0, 'retraits': 0}
+    ecritures = []
+    for st in students:
+        if st['id'] not in nouveaux:
+            continue
+        prop = nouveaux[st['id']]
+        for fam in (familles if familles is not None else sorted(set(prop) | set(st['groupes']))):
+            nouveau = prop.get(fam, '')
+            avant = st['groupes'].get(fam) or ''
+            if nouveau == avant:
+                continue
+            changements['ajouts' if not avant else ('retraits' if not nouveau else 'modifications')] += 1
+            ecritures.append((st['id'], fam, nouveau))
+    return changements, ecritures
+
+@app.route('/api/promotions/<int:pid>/groupes/<semestre>', methods=['GET'])
+def get_promotion_groupes(pid, semestre):
     err = _require_promo_read()
     if err:
         return err
     pdb = get_promotions_db()
-    err = _groupes_promo_check(pdb, pid, year)
+    err = _groupes_promo_check(pdb, pid, semestre)
     if err:
         return err
-    return jsonify(_groupes_payload(pdb, pid, year))
+    return jsonify(_groupes_payload(pdb, pid, semestre))
 
-@app.route('/api/promotions/<int:pid>/groupes/<int:year>', methods=['PUT'])
-def set_promotion_groupe(pid, year):
+@app.route('/api/promotions/<int:pid>/groupes/<semestre>', methods=['PUT'])
+def set_promotion_groupe(pid, semestre):
     """Place un étudiant dans un groupe d'une famille, ou l'en retire (groupe vide) :
     {student_id, famille, groupe}. Réservé à l'admin."""
     err = _require_admin()
     if err:
         return err
     pdb = get_promotions_db()
-    err = _groupes_promo_check(pdb, pid, year)
+    err = _groupes_promo_check(pdb, pid, semestre)
     if err:
         return err
     data = request.get_json() or {}
@@ -5750,37 +5852,63 @@ def set_promotion_groupe(pid, year):
         return error_response('Étudiant invalide', 400)
     if not famille:
         return error_response('Famille de groupes manquante', 400)
+    if groupe and famille in _GROUPES_SAE and semestre != 'S1':
+        return error_response("Il n'y a de groupes de SAÉ qu'au S1", 400)
     if not pdb.execute('SELECT 1 FROM promotion_students WHERE id=? AND promotion_id=?', (sid, pid)).fetchone():
         return error_response('Étudiant introuvable dans cette promotion', 404)
-    if groupe:
-        pdb.execute('''INSERT INTO student_groupes(student_id, year, famille, groupe) VALUES(?,?,?,?)
-                       ON CONFLICT(student_id, year, famille) DO UPDATE SET groupe=excluded.groupe''',
-                    (sid, year, famille, groupe))
-    else:
-        pdb.execute('DELETE FROM student_groupes WHERE student_id=? AND year=? AND famille=?',
-                    (sid, year, famille))
+    _groupes_ecrire(pdb, semestre, [(sid, famille, groupe)])
     pdb.commit()
-    _audit('GROUPE_SET', ip=_client_ip(), user=session.get('user'), promo=pid, year=year,
+    _audit('GROUPE_SET', ip=_client_ip(), user=session.get('user'), promo=pid, semestre=semestre,
            student=sid, famille=famille, groupe=groupe)
-    return jsonify(_groupes_payload(pdb, pid, year))
+    return jsonify(_groupes_payload(pdb, pid, semestre))
 
-@app.route('/api/promotions/<int:pid>/groupes/<int:year>/famille', methods=['DELETE'])
-def delete_promotion_groupe_famille(pid, year):
-    """Vide une famille de groupes pour l'année (tous les étudiants en sont retirés). Admin."""
+@app.route('/api/promotions/<int:pid>/groupes/<semestre>/famille', methods=['DELETE'])
+def delete_promotion_groupe_famille(pid, semestre):
+    """Vide une famille de groupes pour le semestre (tous les étudiants, FTP et ALT, en
+    sont retirés). Admin."""
     err = _require_admin()
     if err:
         return err
     pdb = get_promotions_db()
-    err = _groupes_promo_check(pdb, pid, year)
+    err = _groupes_promo_check(pdb, pid, semestre)
     if err:
         return err
     famille = _groupe_famille(request.args.get('famille'))
-    pdb.execute('''DELETE FROM student_groupes WHERE year=? AND famille=? AND student_id IN
-                   (SELECT id FROM promotion_students WHERE promotion_id=?)''', (year, famille, pid))
+    pdb.execute('''DELETE FROM student_groupes WHERE semestre=? AND famille=? AND student_id IN
+                   (SELECT id FROM promotion_students WHERE promotion_id=?)''', (semestre, famille, pid))
     pdb.commit()
     _audit('GROUPE_FAMILLE_DELETE', ip=_client_ip(), user=session.get('user'), promo=pid,
-           year=year, famille=famille)
-    return jsonify(_groupes_payload(pdb, pid, year))
+           semestre=semestre, famille=famille)
+    return jsonify(_groupes_payload(pdb, pid, semestre))
+
+@app.route('/api/promotions/<int:pid>/groupes/<semestre>/copier', methods=['POST'])
+def copier_promotion_groupes(pid, semestre):
+    """Reprend pour le semestre la répartition d'un autre semestre {depuis} : pour chaque
+    étudiant présent dans les deux, ses groupes du semestre source remplacent ceux du
+    semestre — sans les groupes de SAÉ hors S1. Admin."""
+    err = _require_admin()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    err = _groupes_promo_check(pdb, pid, semestre)
+    if err:
+        return err
+    depuis = str((request.get_json() or {}).get('depuis') or '').strip().upper()
+    if depuis not in _PROMO_SEMESTERS or depuis == semestre:
+        return error_response('Semestre source invalide', 400)
+    source = _groupes_payload(pdb, pid, depuis)
+    cible = _groupes_payload(pdb, pid, semestre)
+    garder = lambda f: semestre == 'S1' or f not in _GROUPES_SAE
+    changements, ecritures = _groupes_changements(
+        cible['students'], {st['id']: {f: g for f, g in st['groupes'].items() if garder(f)}
+                            for st in source['students']})
+    _groupes_ecrire(pdb, semestre, ecritures)
+    pdb.commit()
+    _audit('GROUPES_COPIE', ip=_client_ip(), user=session.get('user'), promo=pid, semestre=semestre,
+           depuis=depuis, **changements)
+    payload = _groupes_payload(pdb, pid, semestre)
+    payload['copie'] = {'depuis': depuis, 'changements': changements}
+    return jsonify(payload)
 
 def _parse_groupes_xlsx(path):
     """Liste de groupes : la feuille qui porte Nom, Prénom et le plus de colonnes de
@@ -5788,7 +5916,7 @@ def _parse_groupes_xlsx(path):
     Nom / Prénom en blocs : seul le premier bloc est lu). Une colonne est une famille de
     groupes quand 80 % de ses cases ressemblent à un code de groupe (TD_1, TP12_3…).
     Renvoie (feuille, familles, lignes) ou None — lignes : [{ligne, nom, prenom,
-    numero, cohorte, groupes: {famille: groupe}}]."""
+    numero, cohorte, abandon, groupes: {famille: groupe}}]."""
     wb = _load_workbook_lenient(path, data_only=True)
     meilleur = None
     for ws in wb.worksheets:
@@ -5839,18 +5967,19 @@ def _parse_groupes_xlsx(path):
                     'groupes': groupes})
     return ws.title, list(dict.fromkeys(familles.values())), out
 
-@app.route('/api/promotions/<int:pid>/groupes/<int:year>/import', methods=['POST'])
-def import_promotion_groupes(pid, year):
-    """Import d'une liste de groupes (.xlsx). Rapprochement par n° étudiant s'il y en a
-    un, sinon nom + prénom, avec l'effectif de l'année. Sans `apply=1`, rien n'est écrit :
-    le rapport dit ce qui changerait. Pour chaque étudiant retrouvé, les familles du
-    fichier remplacent ses groupes de ces familles (une case vide l'en retire) ; les
-    étudiants absents du fichier et les autres familles ne bougent pas."""
+@app.route('/api/promotions/<int:pid>/groupes/<semestre>/import', methods=['POST'])
+def import_promotion_groupes(pid, semestre):
+    """Import d'une liste de groupes (.xlsx) pour un semestre. Rapprochement par n°
+    étudiant s'il y en a un, sinon nom + prénom, avec l'effectif de l'année du semestre.
+    Sans `apply=1`, rien n'est écrit : le rapport dit ce qui changerait. Pour chaque
+    étudiant retrouvé, les familles du fichier remplacent ses groupes de ces familles (une
+    case vide l'en retire) ; les étudiants absents du fichier et les autres familles ne
+    bougent pas. Hors S1, les colonnes de groupes de SAÉ sont ignorées."""
     err = _require_admin()
     if err:
         return err
     pdb = get_promotions_db()
-    err = _groupes_promo_check(pdb, pid, year)
+    err = _groupes_promo_check(pdb, pid, semestre)
     if err:
         return err
     f = request.files.get('file')
@@ -5876,23 +6005,25 @@ def import_promotion_groupes(pid, year):
         return error_response("Aucune liste de groupes reconnue : il faut une feuille avec les colonnes "
                               "Nom, Prénom et au moins une colonne de groupes (TD_1, TP12_3…)", 400)
     feuille, familles, lignes = lu
-    payload = _groupes_payload(pdb, pid, year)
+    ignorees = [fam for fam in familles if fam in _GROUPES_SAE and semestre != 'S1']
+    familles = [fam for fam in familles if fam not in ignorees]
+    if not familles:
+        return error_response(f"Le fichier ne contient que des groupes de SAÉ, qui n'existent qu'au S1", 400)
+    payload = _groupes_payload(pdb, pid, semestre)
     par_nom, par_num = {}, {}
     for st in payload['students']:
         par_nom.setdefault(_ps_key(st['nom'], st['prenom']), st)
         if st.get('numero'):
             par_num.setdefault(_saisie_num_txt(st['numero']), st)
-    vus, non_retrouves, cohorte_diff, ecritures = set(), [], 0, []
-    abandon_discordant = []      # le fichier et l'effectif ne disent pas la même chose
-    changements = {'ajouts': 0, 'modifications': 0, 'retraits': 0}
+    nouveaux, non_retrouves, abandon_discordant, cohorte_diff = {}, [], [], 0
     for l in lignes:
         st = (par_num.get(l['numero']) if l['numero'] else None) or par_nom.get(_ps_key(l['nom'], l['prenom']))
         if st is None:
             non_retrouves.append(f"ligne {l['ligne']} : {l['nom']} {l['prenom']}".strip())
             continue
-        if st['id'] in vus:
+        if st['id'] in nouveaux:
             continue           # doublon dans le fichier : la première ligne fait foi
-        vus.add(st['id'])
+        nouveaux[st['id']] = {fam: g for fam, g in l['groupes'].items() if fam in familles}
         if l['cohorte'] in _SUBCOHORTS and l['cohorte'] != st['formation']:
             cohorte_diff += 1
         if l.get('abandon') is not None:
@@ -5901,59 +6032,462 @@ def import_promotion_groupes(pid, year):
                 abandon_discordant.append(qui + " (abandon dans le fichier, actif dans l'effectif)")
             elif not l['abandon'] and st['statut'] == 'Abandon':
                 abandon_discordant.append(qui + " (abandon dans l'effectif, pas dans le fichier)")
-        for fam, g in l['groupes'].items():
-            avant = st['groupes'].get(fam) or ''
-            if g == avant:
-                continue
-            changements['ajouts' if not avant else ('retraits' if not g else 'modifications')] += 1
-            ecritures.append((st['id'], fam, g))
+    changements, ecritures = _groupes_changements(payload['students'], nouveaux, familles)
     appliquer = request.form.get('apply') == '1'
-    rapport = {'feuille': feuille, 'familles': familles, 'lignes': len(lignes),
-               'effectif': len(payload['students']), 'retrouves': len(vus),
+    rapport = {'feuille': feuille, 'familles': familles, 'familles_ignorees': ignorees,
+               'lignes': len(lignes), 'effectif': len(payload['students']), 'retrouves': len(nouveaux),
                'non_retrouves': non_retrouves, 'cohorte_differente': cohorte_diff,
                'abandon_discordant': abandon_discordant,
                'sans_ligne': [f"{st['nom'] or ''} {st['prenom'] or ''}".strip()
-                              for st in payload['students'] if st['actif'] and st['id'] not in vus],
+                              for st in payload['students'] if st['actif'] and st['id'] not in nouveaux],
                'changements': changements}
     if appliquer:
-        for sid, fam, g in ecritures:
-            if g:
-                pdb.execute('''INSERT INTO student_groupes(student_id, year, famille, groupe) VALUES(?,?,?,?)
-                               ON CONFLICT(student_id, year, famille) DO UPDATE SET groupe=excluded.groupe''',
-                            (sid, year, fam, g))
-            else:
-                pdb.execute('DELETE FROM student_groupes WHERE student_id=? AND year=? AND famille=?',
-                            (sid, year, fam))
+        _groupes_ecrire(pdb, semestre, ecritures)
         pdb.commit()
-        _audit('GROUPES_IMPORT', ip=_client_ip(), user=session.get('user'), promo=pid, year=year,
-               fichier=f.filename, retrouves=len(vus), **changements)
-        payload = _groupes_payload(pdb, pid, year)
+        _audit('GROUPES_IMPORT', ip=_client_ip(), user=session.get('user'), promo=pid, semestre=semestre,
+               fichier=f.filename, retrouves=len(nouveaux), **changements)
+        payload = _groupes_payload(pdb, pid, semestre)
     return jsonify({'rapport': rapport, 'applique': appliquer,
                     'repartition': payload if appliquer else None})
 
-@app.route('/api/promotions/<int:pid>/groupes/<int:year>/export', methods=['GET'])
-def export_promotion_groupes(pid, year):
-    """Répartition au format Excel : la liste complète (une colonne par famille), puis une
-    feuille par famille où les groupes sont côte à côte. Ouvert aux enseignants autorisés."""
+# ---- Répartition automatique (règles du département) ----
+# Semestre MUTUALISÉ (une répartition pour la promo) :
+# 1. Les alternants viennent toujours après les FTP : dans des groupes qui leur sont
+#    dédiés (les derniers), ou mélangés avec les FTP dans les derniers groupes — au choix
+#    pour chaque famille (TD, TP12, TP8).
+# 2. Au S1, les groupes de SAÉ reprennent le numéro du TD / TP12 ; les alternants désignés
+#    les suivent avec les FTP, dans les derniers groupes.
+# Semestre NON MUTUALISÉ : FTP et ALT sont répartis chacun de leur côté, avec leur nombre
+# de TD ; il n'y a plus d'alternants à placer vis-à-vis des FTP.
+# Dans tous les cas :
+# 3. Emboîtement : un TD de 24 étudiants contient 2 TP12 et 3 TP8 ; au-delà de 24, il
+#    prend sur le TP suivant, partagé avec le TD suivant (TD1 prend sur TP12_3, TP8_4).
+# 4. On remplit d'abord les TP8 — les filles au moins par deux, de préférence dans les
+#    TP8 que le découpage ne coupe pas —, on trie chaque TP8 par ordre alphabétique, puis
+#    on découpe cet ordre en TP12, puis en TD.
+_GROUPES_AUTO_PREFIXES = {'TD': 'TD', 'TD SAE': 'TDSAE', 'TP12': 'TP12', 'TP12 SAE': 'TP12SAE', 'TP8': 'TP8'}
+_ECHELLE_ALT = ('melange', 'dedie')
+
+def _parts_equilibrees(n, k):
+    """n étudiants en k groupes aussi égaux que possible, les plus grands d'abord."""
+    if n <= 0:
+        return []
+    k = max(1, min(int(k), n))
+    return [n // k + (1 if i < n % k else 0) for i in range(k)]
+
+def _tailles_emboitees(regions, cap, nominal):
+    """Tailles des TP d'un bloc d'étudiants découpé en régions de TD (leurs effectifs, dans
+    l'ordre). Un TD d'au plus nominal × cap étudiants (24 = 2 TP12 = 3 TP8) contient ses
+    propres TP, équilibrés ; au-delà, ses TP sont pleins et le surplus ouvre le TP suivant,
+    partagé avec le TD suivant. Le dernier TD garde tout ce qui reste."""
+    regions = [r for r in regions if r > 0]
+    tailles, report = [], 0
+    for i, r in enumerate(regions):
+        dispo = report + r
+        dernier = i == len(regions) - 1
+        if dispo > nominal * cap and not dernier:
+            tailles.extend([cap] * nominal)
+            report = dispo - nominal * cap
+            while report > cap:
+                tailles.append(cap)
+                report -= cap
+        else:
+            k = max(1, math.ceil(dispo / cap))
+            if not dernier:
+                k = min(k, nominal)
+            tailles.extend(_parts_equilibrees(dispo, k))
+            report = 0
+    return tailles
+
+def _plan_groupes_auto(nF, nA, regles):
+    """Tailles de chaque famille sur l'ordre global des étudiants (les FTP, puis les ALT).
+    Des groupes « dédiés » aux alternants imposent une frontière entre les deux blocs."""
+    cap, alt, ag = regles['capacites'], regles['alt'], regles['alt_groupes']
+    if alt['TD'] == 'dedie':
+        td = _parts_equilibrees(nF, regles['td_groupes']) + _parts_equilibrees(nA, ag['TD'])
+    else:
+        td = _parts_equilibrees(nF + nA, regles['td_groupes'])
+    plan = {'TD': td}
+    for fam in ('TP12', 'TP8'):
+        c = cap[fam]
+        nominal = max(1, cap['TD'] // c)
+        if alt[fam] == 'dedie':
+            regions, pos = [], 0
+            for t in td:
+                regions.append(max(0, min(pos + t, nF) - pos))
+                pos += t
+            plan[fam] = _tailles_emboitees(regions, c, nominal) + _parts_equilibrees(nA, ag[fam])
+        else:
+            plan[fam] = _tailles_emboitees(td, c, nominal)
+    return plan
+
+def _remplir_tp8_auto(ftp, alt, tailles, bornes, eviter, libelles=('FTP', 'ALT')):
+    """Remplit les TP8 : le premier bloc (les FTP) dans ses places, le second (les ALT) en
+    fin d'ordre. Avec la règle des filles, elles vont au moins par deux dans un même groupe,
+    sur autant de groupes que possible, de préférence les TP8 qu'aucune frontière de TP12 ou
+    de TD ne coupe ; les autres places se prennent dans l'ordre alphabétique. Renvoie
+    (groupes, alertes), chaque groupe trié (FTP puis ALT, par nom)."""
+    nF = len(ftp)
+    groupes, pos = [], 0
+    for t in tailles:
+        a, b = pos, pos + t
+        pos = b
+        groupes.append({'places': [max(0, min(b, nF) - a), max(0, b - max(a, nF))],
+                        'sur': not any(a < x < b for x in bornes), 'membres': []})
+    alertes = []
+    for rang, (bloc, libelle) in enumerate(((ftp, libelles[0]), (alt, libelles[1]))):
+        places = [g['places'][rang] for g in groupes]
+        filles = [x for x in bloc if x.get('sexe') == 'F']
+        autres = [x for x in bloc if x.get('sexe') != 'F']
+        quota = None
+        if eviter and filles:
+            cand = [j for j, n in enumerate(places) if n >= 2]
+            m = min(len(cand), len(filles) // 2)
+            if m == 0:
+                if len(filles) == 1:
+                    alertes.append(f"{libelle} : une seule fille, elle sera seule dans ses groupes")
+            else:
+                quota = [0] * len(groupes)
+                surs = [j for j in cand if groupes[j]['sur']]
+                espaces = lambda l, k: [l[int(i * len(l) / k)] for i in range(k)] if k else []
+                choisis = (espaces(surs, m) if len(surs) >= m
+                           else surs + espaces([j for j in cand if j not in surs], m - len(surs)))
+                choisis.sort()
+                reste = len(filles)
+                for i, j in enumerate(choisis):
+                    q = min(places[j], len(filles) // m + (1 if i < len(filles) % m else 0))
+                    quota[j] = q
+                    reste -= q
+                for j in choisis + [j for j in range(len(groupes)) if j not in choisis]:
+                    while reste and quota[j] < places[j]:
+                        quota[j] += 1
+                        reste -= 1
+        if quota is None:
+            k = 0
+            for j, g in enumerate(groupes):
+                g['membres'].extend(bloc[k:k + places[j]])
+                k += places[j]
+        else:
+            kf = ka = 0
+            for j, g in enumerate(groupes):
+                g['membres'].extend(filles[kf:kf + quota[j]])
+                kf += quota[j]
+                n = places[j] - quota[j]
+                g['membres'].extend(autres[ka:ka + n])
+                ka += n
+    rangs = {id(x): 0 for x in ftp}
+    rangs.update({id(x): 1 for x in alt})
+    cle = lambda x: (rangs[id(x)], _profile_key(x.get('nom')), _profile_key(x.get('prenom')))
+    for g in groupes:
+        g['membres'].sort(key=cle)
+    return groupes, alertes
+
+def _repartition_auto(students, regles, sae=None, bloc_unique=False, prefixe=''):
+    """Répartition automatique d'étudiants actifs selon les règles. `bloc_unique` : ils
+    forment un seul bloc (une sous-cohorte d'un semestre non mutualisé), sinon les ALT
+    viennent après les FTP. `sae` : identifiants des étudiants qui suivent les SAÉ (None :
+    pas de groupes de SAÉ). Renvoie (affectations {id: {famille: groupe}}, aperçu
+    {famille: [composition]}, alertes)."""
+    from collections import Counter
+    cle = lambda x: (_profile_key(x.get('nom')), _profile_key(x.get('prenom')))
+    if bloc_unique:
+        ftp, alt = sorted(students, key=cle), []
+        face = students[0]['formation'] if students else 'FTP'
+        libelles = (face, '')
+    else:
+        ftp = sorted((x for x in students if x['formation'] != 'ALT'), key=cle)
+        alt = sorted((x for x in students if x['formation'] == 'ALT'), key=cle)
+        libelles = ('FTP', 'ALT')
+    plan = _plan_groupes_auto(len(ftp), len(alt), regles)
+    bornes = set()
+    for fam in ('TD', 'TP12'):
+        pos = 0
+        for t in plan[fam]:
+            pos += t
+            bornes.add(pos)
+    tp8, alertes = _remplir_tp8_auto(ftp, alt, plan['TP8'], bornes, regles['filles'], libelles)
+    alertes = [prefixe + a for a in alertes]
+    ordre = [x for g in tp8 for x in g['membres']]
+    aff = {x['id']: {} for x in ordre}
+    for fam in ('TP8', 'TP12', 'TD'):
+        pos = 0
+        for k, t in enumerate(plan[fam], 1):
+            for x in ordre[pos:pos + t]:
+                aff[x['id']][fam] = f'{fam}_{k}'
+            pos += t
+    familles = ('TD', 'TP12', 'TP8')
+    if sae is not None:
+        # Groupes de SAÉ : numéro du TD / TP12 ; un alternant dont le groupe n'a pas de FTP
+        # rejoint les derniers groupes FTP (le dernier TD, l'un des deux derniers TP12).
+        familles = ('TD', 'TD SAE', 'TP12', 'TP12 SAE', 'TP8')
+        suit = set(sae)
+        num = lambda g: g.rsplit('_', 1)[-1]
+        avec_ftp = {fam: sorted({aff[x['id']][fam] for x in ordre if bloc_unique or x['formation'] != 'ALT'},
+                                key=_groupe_tri) for fam in ('TD', 'TP12')}
+        compte = {'TD SAE': Counter(), 'TP12 SAE': Counter()}
+        nb_filles = {'TD SAE': Counter(), 'TP12 SAE': Counter()}
+        seuls = []
+
+        def placer(x, fam_sae, nom):
+            aff[x['id']][fam_sae] = nom
+            compte[fam_sae][nom] += 1
+            nb_filles[fam_sae][nom] += x.get('sexe') == 'F'
+
+        for x in ordre:
+            if x['id'] not in suit:
+                continue
+            for fam, fam_sae in (('TD', 'TD SAE'), ('TP12', 'TP12 SAE')):
+                g = aff[x['id']][fam]
+                if bloc_unique or x['formation'] != 'ALT' or g in avec_ftp[fam] or not avec_ftp[fam]:
+                    placer(x, fam_sae, f"{_GROUPES_AUTO_PREFIXES[fam_sae]}_{num(g)}")
+                else:
+                    seuls.append((x, fam, fam_sae))
+        for x, fam, fam_sae in seuls:
+            derniers = [f"{_GROUPES_AUTO_PREFIXES[fam_sae]}_{num(g)}"
+                        for g in avec_ftp[fam][-(1 if fam == 'TD' else 2):]]
+            if x.get('sexe') == 'F' and any(nb_filles[fam_sae][d] for d in derniers):
+                derniers = [d for d in derniers if nb_filles[fam_sae][d]]
+            placer(x, fam_sae, min(reversed(derniers), key=lambda d: compte[fam_sae][d]))
+    # Aperçu : composition de chaque groupe ; les TD disent quels TP ils contiennent
+    apercu = {}
+    for fam in familles:
+        comp = {}
+        for x in ordre:
+            g = aff[x['id']].get(fam)
+            if not g:
+                continue
+            c = comp.setdefault(g, {'groupe': g, 'n': 0, 'FTP': 0, 'ALT': 0, 'F': 0, 'inconnu': 0})
+            c['n'] += 1
+            c['ALT' if x['formation'] == 'ALT' else 'FTP'] += 1
+            if x.get('sexe') == 'F':
+                c['F'] += 1
+            elif x.get('sexe') != 'M':
+                c['inconnu'] += 1
+        apercu[fam] = sorted(comp.values(), key=lambda c: _groupe_tri(c['groupe']))
+        if regles['filles']:
+            alertes.extend(f"{prefixe}{fam} · {c['groupe']} : une seule fille" for c in apercu[fam] if c['F'] == 1)
+    for c in apercu['TD']:
+        for sous in ('TP12', 'TP8'):
+            n = Counter(aff[x['id']][sous] for x in ordre if aff[x['id']].get('TD') == c['groupe'])
+            c[sous] = [[g, n[g]] for g in sorted(n, key=_groupe_tri)]
+    for fam in ('TD', 'TP12', 'TP8'):
+        cap = regles['capacites'][fam]
+        for c in apercu[fam]:
+            if c['n'] > cap:
+                alertes.append(f"{prefixe}{fam} · {c['groupe']} : {c['n']} étudiants pour une capacité de {cap}"
+                               + (' (il prend sur le TP suivant)' if fam == 'TD' else ''))
+            elif fam != 'TD' and c['n'] < cap / 2:
+                alertes.append(f"{prefixe}{fam} · {c['groupe']} : petit groupe de {c['n']} étudiant(s)")
+    inconnus = sum(1 for x in ordre if x.get('sexe') not in ('M', 'F'))
+    if regles['filles'] and inconnus:
+        alertes.insert(0, f"{prefixe}Sexe non renseigné pour {inconnus} étudiant(s) : la règle des filles ne s'applique pas à eux")
+    return aff, apercu, alertes
+
+def _groupes_regles_defaut(students, svc, semestre):
+    """Réglages proposés : capacités 24 / 12 / 8 et, d'après le réglage du service du
+    semestre, le nombre de TD (de la promo si mutualisé, de chaque sous-cohorte sinon) et le
+    traitement des alternants (TP distincts = TP dédiés). Au S1, les alternants qui ont déjà
+    un groupe de SAÉ sont cochés."""
+    actifs = [x for x in students if x['actif']]
+    nF = sum(1 for x in actifs if x['formation'] != 'ALT')
+    nA = len(actifs) - nF
+    regles = {'capacites': {'TD': 24, 'TP12': 12, 'TP8': 8},
+              'td_groupes': max(1, round(len(actifs) / 24)),
+              'td_faces': {'FTP': max(1, round(nF / 24)), 'ALT': max(1, round(nA / 24))},
+              'alt': {'TD': 'melange', 'TP12': 'dedie', 'TP8': 'dedie'},
+              # semestre non mutualisé : capacités propres aux FTP et aux ALT
+              'capacites_faces': {face: {'TD': 24, 'TP12': 12, 'TP8': 8} for face in _SUBCOHORTS},
+              'alt_groupes': {'TD': 1, 'TP12': 1, 'TP8': 1}, 'filles': True,
+              'alt_sae': [x['id'] for x in actifs if semestre == 'S1' and x['formation'] == 'ALT'
+                          and (x['groupes'].get('TD SAE') or x['groupes'].get('TP12 SAE'))]}
+    if svc:
+        g = svc['groupes']
+        val = lambda ft, k, d: int((g.get(ft) or {}).get(k) or d)
+        regles['td_faces'] = {'FTP': val(0, 'td_groups', regles['td_faces']['FTP']),
+                              'ALT': val(1, 'td_groups', regles['td_faces']['ALT'])}
+        # Capacités de chaque sous-cohorte proposées d'après le nombre de groupes du service :
+        # 9 alternants pour 1 TP8 donnent une capacité de 9 plutôt que deux TP8 de 5 et 4.
+        effectifs = {'FTP': nF, 'ALT': nA}
+        champs = {'TD': 'td_groups', 'TP12': 'tp_groups', 'TP8': 'tp8_groups'}
+        for face, ft in (('FTP', 0), ('ALT', 1)):
+            for fam, champ in champs.items():
+                nb = int((g.get(ft) or {}).get(champ) or 0)
+                if nb and effectifs[face]:
+                    regles['capacites_faces'][face][fam] = max(regles['capacites'][fam],
+                                                               math.ceil(effectifs[face] / nb))
+        if svc['mutualise']:
+            regles['td_groupes'] = val(2, 'td_groups', regles['td_groupes'])
+            if svc['tp_distincts']:
+                regles['alt_groupes'].update(TP12=val(1, 'tp_groups', 1), TP8=val(1, 'tp8_groups', 1))
+            else:
+                regles['alt'].update(TP12='melange', TP8='melange')
+    return regles
+
+def _groupes_regles_propres(data, defaut):
+    """Réglages reçus, bornés et complétés par les réglages proposés."""
+    r = json.loads(json.dumps(defaut))
+    data = data if isinstance(data, dict) else {}
+
+    def entier(v, d, lo, hi):
+        try:
+            return max(lo, min(hi, int(v)))
+        except (TypeError, ValueError):
+            return d
+
+    for fam in ('TD', 'TP12', 'TP8'):
+        r['capacites'][fam] = entier((data.get('capacites') or {}).get(fam), r['capacites'][fam], 2, 60)
+        if (data.get('alt') or {}).get(fam) in _ECHELLE_ALT:
+            r['alt'][fam] = data['alt'][fam]
+        r['alt_groupes'][fam] = entier((data.get('alt_groupes') or {}).get(fam), r['alt_groupes'][fam], 1, 10)
+    r['td_groupes'] = entier(data.get('td_groupes'), r['td_groupes'], 1, 20)
+    for face in _SUBCOHORTS:
+        r['td_faces'][face] = entier((data.get('td_faces') or {}).get(face), r['td_faces'][face], 1, 20)
+        for fam in ('TD', 'TP12', 'TP8'):
+            r['capacites_faces'][face][fam] = entier(
+                ((data.get('capacites_faces') or {}).get(face) or {}).get(fam), r['capacites_faces'][face][fam], 2, 60)
+    if 'filles' in data:
+        r['filles'] = bool(data['filles'])
+    if isinstance(data.get('alt_sae'), list):
+        r['alt_sae'] = sorted({entier(x, 0, 0, 10 ** 9) for x in data['alt_sae']} - {0})
+    return r
+
+def _groupes_auto_calcul(p, regles):
+    """Répartition automatique d'un semestre : une pour la promo s'il est mutualisé, sinon
+    une par sous-cohorte. Renvoie (affectations, aperçu {tableau: {famille: [...]}}, alertes)."""
+    actifs = [x for x in p['students'] if x['actif']]
+    if p['mutualise']:
+        sae = ({x['id'] for x in actifs if x['formation'] != 'ALT'} | set(regles['alt_sae'])) if p['sae'] else None
+        aff, apercu, alertes = _repartition_auto(actifs, regles, sae=sae)
+        return aff, {'PROMO': apercu}, alertes
+    aff, apercu, alertes = {}, {}, []
+    for face in _SUBCOHORTS:
+        bloc = [x for x in actifs if x['formation'] == face]
+        if not bloc:
+            continue
+        ids = {x['id'] for x in bloc}
+        sae = (ids if face == 'FTP' else ids & set(regles['alt_sae'])) if p['sae'] else None
+        a, ap, al = _repartition_auto(bloc, dict(regles, capacites=regles['capacites_faces'][face],
+                                                 td_groupes=regles['td_faces'][face]),
+                                      sae=sae, bloc_unique=True, prefixe=f'{face} · ')
+        aff.update(a)
+        apercu[face] = ap
+        alertes += al
+    return aff, apercu, alertes
+
+def _groupes_auto_service_alertes(apercu, svc):
+    """Écarts entre le nombre de groupes produit et le réglage du service du semestre."""
+    if not svc:
+        return []
+    g, out = svc['groupes'], []
+    champ = {'TD': 'td_groups', 'TP12': 'tp_groups', 'TP8': 'tp8_groups'}
+    for fam in ('TD', 'TP12', 'TP8'):
+        if 'PROMO' in apercu:
+            l = apercu['PROMO'].get(fam) or []
+            if fam == 'TD' or not svc['tp_distincts']:
+                cas = [('', 2, len(l))]
+            else:
+                cas = [('FTP', 0, sum(1 for c in l if c['FTP'])),
+                       ('ALT', 1, sum(1 for c in l if not c['FTP'] and c['ALT']))]
+        else:
+            cas = [(face, 0 if face == 'FTP' else 1, len(apercu[face].get(fam) or [])) for face in apercu]
+        for face, ft, obtenu in cas:
+            prevu = (g.get(ft) or {}).get(champ[fam])
+            if obtenu and prevu is not None and int(prevu) != obtenu:
+                out.append(f"{fam}{' ' + face if face else ''} : {obtenu} groupe(s), le réglage du service "
+                           f"({svc['semestre']} {svc['annee']}) en prévoit {prevu}")
+    return out
+
+@app.route('/api/promotions/<int:pid>/groupes/<semestre>/auto', methods=['GET'])
+def get_groupes_auto(pid, semestre):
+    """Réglages de la répartition automatique du semestre (enregistrés, sinon proposés),
+    mutualisation, effectif et alternants actifs. Réservé à l'admin."""
+    err = _require_admin()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    err = _groupes_promo_check(pdb, pid, semestre)
+    if err:
+        return err
+    svc = _groupes_service(pdb, pid, semestre)
+    p = _groupes_payload(pdb, pid, semestre, svc=svc)
+    defaut = _groupes_regles_defaut(p['students'], svc, semestre)
+    row = pdb.execute('SELECT data FROM groupes_regles WHERE promotion_id=? AND semestre=?',
+                      (pid, semestre)).fetchone()
+    regles = _groupes_regles_propres(json.loads(row['data']), defaut) if row else defaut
+    actifs = [x for x in p['students'] if x['actif']]
+    effectif = {face: {'total': sum(1 for x in actifs if x['formation'] == face),
+                       'F': sum(1 for x in actifs if x['formation'] == face and x.get('sexe') == 'F'),
+                       'M': sum(1 for x in actifs if x['formation'] == face and x.get('sexe') == 'M'),
+                       'inconnu': sum(1 for x in actifs if x['formation'] == face and x.get('sexe') not in ('M', 'F'))}
+                for face in _SUBCOHORTS}
+    return jsonify({'regles': regles, 'enregistrees': bool(row), 'effectif': effectif,
+                    'mutualise': p['mutualise'], 'sae': p['sae'], 'service': p['service'],
+                    'alternants': [{'id': x['id'], 'nom': x['nom'], 'prenom': x['prenom'], 'sexe': x.get('sexe')}
+                                   for x in actifs if x['formation'] == 'ALT']})
+
+@app.route('/api/promotions/<int:pid>/groupes/<semestre>/auto', methods=['POST'])
+def post_groupes_auto(pid, semestre):
+    """Calcule la répartition automatique des étudiants actifs du semestre {regles, apply}.
+    Sans `apply`, rien n'est écrit : aperçu, alertes et changements. Avec `apply`, les
+    familles de base du semestre (TD, TP12, TP8, et TD SAE / TP12 SAE au S1) des étudiants
+    actifs sont remplacées — les autres familles et les étudiants inactifs ne bougent pas —
+    et les réglages sont enregistrés."""
+    err = _require_admin()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    err = _groupes_promo_check(pdb, pid, semestre)
+    if err:
+        return err
+    data = request.get_json() or {}
+    svc = _groupes_service(pdb, pid, semestre)
+    p = _groupes_payload(pdb, pid, semestre, svc=svc)
+    regles = _groupes_regles_propres(data.get('regles'), _groupes_regles_defaut(p['students'], svc, semestre))
+    actifs = [x for x in p['students'] if x['actif']]
+    if not actifs:
+        return error_response("Aucun étudiant actif dans l'effectif de ce semestre", 400)
+    aff, apercu, alertes = _groupes_auto_calcul(p, regles)
+    alertes += _groupes_auto_service_alertes(apercu, svc)
+    changements, ecritures = _groupes_changements(actifs, aff, list(_groupe_familles_base(semestre)))
+    applique = bool(data.get('apply'))
+    if applique:
+        _groupes_ecrire(pdb, semestre, ecritures)
+        pdb.execute('''INSERT INTO groupes_regles(promotion_id, semestre, data) VALUES(?,?,?)
+                       ON CONFLICT(promotion_id, semestre) DO UPDATE SET data=excluded.data''',
+                    (pid, semestre, json.dumps(regles)))
+        pdb.commit()
+        _audit('GROUPES_AUTO', ip=_client_ip(), user=session.get('user'), promo=pid, semestre=semestre,
+               **changements)
+        p = _groupes_payload(pdb, pid, semestre, svc=svc)
+    return jsonify({'apercu': apercu, 'mutualise': p['mutualise'], 'alertes': alertes,
+                    'changements': changements, 'regles': regles, 'applique': applique,
+                    'repartition': p if applique else None})
+
+@app.route('/api/promotions/<int:pid>/groupes/<semestre>/export', methods=['GET'])
+def export_promotion_groupes(pid, semestre):
+    """Répartition du semestre au format Excel : la liste complète (une colonne par famille,
+    avec filtres), puis une feuille par famille — et par sous-cohorte si le semestre n'est
+    pas mutualisé — où les groupes sont côte à côte. Ouvert aux enseignants autorisés."""
     err = _require_promo_read()
     if err:
         return err
     pdb = get_promotions_db()
-    err = _groupes_promo_check(pdb, pid, year)
+    err = _groupes_promo_check(pdb, pid, semestre)
     if err:
         return err
     import io
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
-    p = _groupes_payload(pdb, pid, year)
+    p = _groupes_payload(pdb, pid, semestre)
     bold, fond = Font(bold=True), PatternFill('solid', fgColor='EEF2FF')
     ordre = lambda st: ((st['nom'] or '').lower(), (st['prenom'] or '').lower())
-    familles = [f for f in p['familles'] if p['groupes'].get(f)]
+    familles = [f for f in p['familles'] if any(t['groupes'].get(f) for t in p['tables'])]
     wb = Workbook()
     ws = wb.active
     ws.title = 'Répartition'
-    ws.cell(1, 1, f"Groupes — promotion {p['promotion']} — année {year}").font = Font(bold=True, size=12)
+    ws.cell(1, 1, f"Groupes — promotion {p['promotion']} — {semestre}"
+                  + ('' if p['mutualise'] else ' (non mutualisé : groupes FTP et ALT distincts)')).font = Font(bold=True, size=12)
     entetes = ['Nom', 'Prénom', 'Cohorte'] + familles + ['Statut']
     for c, h in enumerate(entetes, 1):
         cell = ws.cell(3, c, h)
@@ -5969,27 +6503,33 @@ def export_promotion_groupes(pid, year):
         ws.column_dimensions[get_column_letter(c)].width = w
     ws.freeze_panes = 'D4'
     ws.auto_filter.ref = f"A3:{get_column_letter(len(entetes))}{max(3, len(lignes) + 3)}"
-    for f in familles:
-        wsf = wb.create_sheet(re.sub(r'[\[\]:*?/\\]', ' ', f)[:31] or 'Groupes')
-        for i, g in enumerate(p['groupes'][f]):
-            c0 = 1 + i * 3
-            membres = sorted((st for st in p['students'] if st['actif'] and st['groupes'].get(f) == g['groupe']),
-                             key=ordre)
-            t = wsf.cell(1, c0, f"{g['groupe']} ({len(membres)})")
-            t.font, t.fill = bold, fond
-            wsf.cell(2, c0, 'Nom').font = bold
-            wsf.cell(2, c0 + 1, 'Prénom').font = bold
-            for j, st in enumerate(membres, 3):
-                wsf.cell(j, c0, st['nom'])
-                wsf.cell(j, c0 + 1, (st['prenom'] or '') + (' (ALT)' if st['formation'] == 'ALT' else ''))
-            wsf.column_dimensions[get_column_letter(c0)].width = 20
-            wsf.column_dimensions[get_column_letter(c0 + 1)].width = 18
-            wsf.column_dimensions[get_column_letter(c0 + 2)].width = 3
-        wsf.freeze_panes = 'A3'
+    for t in p['tables']:
+        for f in familles:
+            if not t['groupes'].get(f):
+                continue
+            titre = f if t['face'] is None else f"{f} {t['face']}"
+            wsf = wb.create_sheet(re.sub(r'[\[\]:*?/\\]', ' ', titre)[:31] or 'Groupes')
+            for i, g in enumerate(t['groupes'][f]):
+                c0 = 1 + i * 3
+                membres = sorted((st for st in p['students']
+                                  if st['actif'] and (t['face'] is None or st['formation'] == t['face'])
+                                  and st['groupes'].get(f) == g['groupe']), key=ordre)
+                cell = wsf.cell(1, c0, f"{g['groupe']} ({len(membres)})")
+                cell.font, cell.fill = bold, fond
+                wsf.cell(2, c0, 'Nom').font = bold
+                wsf.cell(2, c0 + 1, 'Prénom').font = bold
+                for j, st in enumerate(membres, 3):
+                    wsf.cell(j, c0, st['nom'])
+                    wsf.cell(j, c0 + 1, (st['prenom'] or '')
+                             + (' (ALT)' if t['face'] is None and st['formation'] == 'ALT' else ''))
+                wsf.column_dimensions[get_column_letter(c0)].width = 20
+                wsf.column_dimensions[get_column_letter(c0 + 1)].width = 18
+                wsf.column_dimensions[get_column_letter(c0 + 2)].width = 3
+            wsf.freeze_panes = 'A3'
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    nom = secure_filename(f"groupes_{p['promotion']}_annee{year}.xlsx") or 'groupes.xlsx'
+    nom = secure_filename(f"groupes_{p['promotion']}_{semestre}.xlsx") or 'groupes.xlsx'
     return send_file(buf, as_attachment=True, download_name=nom,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
