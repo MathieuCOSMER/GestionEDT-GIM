@@ -2584,7 +2584,7 @@ _CONSTRAINTS_SELF_RE = _re.compile(r'^/api/constraints/me(/file)?$')
 # Reconnaît la saisie de notes par sous-matière (onglet Saisie Notes) : ouverte
 # aux enseignants avec promo_access, l'autorisation fine (colonne éditable,
 # référent) est vérifiée dans les handlers.
-_SAISIE_WRITE_RE = _re.compile(r'^/api/promotions/\d+/saisie/S[1-6]/(notes|weights)$')
+_SAISIE_WRITE_RE = _re.compile(r'^/api/promotions/\d+/saisie/S[1-6]/(notes|weights|import)$')
 
 def _is_course_content_path(path):
     return bool(_COURSE_CONTENT_RE.match(path))
@@ -7865,6 +7865,192 @@ def save_promotion_saisie_weights(pid, semester):
     _audit('SAISIE_WEIGHTS', ip=_client_ip(), user=session.get('user'),
            promo=pid, semester=semester, formation=formation, matiere=key)
     return jsonify(_saisie_payload(pdb, pid, semester, formation, teacher))
+
+# ---- Import des notes de sous-matières (onglet Saisie Notes) ----
+# Clés (_profile_key) reconnues comme colonne « n° étudiant » dans un fichier importé
+_SAISIE_NUM_HEADERS = {'netudiant', 'noetudiant', 'numero', 'numeroetudiant', 'numetudiant',
+                       'codeetudiant', 'codeapogee', 'apogee'}
+
+def _saisie_request_ctx(pid, semester, formation):
+    """(teacher, pdb, err) communs au modèle et à l'import de notes."""
+    teacher, err = _saisie_teacher_ctx()
+    if err:
+        return None, None, err
+    if semester not in _PROMO_SEMESTERS:
+        return None, None, error_response('Semestre invalide', 400)
+    if formation not in _SUBCOHORTS:
+        return None, None, error_response('Sous-cohorte invalide', 400)
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return None, None, error_response('Promotion introuvable', 404)
+    return teacher, pdb, None
+
+def _saisie_num_txt(v):
+    """N° étudiant d'une cellule : Excel le lit souvent en nombre (12345.0)."""
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return _cell_txt(v).lower()
+
+@app.route('/api/promotions/<int:pid>/saisie/<semester>/modele', methods=['GET'])
+def saisie_import_template(pid, semester):
+    """Modèle Excel vide pour l'import : une ligne par étudiant de la sous-cohorte,
+    une colonne par sous-matière que l'utilisateur peut saisir (celles de
+    l'enseignant connecté ; toutes pour l'admin)."""
+    formation = (request.args.get('formation') or 'FTP').strip().upper()
+    teacher, pdb, err = _saisie_request_ctx(pid, semester, formation)
+    if err:
+        return err
+    payload = _saisie_payload(pdb, pid, semester, formation, teacher)
+    subs = [s for g in payload['groups'] for s in g['subs'] if s['editable']]
+    if not subs:
+        return error_response('Aucune sous-matière à saisir sur ce semestre et cette sous-cohorte', 400)
+    import openpyxl, io
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Notes'
+    bold, center = Font(bold=True), Alignment(horizontal='center', vertical='center', wrap_text=True)
+    fill = PatternFill('solid', fgColor='EDE9FE')
+    for c, txt in enumerate(['N° étudiant', 'Nom', 'Prénom'] + [s['code'] for s in subs], start=1):
+        cell = ws.cell(1, c, txt)
+        cell.font, cell.fill, cell.alignment = bold, fill, center
+    # Ligne 2 : libellés des sous-matières (ligne sans étudiant, ignorée à l'import)
+    for i, s in enumerate(subs):
+        cell = ws.cell(2, 4 + i, s['name'])
+        cell.font, cell.alignment = Font(italic=True, size=8, color='6B7280'), center
+    for r, st in enumerate(payload['students'], start=3):
+        ws.cell(r, 1, st.get('numero') or '').number_format = '@'
+        ws.cell(r, 2, st.get('nom') or '')
+        ws.cell(r, 3, st.get('prenom') or '')
+    ws.column_dimensions['A'].width = 14
+    ws.column_dimensions['B'].width = 22
+    ws.column_dimensions['C'].width = 18
+    for i in range(len(subs)):
+        ws.column_dimensions[get_column_letter(4 + i)].width = 14
+    ws.row_dimensions[2].height = 42
+    ws.freeze_panes = 'D3'
+    info = wb.create_sheet('Consignes')
+    for r, txt in enumerate([
+            f"Notes de {semester} — sous-cohorte {formation}",
+            "Une note de 0 à 20 (virgule ou point), ou ABI pour une absence injustifiée.",
+            "Une case laissée vide ne modifie pas la note déjà saisie.",
+            "Les étudiants sont reconnus par leur n° étudiant, sinon par nom + prénom.",
+            "Les colonnes sont reconnues par le code de la sous-matière (ligne 1) : ne pas le modifier.",
+            "L'import remplit la grille sans rien enregistrer : vérifier, puis cliquer sur « Enregistrer »."],
+            start=1):
+        info.cell(r, 1, txt).font = bold if r == 1 else Font()
+    info.column_dimensions['A'].width = 95
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = secure_filename(f"notes_{semester}_{formation}.xlsx")
+    return send_file(buf, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+@app.route('/api/promotions/<int:pid>/saisie/<semester>/import', methods=['POST'])
+def saisie_import_preview(pid, semester):
+    """Lit un fichier de notes (le modèle ci-dessus ou un classeur équivalent)
+    SANS RIEN ENREGISTRER : renvoie les notes reconnues, que la grille affiche ;
+    l'utilisateur les vérifie puis enregistre (mêmes droits que la saisie).
+    Étudiants rapprochés par n° étudiant, sinon nom + prénom ; colonnes par code
+    de sous-matière. Une case vide ne propose rien : l'import n'efface jamais."""
+    formation = (request.form.get('formation') or '').strip().upper()
+    teacher, pdb, err = _saisie_request_ctx(pid, semester, formation)
+    if err:
+        return err
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return error_response('Aucun fichier reçu', 400)
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in _ALLOWED_GRADE_EXT:
+        return error_response('Type de fichier non autorisé (.xlsx/.xlsm)', 400)
+    if request.content_length and request.content_length > _MAX_GRADE_FILE:
+        return error_response('Fichier trop volumineux (max 15 Mo)', 400)
+    import tempfile
+    fd, tmp = tempfile.mkstemp(suffix=ext)
+    os.close(fd)
+    f.save(tmp)
+    try:
+        wb = _load_workbook_lenient(tmp, data_only=True)
+        ws = wb['Notes'] if 'Notes' in wb.sheetnames else wb.worksheets[0]
+        rows = list(ws.iter_rows(values_only=True))
+    except Exception as e:
+        return error_response(f'Lecture impossible : {e}', 400)
+    finally:
+        try: os.remove(tmp)
+        except OSError: pass
+
+    payload = _saisie_payload(pdb, pid, semester, formation, teacher)
+    all_subs = {s['code']: s for g in payload['groups'] for s in g['subs']}
+    by_key = {_profile_key(code): code for code in all_subs}
+    hidx = next((i for i, row in enumerate(rows[:20])
+                 if any(_profile_key(v) == 'nom' for v in row)), None)
+    if hidx is None:
+        return error_response('Colonne « Nom » introuvable (utilisez le modèle vide)', 400)
+    col_num = col_nom = col_prenom = None
+    cols, unknown_cols = {}, []
+    for i, v in enumerate(rows[hidx]):
+        k = _profile_key(v)
+        if not k:
+            continue
+        if k == 'nom':
+            col_nom = i
+        elif k == 'prenom':
+            col_prenom = i
+        elif k in _SAISIE_NUM_HEADERS:
+            col_num = i
+        elif k in by_key:
+            cols[i] = by_key[k]
+        else:
+            unknown_cols.append(_cell_txt(v))
+    if not cols:
+        return error_response('Aucune colonne de sous-matière reconnue : la ligne d\'en-tête doit porter '
+                              'les codes (' + ', '.join(sorted(all_subs)) + ')', 400)
+    locked = sorted({code for code in cols.values() if not all_subs[code]['editable']})
+
+    students = payload['students']
+    by_num = {_saisie_num_txt(s.get('numero')): s for s in students if s.get('numero')}
+    by_name = {(_profile_key(s.get('nom')), _profile_key(s.get('prenom'))): s for s in students}
+    cell = lambda row, i: row[i] if i is not None and i < len(row) else None
+    notes, unmatched, invalid, seen, count = {}, [], [], set(), 0
+    for ridx, row in enumerate(rows[hidx + 1:], start=hidx + 2):
+        num = _saisie_num_txt(cell(row, col_num))
+        nom, prenom = _cell_txt(cell(row, col_nom)), _cell_txt(cell(row, col_prenom))
+        if not (num or nom):
+            continue   # ligne vide ou ligne des libellés du modèle
+        st = by_num.get(num) if num else None
+        if st is None and nom:
+            st = by_name.get((_profile_key(nom), _profile_key(prenom)))
+        if st is None:
+            unmatched.append(f"ligne {ridx} : {nom} {prenom}".strip() + (f" ({num})" if num else ''))
+            continue
+        seen.add(st['id'])
+        for i, code in cols.items():
+            if code in locked:
+                continue
+            v = cell(row, i)
+            txt = _cell_txt(v)
+            if txt == '':
+                continue
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                val = float(v)
+            elif txt.upper() == 'ABI':
+                val = 'ABI'
+            else:
+                try:
+                    val = float(txt.replace(',', '.'))
+                except ValueError:
+                    val = None
+            if val is None or (val != 'ABI' and not 0 <= val <= 20):
+                invalid.append(f"ligne {ridx}, {code} : {txt}")
+                continue
+            notes.setdefault(code, {})[str(st['id'])] = val if val == 'ABI' else round(val, 2)
+            count += 1
+    missing = [f"{s.get('nom') or ''} {s.get('prenom') or ''}".strip()
+               for s in students if s['id'] not in seen]
+    return jsonify({'notes': notes, 'count': count, 'unmatched': unmatched, 'invalid': invalid,
+                    'unknown_columns': unknown_cols, 'locked_columns': locked, 'missing': missing})
 
 def _cell_txt(v):
     return ('' if v is None else str(v)).strip()

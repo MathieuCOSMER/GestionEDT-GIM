@@ -760,12 +760,19 @@
                     <option>S4</option><option>S5</option><option>S6</option>
                 </select>
                 <button class="btn btn-primary btn-sm" style="margin-left:14px" id="saisie-save-btn" onclick="saveSaisie()" disabled>💾 Enregistrer</button>
+                <button class="btn btn-secondary btn-sm" style="margin-left:6px" id="saisie-tpl-btn" onclick="downloadSaisieTemplate()" disabled
+                    title="Télécharger un fichier Excel vide : les étudiants de la sous-cohorte en lignes, vos sous-matières en colonnes">⤓ Modèle vide</button>
+                <button class="btn btn-secondary btn-sm" style="margin-left:6px" id="saisie-import-btn" onclick="document.getElementById('saisie-import-file').click()" disabled
+                    title="Importer un fichier de notes (modèle rempli) : la grille est remplie, rien n'est enregistré avant « Enregistrer »">⤒ Importer</button>
+                <input type="file" id="saisie-import-file" accept=".xlsx,.xlsm" style="display:none" onchange="importSaisieFile(this)">
                 <span style="margin-left:14px;font-size:.8rem;color:#6b7280">
                     Notes par sous-matière — la note matière (Bulletins) est la moyenne pondérée.
                     <span style="color:#b45309">⏳ provisoire</span> · <span style="color:#15803d">✓ définitif</span>
                 </span>
             </div>
         </div>
+        <!-- hors de saisie-content : son re-rendu remet la grille « propre » -->
+        <div id="saisie-import-report" style="display:none"></div>
         <div id="saisie-content"><div class="empty">Choisissez une sous-cohorte et un semestre.</div></div>
     </div>
     <div id="promo-tab-notes" style="display:none">
@@ -5827,6 +5834,8 @@ async function loadSaisieGrid() {
     const sub = (document.getElementById('saisie-sub-select') || {}).value || 'FTP';
     const saveBtn = document.getElementById('saisie-save-btn');
     const el = document.getElementById('saisie-content');
+    _saisieImportReport(null);
+    _saisieIoButtons(false);
     if (!pid || !sem) {
         _saisieData = null; saveBtn.disabled = true;
         el.innerHTML = '<div class="empty">Choisissez une promotion, une sous-cohorte et un semestre.</div>';
@@ -5860,6 +5869,7 @@ function renderSaisieGrid() {
     const editable = d.groups.some(g => g.subs.some(s => s.editable));
     const anyRef = d.groups.some(g => g.is_referent);
     saveBtn.disabled = !(editable || anyRef);
+    _saisieIoButtons(editable);
     const CW = 74;
     // Ligne 1 : matières (groupes) ; ligne 2 : sous-matières + Moy. ;
     // ligne 3 : pondérations (référent) + case « définitif » (enseignant de la colonne)
@@ -5888,9 +5898,10 @@ function renderSaisieGrid() {
                 : '<span style="color:#9ca3af">—</span>';
             h3 += `<th style="text-align:center;padding:3px 2px;font-size:.7rem;font-weight:400${i === 0 ? ';border-left:4px solid #8b5cf6' : ''}${off ? ';opacity:.45' : ''}">
                    ${wInput}<br>
-                   <label title="Notes définitives (décochée = provisoires)" style="cursor:pointer;color:${defColor}">
-                       <input type="checkbox" data-def="${esc(s.code)}" ${s.definitive ? 'checked' : ''} ${s.editable ? '' : 'disabled'}>
-                       ${s.definitive ? '✓ définitif' : '⏳ prov.'}</label></th>`;
+                   <label title="Cocher pour rendre les notes définitives (case vide = provisoires)" style="cursor:pointer;color:${defColor};white-space:nowrap">
+                       <span>${s.definitive ? '✓ définitif' : '⏳ prov.'}</span>
+                       <input type="checkbox" data-def="${esc(s.code)}" ${s.definitive ? 'checked' : ''} ${s.editable ? '' : 'disabled'}
+                           onchange="_saisieDefLabel(this)"></label></th>`;
         });
         h2 += `<th style="text-align:center;font-size:.75rem;background:#f0fdf4;color:#166534;width:${CW}px" rowspan="2"
                    title="Note matière : moyenne pondérée des sous-notes dès qu'elles sont toutes saisies, sinon la note actuelle de Bulletins (📥 importée ou saisie par l'administration)">Moy.<br>${esc(g.key)}</th>`;
@@ -6014,6 +6025,13 @@ function updateSaisieAvg(inp) {
     if (g && td) _saisieNoteApply(td, g, sid);
 }
 
+// Case « définitif » : l'état affiché AVANT la case suit la case tout de suite
+function _saisieDefLabel(cb) {
+    const label = cb.closest('label');
+    label.style.color = cb.checked ? '#15803d' : '#b45309';
+    label.querySelector('span').textContent = cb.checked ? '✓ définitif' : '⏳ prov.';
+}
+
 // Un changement de pondération : rafraîchit toutes les moyennes du groupe
 function renderSaisieDirty() {
     if (!_saisieData) return;
@@ -6093,6 +6111,93 @@ async function saveSaisie() {
         btn.disabled = false;
         return false;
     }
+}
+
+// ----- Import de notes (modèle Excel vide + import dans la grille) -----
+function _saisieIoButtons(on) {
+    ['saisie-tpl-btn', 'saisie-import-btn'].forEach(id => {
+        const b = document.getElementById(id); if (b) b.disabled = !on;
+    });
+}
+
+function _saisieQuery() {
+    return {
+        pid: document.getElementById('promo-select').value,
+        sem: document.getElementById('saisie-sem-select').value,
+        sub: (document.getElementById('saisie-sub-select') || {}).value || 'FTP',
+    };
+}
+
+function downloadSaisieTemplate() {
+    const { pid, sem, sub } = _saisieQuery();
+    if (!pid || !sem) return;
+    window.location.href = `/api/promotions/${pid}/saisie/${sem}/modele?formation=${encodeURIComponent(sub)}`;
+}
+
+// Compte rendu d'import au-dessus de la grille (null = masqué)
+function _saisieImportReport(html) {
+    const el = document.getElementById('saisie-import-report');
+    if (!el) return;
+    el.style.display = html ? '' : 'none';
+    el.innerHTML = html ? `<div style="position:relative;margin:0 0 10px;padding:10px 34px 10px 14px;border:1px solid #c7d2fe;background:#eef2ff;border-radius:8px;font-size:.84rem">
+        <button type="button" onclick="_saisieImportReport(null)" title="Fermer"
+            style="position:absolute;top:6px;right:8px;border:none;background:none;font-size:1rem;cursor:pointer;color:#6b7280">✕</button>${html}</div>` : '';
+}
+
+// Lit le fichier côté serveur (rien n'est enregistré), puis remplit la grille :
+// les cases importées sont surlignées (vert = ajoutée, ambre = remplace une note
+// différente) et la grille passe « modifiée » — l'enregistrement reste manuel.
+async function importSaisieFile(input) {
+    const f = input.files[0];
+    input.value = '';
+    if (!f || !_saisieData) return;
+    const { pid, sem, sub } = _saisieQuery();
+    let d;
+    try {
+        const fd = new FormData(); fd.append('file', f); fd.append('formation', sub);
+        const r = await fetch(`/api/promotions/${pid}/saisie/${sem}/import`, { method: 'POST', body: fd });
+        const body = await r.text();
+        if (r.status === 401) { showLogin(); return; }
+        if (!r.ok) {
+            let msg = body;
+            try { msg = JSON.parse(body).error || msg; } catch (_) { /* texte brut */ }
+            throw new Error(msg);
+        }
+        d = JSON.parse(body);
+    } catch (e) {
+        toast('Import : ' + e.message, 'error');
+        return;
+    }
+    let added = 0, replaced = 0, same = 0;
+    Object.entries(d.notes || {}).forEach(([code, notes]) => {
+        Object.entries(notes).forEach(([sid, val]) => {
+            const inp = document.querySelector(`[data-note="${CSS.escape(code + '|' + sid)}"]`);
+            if (!inp) return;
+            const nv = String(val);
+            const old = inp.value.trim().replace(',', '.');
+            const eq = nv === 'ABI' ? old.toUpperCase() === 'ABI' : parseFloat(old) === Number(val);
+            if (old !== '' && eq) { same++; return; }
+            if (old !== '') replaced++; else added++;
+            inp.value = nv;
+            inp.style.background = old !== '' ? '#fef3c7' : '#dcfce7';
+            inp.title = old !== '' ? `Importée : ${nv} (remplace ${old})` : 'Importée';
+            inp.dispatchEvent(new Event('input', { bubbles: true }));   // moyenne live + grille modifiée
+        });
+    });
+    const list = (arr, max = 8) => esc(arr.slice(0, max).join(' · ')) + (arr.length > max ? ` … (+${arr.length - max})` : '');
+    const li = [];
+    li.push(`<li><strong style="color:#166534">${added}</strong> note(s) ajoutée(s)`
+        + (replaced ? ` · <strong style="color:#b45309">${replaced}</strong> note(s) remplaçant une note différente (surlignées en ambre)` : '')
+        + (same ? ` · ${same} identique(s) à la note déjà saisie` : '') + '</li>');
+    if (d.invalid.length) li.push(`<li style="color:#b91c1c">⚠ ${d.invalid.length} case(s) ignorée(s), note invalide (0 à 20 ou ABI) : ${list(d.invalid)}</li>`);
+    if (d.unmatched.length) li.push(`<li style="color:#b91c1c">⚠ ${d.unmatched.length} ligne(s) sans étudiant correspondant dans cette sous-cohorte : ${list(d.unmatched)}</li>`);
+    if (d.locked_columns.length) li.push(`<li style="color:#92400e">🔒 Colonne(s) non modifiable(s) par vous, ignorée(s) : ${list(d.locked_columns)}</li>`);
+    if (d.unknown_columns.length) li.push(`<li style="color:#6b7280">Colonne(s) non reconnue(s), ignorée(s) : ${list(d.unknown_columns)}</li>`);
+    if (d.missing.length) li.push(`<li style="color:#6b7280">${d.missing.length} étudiant(s) absent(s) du fichier : ${list(d.missing)}</li>`);
+    _saisieImportReport(`<strong>Import de « ${esc(f.name)} »</strong><ul style="margin:6px 0 6px 18px;padding:0">${li.join('')}</ul>
+        <strong>Rien n'est encore enregistré</strong> : vérifiez la grille, puis cliquez sur 💾 Enregistrer.`);
+    toast(added + replaced ? `${added + replaced} note(s) importée(s) — à enregistrer` : 'Aucune nouvelle note dans ce fichier',
+          added + replaced ? 'success' : 'error');
 }
 
 async function loadNotes() {
