@@ -11835,11 +11835,24 @@ function stBox(s, max) {
         <i class="st-tn" style="left:${p(10)}%"></i></span>`;
 }
 
+// Force d'une corrélation, en mots : au-delà du chiffre, ce qu'il faut en conclure
+const stCorrLib = v => v === null || v === undefined ? '—'
+    : (Math.abs(v) < 0.2 ? 'quasi nulle' : Math.abs(v) < 0.4 ? 'faible'
+        : Math.abs(v) < 0.6 ? 'modérée' : 'forte');
+
+// Part d'une catégorie dans une répartition [[libellé, effectif], …], en %
+function stPart(rows, cles) {
+    const tot = (rows || []).reduce((a, r) => a + Number(r[1]), 0);
+    if (!tot) return null;
+    const n = (rows || []).filter(r => cles.includes(r[0])).reduce((a, r) => a + Number(r[1]), 0);
+    return 100 * n / tot;
+}
+
 // Tableau de résumés : [[libellé, résumé], …]
-function stSummaryTable(rows, head) {
+function stSummaryTable(rows, head, nLabel) {
     const list = (rows || []).filter(r => r && r[1]);
     if (!list.length) return '<div class="st-none">Aucune donnée</div>';
-    return `<table class="st-tbl"><thead><tr><th>${esc(head || '')}</th><th>Notes</th><th>Moy.</th>
+    return `<table class="st-tbl"><thead><tr><th>${esc(head || '')}</th><th>${esc(nLabel || 'Notes')}</th><th>Moy.</th>
         <th>Méd.</th><th>Écart</th><th style="width:34%">Répartition (0–20)</th></tr></thead><tbody>` +
         list.map(([lbl, s]) => `<tr><td>${esc(String(lbl))}</td><td>${stNum(s.n)}</td>
             <td><strong>${stNum(s.moy, 2)}</strong></td><td>${stNum(s.med, 2)}</td>
@@ -11880,7 +11893,8 @@ function renderStats() {
 }
 
 function statsApercu(d) {
-    const r = d.resultats, e = d.enseignement;
+    const r = d.resultats, e = d.enseignement, c = d.candidature || {};
+    const boursiers = stPart(c.boursier, ['Boursier']);
     const actifs = (d.profil.statut.find(x => x[0] === 'Actif') || [, 0])[1];
     const kpis = [
         stKpi('Étudiants', stNum(d.nb_etudiants), `${stNum(actifs)} actifs · ${d.promotions.length} promotions`),
@@ -11892,6 +11906,10 @@ function statsApercu(d) {
         stKpi('Matières', stNum(e.nb_matieres), `${stNum(e.nb_sessions)} sessions`, '#14b8a6'),
         stKpi('Salles', stNum(e.nb_salles), `${stNum(e.capacite_totale)} places`, '#64748b'),
         stKpi('Années gérées', d.annees.length, (d.annees_dispo[0] || '') + ' → ' + (d.annees_dispo.slice(-1)[0] || ''), '#ec4899'),
+        stKpi('Âge moyen à l\'entrée', c.age ? stNum(c.age.moy, 1) + ' ans' : '—',
+              c.age ? `médiane ${stNum(c.age.med)} ans · ${stNum(c.age.n)} entrants` : 'dates de naissance non renseignées', '#0e7490'),
+        stKpi('Boursiers', boursiers != null ? stNum(boursiers, 1) + ' %' : '—',
+              c.avec_dossier ? `sur ${stNum(c.avec_dossier)} dossiers de candidature` : 'aucun dossier de candidature importé', '#15803d'),
     ].join('');
     const decs = (d.jury.decisions || []).map(([y, list]) =>
         stCard('Décisions de jury — année ' + y, stBars(list, { colorFn: r => ST_DEC[r[0]] || '#64748b' })));
@@ -11916,9 +11934,11 @@ function statsApercu(d) {
 
 function statsEtudiants(d) {
     const p = d.profil;
+    const libChamp = { sexe: 'Sexe', recrutement: 'Recrutement', pays: 'Pays', bac: 'Série de bac',
+                       bac_ecart: 'Ans depuis le bac', cursus: 'Études antérieures',
+                       naissance: 'Date de naissance', dossier: 'Dossier de candidature' };
     const renseigne = p.renseigne.map(([k, n]) =>
-        [k === 'recrutement' ? 'Recrutement' : k.charAt(0).toUpperCase() + k.slice(1),
-         Math.round(1000 * n / (d.nb_etudiants || 1)) / 10]);
+        [libChamp[k] || k, Math.round(1000 * n / (d.nb_etudiants || 1)) / 10]);
     return `<div class="st-sec"><h2>Profil d'entrée <small>${stNum(d.nb_etudiants)} fiches</small></h2>
         <div class="st-grid">
             ${stCard('Sexe', stDonut(p.sexe, { colors: { M: '#0ea5e9', F: '#ec4899', 'Non renseigné': '#e5e7eb' }, unit: 'étudiants' }))}
@@ -11931,6 +11951,7 @@ function statsEtudiants(d) {
             Le détail du dossier d'entrée — classement, note, spécialités de terminale — et son
             croisement avec les résultats sont dans l'onglet <strong>Recrutement</strong>.
         </div></div>
+        ${statsEntrants(d.candidature || {})}
         <div class="st-sec"><h2>Complétude des fiches</h2><div class="st-grid wide">
             ${stCard('Champs renseignés', stBars(renseigne, { max: 100, fmt: v => stNum(v, 1) + ' %' }),
                      'part des fiches où le champ est saisi')}
@@ -11943,6 +11964,125 @@ function statsEtudiants(d) {
         </div></div>`;
 }
 
+// Âge, origine et situation des entrants (dossier de candidature complet + registre).
+// Chaque personne compte une fois, dans la cohorte qui l'a recrutée.
+function statsEntrants(c) {
+    const pc = v => v == null ? '—' : stNum(v, 1) + ' %';
+    const aucun = !c.avec_dossier ? `<div class="st-note-warn" style="margin-bottom:12px">
+            Aucun dossier de candidature importé : l'origine géographique, les bourses et les profils
+            sportif / artiste se rempliront avec l'<strong>export CSV complet de ParcourSup</strong>
+            (Promotions → Effectifs → Importer ParcourSup).</div>` : '';
+    const horsVar = stPart(c.zone, ['Autre département PACA', 'Autre département', 'Étranger']);
+    const zoneCouleurs = { Var: '#4f46e5', 'Autre département PACA': '#0ea5e9', 'Autre département': '#f59e0b', 'Étranger': '#ec4899' };
+    const pays = (c.pays || []).length
+        ? `<div style="font-size:.76rem;color:#6b7280;margin-top:6px">Étranger : ${c.pays.map(x => esc(x[0]) + ' ' + x[1]).join(' · ')}</div>` : '';
+    const parPromo = (c.par_promo || []).length ? `<div style="overflow-x:auto"><table class="st-tbl">
+            <thead><tr><th>Promotion</th><th>Entrants</th><th>Dossiers</th><th>Âge moyen</th><th>Femmes</th>
+                <th>Boursiers</th><th>Hors Var</th><th>Mention B / TB</th><th>Moy. sci. terminale</th></tr></thead>
+            <tbody>${c.par_promo.map(p => `<tr><td>${esc(p.promo)}</td><td>${stNum(p.entrants)}</td><td>${stNum(p.dossiers)}</td>
+                <td>${p.age_moy == null ? '—' : stNum(p.age_moy, 1)}</td><td>${pc(p.femmes_pct)}</td>
+                <td>${pc(p.boursiers_pct)}</td><td>${pc(p.hors_var_pct)}</td><td>${pc(p.mention_b_tb_pct)}</td>
+                <td>${p.sci_moy == null ? '—' : stNum(p.sci_moy, 2)}</td></tr>`).join('')}</tbody></table></div>`
+        : '<div class="st-none">Aucune donnée</div>';
+    return `<div class="st-sec"><h2>Âge, origine et situation des entrants
+            <small>${stNum(c.entrants)} entrants · ${stNum(c.avec_dossier)} dossiers de candidature</small></h2>
+        ${aucun}
+        <div class="st-kpis">
+            ${stKpi('Âge moyen à l\'entrée', c.age ? stNum(c.age.moy, 1) + ' ans' : '—',
+                    c.age ? `de ${stNum(c.age.min)} à ${stNum(c.age.max)} ans · ${stNum(c.age.n)} entrants` : 'dates de naissance non renseignées', '#0e7490')}
+            ${stKpi('Boursiers', pc(stPart(c.boursier, ['Boursier'])), c.avec_dossier ? `sur ${stNum(c.avec_dossier)} dossiers` : '', '#15803d')}
+            ${stKpi('Hors Var', pc(horsVar), 'lieu de résidence du candidat', '#f59e0b')}
+            ${stKpi('Sportifs de haut niveau', c.avec_dossier ? stNum(c.shn) : '—', 'déclarés dans le dossier', '#0ea5e9')}
+            ${stKpi('Artistes confirmés', c.avec_dossier ? stNum(c.artistes) : '—', 'déclarés dans le dossier', '#8b5cf6')}
+        </div>
+        <div class="st-grid">
+            ${stCard('Âge à l\'entrée en BUT', stColumns(c.age_hist, { color: '#0e7490' }), 'au 1er septembre de l\'année d\'entrée')}
+            ${stCard('Origine géographique', stDonut(c.zone, { colors: zoneCouleurs, unit: 'entrants' }) + pays, 'lieu de résidence')}
+            ${stCard('Bourses', stDonut(c.bourse, { colors: { 'Non boursier': '#e5e7eb' }, unit: 'dossiers' }))}
+        </div>
+        <div class="st-grid wide" style="margin-top:14px">
+            ${stCard('Départements de résidence', stBars(c.departements, { color: '#4f46e5' }), '12 premiers')}
+            ${stCard('Communes de résidence', stBars(c.communes, { color: '#0ea5e9' }), '12 premières')}
+        </div>
+        <div class="st-grid wide" style="margin-top:14px">
+            ${stCard('Échelons de bourse', stBars(c.echelons, { color: '#15803d' }), 'boursiers de l\'enseignement scolaire ou supérieur')}
+        </div>
+        <div style="margin-top:14px">${stCard('Profil des entrants par promotion', parPromo,
+            'pour suivre l\'évolution d\'une campagne de recrutement à l\'autre')}</div>
+    </div>`;
+}
+
+// Dossier de candidature complet : bac, parcours, notes de terminale, avis du chef
+// d'établissement — et ce qu'ils annoncent de la réussite en BUT. Le croisement
+// demande des étudiants qui aient à la fois un dossier et des notes de BUT.
+function statsDossierCandidature(c) {
+    const titre = `<div style="margin:6px 0 16px;padding:10px 14px;border-left:4px solid #7c3aed;background:#f5f3ff;border-radius:6px">
+        <h2 style="margin:0;font-size:1.05rem;color:#5b21b6">Dossier de candidature complet</h2>
+        <div style="font-size:.8rem;color:#6b7280">Export CSV complet de ParcourSup : bac, parcours avant le BUT, notes de terminale,
+            avis du chef d'établissement — et ce qu'ils annoncent des résultats en BUT.</div></div>`;
+    if (!c.avec_dossier) {
+        return titre + `<div class="st-note-warn" style="margin-bottom:24px">Aucun dossier de candidature importé.
+            Importez l'<strong>export CSV complet</strong> de ParcourSup depuis
+            <strong>Promotions → Effectifs → Importer ParcourSup</strong> pour alimenter cette partie.</div>`;
+    }
+    const pc = v => v == null ? '—' : stNum(v, 1) + ' %';
+    const avisCouleurs = { 'Très satisfaisante': '#15803d', Satisfaisante: '#10b981', 'Assez satisfaisante': '#f59e0b', 'Peu démontrée': '#ef4444' };
+    const mentionCouleurs = { 'Très bien': '#15803d', Bien: '#10b981', 'Assez bien': '#f59e0b', 'Sans mention': '#94a3b8', 'Échec': '#ef4444' };
+    const kpis = `<div class="st-kpis">
+        ${stKpi('Dossiers de candidature', stNum(c.avec_dossier), `sur ${stNum(c.entrants)} entrants`)}
+        ${stKpi('Moyenne scientifique de terminale', c.lycee ? stNum(c.lycee.moy, 2) : '—',
+                c.lycee ? `médiane ${stNum(c.lycee.med, 2)} · de ${stNum(c.lycee.min, 1)} à ${stNum(c.lycee.max, 1)}` : '', '#8b5cf6')}
+        ${stKpi('Mention Bien ou Très bien', pc(stPart(c.mention, ['Bien', 'Très bien'])), 'part des mentions connues', '#f59e0b')}
+        ${stKpi('Entrés juste après le bac', pc(stPart(c.post_bac, ['Juste après le bac'])), 'néo-bacheliers', '#0ea5e9')}
+        ${stKpi('Lien terminale / résultats', c.correlation_lycee != null ? stNum(c.correlation_lycee, 2) : '—',
+                c.nb_apparies ? `corrélation ${stCorrLib(c.correlation_lycee)} · ${stNum(c.nb_apparies)} étudiants`
+                              : 'aucun étudiant n\'a encore dossier ET notes de BUT', '#10b981')}
+    </div>`;
+    const bac = `<div class="st-sec"><h2>Bac et parcours avant le BUT <small>${stNum(c.avec_dossier)} dossiers</small></h2>
+        <div class="st-grid">
+            ${stCard('Mention au bac', stDonut(c.mention, { colors: mentionCouleurs, unit: 'dossiers' }))}
+            ${stCard('Série du bac', stDonut(c.serie, { unit: 'dossiers' }))}
+            ${stCard('Entrée en BUT', stDonut(c.post_bac, { unit: 'dossiers' }), 'années écoulées depuis le bac')}
+        </div>
+        <div class="st-grid wide" style="margin-top:14px">
+            ${stCard('Formation l\'année de la candidature', stBars(c.formation, { color: '#0ea5e9' }))}
+            ${stCard('Avis du chef d\'établissement', stBars(c.avis, { colorFn: r => avisCouleurs[r[0]] || '#64748b' }),
+                     'capacité à réussir · fiche Avenir')}
+        </div></div>`;
+    const lycee = `<div class="st-sec"><h2>Notes de terminale <small>moyenne des trimestres · matières scientifiques et technologiques</small></h2>
+        <div class="st-grid wide">
+            ${stCard('Moyenne scientifique de terminale', stColumns(c.lycee_hist, { colorFn: (x, i) => i < 10 ? '#f59e0b' : '#10b981' }),
+                     'une valeur par candidat · tranches de 1 point')}
+            ${stCard('Par matière', stSummaryTable(c.lycee_matieres, 'Matière', 'Candidats'), 'au moins 3 candidats')}
+        </div></div>`;
+    const croise = (t, rows, note, opts) => stCard(t,
+        rows && rows.length ? stBars(rows, Object.assign({ max: 20, dec: 2, color: '#4f46e5' }, opts || {}))
+                            : '<div class="st-none">Pas encore d\'étudiant noté dans ce groupe</div>', note);
+    const pourcent = { max: 100, dec: 1, color: '#15803d', fmt: v => stNum(v, 1) + ' %' };
+    const attente = !c.dossiers_notes ? `<div class="st-note-warn">
+            <strong>Ce croisement est vide pour l'instant.</strong> Il demande des étudiants ayant à la fois un
+            dossier de candidature et des notes de BUT : ${stNum(c.avec_dossier)} dossier(s), aucun encore noté.
+            Il se remplira dès les premières notes de la promotion recrutée.</div>` : '';
+    const reussite = `<div class="st-sec"><h2>Dossier de candidature × réussite en BUT <small>groupes d'au moins 3 étudiants notés</small></h2>
+        ${attente}
+        <div class="st-grid">
+            ${croise('Moyenne de BUT par moyenne scientifique de terminale', c.reussite_par_lycee, 'tranches de moyenne au lycée')}
+            ${croise('Moyenne de BUT par mention au bac', c.reussite_par_mention)}
+            ${croise('Moyenne de BUT par avis du chef d\'établissement', c.reussite_par_avis)}
+        </div>
+        <div class="st-grid" style="margin-top:14px">
+            ${croise('Moyenne de BUT : boursiers / non boursiers', c.reussite_par_boursier)}
+            ${croise('Moyenne de BUT par âge à l\'entrée', c.reussite_par_age)}
+            ${croise('Moyenne de BUT par origine géographique', c.reussite_par_zone)}
+        </div>
+        <div class="st-grid" style="margin-top:14px">
+            ${croise('Moyenne de BUT par années depuis le bac', c.reussite_par_post_bac)}
+            ${croise('Moyenne de BUT par formation l\'année de la candidature', c.reussite_par_formation)}
+            ${croise('UE validées par moyenne scientifique de terminale', c.validation_par_lycee, 'part des UE acquises', pourcent)}
+        </div></div>`;
+    return titre + kpis + bac + lycee + reussite;
+}
+
 // ===== Recrutement : le dossier ParcourSup, et ce qu'il annonce des résultats =====
 // Le classement dit le niveau à l'entrée ; les notes disent ce qu'il en advient.
 // Les croiser demande des étudiants qui aient les deux — une promotion tout juste
@@ -11950,18 +12090,22 @@ function statsEtudiants(d) {
 // importé. Quand le croisement est vide, on dit POURQUOI plutôt que d'afficher
 // des cadres blancs : la couverture par promotion est là pour ça.
 function statsRecrutement(d) {
-    const p = d.parcoursup || {};
-    if (!p.avec_dossier) {
+    const p = d.parcoursup || {}, cand = d.candidature || {};
+    if (!p.avec_dossier && !cand.avec_dossier) {
         return `<div class="empty">Aucun dossier ParcourSup enregistré.<br>
-            Importez un classement depuis <strong>Promotions → Effectifs → Importer ParcourSup</strong>
-            pour alimenter cette page.</div>`;
+            Importez un classement ou l'export CSV complet depuis
+            <strong>Promotions → Effectifs → Importer ParcourSup</strong> pour alimenter cette page.</div>`;
     }
+    const dossier = statsDossierCandidature(cand);
+    if (!p.avec_dossier) return dossier;
     const n = p.note || {}, r = p.rang || {};
+    const avecNote = !!n.n;      // la note PS ne vient que du classement .xlsx
     // Corrélation : au-delà du chiffre, ce qu'il faut en conclure. Une corrélation
     // faible sur le classement d'entrée est un résultat en soi, pas une anomalie.
-    const corrLib = v => v === null || v === undefined ? '—'
-        : (Math.abs(v) < 0.2 ? 'quasi nulle' : Math.abs(v) < 0.4 ? 'faible'
-            : Math.abs(v) < 0.6 ? 'modérée' : 'forte');
+    const corrLib = stCorrLib;
+    const titreClassement = `<div style="margin:30px 0 16px;padding:10px 14px;border-left:4px solid #0ea5e9;background:#f0f9ff;border-radius:6px">
+        <h2 style="margin:0;font-size:1.05rem;color:#0369a1">Classement ParcourSup</h2>
+        <div style="font-size:.8rem;color:#6b7280">Rang, note globale et spécialités repris du classement des candidatures.</div></div>`;
     const kpis = `<div class="st-kpis">
         ${stKpi('Dossiers ParcourSup', stNum(p.avec_dossier), `sur ${stNum(p.total)} fiches`)}
         ${stKpi('Note ParcourSup moyenne', n.moy != null ? stNum(n.moy, 2) : '—',
@@ -11991,7 +12135,7 @@ function statsRecrutement(d) {
             ${stCard('Profil à la candidature', stDonut(p.profil, { unit: 'étudiants' }))}
         </div>
         <div class="st-grid wide" style="margin-top:14px">
-            ${stCard('Note globale ParcourSup', stColumns(p.histogramme, { colorFn: (x, i) => i < 10 ? '#f59e0b' : '#10b981' }), 'tranches de 1 point')}
+            ${avecNote ? stCard('Note globale ParcourSup', stColumns(p.histogramme, { colorFn: (x, i) => i < 10 ? '#f59e0b' : '#10b981' }), 'tranches de 1 point') : ''}
             ${stCard('Combinaisons de spécialités', stBars(p.specialites, { color: '#8b5cf6' }), 'enseignements de terminale')}
         </div>
         <div class="st-grid wide" style="margin-top:14px">
@@ -11999,7 +12143,7 @@ function statsRecrutement(d) {
             ${stCard('Spécialité abandonnée en première', stBars(p.spe_abandon, { color: '#64748b' }))}
         </div></div>`;
 
-    const niveau = `<div class="st-sec"><h2>Niveau du recrutement</h2><div class="st-grid">
+    const niveau = !avecNote ? '' : `<div class="st-sec"><h2>Niveau du recrutement</h2><div class="st-grid">
             ${stCard('Note ParcourSup moyenne par promotion',
                      stBars(p.note_par_promo, { max: 20, dec: 2, color: '#4f46e5' }),
                      'permet de suivre l\'évolution d\'une campagne à l\'autre')}
@@ -12055,7 +12199,7 @@ function statsRecrutement(d) {
                 'un rang meilleur porte une corrélation positive ; proche de 0, le classement n\'annonce pas les résultats')}
         </div></div>`;
 
-    return kpis + profil + niveau + reussite;
+    return dossier + titreClassement + kpis + profil + niveau + reussite;
 }
 
 function statsParcours(d) {

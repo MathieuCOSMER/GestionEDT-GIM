@@ -3936,6 +3936,11 @@ _CAND_REQUIRED = ('Candidat - Nom', 'Candidat - Prénom', 'Classement')
 # Niveaux de collège : sans intérêt pour la scolarité antérieure d'un entrant en BUT
 _CAND_COLLEGE = ('sixieme', 'cinquieme', 'quatrieme', 'troisieme')
 
+# Libellés « pays » sous lesquels ParcourSup écrit la France et son outre-mer
+_PAYS_FRANCAIS = {'france', 'guadeloupe', 'martinique', 'guyane', 'guyanefrancaise', 'lareunion',
+                  'reunion', 'mayotte', 'saintpierreetmiquelon', 'saintbarthelemy', 'saintmartin',
+                  'wallisetfutuna', 'polynesiefrancaise', 'nouvellecaledonie'}
+
 _DEPARTEMENTS = dict(x.split(':', 1) for x in (
     "01:Ain|02:Aisne|03:Allier|04:Alpes-de-Haute-Provence|05:Hautes-Alpes|06:Alpes-Maritimes|"
     "07:Ardèche|08:Ardennes|09:Ariège|10:Aube|11:Aude|12:Aveyron|13:Bouches-du-Rhône|14:Calvados|"
@@ -3958,11 +3963,13 @@ _DEPARTEMENTS = dict(x.split(':', 1) for x in (
 def _departement_du_cp(cp, pays=None):
     """(code, nom) du département d'un code postal français, sinon (None, None).
     Corse : 200xx-201xx = 2A, 202xx et au-delà = 2B ; outre-mer sur trois chiffres.
-    Un code sur 4 chiffres a perdu son zéro de tête dans un tableur."""
+    Un code sur 4 chiffres a perdu son zéro de tête dans un tableur. ParcourSup
+    écrit l'outre-mer comme un pays (« Nouvelle-Calédonie ») : c'est bien la France."""
     cp = re.sub(r'\D', '', cp or '')
     if len(cp) == 4:
         cp = '0' + cp
-    if len(cp) != 5 or (pays and _profile_key(pays) != 'france'):
+    francais = not pays or _profile_key(pays) in _PAYS_FRANCAIS
+    if len(cp) != 5 or not francais:
         return None, None
     if cp[:2] == '20':
         code = '2A' if int(cp) < 20200 else '2B'
@@ -13062,6 +13069,244 @@ def _stats_parcoursup(students, moy_etudiant, admis_etudiant):
         'validation_par_specialites': validation(lambda r: r['specialites']),
     }
 
+# ---- Dossier de candidature complet (export CSV ParcourSup) : profil des entrants ----
+# Catégories dans leur ordre de lecture : un graphique sur des mentions ou des
+# tranches se lit dans l'ordre de l'échelle, pas par effectif décroissant.
+_PACA = ('04', '05', '06', '13', '83', '84')
+_CAND_ZONES = ('Var', 'Autre département PACA', 'Autre département', 'Étranger')
+_CAND_MENTIONS = ('Très bien', 'Bien', 'Assez bien', 'Sans mention', 'Échec')
+_CAND_AVIS = ('Très satisfaisante', 'Satisfaisante', 'Assez satisfaisante', 'Peu démontrée')
+_CAND_POST_BAC = ('Juste après le bac', '1 an après', '2 ans après', '3 ans et plus')
+_CAND_AGES = ('18 ans ou moins', '19 ans', '20 ans', '21 ans et plus')
+_LYCEE_BANDES = ((10, '< 10'), (12, '10–12'), (14, '12–14'), (16, '14–16'), (99, '≥ 16'))
+
+def _age_a(naissance, jour):
+    """Âge révolu au `jour` (datetime) d'une naissance jj/mm/aaaa ou aaaa-mm-jj ;
+    None si la date est vide, illisible ou invraisemblable."""
+    t = (naissance or '').strip()
+    m = re.match(r'(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})', t)
+    if m:
+        j, mo, a = (int(x) for x in m.groups())
+    else:
+        m = re.match(r'(\d{4})-(\d{1,2})-(\d{1,2})', t)
+        if not m:
+            return None
+        a, mo, j = (int(x) for x in m.groups())
+    try:
+        n = datetime(a, mo, j)
+    except ValueError:
+        return None
+    age = jour.year - n.year - ((jour.month, jour.day) < (n.month, n.day))
+    return age if 10 <= age < 100 else None
+
+def _age_bande(age):
+    if age is None:
+        return None
+    return _CAND_AGES[min(max(age - 18, 0), 3)]
+
+def _cand_mention(txt):
+    """« Admis mention Assez Bien » -> « Assez bien » (échelle _CAND_MENTIONS)."""
+    k = _profile_key(txt)
+    if not k:
+        return None
+    for cle, lib in (('echec', 'Échec'), ('tresbien', 'Très bien'), ('assezbien', 'Assez bien'),
+                     ('bien', 'Bien'), ('sansmention', 'Sans mention')):
+        if cle in k:
+            return lib
+    return txt
+
+def _cand_serie(txt):
+    """Série du bac en toutes lettres -> sigle usuel."""
+    k = _profile_key(txt)
+    if not k:
+        return None
+    for cle, lib in (('generale', 'Générale'), ('industrie', 'STI2D'), ('professionnelle', 'Bac pro'),
+                     ('management', 'STMG'), ('laboratoire', 'STL'), ('scientifique', 'S (avant 2021)')):
+        if cle in k:
+            return lib
+    return txt
+
+def _cand_formation(dossier):
+    """Ce que faisait le candidat l'année de sa candidature, en grandes catégories."""
+    scol = dossier.get('scolarite') or []
+    rentree = dossier.get('rentree')
+    e = next((x for x in scol if rentree and x.get('annee') == f'{rentree - 1}-{rentree}'),
+             scol[0] if scol else None)
+    if not e:
+        return None
+    niveau, formation = _profile_key(e.get('niveau')), _profile_key(e.get('formation'))
+    if 'nonscolarise' in niveau:
+        return 'Non scolarisé'
+    if niveau == 'terminale':
+        return 'Terminale'
+    if niveau == 'premiere':
+        return 'Première'
+    for cle, lib in (('cpge', 'CPGE'), ('bts', 'BTS'), ('licence', 'Licence'),
+                     ('ingenieur', "École d'ingénieurs"), ('but', 'BUT')):
+        if cle in formation:
+            return lib
+    return 'Autre formation'
+
+def _cand_lycee(dossier):
+    """{matière: moyenne des trimestres} du bulletin de terminale (à défaut, du plus récent)."""
+    bl = dossier.get('bulletins') or []
+    b = next((x for x in bl if _profile_key(x.get('niveau')) == 'terminale'), bl[0] if bl else None)
+    out = {}
+    for m in (b or {}).get('matieres') or []:
+        notes = [n for n in m.get('notes') or [] if isinstance(n, (int, float))]
+        if notes:
+            out[m['matiere']] = sum(notes) / len(notes)
+    return out
+
+def _ordonner(rows, ordre):
+    """Remet [[clé, …], …] dans l'ordre d'une échelle (les clés inconnues à la fin)."""
+    if not ordre:
+        return rows
+    rang = {k: i for i, k in enumerate(ordre)}
+    return sorted(rows, key=lambda r: rang.get(r[0], len(rang)))
+
+def _stats_candidature(pdb, students, promos, moy_etudiant, admis_etudiant):
+    """Profil des entrants — âge (registre), origine, bourse, bac, parcours, notes de
+    lycée, avis du chef d'établissement (dossier de candidature complet) — et ce que
+    ce dossier annonce de la réussite en BUT.
+
+    Chaque personne compte UNE fois, rattachée à la cohorte qui l'a recrutée (sa
+    première inscription) : un redoublant inscrit dans deux cohortes ne double ni les
+    effectifs ni les taux. Tout est agrégé : aucun étudiant n'est nommé."""
+    debut = {p['id']: p['start_year'] for p in promos}
+    dossiers = {r['person_id']: json.loads(r['data'])
+                for r in pdb.execute('SELECT person_id, data FROM student_candidature')}
+    entrants = {}
+    for s in sorted(students, key=lambda s: (int(debut.get(s['promotion_id']) or 0)
+                                             + (s.get('entry_year') or 1), s['id'])):
+        entrants.setdefault(s.get('person_id') or ('fiche', s['id']), s)
+    rows = []
+    for s in entrants.values():
+        annee_entree = int(debut.get(s['promotion_id']) or 0) + (s.get('entry_year') or 1) - 1
+        age = _age_a(s.get('naissance'), datetime(annee_entree, 9, 1)) if annee_entree > 1900 else None
+        d = dossiers.get(s.get('person_id'))
+        r = {'sid': s['id'], 'promo': s.get('promo'), 'sexe': s.get('sexe'),
+             'age': age, 'age_bande': _age_bande(age), 'dossier': d is not None}
+        if d:
+            o, b, bo = d.get('origine') or {}, d.get('bac') or {}, d.get('bourse') or {}
+            # Recalculé depuis le code postal : suit les corrections de _departement_du_cp
+            # sans réimport (outre-mer que ParcourSup écrit comme un pays, par exemple).
+            dep, dep_nom = _departement_du_cp(o.get('code_postal'), o.get('pays'))
+            if dep == '83':
+                zone = 'Var'
+            elif dep in _PACA:
+                zone = 'Autre département PACA'
+            elif dep:
+                zone = 'Autre département'
+            elif o.get('pays') and _profile_key(o['pays']) not in _PAYS_FRANCAIS:
+                zone = 'Étranger'
+            else:
+                zone = None
+            ecart = d.get('annees_post_bac')
+            lycee = _cand_lycee(d)
+            sci = round(sum(lycee.values()) / len(lycee), 2) if lycee else None
+            r.update({
+                'zone': zone,
+                'departement': f"{dep} — {dep_nom}" if dep else None,
+                # la commune du lycée (export réduit) n'est pas un lieu de résidence
+                'commune': o.get('ville') if o.get('ville_source') == 'candidat' else None,
+                'pays': o.get('pays') if zone == 'Étranger' else None,
+                'boursier': 'Boursier' if bo.get('boursier') else 'Non boursier',
+                'bourse': bo.get('statut') or ('Boursier' if bo.get('boursier') else 'Non boursier'),
+                'echelon': f"Échelon {bo['echelon']}" if bo.get('boursier') and bo.get('echelon') else None,
+                'shn': bool(d.get('shn')), 'artiste': bool(d.get('artiste')),
+                'mention': _cand_mention(b.get('mention')),
+                'serie': _cand_serie(b.get('serie')),
+                'post_bac': None if ecart is None else _CAND_POST_BAC[min(int(ecart), 3)],
+                'formation': _cand_formation(d),
+                'avis': d.get('avis_ce') or None,
+                'lycee': lycee, 'sci': sci,
+                'lycee_bande': _ps_bande(sci, _LYCEE_BANDES),
+            })
+        rows.append(r)
+    avec = [r for r in rows if r['dossier']]
+
+    def repart(champ, ordre=None, pop=None):
+        return _count_by([r for r in (avec if pop is None else pop) if r.get(champ)], champ, ordre)
+
+    def croise(valeurs, champ, ordre=None, pop=None):
+        return _ordonner(_stats_group_avg(
+            [r for r in (avec if pop is None else pop) if r['sid'] in valeurs],
+            lambda r: r.get(champ), valfn=lambda r: valeurs[r['sid']], mini=3), ordre)
+
+    pct = lambda n, tot: round(100.0 * n / tot, 1) if tot else None
+    ages = [r['age'] for r in rows if r['age'] is not None]
+    sci = [r['sci'] for r in avec if r['sci'] is not None]
+    par_matiere = {}
+    for r in avec:
+        for m, v in (r.get('lycee') or {}).items():
+            par_matiere.setdefault(m, []).append(v)
+    par_promo = []
+    for p in promos:
+        pr = [r for r in rows if r['promo'] == p['name']]
+        if not pr:
+            continue
+        pd_ = [r for r in pr if r['dossier']]
+        sx = [r for r in pr if r['sexe'] in ('M', 'F')]
+        ag = [r['age'] for r in pr if r['age'] is not None]
+        sc = [r['sci'] for r in pd_ if r['sci'] is not None]
+        par_promo.append({
+            'promo': p['name'], 'entrants': len(pr), 'dossiers': len(pd_),
+            'age_moy': round(sum(ag) / len(ag), 1) if ag else None,
+            'femmes_pct': pct(sum(1 for r in sx if r['sexe'] == 'F'), len(sx)),
+            'boursiers_pct': pct(sum(1 for r in pd_ if r['boursier'] == 'Boursier'), len(pd_)),
+            'hors_var_pct': pct(sum(1 for r in pd_ if r['zone'] and r['zone'] != 'Var'),
+                                sum(1 for r in pd_ if r['zone'])),
+            'mention_b_tb_pct': pct(sum(1 for r in pd_ if r['mention'] in ('Bien', 'Très bien')),
+                                    sum(1 for r in pd_ if r['mention'])),
+            'sci_moy': round(sum(sc) / len(sc), 2) if sc else None})
+    apparies = [(r['sci'], moy_etudiant[r['sid']])
+                for r in avec if r['sci'] is not None and r['sid'] in moy_etudiant]
+    return {
+        'entrants': len(rows), 'avec_dossier': len(avec), 'avec_age': len(ages),
+        'fiches_avec_dossier': sum(1 for s in students if s.get('person_id') in dossiers),
+        'dossiers_notes': sum(1 for r in avec if r['sid'] in moy_etudiant),
+        # --- âge et origine
+        'age': _num_stats(ages),
+        'age_hist': [['≤ 17', sum(1 for a in ages if a <= 17)]]
+                    + [[str(a), ages.count(a)] for a in range(18, 24)]
+                    + [['≥ 24', sum(1 for a in ages if a >= 24)]],
+        'zone': repart('zone', _CAND_ZONES),
+        'departements': repart('departement')[:12],
+        'communes': repart('commune')[:12],
+        'pays': repart('pays'),
+        # --- situation
+        'boursier': repart('boursier', ('Boursier', 'Non boursier')),
+        'bourse': repart('bourse'),
+        'echelons': repart('echelon', ['Échelon %d' % i for i in range(8)]),
+        'shn': sum(1 for r in avec if r['shn']),
+        'artistes': sum(1 for r in avec if r['artiste']),
+        # --- bac, parcours, lycée
+        'mention': repart('mention', _CAND_MENTIONS),
+        'serie': repart('serie'),
+        'post_bac': repart('post_bac', _CAND_POST_BAC),
+        'formation': repart('formation'),
+        'avis': repart('avis', _CAND_AVIS),
+        'lycee': _num_stats(sci),
+        'lycee_hist': _hist20(sci, 1),
+        'lycee_matieres': sorted(([m, _num_stats(v)] for m, v in par_matiere.items() if len(v) >= 3),
+                                 key=lambda x: -x[1]['n']),
+        'par_promo': par_promo,
+        # --- ce que le dossier annonce de la réussite en BUT
+        'correlation_lycee': _pearson(apparies),
+        'nb_apparies': len(apparies),
+        'reussite_par_lycee': croise(moy_etudiant, 'lycee_bande', [b for _, b in _LYCEE_BANDES]),
+        'reussite_par_mention': croise(moy_etudiant, 'mention', _CAND_MENTIONS),
+        'reussite_par_avis': croise(moy_etudiant, 'avis', _CAND_AVIS),
+        'reussite_par_boursier': croise(moy_etudiant, 'boursier', ('Boursier', 'Non boursier')),
+        'reussite_par_age': croise(moy_etudiant, 'age_bande', _CAND_AGES, pop=rows),
+        'reussite_par_zone': croise(moy_etudiant, 'zone', _CAND_ZONES),
+        'reussite_par_post_bac': croise(moy_etudiant, 'post_bac', _CAND_POST_BAC),
+        'reussite_par_formation': croise(moy_etudiant, 'formation'),
+        'validation_par_lycee': croise(admis_etudiant, 'lycee_bande', [b for _, b in _LYCEE_BANDES]),
+        'validation_par_mention': croise(admis_etudiant, 'mention', _CAND_MENTIONS),
+    }
+
 def _stats_academique(pdb):
     """Profils, parcours et résultats de toutes les promotions."""
     promos = [dict(r) for r in pdb.execute(
@@ -13201,6 +13446,10 @@ def _stats_academique(pdb):
     # --- dossier ParcourSup : niveau du recrutement, et ce qu'il annonce des résultats
     admis_etudiant = {sid: 100.0 * ok / tot for sid, (ok, tot) in ue_par_etudiant.items() if tot}
     parcoursup = _stats_parcoursup(students, moy_etudiant, admis_etudiant)
+    # --- dossier de candidature complet : profil des entrants et réussite
+    candidature = _stats_candidature(pdb, students, promos, moy_etudiant, admis_etudiant)
+    profil['renseigne'] += [['naissance', sum(1 for s in students if s.get('naissance'))],
+                            ['dossier', candidature['fiches_avec_dossier']]]
 
     jury = {
         'decisions': [[y, sorted(d.items(), key=lambda kv: -kv[1])]
@@ -13244,7 +13493,7 @@ def _stats_academique(pdb):
     }
     return {'promotions': promos, 'profil': profil, 'cohortes': cohortes,
             'resultats': resultats, 'jury': jury, 'encadrement': encadrement,
-            'parcoursup': parcoursup, 'nb_etudiants': len(students)}
+            'parcoursup': parcoursup, 'candidature': candidature, 'nb_etudiants': len(students)}
 
 def _stats_enseignement(db):
     """Service, matières, volumes et salles de la base année fournie."""
