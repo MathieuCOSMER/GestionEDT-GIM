@@ -5741,9 +5741,14 @@ def _groupes_tables(students, familles, mutualise):
             for st in membres:
                 g = st['groupes'].get(f)
                 if g:
-                    c = compte.setdefault(g, {'FTP': 0, 'ALT': 0})
+                    # F : filles ; inconnu : sexe non renseigné (étudiants actifs)
+                    c = compte.setdefault(g, {'FTP': 0, 'ALT': 0, 'F': 0, 'inconnu': 0})
                     if st['actif']:
                         c[st['formation']] += 1
+                        if st.get('sexe') == 'F':
+                            c['F'] += 1
+                        elif st.get('sexe') != 'M':
+                            c['inconnu'] += 1
             groupes[f] = [dict(groupe=g, **compte[g]) for g in sorted(compte, key=_groupe_tri)]
         tables.append({'cle': cle, 'titre': titre, 'face': face, 'groupes': groupes,
                        'effectif': len(membres), 'actifs': sum(1 for st in membres if st['actif']),
@@ -6121,12 +6126,15 @@ def _plan_groupes_auto(nF, nA, regles):
             plan[fam] = _tailles_emboitees(td, c, nominal)
     return plan
 
-def _remplir_tp8_auto(ftp, alt, tailles, bornes, eviter, libelles=('FTP', 'ALT')):
+def _remplir_tp8_auto(ftp, alt, tailles, bornes, eviter, libelles=('FTP', 'ALT'), unites=()):
     """Remplit les TP8 : le premier bloc (les FTP) dans ses places, le second (les ALT) en
-    fin d'ordre. Avec la règle des filles, elles vont au moins par deux dans un même groupe,
-    sur autant de groupes que possible, de préférence les TP8 qu'aucune frontière de TP12 ou
-    de TD ne coupe ; les autres places se prennent dans l'ordre alphabétique. Renvoie
-    (groupes, alertes), chaque groupe trié (FTP puis ALT, par nom)."""
+    fin d'ordre. Les covoiturages (`unites` : listes d'identifiants) vont d'abord, entiers,
+    dans un même TP8 — de préférence un TP8 qu'aucune frontière de TP12 ou de TD ne coupe :
+    ils ont alors aussi le même TP12 et le même TD. Avec la règle des filles, celles-ci
+    complètent d'abord un groupe où un covoiturage a amené une fille seule, puis vont au
+    moins par deux dans un même groupe, sur autant de groupes que possible, de préférence
+    non coupés. Les autres places se prennent dans l'ordre alphabétique. Renvoie (groupes,
+    alertes), chaque groupe trié (FTP puis ALT, par nom)."""
     nF = len(ftp)
     groupes, pos = [], 0
     for t in tailles:
@@ -6135,46 +6143,71 @@ def _remplir_tp8_auto(ftp, alt, tailles, bornes, eviter, libelles=('FTP', 'ALT')
         groupes.append({'places': [max(0, min(b, nF) - a), max(0, b - max(a, nF))],
                         'sur': not any(a < x < b for x in bornes), 'membres': []})
     alertes = []
+    k = len(groupes)
+    espaces = lambda l, n: [l[int(i * len(l) / n)] for i in range(n)] if n else []
     for rang, (bloc, libelle) in enumerate(((ftp, libelles[0]), (alt, libelles[1]))):
-        places = [g['places'][rang] for g in groupes]
-        filles = [x for x in bloc if x.get('sexe') == 'F']
-        autres = [x for x in bloc if x.get('sexe') != 'F']
-        quota = None
-        if eviter and filles:
-            cand = [j for j, n in enumerate(places) if n >= 2]
-            m = min(len(cand), len(filles) // 2)
-            if m == 0:
-                if len(filles) == 1:
-                    alertes.append(f"{libelle} : une seule fille, elle sera seule dans ses groupes")
-            else:
-                quota = [0] * len(groupes)
+        if not bloc:
+            continue
+        restant = [g['places'][rang] for g in groupes]
+        membres = [[] for _ in groupes]
+        nb_filles = [0] * k
+        par_id = {x['id']: x for x in bloc}
+        places = set()
+        # 1. Covoiturages : entiers dans un même TP8, non coupé si possible (les plus grands d'abord)
+        sous = [[par_id[i] for i in u if i in par_id] for u in unites]
+        for u in sorted((u for u in sous if len(u) >= 2), key=len, reverse=True):
+            cand = [j for j in range(k) if restant[j] >= len(u)]
+            liste = [j for j in cand if groupes[j]['sur']] or cand
+            if not liste:
+                continue          # trop grand pour un TP8 : signalé par le contrôle final
+            j = max(liste, key=lambda j: (restant[j], -j))
+            membres[j].extend(u)
+            restant[j] -= len(u)
+            nb_filles[j] += sum(1 for x in u if x.get('sexe') == 'F')
+            places.update(x['id'] for x in u)
+        libres = [x for x in bloc if x['id'] not in places]
+        filles = [x for x in libres if x.get('sexe') == 'F'] if eviter else []
+        autres = [x for x in libres if x.get('sexe') != 'F'] if eviter else libres
+        # 2. Filles : compléter les groupes où une fille serait seule, puis par deux au moins
+        if filles:
+            quota = [0] * k
+            reste = len(filles)
+            for j in range(k):
+                if reste and nb_filles[j] == 1 and restant[j] >= 1:
+                    quota[j] = 1
+                    reste -= 1
+            cand = [j for j in range(k) if nb_filles[j] == 0 and restant[j] >= 2]
+            m = min(len(cand), reste // 2)
+            if m:
                 surs = [j for j in cand if groupes[j]['sur']]
-                espaces = lambda l, k: [l[int(i * len(l) / k)] for i in range(k)] if k else []
                 choisis = (espaces(surs, m) if len(surs) >= m
                            else surs + espaces([j for j in cand if j not in surs], m - len(surs)))
                 choisis.sort()
-                reste = len(filles)
+                total = reste
                 for i, j in enumerate(choisis):
-                    q = min(places[j], len(filles) // m + (1 if i < len(filles) % m else 0))
-                    quota[j] = q
+                    q = min(restant[j], total // m + (1 if i < total % m else 0))
+                    quota[j] += q
                     reste -= q
-                for j in choisis + [j for j in range(len(groupes)) if j not in choisis]:
-                    while reste and quota[j] < places[j]:
-                        quota[j] += 1
-                        reste -= 1
-        if quota is None:
-            k = 0
-            for j, g in enumerate(groupes):
-                g['membres'].extend(bloc[k:k + places[j]])
-                k += places[j]
-        else:
-            kf = ka = 0
-            for j, g in enumerate(groupes):
-                g['membres'].extend(filles[kf:kf + quota[j]])
+            # le reste : d'abord là où il y a déjà au moins deux filles, puis ailleurs
+            for j in ([j for j in range(k) if nb_filles[j] + quota[j] >= 2]
+                      + [j for j in range(k) if nb_filles[j] + quota[j] == 1]
+                      + [j for j in range(k) if nb_filles[j] + quota[j] == 0]):
+                while reste and quota[j] < restant[j]:
+                    quota[j] += 1
+                    reste -= 1
+            kf = 0
+            for j in range(k):
+                membres[j].extend(filles[kf:kf + quota[j]])
                 kf += quota[j]
-                n = places[j] - quota[j]
-                g['membres'].extend(autres[ka:ka + n])
-                ka += n
+                restant[j] -= quota[j]
+        if eviter and len(filles) + sum(nb_filles) == 1:
+            alertes.append(f"{libelle} : une seule fille, elle sera seule dans ses groupes")
+        # 3. Les autres places, dans l'ordre alphabétique
+        ka = 0
+        for j in range(k):
+            membres[j].extend(autres[ka:ka + restant[j]])
+            ka += restant[j]
+            groupes[j]['membres'].extend(membres[j])
     rangs = {id(x): 0 for x in ftp}
     rangs.update({id(x): 1 for x in alt})
     cle = lambda x: (rangs[id(x)], _profile_key(x.get('nom')), _profile_key(x.get('prenom')))
@@ -6182,7 +6215,7 @@ def _remplir_tp8_auto(ftp, alt, tailles, bornes, eviter, libelles=('FTP', 'ALT')
         g['membres'].sort(key=cle)
     return groupes, alertes
 
-def _repartition_auto(students, regles, sae=None, bloc_unique=False, prefixe=''):
+def _repartition_auto(students, regles, sae=None, bloc_unique=False, prefixe='', unites=()):
     """Répartition automatique d'étudiants actifs selon les règles. `bloc_unique` : ils
     forment un seul bloc (une sous-cohorte d'un semestre non mutualisé), sinon les ALT
     viennent après les FTP. `sae` : identifiants des étudiants qui suivent les SAÉ (None :
@@ -6205,7 +6238,7 @@ def _repartition_auto(students, regles, sae=None, bloc_unique=False, prefixe='')
         for t in plan[fam]:
             pos += t
             bornes.add(pos)
-    tp8, alertes = _remplir_tp8_auto(ftp, alt, plan['TP8'], bornes, regles['filles'], libelles)
+    tp8, alertes = _remplir_tp8_auto(ftp, alt, plan['TP8'], bornes, regles['filles'], libelles, unites)
     alertes = [prefixe + a for a in alertes]
     ordre = [x for g in tp8 for x in g['membres']]
     aff = {x['id']: {} for x in ordre}
@@ -6297,7 +6330,7 @@ def _groupes_regles_defaut(students, svc, semestre):
               'alt': {'TD': 'melange', 'TP12': 'dedie', 'TP8': 'dedie'},
               # semestre non mutualisé : capacités propres aux FTP et aux ALT
               'capacites_faces': {face: {'TD': 24, 'TP12': 12, 'TP8': 8} for face in _SUBCOHORTS},
-              'alt_groupes': {'TD': 1, 'TP12': 1, 'TP8': 1}, 'filles': True,
+              'alt_groupes': {'TD': 1, 'TP12': 1, 'TP8': 1}, 'filles': True, 'covoiturage': True,
               'alt_sae': [x['id'] for x in actifs if semestre == 'S1' and x['formation'] == 'ALT'
                           and (x['groupes'].get('TD SAE') or x['groupes'].get('TP12 SAE'))]}
     if svc:
@@ -6347,32 +6380,64 @@ def _groupes_regles_propres(data, defaut):
                 ((data.get('capacites_faces') or {}).get(face) or {}).get(fam), r['capacites_faces'][face][fam], 2, 60)
     if 'filles' in data:
         r['filles'] = bool(data['filles'])
+    if 'covoiturage' in data:
+        r['covoiturage'] = bool(data['covoiturage'])
     if isinstance(data.get('alt_sae'), list):
         r['alt_sae'] = sorted({entier(x, 0, 0, 10 ** 9) for x in data['alt_sae']} - {0})
     return r
 
+def _famille_covoiturage(familles):
+    """La famille de groupes du covoiturage (« Covoiturage », « Covoit »…), ou None."""
+    return next((f for f in familles if _profile_key(f).startswith('covoit')), None)
+
 def _groupes_auto_calcul(p, regles):
     """Répartition automatique d'un semestre : une pour la promo s'il est mutualisé, sinon
-    une par sous-cohorte. Renvoie (affectations, aperçu {tableau: {famille: [...]}}, alertes)."""
+    une par sous-cohorte. Les covoiturages du semestre (famille Covoiturage) sont gardés
+    ensemble si la règle est active, puis contrôlés : même TD, même TP12, même TP8.
+    Renvoie (affectations, aperçu {tableau: {famille: [...]}}, alertes, bilan des covoiturages)."""
     actifs = [x for x in p['students'] if x['actif']]
+    fam_c = _famille_covoiturage(p['familles'])
+    covoit = {}
+    if fam_c:
+        for x in actifs:
+            if x['groupes'].get(fam_c):
+                covoit.setdefault(x['groupes'][fam_c], []).append(x)
+    unites = ([[x['id'] for x in m] for m in covoit.values() if len(m) >= 2]
+              if regles.get('covoiturage', True) else [])
     if p['mutualise']:
         sae = ({x['id'] for x in actifs if x['formation'] != 'ALT'} | set(regles['alt_sae'])) if p['sae'] else None
-        aff, apercu, alertes = _repartition_auto(actifs, regles, sae=sae)
-        return aff, {'PROMO': apercu}, alertes
-    aff, apercu, alertes = {}, {}, []
-    for face in _SUBCOHORTS:
-        bloc = [x for x in actifs if x['formation'] == face]
-        if not bloc:
+        aff, ap, alertes = _repartition_auto(actifs, regles, sae=sae, unites=unites)
+        apercu = {'PROMO': ap}
+    else:
+        aff, apercu, alertes = {}, {}, []
+        for face in _SUBCOHORTS:
+            bloc = [x for x in actifs if x['formation'] == face]
+            if not bloc:
+                continue
+            ids = {x['id'] for x in bloc}
+            sae = (ids if face == 'FTP' else ids & set(regles['alt_sae'])) if p['sae'] else None
+            a, ap, al = _repartition_auto(bloc, dict(regles, capacites=regles['capacites_faces'][face],
+                                                     td_groupes=regles['td_faces'][face]),
+                                          sae=sae, bloc_unique=True, prefixe=f'{face} · ', unites=unites)
+            aff.update(a)
+            apercu[face] = ap
+            alertes += al
+    # Contrôle : chaque covoiturage a-t-il le même TD, le même TP12 et le même TP8 ?
+    bilan = {'famille': fam_c, 'total': 0, 'ensemble': 0}
+    for g, membres in sorted(covoit.items(), key=lambda kv: _groupe_tri(kv[0])):
+        if len(membres) < 2:
             continue
-        ids = {x['id'] for x in bloc}
-        sae = (ids if face == 'FTP' else ids & set(regles['alt_sae'])) if p['sae'] else None
-        a, ap, al = _repartition_auto(bloc, dict(regles, capacites=regles['capacites_faces'][face],
-                                                 td_groupes=regles['td_faces'][face]),
-                                      sae=sae, bloc_unique=True, prefixe=f'{face} · ')
-        aff.update(a)
-        apercu[face] = ap
-        alertes += al
-    return aff, apercu, alertes
+        bilan['total'] += 1
+        if not p['mutualise'] and len({x['formation'] for x in membres}) > 1:
+            alertes.append(f"{g} : mêle FTP et ALT alors que le semestre n'est pas mutualisé, "
+                           "ils ne peuvent pas avoir les mêmes groupes")
+            continue
+        ecarts = [fam for fam in ('TD', 'TP12', 'TP8') if len({aff[x['id']].get(fam) for x in membres}) > 1]
+        if ecarts:
+            alertes.append(f"{g} : ses {len(membres)} étudiants n'ont pas le même {', '.join(ecarts)}")
+        else:
+            bilan['ensemble'] += 1
+    return aff, apercu, alertes, bilan
 
 def _groupes_auto_service_alertes(apercu, svc):
     """Écarts entre le nombre de groupes produit et le réglage du service du semestre."""
@@ -6420,7 +6485,15 @@ def get_groupes_auto(pid, semestre):
                        'M': sum(1 for x in actifs if x['formation'] == face and x.get('sexe') == 'M'),
                        'inconnu': sum(1 for x in actifs if x['formation'] == face and x.get('sexe') not in ('M', 'F'))}
                 for face in _SUBCOHORTS}
+    fam_c = _famille_covoiturage(p['familles'])
+    par_covoit = {}
+    for x in actifs:
+        if fam_c and x['groupes'].get(fam_c):
+            par_covoit.setdefault(x['groupes'][fam_c], []).append(x)
+    covoiturages = [{'groupe': g, 'effectif': len(m), 'faces': sorted({x['formation'] for x in m})}
+                    for g, m in sorted(par_covoit.items(), key=lambda kv: _groupe_tri(kv[0]))]
     return jsonify({'regles': regles, 'enregistrees': bool(row), 'effectif': effectif,
+                    'famille_covoiturage': fam_c, 'covoiturages': covoiturages,
                     'mutualise': p['mutualise'], 'sae': p['sae'], 'service': p['service'],
                     'alternants': [{'id': x['id'], 'nom': x['nom'], 'prenom': x['prenom'], 'sexe': x.get('sexe')}
                                    for x in actifs if x['formation'] == 'ALT']})
@@ -6446,7 +6519,7 @@ def post_groupes_auto(pid, semestre):
     actifs = [x for x in p['students'] if x['actif']]
     if not actifs:
         return error_response("Aucun étudiant actif dans l'effectif de ce semestre", 400)
-    aff, apercu, alertes = _groupes_auto_calcul(p, regles)
+    aff, apercu, alertes, covoit = _groupes_auto_calcul(p, regles)
     alertes += _groupes_auto_service_alertes(apercu, svc)
     changements, ecritures = _groupes_changements(actifs, aff, list(_groupe_familles_base(semestre)))
     applique = bool(data.get('apply'))
@@ -6459,7 +6532,7 @@ def post_groupes_auto(pid, semestre):
         _audit('GROUPES_AUTO', ip=_client_ip(), user=session.get('user'), promo=pid, semestre=semestre,
                **changements)
         p = _groupes_payload(pdb, pid, semestre, svc=svc)
-    return jsonify({'apercu': apercu, 'mutualise': p['mutualise'], 'alertes': alertes,
+    return jsonify({'apercu': apercu, 'mutualise': p['mutualise'], 'alertes': alertes, 'covoiturage': covoit,
                     'changements': changements, 'regles': regles, 'applique': applique,
                     'repartition': p if applique else None})
 

@@ -20,6 +20,8 @@
         /* Onglet Jury : large tableau (UE × 4 colonnes) → pleine largeur si nécessaire */
         main:has(#page-promotions.active #promo-subtab-jury.active) { max-width: none; }
         main:has(#page-promotions.active #promo-subtab-saisie.active) { max-width: none; }
+        /* Groupes : la répartition compte une colonne par famille de groupes */
+        main:has(#page-promotions.active #promo-subtab-groupes.active) { max-width: none; }
         /* Onglet Effectif : la fiche étudiant plus les onze colonnes du dossier
            ParcourSup → pleine largeur, sinon le tableau défile alors que l'écran
            a de la place de reste de chaque côté. */
@@ -10157,8 +10159,14 @@ function renderGroupesResume() {
         el.innerHTML = familles.map(f => {
             const gs = t.groupes[f] || [];
             const sans = (t.sans_groupe || {})[f] || 0;
-            const puces = gs.map(g => `<span class="st-pill" style="background:#eef2ff;color:#3730a3"
-                title="${g.FTP} FTP · ${g.ALT} ALT">${esc(g.groupe)} <span style="font-weight:400">${g.FTP + g.ALT}</span></span>`).join(' ');
+            // Effectif et nombre de filles de chaque groupe ; une fille seule est signalée
+            const puces = gs.map(g => {
+                const seule = g.F === 1;
+                const detail = `${g.FTP} FTP · ${g.ALT} ALT · ${g.F} fille(s)${g.inconnu ? ` · ${g.inconnu} sexe non renseigné` : ''}${seule ? ' — une seule fille' : ''}`;
+                return `<span class="st-pill" style="background:${seule ? '#fef2f2' : '#eef2ff'};color:#3730a3" title="${detail}">${esc(g.groupe)}
+                    <span style="font-weight:400">${g.FTP + g.ALT}</span>
+                    <span style="font-weight:600;color:${seule ? '#b91c1c' : '#be185d'}">· ${g.F} F${g.inconnu ? `<span style="font-weight:400;color:#9ca3af"> +${g.inconnu}?</span>` : ''}</span></span>`;
+            }).join(' ');
             return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:3px 0;border-bottom:1px solid #f3f4f6">
                 <strong style="min-width:96px;font-size:.84rem">${esc(f)}</strong>
                 ${puces || '<span style="color:#9ca3af;font-size:.8rem">aucun groupe</span>'}
@@ -10238,13 +10246,20 @@ function renderGroupesCorpsTable(t) {
     if (_grpVue === 'groupes') {
         const f = _grpFamille;
         const parNom = lignes.slice().sort((a, b) => _grpCompare(a.nom, b.nom) || _grpCompare(a.prenom, b.prenom));
+        const fille = s => s.sexe === 'F' ? ' <span class="st-pill" style="background:#fce7f3;color:#9d174d" title="Fille">F</span>' : '';
         const carte = (titre, membres, couleur) => {
-            const nAlt = membres.filter(s => s.formation === 'ALT').length;
+            const actifs = membres.filter(s => s.actif);
+            const nAlt = actifs.filter(s => s.formation === 'ALT').length;
+            const nF = actifs.filter(s => s.sexe === 'F').length;
+            const nInconnu = actifs.filter(s => s.sexe !== 'F' && s.sexe !== 'M').length;
             return `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;flex:1 1 220px;max-width:340px">
                 <div style="font-weight:700;color:${couleur};margin-bottom:6px">${esc(titre)}
-                    <span style="font-weight:400;color:#6b7280;font-size:.8rem">· ${membres.filter(s => s.actif).length} étudiant(s)${!t.face && nAlt ? ` dont ${nAlt} ALT` : ''}</span></div>
+                    <span style="font-weight:400;color:#6b7280;font-size:.8rem">· ${actifs.length} étudiant(s)${!t.face && nAlt ? ` dont ${nAlt} ALT` : ''}
+                        · <span style="color:${nF === 1 ? '#b91c1c;font-weight:700' : '#be185d'}"
+                            title="${nF === 1 ? 'Une seule fille dans ce groupe' : 'Filles du groupe'}">${nF} fille(s)</span>${
+                        nInconnu ? ` <span style="color:#9ca3af" title="Sexe non renseigné">+${nInconnu} ?</span>` : ''}</span></div>
                 <ol style="margin:0;padding-left:22px;font-size:.84rem;line-height:1.55">${membres.length
-                    ? membres.map(s => `<li${s.actif ? '' : ' style="color:#9ca3af"'}>${esc(s.nom || '')} ${esc(s.prenom || '')}${alt(s)}${inactif(s)}</li>`).join('')
+                    ? membres.map(s => `<li${s.actif ? '' : ' style="color:#9ca3af"'}>${esc(s.nom || '')} ${esc(s.prenom || '')}${fille(s)}${alt(s)}${inactif(s)}</li>`).join('')
                     : '<li style="list-style:none;color:#9ca3af">—</li>'}</ol></div>`;
         };
         const cartes = (t.groupes[f] || []).map(g => carte(g.groupe, parNom.filter(s => s.groupes[f] === g.groupe), '#4f46e5'));
@@ -10633,6 +10648,12 @@ function renderGroupesAutoForm() {
                 ${nbTd}
                 <label style="cursor:pointer"><input type="checkbox" data-auto="filles" ${r.filles ? 'checked' : ''}
                     onchange="grpAutoModifie()"> Éviter qu'une fille soit seule dans un groupe</label>
+                <label style="cursor:pointer" title="Les étudiants d'un même groupe de covoiturage sont placés ensemble dans un TP8 que le découpage ne coupe pas : même TP8, même TP12 et même TD">
+                    <input type="checkbox" data-auto="covoiturage" ${r.covoiturage !== false ? 'checked' : ''}
+                    onchange="grpAutoModifie()"> Garder ensemble chaque covoiturage (même TD, TP12 et TP8)</label>
+                <span style="color:#6b7280;font-size:.78rem;margin-top:-4px">${(d.covoiturages || []).length
+                    ? `${d.covoiturages.length} covoiturage(s) : ${d.covoiturages.map(c => `${esc(c.groupe)} (${c.effectif}${c.faces.length > 1 ? ', FTP et ALT' : ''})`).join(', ')}`
+                    : `Aucun covoiturage pour le ${esc(_grpSem)} (famille « Covoiturage » vide).`}</span>
                 <span style="color:#6b7280;font-size:.78rem">${d.enregistrees
                     ? 'Réglages de la dernière répartition appliquée à ce semestre.'
                     : (d.service ? `Réglages proposés d'après le nombre de groupes du ${esc(d.service.semestre)} ${esc(d.service.annee)}.` : 'Réglages proposés par défaut.')}</span>
@@ -10717,6 +10738,9 @@ function renderGroupesAutoApercu(d) {
         <div style="font-size:.88rem;margin-bottom:8px"><strong>Aperçu</strong> — ${total
             ? `${ch.ajouts} affectation(s) ajoutée(s) · ${ch.modifications} modifiée(s) · ${ch.retraits} retirée(s). Rien n'est écrit avant « Appliquer ».`
             : 'la répartition actuelle est déjà celle-ci.'}</div>
+        ${d.covoiturage && d.covoiturage.total ? `<div style="font-size:.84rem;margin-bottom:8px;color:${
+            d.covoiturage.ensemble === d.covoiturage.total ? '#15803d' : '#b45309'}">Covoiturages :
+            <strong>${d.covoiturage.ensemble}</strong> sur ${d.covoiturage.total} avec le même TD, le même TP12 et le même TP8.</div>` : ''}
         ${d.alertes.length ? `<div class="st-note-warn" style="margin-bottom:10px"><ul style="margin:0;padding-left:18px">${
             d.alertes.map(a => `<li>${esc(a)}</li>`).join('')}</ul></div>` : ''}
         ${blocs}`;
