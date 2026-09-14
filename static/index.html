@@ -1371,6 +1371,12 @@
             <em>note globale</em>.
         </p>
         <p style="color:#6b7280;font-size:.9rem">
+            L'<strong>export CSV complet</strong> (<code>…_CLA_….csv</code>) est aussi accepté : il ajoute à la fiche
+            de l'étudiant un <strong>dossier de candidature</strong> — pays, département, ville du lycée, bac et
+            mention, années post-bac, scolarité antérieure, notes et appréciations des bulletins, bourse,
+            sportif de haut niveau, artiste confirmé.
+        </p>
+        <p style="color:#6b7280;font-size:.9rem">
             Cet import <strong>ne crée aucune fiche</strong> : il complète celles qui sont déjà dans
             l'effectif, rapprochées par <strong>nom et prénom</strong> (le classement est antérieur à
             l'inscription, il ne porte pas de n° Apogée). Les centaines de candidats non inscrits
@@ -1380,7 +1386,7 @@
         </p>
         <div class="form-group">
             <label>Fichier *</label>
-            <input type="file" id="ps-import-file" accept=".xlsm,.xlsx">
+            <input type="file" id="ps-import-file" accept=".xlsm,.xlsx,.csv">
         </div>
         <div id="ps-import-report"></div>
         <div class="form-actions">
@@ -4453,11 +4459,18 @@ function renderPromoEffectif() {
         return tag('→ départ', '#fee2e2', 'Quitte la formation — raison inconnue');
     };
 
+    // Pastille « à compléter » : seulement une fois le dossier de candidature importé
+    // pour une partie de l'année (sinon, sur une cohorte jamais importée, tout le
+    // monde la porterait), ou quand le filtre des étudiants sans dossier est actif.
+    const marquerSansDossier = _effSansDossier
+        || d.students.some(s => !s.hors_annee && s.dossier_candidature);
+
     // Une section par sous-cohorte (FTP / ALT)
     function section(formation) {
         const label = formation === 'FTP' ? 'FTP — formation initiale' : 'ALT — alternance';
         const sc = (d.sub_counts && d.sub_counts[formation]) || {};
-        const studs = d.students.filter(s => !s.hors_annee && (s.formation || 'FTP') === formation);
+        const studs = d.students.filter(s => !s.hors_annee && (s.formation || 'FTP') === formation
+                                             && !(_effSansDossier && s.dossier_candidature));
         const badges = d.statuses.map(st =>
             `<span style="display:inline-block;padding:3px 10px;border-radius:12px;margin-right:8px;font-size:.8rem;background:${_statutColor(st)}">${st} : <strong>${sc[st] || 0}</strong></span>`).join('') +
             `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:.8rem;background:#e0e7ff">Total : <strong>${sc.total || studs.length}</strong></span>`
@@ -4470,7 +4483,9 @@ function renderPromoEffectif() {
         </div>`;
         if (!studs.length) {
             return header + `<div style="margin-bottom:8px">${badges}</div>
-                <div class="empty" style="margin-bottom:6px">Aucun étudiant dans cette sous-cohorte pour l'année ${y}. Importez un effectif ou ajoutez un étudiant.</div>`;
+                <div class="empty" style="margin-bottom:6px">${_effSansDossier
+                    ? 'Tous les étudiants de cette sous-cohorte ont leur dossier de candidature importé.'
+                    : `Aucun étudiant dans cette sous-cohorte pour l'année ${y}. Importez un effectif ou ajoutez un étudiant.`}</div>`;
         }
         const rows = studs.map((s, i) => `<tr${s.cesure ? ' style="opacity:.55" title="En césure cette année — hors effectif, hors notes et hors jury"' : ''}>
             <td style="color:#9ca3af">${i + 1}</td>
@@ -4480,6 +4495,8 @@ function renderPromoEffectif() {
                     (s.origin.reason === 'CESURE' ? 'Reprise après césure — venu de la promotion ' : 'Redoublant — venu de la promotion ') + s.origin.promo)
                 : ((s.entrant && y > 1) ? tag('entrant', '#ddd6fe', 'Entré directement en année ' + y + ' (redoublant)') : '')}${s.manual === 'add' ? tag('ajouté', '#dbeafe', 'Ajouté manuellement à cette année') : ''}${devBadge(s)}${
                 s.cesure ? tag('césure', '#e0e7ff', 'En césure sur cette année — il reprendra cette même année dans la cohorte suivante') : ''}${
+                marquerSansDossier && !s.dossier_candidature ? tag('à compléter', '#fef3c7',
+                    "Aucun dossier de candidature importé (export CSV ParcourSup) : ses informations sont à compléter à la main sur sa fiche") : ''}${
                 s.mobility ? tag('MI ' + s.mobility.semester, '#cffafe',
                     'Mobilité internationale en ' + s.mobility.semester
                     + (s.mobility.etablissement ? ' — ' + s.mobility.etablissement : '')
@@ -4929,6 +4946,13 @@ async function changeAbandonSemaine(sid, semaine) {
     } catch (e) { toast('Erreur : ' + e.message, 'error'); loadEffectif(); }
 }
 
+// Filtre de l'effectif : seulement les étudiants sans dossier de candidature importé
+let _effSansDossier = false;
+function toggleEffSansDossier() {
+    _effSansDossier = !_effSansDossier;
+    renderPromoEffectif();
+}
+
 // Bandeau de tête : total des deux listes et nombre d'actifs, en un coup d'œil.
 // Le « total fiches » de la cohorte est rappelé à côté : il ne bouge pas quand on
 // retire quelqu'un d'une année (🗑 retire de l'effectif, il ne supprime pas la fiche).
@@ -4944,14 +4968,19 @@ function _effTotaux(d, y) {
         style="display:inline-flex;align-items:baseline;gap:6px;padding:4px 12px;border-radius:8px;background:${couleur}">
         <strong style="font-size:1.15rem;line-height:1">${val}</strong>
         <span style="font-size:.78rem;color:#4b5563">${esc(lbl)}</span></span>`;
-    // Couverture ParcourSup : combien d'inscrits ont leur dossier de candidature.
-    // Affichée tant qu'elle est incomplète — c'est le rappel qu'il reste un des
-    // deux classements (STI2D / hors STI2D) à importer.
+    // Couverture ParcourSup : combien d'inscrits n'ont pas de dossier de candidature
+    // importé (export CSV complet) — ceux dont les infos sont à compléter à la main.
+    // Un clic filtre les deux listes sur eux ; l'encart reste visible tant que le
+    // filtre est actif, pour pouvoir le relâcher.
     const dansAnnee = (d.students || []).filter(s => !s.hors_annee);
-    const avecPs = dansAnnee.filter(s => s.ps_classement != null || s.ps_numero).length;
-    const ps = (!dansAnnee.length || avecPs === dansAnnee.length) ? '' :
-        bloc(`sans dossier ParcourSup`, dansAnnee.length - avecPs, '#ede9fe',
-             'Inscrits dont le classement ParcourSup n\'a pas encore été importé');
+    const sansDossier = dansAnnee.filter(s => !s.dossier_candidature).length;
+    const ps = (!dansAnnee.length || (!sansDossier && !_effSansDossier)) ? '' :
+        `<span onclick="toggleEffSansDossier()" style="cursor:pointer;border-radius:8px;${_effSansDossier ? 'outline:2px solid #7c3aed' : ''}">`
+        + bloc(_effSansDossier ? 'sans dossier importé — ✕ tout afficher' : 'sans dossier importé — afficher',
+               sansDossier, '#ede9fe',
+               _effSansDossier ? 'Filtre actif : cliquer pour revoir tout l\'effectif'
+                   : 'Inscrits sans dossier de candidature importé (CSV ParcourSup) : cliquer pour ne voir qu\'eux, et savoir quelles fiches compléter')
+        + '</span>';
     return `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px">
         ${bloc(`inscrits en année ${y}`, total, '#eef2ff', 'FTP + ALT de l\'année affichée')}
         ${bloc('actifs', actifs, '#dcfce7', 'Hors RED, césure et abandon')}
@@ -5589,6 +5618,22 @@ function studentNotes(d) {
 // fenêtre ouverte depuis l'effectif et le sous-onglet « Informations » de l'onglet
 // Étudiants. Une seule fabrique, une seule façon d'enregistrer ; `large` dit
 // seulement qu'on a la place d'étaler les champs (pleine page plutôt que fenêtre).
+// Âge en années révolues à la date du jour : jj/mm/aaaa (aussi « - » ou « . ») ou
+// aaaa-mm-jj ; null si la date est vide ou illisible.
+function _ageDepuis(naissance) {
+    const t = String(naissance || '').trim();
+    let m = t.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})/), j, mo, a;
+    if (m) [j, mo, a] = [+m[1], +m[2], +m[3]];
+    else if ((m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) [a, mo, j] = [+m[1], +m[2], +m[3]];
+    else return null;
+    const n = new Date(a, mo - 1, j);
+    if (n.getMonth() !== mo - 1 || n.getDate() !== j) return null;     // 31/02 etc.
+    const auj = new Date();
+    let age = auj.getFullYear() - a;
+    if (auj.getMonth() < mo - 1 || (auj.getMonth() === mo - 1 && auj.getDate() < j)) age--;
+    return age >= 0 && age < 120 ? age : null;
+}
+
 function studentSections(d, opts = {}) {
     const s = d.student;
     const dis = state.role !== 'admin' ? ' disabled' : '';
@@ -5614,6 +5659,10 @@ function studentSections(d, opts = {}) {
             ${champ('Nom', 'nom')}${champ('Prénom', 'prenom')}
             ${champ('N° Apogée', 'numero', "Numéro Apogée de l'étudiant")}
             ${champ('Naissance', 'naissance', 'Date de naissance (jj/mm/aaaa)')}
+            <div class="form-group" style="margin:0">
+                <label style="font-size:.78rem" title="Âge aujourd'hui, calculé depuis la date de naissance">Âge</label>
+                <div style="padding:7px 0;font-size:.9rem">${_ageDepuis(s.naissance) == null
+                    ? '<span style="color:#9ca3af">—</span>' : _ageDepuis(s.naissance) + ' ans'}</div></div>
             ${liste('Sexe', 'sexe')}
             ${liste('Recrutement', 'recrutement', 'PS : ParcourSup · EC : eCandidat · ADIUT : candidats étrangers')}
             ${champ('Pays', 'pays', "Pays de la scolarité antérieure — FR par défaut pour un recrutement ParcourSup")}
@@ -5667,7 +5716,80 @@ function studentSections(d, opts = {}) {
         <div style="display:grid;grid-template-columns:repeat(${opts.large ? 4 : 2}, 1fr);gap:8px">
             ${(d.ps_columns || []).map(psChamp).join('')}</div>`;
 
-    return identite + parcours + ps;
+    return identite + parcours + ps + candidatureSection(d.candidature);
+}
+
+// Dossier de candidature détaillé, repris de l'export CSV complet de ParcourSup
+// (lecture seule : il se remplace en réimportant le fichier).
+function candidatureSection(c) {
+    if (!c) return '';
+    const vide = '<span style="color:#9ca3af">—</span>';
+    const v = x => (x === null || x === undefined || x === '') ? vide : esc(String(x));
+    const item = (label, val, title) => `<div title="${esc(title || '')}">
+        <div style="font-size:.72rem;color:#6b7280">${label}</div><div style="font-size:.86rem">${val}</div></div>`;
+    const o = c.origine || {}, b = c.bac || {}, bo = c.bourse || {}, ct = c.contact || {};
+    const joint = arr => arr.filter(Boolean).join(' · ');
+    const grille = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px">
+        ${item('Pays', v(o.pays))}
+        ${item('Département', o.departement ? esc(o.departement_code + ' — ' + o.departement) : vide, 'Déduit du code postal du candidat')}
+        ${o.ville_source === 'lycee'
+            ? item('Ville (lycée)', esc(o.ville) + (o.ville_departement ? ` <span style="color:#9ca3af;font-size:.74rem">(${esc(o.ville_departement)})</span>` : ''),
+                   "Commune de l'établissement d'origine le plus récent — cet export ne donne pas la ville du candidat")
+            : item('Ville', v(o.ville), 'Commune de résidence du candidat')}
+        ${item('Code postal', v(o.code_postal))}
+        ${item('E-mail', ct.email ? `<a href="mailto:${esc(ct.email)}" style="word-break:break-all">${esc(ct.email)}</a>` : vide)}
+        ${item('Téléphone', v(joint([ct.mobile, ct.fixe ? ct.fixe + ' (fixe)' : ''])))}
+        ${item('Bac', v(joint([b.diplome, b.serie, b.diplome_etranger])))}
+        ${item('Mention', v(b.mention))}
+        ${b.obtention ? item("Date d'obtention", v(b.obtention)) : ''}
+        ${item('Années post-bac', v(c.annees_post_bac), "Années entre le bac et l'entrée en BUT" + (c.rentree ? ` (rentrée ${c.rentree})` : ''))}
+        ${item('Boursier', bo.boursier ? esc(joint([bo.statut, bo.echelon ? 'échelon ' + bo.echelon : ''])) : 'Non', bo.certification)}
+        ${item('Sportif de haut niveau', c.shn ? '<strong>Oui</strong> — ' + v(joint([c.shn.discipline, c.shn.categorie])) : 'Non')}
+        ${item('Artiste confirmé', c.artiste ? '<strong>Oui</strong> — ' + v(joint([c.artiste.discipline, c.artiste.instrument])) : 'Non')}
+        ${c.avis_ce ? item('Avis du chef d\'établissement', v(c.avis_ce), 'Capacité à réussir (fiche Avenir)') : ''}
+    </div>`;
+    const detail = (titre, obj, labels) => obj ? `<details style="margin-top:8px">
+        <summary style="cursor:pointer;font-size:.84rem;font-weight:600">${titre}</summary>
+        <dl style="display:grid;grid-template-columns:max-content 1fr;gap:3px 12px;font-size:.82rem;margin:6px 0 0 14px">
+            ${labels.filter(([k]) => obj[k]).map(([k, l]) =>
+                `<dt style="color:#6b7280">${l}</dt><dd style="margin:0;white-space:pre-line">${esc(obj[k])}</dd>`).join('')}
+        </dl></details>` : '';
+    const details = detail('Sportif de haut niveau — détail', c.shn, [
+            ['discipline', 'Discipline'], ['federation', 'Fédération'], ['categorie', 'Catégorie'],
+            ['club', 'Club'], ['structure', 'Structure'], ['entrainement', 'Entraînement hebdo'],
+            ['performance', 'Performances'], ['programme', 'Programme'], ['etalement', 'Étalement de scolarité']])
+        + detail('Artiste confirmé — détail', c.artiste, [
+            ['discipline', 'Discipline'], ['instrument', 'Instrument'], ['annees_pratique', 'Années de pratique'],
+            ['groupe', 'Groupe'], ['ecole', 'École'], ['evenements', 'Événements'], ['prix', 'Prix / titres'],
+            ['entrainement', 'Pratique hebdo']]);
+    const th = 'style="text-align:left;font-size:.76rem;padding:4px 6px;background:#f3f4f6"';
+    const td = 'style="font-size:.8rem;padding:4px 6px;vertical-align:top;border-top:1px solid #e5e7eb"';
+    const thNote = 'style="text-align:center;font-size:.76rem;padding:4px 6px;background:#f3f4f6;width:48px"';
+    const tdNote = 'style="text-align:center;font-size:.8rem;padding:4px 6px;vertical-align:top;border-top:1px solid #e5e7eb"';
+    const petit = t => t ? `<div style="color:#6b7280;font-size:.74rem;white-space:pre-line">${esc(t)}</div>` : '';
+    const scol = (c.scolarite || []).map(e => `<tr>
+        <td ${td}>${esc(e.annee)}</td><td ${td}>${v(e.niveau)}</td>
+        <td ${td}>${v(joint([e.formation !== e.niveau ? e.formation : '', e.filiere, e.serie, e.specialite]))}${petit(e.section)}${petit(e.elements)}</td>
+        <td ${td}>${v(e.etablissement)}${petit(joint([e.commune, e.departement, e.pays && e.pays !== 'France' ? e.pays : '']))}</td></tr>`).join('');
+    const bulletins = (c.bulletins || []).map(bl => {
+        const sem = bl.periodes === 'Semestre', n = sem ? 2 : 3, ab = sem ? 'S' : 'T';
+        const lignes = bl.matieres.map(m => `<tr><td ${td}>${esc(m.matiere)}</td>
+            ${m.notes.slice(0, n).map(x => `<td ${tdNote}>${x == null ? vide : x}</td>`).join('')}
+            <td ${td}>${m.appreciations.slice(0, n).map((a, i) => a ? `<div><strong>${ab}${i + 1}</strong> : ${esc(a)}</div>` : '').join('') || vide}</td></tr>`).join('');
+        return `<div style="margin-top:10px;font-size:.84rem;font-weight:600">${v(bl.annee)}${bl.niveau ? ' — ' + esc(bl.niveau) : ''}${bl.serie ? ' · ' + esc(bl.serie) : ''}
+                <span style="font-weight:400;color:#6b7280">(${sem ? 'semestres' : 'trimestres'})</span></div>
+            <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+                <thead><tr><th ${th}>Matière</th>${Array.from({ length: n }, (_, i) => `<th ${thNote}>${ab}${i + 1}</th>`).join('')}<th ${th}>Appréciations</th></tr></thead>
+                <tbody>${lignes}</tbody></table></div>`;
+    }).join('');
+    return `<div class="section-title" style="margin-top:16px">Dossier de candidature
+            <span style="font-weight:400;color:#9ca3af;font-size:.82rem">— export ParcourSup${c.fichier ? ' « ' + esc(c.fichier) + ' »' : ''}${c.imported_at ? ', importé le ' + esc(String(c.imported_at).slice(0, 10)) : ''}</span></div>
+        ${grille}${details}
+        ${scol ? `<div style="margin-top:14px;font-weight:600;font-size:.88rem">Scolarité antérieure</div>
+            <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+                <thead><tr><th ${th}>Année</th><th ${th}>Niveau</th><th ${th}>Formation</th><th ${th}>Établissement</th></tr></thead>
+                <tbody>${scol}</tbody></table></div>` : ''}
+        ${bulletins ? `<div style="margin-top:14px;font-weight:600;font-size:.88rem">Bulletins — matières scientifiques et appréciations des enseignants</div>${bulletins}` : ''}`;
 }
 
 function renderStudentCard() {
@@ -5794,6 +5916,7 @@ async function submitParcoursupImport() {
                 <strong>${rep.updated || 0}</strong> fiche(s) complétée(s) sur les
                 <strong>${rep.fiches || 0}</strong> de la cohorte, à partir de
                 ${rep.candidats || 0} candidats classés.
+                ${rep.dossiers ? `<div style="margin-top:4px"><strong>${rep.dossiers}</strong> dossier(s) de candidature détaillé(s) ajouté(s) aux fiches (onglet Étudiants).</div>` : ''}
                 ${manque.length ? `<div style="margin-top:8px;color:#92400e">
                     <strong>${manque.length}</strong> étudiant(s) sans ligne dans ce classement —
                     ils figurent sans doute dans l'autre (STI2D / hors STI2D), ou leur nom y est

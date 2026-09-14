@@ -1262,6 +1262,7 @@ def _person_prune(db, sid):
     if sid and not db.execute('SELECT 1 FROM promotion_students WHERE person_id=?',
                               (sid,)).fetchone():
         db.execute('DELETE FROM students WHERE id=?', (sid,))
+        db.execute('DELETE FROM student_candidature WHERE person_id=?', (sid,))
 
 def _fiche_person(db, fid):
     """L'étudiant (registre) dont la fiche `fid` est une inscription, ou None."""
@@ -1328,6 +1329,16 @@ def _apply_promotions_migrations(db):
             db.execute('ALTER TABLE students ADD COLUMN %s %s' % (_f, _sql))
         except sqlite3.OperationalError:
             pass
+    # Dossier de candidature détaillé (export CSV complet de ParcourSup) : scolarité
+    # année par année, bulletins, bac, bourse, sportif / artiste. Trop riche et trop
+    # variable pour des colonnes : un document JSON par étudiant du registre.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS student_candidature (
+            person_id   INTEGER PRIMARY KEY,   -- students.id
+            data        TEXT NOT NULL,
+            fichier     TEXT,
+            imported_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )''')
     # Le diplôme et son état (préparé / obtenu) quittent le dossier : ils ne
     # disaient rien que la série du bac et l'écart au bac ne disent déjà.
     for _t in ('students', 'promotion_students'):
@@ -3918,6 +3929,241 @@ def _parse_parcoursup(path):
             rows.append(rec)
     return rows
 
+# ---- Dossier de candidature complet (export CSV ParcourSup « …_CLA_….csv ») ----
+# Un export bien plus riche que le classement .xlsx : ~1 500 colonnes, séparateur
+# « ; », en-têtes répétés d'un bloc de bulletins à l'autre (lecture par POSITION).
+_CAND_REQUIRED = ('Candidat - Nom', 'Candidat - Prénom', 'Classement')
+# Niveaux de collège : sans intérêt pour la scolarité antérieure d'un entrant en BUT
+_CAND_COLLEGE = ('sixieme', 'cinquieme', 'quatrieme', 'troisieme')
+
+_DEPARTEMENTS = dict(x.split(':', 1) for x in (
+    "01:Ain|02:Aisne|03:Allier|04:Alpes-de-Haute-Provence|05:Hautes-Alpes|06:Alpes-Maritimes|"
+    "07:Ardèche|08:Ardennes|09:Ariège|10:Aube|11:Aude|12:Aveyron|13:Bouches-du-Rhône|14:Calvados|"
+    "15:Cantal|16:Charente|17:Charente-Maritime|18:Cher|19:Corrèze|2A:Corse-du-Sud|2B:Haute-Corse|"
+    "21:Côte-d'Or|22:Côtes-d'Armor|23:Creuse|24:Dordogne|25:Doubs|26:Drôme|27:Eure|28:Eure-et-Loir|"
+    "29:Finistère|30:Gard|31:Haute-Garonne|32:Gers|33:Gironde|34:Hérault|35:Ille-et-Vilaine|36:Indre|"
+    "37:Indre-et-Loire|38:Isère|39:Jura|40:Landes|41:Loir-et-Cher|42:Loire|43:Haute-Loire|"
+    "44:Loire-Atlantique|45:Loiret|46:Lot|47:Lot-et-Garonne|48:Lozère|49:Maine-et-Loire|50:Manche|"
+    "51:Marne|52:Haute-Marne|53:Mayenne|54:Meurthe-et-Moselle|55:Meuse|56:Morbihan|57:Moselle|"
+    "58:Nièvre|59:Nord|60:Oise|61:Orne|62:Pas-de-Calais|63:Puy-de-Dôme|64:Pyrénées-Atlantiques|"
+    "65:Hautes-Pyrénées|66:Pyrénées-Orientales|67:Bas-Rhin|68:Haut-Rhin|69:Rhône|70:Haute-Saône|"
+    "71:Saône-et-Loire|72:Sarthe|73:Savoie|74:Haute-Savoie|75:Paris|76:Seine-Maritime|"
+    "77:Seine-et-Marne|78:Yvelines|79:Deux-Sèvres|80:Somme|81:Tarn|82:Tarn-et-Garonne|83:Var|"
+    "84:Vaucluse|85:Vendée|86:Vienne|87:Haute-Vienne|88:Vosges|89:Yonne|90:Territoire de Belfort|"
+    "91:Essonne|92:Hauts-de-Seine|93:Seine-Saint-Denis|94:Val-de-Marne|95:Val-d'Oise|971:Guadeloupe|"
+    "972:Martinique|973:Guyane|974:La Réunion|975:Saint-Pierre-et-Miquelon|976:Mayotte|"
+    "977:Saint-Barthélemy|978:Saint-Martin|986:Wallis-et-Futuna|987:Polynésie française|"
+    "988:Nouvelle-Calédonie").split('|'))
+
+def _departement_du_cp(cp, pays=None):
+    """(code, nom) du département d'un code postal français, sinon (None, None).
+    Corse : 200xx-201xx = 2A, 202xx et au-delà = 2B ; outre-mer sur trois chiffres.
+    Un code sur 4 chiffres a perdu son zéro de tête dans un tableur."""
+    cp = re.sub(r'\D', '', cp or '')
+    if len(cp) == 4:
+        cp = '0' + cp
+    if len(cp) != 5 or (pays and _profile_key(pays) != 'france'):
+        return None, None
+    if cp[:2] == '20':
+        code = '2A' if int(cp) < 20200 else '2B'
+    else:
+        code = cp[:3] if cp[:2] in ('97', '98') else cp[:2]
+    return (code, _DEPARTEMENTS[code]) if code in _DEPARTEMENTS else (None, None)
+
+def _cand_note(txt):
+    """« 13,50 » -> 13.5 ; vide ou illisible -> None."""
+    try:
+        return round(float(txt.replace(',', '.')), 2) if txt else None
+    except ValueError:
+        return None
+
+def _cand_tel(txt):
+    """Numéro de l'export (« 33612345678 ») rendu lisible : « 06 12 34 56 78 » pour un
+    numéro français, « +<indicatif>… » sinon ; vide -> None."""
+    d = re.sub(r'\D', '', txt or '')
+    if not d:
+        return None
+    if len(d) == 11 and d.startswith('33'):
+        d = '0' + d[2:]
+    if len(d) == 10 and d.startswith('0'):
+        return ' '.join(d[i:i + 2] for i in range(0, 10, 2))
+    return '+' + d
+
+def _cand_annees_post_bac(bac, scolarite, rentree):
+    """Années entre le bac et l'entrée en BUT (rentrée = année civile visée) :
+    0 pour un bac en préparation, sinon l'année d'obtention, sinon la dernière
+    année passée en terminale. None si rien ne permet de le dire."""
+    if 'preparation' in _profile_key(bac.get('diplome')):
+        return 0
+    m = re.search(r'(\d{4})', bac.get('obtention') or '')
+    if m:
+        return max(0, rentree - int(m.group(1)))
+    for e in scolarite:                     # de la plus récente à la plus ancienne
+        if _profile_key(e.get('niveau')) == 'terminale':
+            return max(0, rentree - int(e['annee'][:4]) - 1)
+    return None
+
+def _cand_cursus(scolarite, ecart):
+    """Code d'études antérieures (_STUDENT_CURSUS) déduit de l'année de candidature."""
+    if not ecart or not scolarite:
+        return None
+    e = scolarite[0]
+    txt = ' '.join(e.get(k) or '' for k in ('formation', 'filiere'))
+    for cle, code in (('CPGE', 'PREPA'), ('préparatoire', 'PREPA'), ('BTS', 'BTS'),
+                      ('Licence', 'LIC'), ('BUT', 'BUT')):
+        if cle in txt:
+            return code
+    return 'REP' if _profile_key(e.get('niveau')) == 'nonscolarise' else None
+
+def _parse_candidature_csv(path):
+    """Lit l'export CSV complet d'un classement ParcourSup et retourne
+    [{nom, prenom, ps_classement, ps_numero, ps_profil, dossier}], ou None si le
+    fichier n'est pas de ce format. `dossier` est ce que la fiche étudiant affiche :
+    origine, bac, années post-bac, scolarité, bulletins, bourse, sportif, artiste.
+    Les coordonnées de tiers (club, entraîneur, professeur, n° de licence) ne sont
+    volontairement pas reprises."""
+    import csv, io
+    raw = open(path, 'rb').read()
+    try:
+        txt = raw.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        txt = raw.decode('cp1252')
+    rows = list(csv.reader(io.StringIO(txt), delimiter=';'))
+    if not rows:
+        return None
+    head = [re.sub(r'\s+', ' ', h).strip() for h in rows[0]]
+    first = {}
+    for i, h in enumerate(head):
+        first.setdefault(h, i)
+    if not all(h in first for h in _CAND_REQUIRED):
+        return None
+    # Années de scolarité décrites (début d'année), de la plus récente à la plus ancienne
+    annees = sorted({int(m.group(1)) for h in head
+                     if (m := re.match(r'Niveau Etude - Libellé (\d{4})/\d{4}$', h))}, reverse=True)
+    rentree = annees[0] + 1 if annees else None
+    # Blocs de bulletins : chacun s'ouvre sur « Bulletins - Année Scolaire - Code »
+    # (0 = année de candidature, 1 = l'année d'avant…), suivi de la périodicité
+    # (2 = semestres) et de la série ; ses colonnes de notes répètent les mêmes noms.
+    starts = [i for i, h in enumerate(head) if h == 'Bulletins - Année Scolaire - Code']
+    blocs = []
+    for k, s in enumerate(starts):
+        end = starts[k + 1] if k + 1 < len(starts) else len(head)
+        mats = {}
+        for i in range(s, end):
+            m = re.match(r'(Moyenne du Candidat|Appréciation Professeur) - (.+) - Trimestre (\d)$', head[i])
+            if m:
+                slot = mats.setdefault(m.group(2), {}).setdefault(int(m.group(3)), [None, None])
+                slot[0 if m.group(1).startswith('Moyenne') else 1] = i
+        blocs.append((s, mats))
+
+    out = []
+    for r in rows[1:]:
+        at = lambda i: r[i].strip() if i is not None and i < len(r) else ''
+        cell = lambda name, y=None: at(first.get(name if y is None else f'{name} {y}/{y + 1}'))
+        nom, prenom = cell('Candidat - Nom'), cell('Candidat - Prénom')
+        if not (nom or prenom):
+            continue
+        scolarite = []
+        for y in annees:
+            e = {'niveau': cell('Niveau Etude - Libellé', y),
+                 'formation': cell('Type Formation - Libellé', y),
+                 'filiere': cell('Filiere (pour scolarité du supérieur)- Libellé', y)
+                            or cell('Formation - Libellé (Saisie manuelle)', y)
+                            or cell('Formation Domaine - Libellé', y),
+                 'serie': cell('Série de classe - Libellé', y),
+                 'specialite': cell('Spécialité / Mention - Libellé', y),
+                 'section': cell('Section linguistique ou sportive Scolarité - Libellé', y),
+                 'etablissement': cell('Nom Etablissement origine', y),
+                 'commune': cell('Commune Etablissement origine - Libellé', y),
+                 'departement': cell('Département Etablissement origine - Libellé', y),
+                 'pays': cell('Pays Etablissement origine - Libellé', y),
+                 'elements': cell('Eléments liés à la scolarité/activité', y)}
+            e = {k: v for k, v in e.items() if v}
+            if e.get('niveau') and _profile_key(e['niveau']) in _CAND_COLLEGE:
+                continue
+            if any(k in e for k in ('niveau', 'formation', 'etablissement')):
+                scolarite.append(dict(annee=f'{y}-{y + 1}', **e))
+        bulletins = []
+        for s, mats in blocs:
+            matieres = []
+            for matiere, slots in mats.items():
+                notes = [_cand_note(at((slots.get(t) or [None, None])[0])) for t in (1, 2, 3)]
+                apprs = [at((slots.get(t) or [None, None])[1]) for t in (1, 2, 3)]
+                if any(n is not None for n in notes) or any(apprs):
+                    matieres.append({'matiere': matiere, 'notes': notes, 'appreciations': apprs})
+            if not matieres:
+                continue
+            code = at(s)
+            annee = f'{annees[0] - int(code)}-{annees[0] - int(code) + 1}' \
+                if annees and code.isdigit() else None
+            niveau = next((e.get('niveau') for e in scolarite if e['annee'] == annee), None)
+            bulletins.append({'annee': annee, 'niveau': niveau, 'serie': at(s + 2),
+                              'periodes': 'Semestre' if at(s + 1) == '2' else 'Trimestre',
+                              'matieres': matieres})
+        bac = {k: v for k, v in (
+            ('diplome', cell('Type Diplôme - Libellé')), ('serie', cell('Série Diplôme - Libellé')),
+            ('mention', cell('Mention Obtenue - Libellé')),
+            ('obtention', cell("Mois et année d'obtention du bac")),
+            ('pays', cell("Pays d'obtention du diplôme - Libelle")),
+            ('diplome_etranger', cell('Diplôme Etranger - Libellé'))) if v}
+        ecart = _cand_annees_post_bac(bac, scolarite, rentree) if rentree else None
+        pays = cell('Coordonnées - Libellé pays')
+        cp = cell('Coordonnées - Code postal')
+        dep_code, dep = _departement_du_cp(cp, pays)
+        lycee = next((e for e in scolarite if e.get('commune')), {})
+        # Commune du candidat : présente dans l'export « toutes données candidats » ;
+        # à défaut (export réduit), celle de son lycée d'origine.
+        commune = cell('Coordonnées - Libellé commune')
+        shn = None
+        if cell('Identificateur du SHN') or cell('Discipline Sportive - Libellé'):
+            shn = {k: v for k, v in (
+                ('discipline', cell('Discipline Sportive - Libellé')),
+                ('federation', cell('Fédération Sportive - Libellé')),
+                ('categorie', cell('Catégorie Sportive - Libellé')),
+                ('club', cell('Club du SHN')), ('structure', cell('Structure du SHN')),
+                ('entrainement', cell('Nombre Heures Entrainement Hebdo Sportif')),
+                ('performance', cell('Performance Sportive')),
+                ('programme', cell('Programme Sportif')),
+                ('etalement', cell('Etalement de scolarité - SHN'))) if v}
+        artiste = None
+        if cell('Discipline Artistique'):
+            artiste = {k: v for k, v in (
+                ('discipline', cell('Discipline Artistique')), ('instrument', cell('Instrument')),
+                ('annees_pratique', cell("Nombre d'Années de Pratique")),
+                ('groupe', cell('Info Groupe')), ('ecole', cell('Info Ecole')),
+                ('evenements', cell('Info Evénements')), ('prix', cell('Info Prix Titres')),
+                ('entrainement', cell('Nombre Heures Entrainement Hebdo Artiste'))) if v}
+        classement = cell('Classement')
+        out.append({
+            'nom': nom, 'prenom': prenom,
+            'ps_classement': int(classement) if classement.isdigit() else None,
+            'ps_numero': cell('Candidat - Code') or None,
+            'ps_profil': cell('Profil Candidat - Libellé') or None,
+            'naissance': cell('Date Naissance') or None,
+            'sexe': _norm_sexe(cell('Sexe')) or _norm_sexe(cell('Civilité')),
+            'pays_scolarite': (scolarite[0].get('pays') if scolarite else None) or bac.get('pays'),
+            'cursus': _cand_cursus(scolarite, ecart),
+            'dossier': {
+                'rentree': rentree, 'groupe': cell('Groupe candidat - Code'),
+                'classement': classement, 'profil': cell('Profil Candidat - Libellé'),
+                'origine': {'pays': pays, 'code_postal': cp, 'departement_code': dep_code,
+                            'departement': dep, 'ville': commune or lycee.get('commune'),
+                            'ville_source': 'candidat' if commune else ('lycee' if lycee else None),
+                            'ville_departement': None if commune else lycee.get('departement')},
+                'contact': {k: v for k, v in (
+                    ('email', cell('Coordonnées - Adresse mail')),
+                    ('mobile', _cand_tel(cell('Coordonnées - Téléphone mobile'))),
+                    ('fixe', _cand_tel(cell('Coordonnées - Téléphone fixe')))) if v},
+                'bac': bac, 'annees_post_bac': ecart,
+                'bourse': {'boursier': cell('Candidat boursier - Code') not in ('', '0'),
+                           'statut': cell('Candidat boursier - Libellé'),
+                           'echelon': cell('Echelon de bourse'),
+                           'certification': cell('Certification statut de boursier - Libellé')},
+                'shn': shn, 'artiste': artiste,
+                'avis_ce': cell('Avis CE sur la capacité à réussir - Libellé'),
+                'scolarite': scolarite, 'bulletins': bulletins}})
+    return out
+
 def _ps_key(nom, prenom):
     """Clé de rapprochement d'un candidat : nom + prénom, casse et accents ignorés.
     Le classement ne porte pas de n° Apogée (il est antérieur à l'inscription),
@@ -4242,6 +4488,7 @@ def delete_promotion(pid):
     # ceux qui sont inscrits ailleurs y restent, avec leur dossier.
     db.execute('DELETE FROM students WHERE id NOT IN '
                '(SELECT person_id FROM promotion_students WHERE person_id IS NOT NULL)')
+    db.execute('DELETE FROM student_candidature WHERE person_id NOT IN (SELECT id FROM students)')
     db.commit()
     # Les années universitaires ne sont PAS supprimées (partagées entre cohortes).
     return jsonify({'deleted': True})
@@ -4480,7 +4727,11 @@ def _student_payload(pdb, person_id):
         return None
     d = dict(row)
     d['ps_court'] = {f: _ps_court(f, d.get(f)) for f in _PS_FIELDS}
+    cand = pdb.execute('SELECT data, fichier, imported_at FROM student_candidature WHERE person_id=?',
+                       (person_id,)).fetchone()
     return {'student': d, 'parcours': _student_parcours(pdb, person_id),
+            'candidature': dict(json.loads(cand['data']), fichier=cand['fichier'],
+                                imported_at=cand['imported_at']) if cand else None,
             'profile_options': {k: list(v) for k, v in _STUDENT_PROFILE.items()},
             'profile_labels': _profile_labels_all(),
             'ps_columns': [{'field': f, 'label': lbl, 'title': t, 'type': sql}
@@ -4802,6 +5053,9 @@ def _year_effectif_payload(pdb, pid, year):
     # l'année jugée, et repris comme motif de sortie sur les années suivantes.
     devenirs = _devenir_map(pdb, pid)
     dernier_devenir = _devenir_last(pdb, pid)
+    # Étudiants dont le dossier de candidature complet (CSV ParcourSup) est importé :
+    # les autres ont leurs informations à compléter à la main.
+    avec_dossier = {r['person_id'] for r in pdb.execute('SELECT person_id FROM student_candidature')}
     students = []
     for r in pdb.execute('''SELECT s.id, s.person_id, s.statut,
                                    s.abandon_semaine, s.abandon_annee,
@@ -4817,6 +5071,7 @@ def _year_effectif_payload(pdb, pid, year):
         d['cesure'] = r['id'] in cesure_ids
         d['origin'] = origins.get(r['id'])
         d['nb_notes'] = nb_notes.get(r['id'], 0)
+        d['dossier_candidature'] = r['person_id'] in avec_dossier
         # Dossier ParcourSup abrégé pour l'affichage ; la valeur complète reste
         # dans le champ d'origine, que le tableau donne en infobulle.
         d['ps_court'] = {f: _ps_court(f, d.get(f)) for f in _PS_FIELDS}
@@ -4865,9 +5120,10 @@ def _year_effectif_payload(pdb, pid, year):
             # Colonnes du groupe « Scolarité antérieure », dans l'ordre où le
             # tableau les rend — la liste et le mode de saisie de chacune viennent
             # d'ici, le navigateur n'a pas à les répéter.
+            # La note ParcourSup n'est plus affichée à l'écran (l'export Excel la garde).
             'scolarite_columns': [{'field': f, 'label': lbl, 'kind': k,
                                    'title': t or _ps_title(f)}
-                                  for f, lbl, k, t in _SCOLARITE_COLUMNS]}
+                                  for f, lbl, k, t in _SCOLARITE_COLUMNS if f != 'ps_note']}
 
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>', methods=['GET'])
 def get_year_effectif(pid, year):
@@ -5276,20 +5532,25 @@ def import_year_parcoursup(pid, year):
     if not f or not f.filename:
         return error_response('Aucun fichier reçu', 400)
     ext = os.path.splitext(f.filename)[1].lower()
-    if ext not in _ALLOWED_GRADE_EXT:
-        return error_response('Type de fichier non autorisé (.xlsm/.xlsx)', 400)
+    if ext not in _ALLOWED_GRADE_EXT | {'.csv'}:
+        return error_response('Type de fichier non autorisé (.xlsx/.xlsm, ou .csv complet)', 400)
     if request.content_length and request.content_length > _MAX_GRADE_FILE:
         return error_response('Fichier trop volumineux (max 15 Mo)', 400)
     import tempfile
     tmp = os.path.join(tempfile.gettempdir(), secure_filename(f.filename) or ('ps' + ext))
     f.save(tmp)
+    # Le CSV complet apporte en plus le dossier de candidature détaillé (student_candidature)
+    csv_complet = ext == '.csv'
     try:
-        candidats = _parse_parcoursup(tmp)
+        candidats = _parse_candidature_csv(tmp) if csv_complet else _parse_parcoursup(tmp)
     except Exception as e:
         return error_response(f'Lecture impossible : {e}', 400)
     finally:
         try: os.remove(tmp)
         except OSError: pass
+    if csv_complet and candidats is None:
+        return error_response("Ce CSV n'est pas un export ParcourSup complet (colonnes « Candidat - Nom », "
+                              "« Candidat - Prénom » et « Classement » attendues, séparateur « ; »)", 400)
     if not candidats:
         return error_response("Aucun candidat détecté : ce fichier ne ressemble pas à un "
                               "classement ParcourSup (colonnes Nom, Prénom, Classement…)", 400)
@@ -5304,9 +5565,9 @@ def import_year_parcoursup(pid, year):
             par_nom[k] = c
 
     fiches = [dict(r) for r in db.execute(
-        'SELECT s.person_id, e.nom, e.prenom, e.recrutement, e.pays, e.bac_ecart, e.cursus '
+        'SELECT s.person_id, e.nom, e.prenom, e.naissance, e.sexe, e.recrutement, e.pays, e.bac_ecart, e.cursus '
         'FROM promotion_students s %s WHERE s.promotion_id=?' % _FICHE_JOIN, (pid,))]
-    matched = updated = 0
+    matched = updated = dossiers = 0
     sans_correspondance = []
     for fiche in fiches:
         c = par_nom.get(_ps_key(fiche['nom'], fiche['prenom']))
@@ -5314,6 +5575,28 @@ def import_year_parcoursup(pid, year):
             sans_correspondance.append(f"{fiche['nom'] or ''} {fiche['prenom'] or ''}".strip())
             continue
         matched += 1
+        if csv_complet:
+            db.execute('''INSERT INTO student_candidature(person_id, data, fichier, imported_at)
+                          VALUES(?,?,?,CURRENT_TIMESTAMP)
+                          ON CONFLICT(person_id) DO UPDATE SET data=excluded.data,
+                              fichier=excluded.fichier, imported_at=CURRENT_TIMESTAMP''',
+                       (fiche['person_id'], json.dumps(c['dossier'], ensure_ascii=False), f.filename))
+            dossiers += 1
+            # Cases vides de la fiche : années post-bac, études antérieures, pays
+            d = c['dossier']
+            pays = c.get('pays_scolarite')
+            complement = {'bac_ecart': d.get('annees_post_bac'), 'cursus': c.get('cursus'),
+                          'recrutement': 'PS', 'naissance': c.get('naissance'), 'sexe': c.get('sexe'),
+                          'pays': ('FR' if _profile_key(pays) == 'france' else pays) if pays else None}
+            if not d.get('annees_post_bac'):
+                complement['cursus'] = None
+            vals = {k: v for k, v in complement.items()
+                    if v is not None and fiche[k] in (None, '')}
+            vals.update({fld: c[fld] for fld in ('ps_classement', 'ps_numero', 'ps_profil')
+                         if c.get(fld) is not None})
+            _person_set(db, fiche['person_id'], vals)
+            updated += 1
+            continue
         # La série du classement alimente aussi `bac` : les statistiques par série
         # de bac continuent d'être alimentées alors que la colonne BAC a quitté
         # l'écran. Une série illisible tombe dans « Autre » (cf. _norm_bac).
@@ -5344,7 +5627,7 @@ def import_year_parcoursup(pid, year):
            promo=pid, year=year, candidats=len(par_nom), matched=matched, updated=updated)
     payload = _year_effectif_payload(db, pid, year)
     payload['ps_report'] = {'candidats': len(par_nom), 'matched': matched,
-                            'updated': updated, 'fiches': len(fiches),
+                            'updated': updated, 'fiches': len(fiches), 'dossiers': dossiers,
                             'sans_correspondance': sorted(sans_correspondance)}
     return jsonify(payload)
 
