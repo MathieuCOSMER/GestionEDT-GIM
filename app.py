@@ -1339,6 +1339,17 @@ def _apply_promotions_migrations(db):
             fichier     TEXT,
             imported_at TEXT DEFAULT CURRENT_TIMESTAMP
         )''')
+    # Répartition des étudiants dans les groupes (Promotions › Groupes) : pour une
+    # inscription et une année d'étude, le groupe de chaque famille (TD, TP12, TP8,
+    # TD SAE, covoiturage…). Supprimer la fiche supprime ses groupes.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS student_groupes (
+            student_id INTEGER NOT NULL REFERENCES promotion_students(id) ON DELETE CASCADE,
+            year       INTEGER NOT NULL,           -- année d'étude (1..3)
+            famille    TEXT NOT NULL,
+            groupe     TEXT NOT NULL,
+            PRIMARY KEY (student_id, year, famille)
+        )''')
     # Le diplôme et son état (préparé / obtenu) quittent le dossier : ils ne
     # disaient rien que la série du bac et l'écart au bac ne disent déjà.
     for _t in ('students', 'promotion_students'):
@@ -5637,6 +5648,350 @@ def import_year_parcoursup(pid, year):
                             'updated': updated, 'fiches': len(fiches), 'dossiers': dossiers,
                             'sans_correspondance': sorted(sans_correspondance)}
     return jsonify(payload)
+
+# ===== GROUPES : répartition des étudiants (onglet Promotions › Groupes) =====
+# Pour une année d'étude, chaque étudiant appartient à un groupe par FAMILLE : TD, TP12
+# et TP8 (les groupes du service), et toute autre famille dont la formation a besoin
+# (TD SAE, TP12 SAE, covoiturage…). Celles de base sont toujours proposées, les autres
+# naissent d'un import ou d'une saisie. L'admin importe et corrige ; les enseignants
+# autorisés consultent et téléchargent. Une répartition automatique pourra, plus tard,
+# écrire dans la même table.
+_GROUPE_FAMILLES_BASE = ('TD', 'TD SAE', 'TP12', 'TP12 SAE', 'TP8')
+# Colonnes d'une liste importée qui décrivent l'étudiant, et non un groupe
+_GROUPE_COLONNES_ETUDIANT = {'nom', 'prenom', 'cohorte', 'formation', 'souscohorte', 'abandon',
+                             'statut', 'numero', 'netudiant', 'numeroetudiant', 'codeetudiant',
+                             'apogee', 'numeroapogee', 'naissance', 'datedenaissance', 'sexe',
+                             'mail', 'email', 'telephone'}
+_GROUPE_COLONNES_NUMERO = ('numero', 'netudiant', 'numeroetudiant', 'codeetudiant', 'apogee', 'numeroapogee')
+# Case de groupe : un code suivi d'un numéro (TD_1, TP12_3, TP12SAE_4, Covoit 2)
+_GROUPE_VALEUR = re.compile(r'^[A-Za-zÀ-ÿ][\wÀ-ÿ ]*?[_ -]?\d+$')
+
+def _groupe_famille(txt):
+    """Nom d'une famille à partir d'un en-tête : « TP12_SAE » -> « TP12 SAE », «  TP12 » -> « TP12 »."""
+    return re.sub(r'\s+', ' ', str(txt or '').replace('_', ' ')).strip()[:40]
+
+def _groupe_tri(nom):
+    """Tri naturel des groupes : TP12_2 avant TP12_10."""
+    return [int(x) if x.isdigit() else x.lower() for x in re.split(r'(\d+)', nom or '')]
+
+def _groupes_payload(pdb, pid, year):
+    """Répartition d'une année : étudiants de l'effectif de l'année (les abandons et
+    césures restent listés, marqués inactifs), familles, et groupes de chaque famille
+    avec leurs effectifs FTP / ALT (étudiants actifs seulement)."""
+    eff = _year_effectif_payload(pdb, pid, year)
+    if not eff:
+        return None
+    affect = {}
+    for r in pdb.execute('''SELECT g.student_id, g.famille, g.groupe FROM student_groupes g
+                            JOIN promotion_students s ON s.id = g.student_id
+                            WHERE s.promotion_id=? AND g.year=?''', (pid, year)):
+        affect.setdefault(r['student_id'], {})[r['famille']] = r['groupe']
+    familles = list(_GROUPE_FAMILLES_BASE)
+    for gs in affect.values():
+        for f in sorted(gs):
+            if f not in familles:
+                familles.append(f)
+    students = [{'id': s['id'], 'person_id': s.get('person_id'), 'numero': s.get('numero'),
+                 'nom': s.get('nom'), 'prenom': s.get('prenom'),
+                 'formation': _face(s.get('formation')), 'statut': s.get('statut'),
+                 'actif': s.get('statut') not in ('Abandon', 'Césure') and not s.get('cesure'),
+                 'groupes': affect.get(s['id'], {})}
+                for s in eff['students'] if not s.get('hors_annee')]
+    groupes = {}
+    for f in familles:
+        compte = {}
+        for st in students:
+            g = st['groupes'].get(f)
+            if g:
+                c = compte.setdefault(g, {'FTP': 0, 'ALT': 0})
+                if st['actif']:
+                    c[st['formation']] += 1
+        groupes[f] = [dict(groupe=g, **compte[g]) for g in sorted(compte, key=_groupe_tri)]
+    return {'year': year, 'promotion': eff['promotion'].get('name'), 'familles': familles,
+            'groupes': groupes, 'students': students,
+            'sans_groupe': {f: sum(1 for st in students if st['actif'] and not st['groupes'].get(f))
+                            for f in familles}}
+
+def _groupes_promo_check(pdb, pid, year):
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    return None
+
+@app.route('/api/promotions/<int:pid>/groupes/<int:year>', methods=['GET'])
+def get_promotion_groupes(pid, year):
+    err = _require_promo_read()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    err = _groupes_promo_check(pdb, pid, year)
+    if err:
+        return err
+    return jsonify(_groupes_payload(pdb, pid, year))
+
+@app.route('/api/promotions/<int:pid>/groupes/<int:year>', methods=['PUT'])
+def set_promotion_groupe(pid, year):
+    """Place un étudiant dans un groupe d'une famille, ou l'en retire (groupe vide) :
+    {student_id, famille, groupe}. Réservé à l'admin."""
+    err = _require_admin()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    err = _groupes_promo_check(pdb, pid, year)
+    if err:
+        return err
+    data = request.get_json() or {}
+    famille = _groupe_famille(data.get('famille'))
+    groupe = str(data.get('groupe') or '').strip()[:40]
+    try:
+        sid = int(data.get('student_id'))
+    except (TypeError, ValueError):
+        return error_response('Étudiant invalide', 400)
+    if not famille:
+        return error_response('Famille de groupes manquante', 400)
+    if not pdb.execute('SELECT 1 FROM promotion_students WHERE id=? AND promotion_id=?', (sid, pid)).fetchone():
+        return error_response('Étudiant introuvable dans cette promotion', 404)
+    if groupe:
+        pdb.execute('''INSERT INTO student_groupes(student_id, year, famille, groupe) VALUES(?,?,?,?)
+                       ON CONFLICT(student_id, year, famille) DO UPDATE SET groupe=excluded.groupe''',
+                    (sid, year, famille, groupe))
+    else:
+        pdb.execute('DELETE FROM student_groupes WHERE student_id=? AND year=? AND famille=?',
+                    (sid, year, famille))
+    pdb.commit()
+    _audit('GROUPE_SET', ip=_client_ip(), user=session.get('user'), promo=pid, year=year,
+           student=sid, famille=famille, groupe=groupe)
+    return jsonify(_groupes_payload(pdb, pid, year))
+
+@app.route('/api/promotions/<int:pid>/groupes/<int:year>/famille', methods=['DELETE'])
+def delete_promotion_groupe_famille(pid, year):
+    """Vide une famille de groupes pour l'année (tous les étudiants en sont retirés). Admin."""
+    err = _require_admin()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    err = _groupes_promo_check(pdb, pid, year)
+    if err:
+        return err
+    famille = _groupe_famille(request.args.get('famille'))
+    pdb.execute('''DELETE FROM student_groupes WHERE year=? AND famille=? AND student_id IN
+                   (SELECT id FROM promotion_students WHERE promotion_id=?)''', (year, famille, pid))
+    pdb.commit()
+    _audit('GROUPE_FAMILLE_DELETE', ip=_client_ip(), user=session.get('user'), promo=pid,
+           year=year, famille=famille)
+    return jsonify(_groupes_payload(pdb, pid, year))
+
+def _parse_groupes_xlsx(path):
+    """Liste de groupes : la feuille qui porte Nom, Prénom et le plus de colonnes de
+    groupes — une liste « maître » l'emporte ainsi sur ses vues par groupe (qui répètent
+    Nom / Prénom en blocs : seul le premier bloc est lu). Une colonne est une famille de
+    groupes quand 80 % de ses cases ressemblent à un code de groupe (TD_1, TP12_3…).
+    Renvoie (feuille, familles, lignes) ou None — lignes : [{ligne, nom, prenom,
+    numero, cohorte, groupes: {famille: groupe}}]."""
+    wb = _load_workbook_lenient(path, data_only=True)
+    meilleur = None
+    for ws in wb.worksheets:
+        for hr in range(1, 16):
+            entetes = {}
+            for c in range(1, ws.max_column + 1):
+                k = _profile_key(ws.cell(hr, c).value)
+                if not k:
+                    continue
+                if k == 'nom' and 'nom' in entetes.values():
+                    break
+                entetes[c] = k
+            col = {k: c for c, k in entetes.items()}
+            if 'nom' not in col or 'prenom' not in col:
+                continue
+            lignes = [r for r in range(hr + 1, ws.max_row + 1)
+                      if _cell_txt(ws.cell(r, col['nom']).value) or _cell_txt(ws.cell(r, col['prenom']).value)]
+            familles = {}
+            for c, k in entetes.items():
+                if k in _GROUPE_COLONNES_ETUDIANT:
+                    continue
+                vals = [_cell_txt(ws.cell(r, c).value) for r in lignes]
+                vals = [v for v in vals if v and not v.startswith('=')]
+                if vals and sum(1 for v in vals if _GROUPE_VALEUR.match(v)) >= 0.8 * len(vals):
+                    familles[c] = _groupe_famille(ws.cell(hr, c).value)
+            if lignes and familles:
+                score = (len(familles), len(lignes))
+                if meilleur is None or score > meilleur[0]:
+                    num = next((col[k] for k in _GROUPE_COLONNES_NUMERO if k in col), None)
+                    coh = next((col[k] for k in ('cohorte', 'formation', 'souscohorte') if k in col), None)
+                    meilleur = (score, ws, col, num, coh, familles, lignes)
+            break          # ligne d'en-têtes de cette feuille trouvée
+    if meilleur is None:
+        return None
+    _, ws, col, num, coh, familles, lignes = meilleur
+    ab = col.get('abandon')      # colonne « Abandon » (x) : comparée au statut de l'effectif
+    out = []
+    for r in lignes:
+        groupes = {}
+        for c, f in familles.items():
+            v = _cell_txt(ws.cell(r, c).value)
+            groupes[f] = '' if v.startswith('=') else v[:40]
+        out.append({'ligne': r, 'nom': _cell_txt(ws.cell(r, col['nom']).value),
+                    'prenom': _cell_txt(ws.cell(r, col['prenom']).value),
+                    'numero': _saisie_num_txt(ws.cell(r, num).value) if num else '',
+                    'cohorte': _cell_txt(ws.cell(r, coh).value).upper() if coh else '',
+                    'abandon': bool(_cell_txt(ws.cell(r, ab).value)) if ab else None,
+                    'groupes': groupes})
+    return ws.title, list(dict.fromkeys(familles.values())), out
+
+@app.route('/api/promotions/<int:pid>/groupes/<int:year>/import', methods=['POST'])
+def import_promotion_groupes(pid, year):
+    """Import d'une liste de groupes (.xlsx). Rapprochement par n° étudiant s'il y en a
+    un, sinon nom + prénom, avec l'effectif de l'année. Sans `apply=1`, rien n'est écrit :
+    le rapport dit ce qui changerait. Pour chaque étudiant retrouvé, les familles du
+    fichier remplacent ses groupes de ces familles (une case vide l'en retire) ; les
+    étudiants absents du fichier et les autres familles ne bougent pas."""
+    err = _require_admin()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    err = _groupes_promo_check(pdb, pid, year)
+    if err:
+        return err
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return error_response('Aucun fichier reçu', 400)
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in _ALLOWED_GRADE_EXT:
+        return error_response('Type de fichier non autorisé (.xlsx/.xlsm)', 400)
+    if request.content_length and request.content_length > _MAX_GRADE_FILE:
+        return error_response('Fichier trop volumineux (max 15 Mo)', 400)
+    import tempfile
+    fd, tmp = tempfile.mkstemp(suffix=ext)
+    os.close(fd)
+    f.save(tmp)
+    try:
+        lu = _parse_groupes_xlsx(tmp)
+    except Exception as e:
+        return error_response(f'Lecture impossible : {e}', 400)
+    finally:
+        try: os.remove(tmp)
+        except OSError: pass
+    if lu is None:
+        return error_response("Aucune liste de groupes reconnue : il faut une feuille avec les colonnes "
+                              "Nom, Prénom et au moins une colonne de groupes (TD_1, TP12_3…)", 400)
+    feuille, familles, lignes = lu
+    payload = _groupes_payload(pdb, pid, year)
+    par_nom, par_num = {}, {}
+    for st in payload['students']:
+        par_nom.setdefault(_ps_key(st['nom'], st['prenom']), st)
+        if st.get('numero'):
+            par_num.setdefault(_saisie_num_txt(st['numero']), st)
+    vus, non_retrouves, cohorte_diff, ecritures = set(), [], 0, []
+    abandon_discordant = []      # le fichier et l'effectif ne disent pas la même chose
+    changements = {'ajouts': 0, 'modifications': 0, 'retraits': 0}
+    for l in lignes:
+        st = (par_num.get(l['numero']) if l['numero'] else None) or par_nom.get(_ps_key(l['nom'], l['prenom']))
+        if st is None:
+            non_retrouves.append(f"ligne {l['ligne']} : {l['nom']} {l['prenom']}".strip())
+            continue
+        if st['id'] in vus:
+            continue           # doublon dans le fichier : la première ligne fait foi
+        vus.add(st['id'])
+        if l['cohorte'] in _SUBCOHORTS and l['cohorte'] != st['formation']:
+            cohorte_diff += 1
+        if l.get('abandon') is not None:
+            qui = f"{st['nom'] or ''} {st['prenom'] or ''}".strip()
+            if l['abandon'] and st['actif']:
+                abandon_discordant.append(qui + " (abandon dans le fichier, actif dans l'effectif)")
+            elif not l['abandon'] and st['statut'] == 'Abandon':
+                abandon_discordant.append(qui + " (abandon dans l'effectif, pas dans le fichier)")
+        for fam, g in l['groupes'].items():
+            avant = st['groupes'].get(fam) or ''
+            if g == avant:
+                continue
+            changements['ajouts' if not avant else ('retraits' if not g else 'modifications')] += 1
+            ecritures.append((st['id'], fam, g))
+    appliquer = request.form.get('apply') == '1'
+    rapport = {'feuille': feuille, 'familles': familles, 'lignes': len(lignes),
+               'effectif': len(payload['students']), 'retrouves': len(vus),
+               'non_retrouves': non_retrouves, 'cohorte_differente': cohorte_diff,
+               'abandon_discordant': abandon_discordant,
+               'sans_ligne': [f"{st['nom'] or ''} {st['prenom'] or ''}".strip()
+                              for st in payload['students'] if st['actif'] and st['id'] not in vus],
+               'changements': changements}
+    if appliquer:
+        for sid, fam, g in ecritures:
+            if g:
+                pdb.execute('''INSERT INTO student_groupes(student_id, year, famille, groupe) VALUES(?,?,?,?)
+                               ON CONFLICT(student_id, year, famille) DO UPDATE SET groupe=excluded.groupe''',
+                            (sid, year, fam, g))
+            else:
+                pdb.execute('DELETE FROM student_groupes WHERE student_id=? AND year=? AND famille=?',
+                            (sid, year, fam))
+        pdb.commit()
+        _audit('GROUPES_IMPORT', ip=_client_ip(), user=session.get('user'), promo=pid, year=year,
+               fichier=f.filename, retrouves=len(vus), **changements)
+        payload = _groupes_payload(pdb, pid, year)
+    return jsonify({'rapport': rapport, 'applique': appliquer,
+                    'repartition': payload if appliquer else None})
+
+@app.route('/api/promotions/<int:pid>/groupes/<int:year>/export', methods=['GET'])
+def export_promotion_groupes(pid, year):
+    """Répartition au format Excel : la liste complète (une colonne par famille), puis une
+    feuille par famille où les groupes sont côte à côte. Ouvert aux enseignants autorisés."""
+    err = _require_promo_read()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    err = _groupes_promo_check(pdb, pid, year)
+    if err:
+        return err
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    p = _groupes_payload(pdb, pid, year)
+    bold, fond = Font(bold=True), PatternFill('solid', fgColor='EEF2FF')
+    ordre = lambda st: ((st['nom'] or '').lower(), (st['prenom'] or '').lower())
+    familles = [f for f in p['familles'] if p['groupes'].get(f)]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Répartition'
+    ws.cell(1, 1, f"Groupes — promotion {p['promotion']} — année {year}").font = Font(bold=True, size=12)
+    entetes = ['Nom', 'Prénom', 'Cohorte'] + familles + ['Statut']
+    for c, h in enumerate(entetes, 1):
+        cell = ws.cell(3, c, h)
+        cell.font, cell.fill = bold, fond
+    lignes = sorted(p['students'], key=lambda st: (not st['actif'],) + ordre(st))
+    for r, st in enumerate(lignes, 4):
+        vals = ([st['nom'], st['prenom'], st['formation']]
+                + [st['groupes'].get(f, '') for f in familles]
+                + ['' if st['actif'] else st['statut']])
+        for c, v in enumerate(vals, 1):
+            ws.cell(r, c, v)
+    for c, w in enumerate([22, 18, 9] + [12] * len(familles) + [10], 1):
+        ws.column_dimensions[get_column_letter(c)].width = w
+    ws.freeze_panes = 'D4'
+    ws.auto_filter.ref = f"A3:{get_column_letter(len(entetes))}{max(3, len(lignes) + 3)}"
+    for f in familles:
+        wsf = wb.create_sheet(re.sub(r'[\[\]:*?/\\]', ' ', f)[:31] or 'Groupes')
+        for i, g in enumerate(p['groupes'][f]):
+            c0 = 1 + i * 3
+            membres = sorted((st for st in p['students'] if st['actif'] and st['groupes'].get(f) == g['groupe']),
+                             key=ordre)
+            t = wsf.cell(1, c0, f"{g['groupe']} ({len(membres)})")
+            t.font, t.fill = bold, fond
+            wsf.cell(2, c0, 'Nom').font = bold
+            wsf.cell(2, c0 + 1, 'Prénom').font = bold
+            for j, st in enumerate(membres, 3):
+                wsf.cell(j, c0, st['nom'])
+                wsf.cell(j, c0 + 1, (st['prenom'] or '') + (' (ALT)' if st['formation'] == 'ALT' else ''))
+            wsf.column_dimensions[get_column_letter(c0)].width = 20
+            wsf.column_dimensions[get_column_letter(c0 + 1)].width = 18
+            wsf.column_dimensions[get_column_letter(c0 + 2)].width = 3
+        wsf.freeze_panes = 'A3'
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    nom = secure_filename(f"groupes_{p['promotion']}_annee{year}.xlsx") or 'groupes.xlsx'
+    return send_file(buf, as_attachment=True, download_name=nom,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 # ===== DEVENIR : ce que chaque étudiant fait après l'année que le jury a jugée =====
 # Un seul écran (onglet « Devenir ») pour toute la suite du jury :

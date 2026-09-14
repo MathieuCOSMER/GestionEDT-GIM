@@ -658,10 +658,11 @@
             <div class="filters">
                 <label>Année de la cohorte :</label>
                 <select id="grp-year-select" onchange="onGrpYearChange()"></select>
-                <span style="color:#6b7280;font-size:.85rem">Nb de groupes TD / TP12 / TP8 / PT par semestre, et semestres mutualisés (FTP + ALT ensemble).</span>
+                <span id="grp-hint" style="color:#6b7280;font-size:.85rem">Nb de groupes TD / TP12 / TP8 / PT par semestre, et semestres mutualisés (FTP + ALT ensemble).</span>
             </div>
         </div>
         <div id="promo-groups-editor" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;text-align:center"><div class="spinner">Chargement…</div></div>
+        <div id="grp-repartition" style="margin-top:18px"></div>
     </div>
     <div id="promo-tab-calendrier" style="display:none">
         <div class="toolbar">
@@ -1392,6 +1393,33 @@
         <div class="form-actions">
             <button type="button" class="btn btn-secondary" onclick="closeModal('modal-ps-import')">Fermer</button>
             <button type="button" class="btn btn-primary" id="ps-import-submit" onclick="submitParcoursupImport()">Importer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL IMPORT DES GROUPES ===== -->
+<div class="modal-backdrop" id="modal-grp-import">
+    <div class="modal">
+        <h2>Importer une répartition dans les groupes</h2>
+        <p style="color:#6b7280;font-size:.9rem;margin-top:0">
+            Fichier <code>.xlsx</code> dont une feuille porte les colonnes <strong>Nom</strong>, <strong>Prénom</strong>
+            et une colonne par famille de groupes (<em>TD, TD SAE, TP12, TP8, Covoiturage…</em>) dont les cases valent
+            <code>TD_1</code>, <code>TP12_3</code>… Les étudiants sont rapprochés par <strong>nom et prénom</strong>
+            de l'effectif de l'année affichée ; la cohorte du fichier n'est pas reprise, l'effectif fait foi.
+        </p>
+        <p style="color:#6b7280;font-size:.9rem">
+            Pour chaque étudiant retrouvé, les familles du fichier <strong>remplacent</strong> ses groupes de ces
+            familles (une case vide l'en retire). L'analyse dit ce qui changerait :
+            <strong>rien n'est écrit avant votre confirmation</strong>.
+        </p>
+        <div class="form-group">
+            <label>Fichier *</label>
+            <input type="file" id="grp-import-file" accept=".xlsx,.xlsm" onchange="analyserGroupesImport()">
+        </div>
+        <div id="grp-import-report"></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-grp-import')">Fermer</button>
+            <button type="button" class="btn btn-primary" id="grp-import-apply" onclick="appliquerGroupesImport()" disabled>Importer</button>
         </div>
     </div>
 </div>
@@ -2136,7 +2164,7 @@ const _DIRTY_ZONES = [
     { mark: 'notes-content', clean: null, label: 'des notes du bulletin', save: () => saveNotesMarks() },
     { mark: 'saisie-content', clean: 'saisie-content', label: 'des notes saisies', save: () => saveSaisie() },
     { mark: 'jury-content', clean: null, label: 'des décisions de jury', save: () => saveJuryDecisions() },
-    { mark: 'promo-tab-groupes', clean: 'promo-groups-editor', label: 'des groupes de la promotion', save: () => savePromotionGroups() },
+    { mark: 'promo-groups-editor', clean: 'promo-groups-editor', label: 'des groupes de la promotion', save: () => savePromotionGroups() },
     { mark: 'promo-tab-calendrier', clean: 'calendrier-body', label: 'des modifications du calendrier', save: () => saveCalendrier() },
     { mark: 'page-programme', clean: 'prog-content', label: 'des modifications du programme', save: () => saveProg() },
 ];
@@ -3090,9 +3118,10 @@ let _promoCoeffSemesters = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
 let _coeffPromoId = null;   // promotion dont on édite les coefficients
 
 let _promoTab = 'effectif';
-// Enseignant (lecture seule) : seuls Effectifs / Notes / Jury sont accessibles ;
-// la saisie des notes a son propre onglet principal (page Promotions réduite).
-const _promoTeacherTabs = ['effectif', 'notes', 'jury'];
+// Enseignant (lecture seule) : seuls Effectifs / Groupes / Notes / Jury sont accessibles
+// (Groupes : la répartition des étudiants, à consulter et télécharger) ; la saisie
+// des notes a son propre onglet principal (page Promotions réduite).
+const _promoTeacherTabs = ['effectif', 'groupes', 'notes', 'jury'];
 let _promoSaisieOnly = false;   // page ouverte depuis l'onglet « Saisie Notes »
 function _promoTabAllowed(t) {
     if (state.role !== 'teacher') return true;
@@ -9963,18 +9992,314 @@ function onGrpYearChange() {
 
 async function loadPromoGroups() {
     const el = document.getElementById('promo-groups-editor');
+    // Enseignant : le nombre de groupes (calcul du service) ne le concerne pas — il
+    // consulte la répartition des étudiants.
+    const enseignant = state.role === 'teacher';
+    el.style.display = enseignant ? 'none' : '';
+    const hint = document.getElementById('grp-hint');
+    if (hint) hint.style.display = enseignant ? 'none' : '';
     if (!_promoData || !_promoData.promotion) {
         buildGrpYearSelect();
         el.innerHTML = '<div style="color:#6b7280;padding:8px">Sélectionnez une promotion (onglet Effectifs) pour définir ses groupes.</div>';
+        document.getElementById('grp-repartition').innerHTML = enseignant
+            ? '<div class="empty">Sélectionnez une promotion.</div>' : '';
         return;
     }
-    el.innerHTML = '<div class="spinner">Chargement…</div>';
     buildGrpYearSelect();
+    loadGroupesRepartition();
+    if (enseignant) return;
+    el.innerHTML = '<div class="spinner">Chargement…</div>';
     try {
         const data = await api('/semester-groups' + _grpQ());
         renderPromotionGroups(data);
     } catch (e) {
         el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
+    }
+}
+
+// ===== Répartition des étudiants dans les groupes (onglet Groupes) =====
+// Pour l'année de la cohorte affichée : le groupe de chaque étudiant dans chaque
+// famille (TD, TD SAE, TP12, TP12 SAE, TP8, et toute famille ajoutée). L'admin
+// importe une liste et corrige case par case (enregistrement immédiat) ; les
+// enseignants consultent et téléchargent.
+let _grpRep = null;               // répartition de l'année affichée
+let _grpVue = 'tableau';          // 'tableau' | 'groupes'
+let _grpFamille = 'TD';           // famille affichée dans la vue par groupe
+let _grpRecherche = '';
+let _grpFamillesAjoutees = [];    // familles créées à l'écran, sans affectation encore
+let _grpImportFichier = null;
+
+const _grpNorm = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+async function loadGroupesRepartition() {
+    const el = document.getElementById('grp-repartition');
+    if (!el || !_promoId) return;
+    if (!_grpRep || _grpRep._pid !== _promoId || _grpRep.year !== _grpYG) {
+        _grpFamillesAjoutees = [];
+        el.innerHTML = '<div class="spinner">Chargement de la répartition…</div>';
+    }
+    try {
+        _grpRep = Object.assign(await api(`/promotions/${_promoId}/groupes/${_grpYG}`), { _pid: _promoId });
+    } catch (e) {
+        el.innerHTML = `<div class="empty">Répartition indisponible — ${esc(e.message)}</div>`;
+        return;
+    }
+    renderGroupesRepartition();
+}
+
+function _grpFamilles() {
+    const base = (_grpRep && _grpRep.familles) || [];
+    return base.concat(_grpFamillesAjoutees.filter(f => !base.includes(f)));
+}
+
+function renderGroupesRepartition() {
+    const el = document.getElementById('grp-repartition');
+    const d = _grpRep;
+    if (!el || !d) return;
+    const admin = state.role === 'admin';
+    const familles = _grpFamilles();
+    if (!familles.includes(_grpFamille)) _grpFamille = familles[0];
+    const actifs = d.students.filter(s => s.actif).length;
+    el.innerHTML = `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;text-align:left">
+        <div class="toolbar" style="margin-bottom:8px;flex-wrap:wrap;gap:8px">
+            <h3 style="margin:0;color:#374151">Répartition des étudiants — année ${d.year}
+                <span style="font-weight:400;color:#6b7280;font-size:.85rem">· ${actifs} étudiant(s) actif(s)</span></h3>
+            <div class="filters" style="gap:6px;flex-wrap:wrap">
+                <div class="sem-toggle">
+                    <button type="button" class="sem-btn ${_grpVue === 'tableau' ? 'active' : ''}" onclick="setGrpVue('tableau')">Tableau</button>
+                    <button type="button" class="sem-btn ${_grpVue === 'groupes' ? 'active' : ''}" onclick="setGrpVue('groupes')">Par groupe</button>
+                </div>
+                ${_grpVue === 'groupes' ? `<select onchange="_grpFamille = this.value; renderGroupesCorps()">${
+                    familles.map(f => `<option${f === _grpFamille ? ' selected' : ''}>${esc(f)}</option>`).join('')}</select>` : ''}
+                <input type="text" placeholder="Rechercher un étudiant…" value="${esc(_grpRecherche)}"
+                    oninput="_grpRecherche = this.value; renderGroupesCorps()"
+                    style="padding:5px 9px;border:1px solid #d1d5db;border-radius:6px;min-width:170px">
+                <button class="btn btn-secondary btn-sm" onclick="exportGroupes()"
+                    title="Télécharger la répartition au format Excel : la liste complète et une feuille par famille de groupes">⤓ Télécharger</button>
+                ${admin ? `<button class="btn btn-secondary btn-sm" onclick="openGroupesImport()"
+                    title="Importer une liste de groupes (.xlsx) — aperçu avant écriture">⤒ Importer</button>
+                <button class="btn btn-secondary btn-sm" onclick="ajouterFamilleGroupe()"
+                    title="Ajouter une famille de groupes (covoiturage, langue…)">+ Famille</button>` : ''}
+            </div>
+        </div>
+        <div id="grp-resume"></div>
+        <div id="grp-corps"></div>
+        <div id="grp-listes" hidden></div>
+    </div>`;
+    renderGroupesResume();
+    renderGroupesCorps();
+}
+
+// Effectif de chaque groupe, famille par famille (étudiants actifs), et listes de
+// suggestions des cases de saisie
+function renderGroupesResume() {
+    const el = document.getElementById('grp-resume');
+    const d = _grpRep;
+    if (!el || !d) return;
+    const admin = state.role === 'admin';
+    const familles = _grpFamilles();
+    el.innerHTML = familles.map(f => {
+        const gs = d.groupes[f] || [];
+        const sans = (d.sans_groupe || {})[f] || 0;
+        const puces = gs.map(g => `<span class="st-pill" style="background:#eef2ff;color:#3730a3"
+            title="${g.FTP} FTP · ${g.ALT} ALT">${esc(g.groupe)} <span style="font-weight:400">${g.FTP + g.ALT}</span></span>`).join(' ');
+        return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:3px 0;border-bottom:1px solid #f3f4f6">
+            <strong style="min-width:96px;font-size:.84rem">${esc(f)}</strong>
+            ${puces || '<span style="color:#9ca3af;font-size:.8rem">aucun groupe</span>'}
+            ${gs.length && sans ? `<span class="st-pill" style="background:#fef3c7;color:#92400e">${sans} sans groupe</span>` : ''}
+            ${admin && gs.length ? `<button type="button" class="btn btn-secondary btn-sm" data-famille="${esc(f)}"
+                style="margin-left:auto;padding:1px 7px;font-size:.72rem;color:#b91c1c"
+                title="Retirer tous les étudiants des groupes de cette famille pour l'année"
+                onclick="supprimerFamilleGroupe(this.dataset.famille)">🗑</button>` : ''}
+        </div>`;
+    }).join('');
+    const listes = document.getElementById('grp-listes');
+    if (listes) listes.innerHTML = familles.map((f, i) => `<datalist id="grp-dl-${i}">${
+        (d.groupes[f] || []).map(g => `<option value="${esc(g.groupe)}">`).join('')}</datalist>`).join('');
+}
+
+function renderGroupesCorps() {
+    const el = document.getElementById('grp-corps');
+    const d = _grpRep;
+    if (!el || !d) return;
+    if (!d.students.length) {
+        el.innerHTML = `<div class="empty">Aucun étudiant dans l'effectif de l'année ${d.year}.</div>`;
+        return;
+    }
+    const admin = state.role === 'admin';
+    const familles = _grpFamilles();
+    const q = _grpNorm(_grpRecherche).trim();
+    const studs = d.students.filter(s => !q || _grpNorm(`${s.nom} ${s.prenom}`).includes(q));
+    const alt = s => s.formation === 'ALT' ? ' <span class="st-pill" style="background:#ffedd5;color:#9a3412">ALT</span>' : '';
+    const inactif = s => s.actif ? '' : ` <span class="st-pill" style="background:#f3f4f6;color:#6b7280">${esc(s.statut || 'inactif')}</span>`;
+    if (_grpVue === 'groupes') {
+        const f = _grpFamille;
+        const carte = (titre, membres, couleur) => {
+            const nAlt = membres.filter(s => s.formation === 'ALT').length;
+            return `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;flex:1 1 220px;max-width:340px">
+                <div style="font-weight:700;color:${couleur};margin-bottom:6px">${esc(titre)}
+                    <span style="font-weight:400;color:#6b7280;font-size:.8rem">· ${membres.filter(s => s.actif).length} étudiant(s)${nAlt ? ` dont ${nAlt} ALT` : ''}</span></div>
+                <ol style="margin:0;padding-left:22px;font-size:.84rem;line-height:1.55">${membres.length
+                    ? membres.map(s => `<li${s.actif ? '' : ' style="color:#9ca3af"'}>${esc(s.nom || '')} ${esc(s.prenom || '')}${alt(s)}${inactif(s)}</li>`).join('')
+                    : '<li style="list-style:none;color:#9ca3af">—</li>'}</ol></div>`;
+        };
+        const cartes = (d.groupes[f] || []).map(g => carte(g.groupe, studs.filter(s => s.groupes[f] === g.groupe), '#4f46e5'));
+        const sans = studs.filter(s => s.actif && !s.groupes[f]);
+        if (sans.length && cartes.length) cartes.push(carte('Sans groupe', sans, '#b45309'));
+        el.innerHTML = cartes.length
+            ? `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:10px">${cartes.join('')}</div>`
+            : `<div class="empty">Aucun groupe « ${esc(f)} » pour cette année.</div>`;
+        return;
+    }
+    const cellule = (s, f, i) => {
+        const v = s.groupes[f] || '';
+        if (!admin) return `<td style="text-align:center">${v ? esc(v) : '<span style="color:#d1d5db">—</span>'}</td>`;
+        return `<td style="text-align:center;padding:2px 4px"><input list="grp-dl-${i}" value="${esc(v)}"
+            data-sid="${s.id}" data-famille="${esc(f)}" onchange="setGroupe(this)"
+            style="width:96px;padding:2px 4px;font-size:.8rem;text-align:center;border:1px solid #d1d5db;border-radius:4px"></td>`;
+    };
+    el.innerHTML = `<div style="overflow:auto;max-height:62vh;border:1px solid #e5e7eb;border-radius:8px;margin-top:10px">
+        <table class="pn-table" style="width:100%;table-layout:auto">
+            <thead><tr><th style="width:34px">#</th><th>Nom</th><th>Prénom</th><th>Cohorte</th>${
+                familles.map(f => `<th style="text-align:center">${esc(f)}</th>`).join('')}</tr></thead>
+            <tbody>${studs.map((s, n) => `<tr${s.actif ? '' : ' style="opacity:.55"'}>
+                <td style="color:#9ca3af">${n + 1}</td><td><strong>${esc(s.nom || '')}</strong>${inactif(s)}</td>
+                <td>${esc(s.prenom || '')}</td><td>${esc(s.formation)}</td>
+                ${familles.map((f, i) => cellule(s, f, i)).join('')}</tr>`).join('')}</tbody>
+        </table></div>
+        ${admin ? `<div style="font-size:.78rem;color:#6b7280;margin-top:6px">Chaque case s'enregistre dès qu'on la quitte ;
+            une case vidée retire l'étudiant du groupe. La liste propose les groupes existants, un nom nouveau crée le groupe.</div>` : ''}`;
+}
+
+function setGrpVue(v) {
+    _grpVue = v;
+    renderGroupesRepartition();
+}
+
+async function setGroupe(inp) {
+    const groupe = inp.value.trim();
+    try {
+        const d = await api(`/promotions/${_promoId}/groupes/${_grpYG}`, {
+            method: 'PUT',
+            body: JSON.stringify({ student_id: parseInt(inp.dataset.sid), famille: inp.dataset.famille, groupe })
+        });
+        _grpRep = Object.assign(d, { _pid: _promoId });
+        inp.value = groupe;
+        inp.style.borderColor = '#10b981';
+        setTimeout(() => { inp.style.borderColor = '#d1d5db'; }, 1200);
+        renderGroupesResume();
+    } catch (e) {
+        inp.style.borderColor = '#ef4444';
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+function ajouterFamilleGroupe() {
+    const nom = (prompt('Nom de la nouvelle famille de groupes (ex. Covoiturage, Anglais) :') || '')
+        .replace(/_/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (!nom) return;
+    if (_grpFamilles().some(f => f.toLowerCase() === nom.toLowerCase())) {
+        toast('Cette famille existe déjà', 'error');
+        return;
+    }
+    _grpFamillesAjoutees.push(nom);
+    _grpVue = 'tableau';
+    renderGroupesRepartition();
+    toast(`Famille « ${nom} » ajoutée : saisissez les groupes dans sa colonne`);
+}
+
+async function supprimerFamilleGroupe(f) {
+    if (!confirm(`Retirer tous les étudiants des groupes « ${f} » pour l'année ${_grpYG} ?`)) return;
+    try {
+        const d = await api(`/promotions/${_promoId}/groupes/${_grpYG}/famille?famille=${encodeURIComponent(f)}`,
+                            { method: 'DELETE' });
+        _grpRep = Object.assign(d, { _pid: _promoId });
+        _grpFamillesAjoutees = _grpFamillesAjoutees.filter(x => x !== f);
+        renderGroupesRepartition();
+        toast(`Groupes « ${f} » vidés pour l'année ${_grpYG}`);
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+function exportGroupes() {
+    if (!_promoId) return;
+    window.location.href = `/api/promotions/${_promoId}/groupes/${_grpYG}/export`;
+}
+
+function openGroupesImport() {
+    if (!_promoId) return;
+    _grpImportFichier = null;
+    document.getElementById('grp-import-file').value = '';
+    document.getElementById('grp-import-report').innerHTML = '';
+    document.getElementById('grp-import-apply').disabled = true;
+    openModal('modal-grp-import');
+}
+
+async function _envoyerGroupesImport(appliquer) {
+    const fd = new FormData();
+    fd.append('file', _grpImportFichier);
+    if (appliquer) fd.append('apply', '1');
+    const r = await fetch(`/api/promotions/${_promoId}/groupes/${_grpYG}/import`, { method: 'POST', body: fd });
+    const body = await r.text();
+    if (r.status === 401) { showLogin(); throw new Error('Session expirée — reconnectez-vous'); }
+    if (!r.ok) {
+        let msg = body;
+        try { msg = JSON.parse(body).error || msg; } catch (_) { /* texte brut */ }
+        throw new Error(msg);
+    }
+    return JSON.parse(body);
+}
+
+// Analyse du fichier choisi : rien n'est écrit, le rapport dit ce qui changerait
+async function analyserGroupesImport() {
+    const f = document.getElementById('grp-import-file').files[0];
+    const rep = document.getElementById('grp-import-report');
+    const btn = document.getElementById('grp-import-apply');
+    btn.disabled = true;
+    _grpImportFichier = f || null;
+    if (!f) { rep.innerHTML = ''; return; }
+    rep.innerHTML = '<div class="spinner">Analyse du fichier…</div>';
+    try {
+        const r = (await _envoyerGroupesImport(false)).rapport;
+        const ch = r.changements;
+        const total = ch.ajouts + ch.modifications + ch.retraits;
+        const liste = (arr, max = 12) => esc(arr.slice(0, max).join(' · ')) + (arr.length > max ? ` … (+${arr.length - max})` : '');
+        rep.innerHTML = `<div style="font-size:.86rem;border:1px solid #c7d2fe;background:#eef2ff;border-radius:8px;padding:10px 12px">
+            Feuille <strong>${esc(r.feuille)}</strong> · familles : <strong>${esc(r.familles.join(', '))}</strong><br>
+            <strong>${r.retrouves}</strong> étudiant(s) retrouvé(s) sur ${r.lignes} ligne(s), pour ${r.effectif} étudiant(s) dans l'effectif de l'année ${_grpYG}.
+            <ul style="margin:6px 0 0 18px;padding:0">
+                <li>${ch.ajouts} affectation(s) ajoutée(s) · ${ch.modifications} modifiée(s) · ${ch.retraits} retirée(s)</li>
+                ${r.non_retrouves.length ? `<li style="color:#b91c1c">${r.non_retrouves.length} ligne(s) sans étudiant correspondant : ${liste(r.non_retrouves)}</li>` : ''}
+                ${r.sans_ligne.length ? `<li style="color:#92400e">${r.sans_ligne.length} étudiant(s) actif(s) absent(s) du fichier, groupes inchangés : ${liste(r.sans_ligne)}</li>` : ''}
+                ${r.cohorte_differente ? `<li style="color:#6b7280">${r.cohorte_differente} étudiant(s) dont la cohorte du fichier diffère de l'effectif (l'effectif fait foi)</li>` : ''}
+                ${(r.abandon_discordant || []).length ? `<li style="color:#92400e">${r.abandon_discordant.length} abandon(s) à vérifier, le fichier et l'effectif ne concordent pas (l'import ne change pas les statuts) : ${liste(r.abandon_discordant)}</li>` : ''}
+            </ul>
+            ${total ? '' : '<div style="margin-top:6px;color:#15803d">Rien à changer : la répartition est déjà à jour.</div>'}
+        </div>`;
+        btn.disabled = !total;
+    } catch (e) {
+        rep.innerHTML = `<div class="st-note-warn">${esc(e.message)}</div>`;
+    }
+}
+
+async function appliquerGroupesImport() {
+    if (!_grpImportFichier) return;
+    const btn = document.getElementById('grp-import-apply');
+    btn.disabled = true;
+    btn.textContent = 'Import en cours…';
+    try {
+        const d = await _envoyerGroupesImport(true);
+        _grpRep = Object.assign(d.repartition, { _pid: _promoId });
+        closeModal('modal-grp-import');
+        renderGroupesRepartition();
+        const ch = d.rapport.changements;
+        toast(`Groupes importés : ${ch.ajouts + ch.modifications + ch.retraits} changement(s)`);
+    } catch (e) {
+        btn.disabled = false;
+        toast('Erreur : ' + e.message, 'error');
+    } finally {
+        btn.textContent = 'Importer';
     }
 }
 
