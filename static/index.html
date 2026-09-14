@@ -1440,6 +1440,18 @@
     </div>
 </div>
 
+<!-- ===== MODAL VÉRIFICATION DES RÈGLES DE RÉPARTITION ===== -->
+<div class="modal-backdrop" id="modal-grp-verif">
+    <div class="modal modal-wide">
+        <h2 id="grp-verif-titre">Vérification des règles</h2>
+        <div id="grp-verif-contenu"></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+            <button type="button" class="btn btn-secondary" onclick="verifierGroupes()">↻ Vérifier à nouveau</button>
+            <button type="button" class="btn btn-primary" onclick="closeModal('modal-grp-verif')">Fermer</button>
+        </div>
+    </div>
+</div>
+
 <!-- ===== MODAL IMPORT NOTES ===== -->
 <div class="modal-backdrop" id="modal-notes-import">
     <div class="modal">
@@ -10125,6 +10137,8 @@ function renderGroupesRepartition() {
                     title="Reprendre pour le ${sPair} la répartition du ${sImpair} (sans les groupes de SAÉ)">⧉ Reprendre le ${sImpair}</button>` : ''}
                 <button class="btn btn-secondary btn-sm" onclick="ajouterFamilleGroupe()"
                     title="Ajouter une famille de groupes (covoiturage, langue…)">+ Famille</button>
+                <button class="btn btn-secondary btn-sm" onclick="verifierGroupes()"
+                    title="Vérifier que la répartition affichée respecte les règles (complétude, capacités, emboîtement, alternants, SAÉ, filles, covoiturages, effectifs pairs, réglage du service)">✓ Vérifier les règles</button>
                 <button class="btn btn-primary btn-sm" onclick="openGroupesAuto()"
                     title="Répartir automatiquement les étudiants actifs selon les règles — aperçu avant écriture">⚙ Répartition automatique</button>` : ''}
             </div>
@@ -10651,6 +10665,9 @@ function renderGroupesAutoForm() {
                 <label style="cursor:pointer" title="Les étudiants d'un même groupe de covoiturage sont placés ensemble dans un TP8 que le découpage ne coupe pas : même TP8, même TP12 et même TD">
                     <input type="checkbox" data-auto="covoiturage" ${r.covoiturage !== false ? 'checked' : ''}
                     onchange="grpAutoModifie()"> Garder ensemble chaque covoiturage (même TD, TP12 et TP8)</label>
+                <label style="cursor:pointer" title="Effectifs pairs pour le travail en binôme : un groupe impair seulement quand le nombre d'étudiants à répartir l'impose, quitte à 2 étudiants d'écart entre groupes">
+                    <input type="checkbox" data-auto="pairs" ${r.pairs !== false ? 'checked' : ''}
+                    onchange="grpAutoModifie()"> Groupes à effectif pair, dans la limite du possible</label>
                 <span style="color:#6b7280;font-size:.78rem;margin-top:-4px">${(d.covoiturages || []).length
                     ? `${d.covoiturages.length} covoiturage(s) : ${d.covoiturages.map(c => `${esc(c.groupe)} (${c.effectif}${c.faces.length > 1 ? ', FTP et ALT' : ''})`).join(', ')}`
                     : `Aucun covoiturage pour le ${esc(_grpSem)} (famille « Covoiturage » vide).`}</span>
@@ -10719,7 +10736,8 @@ function renderGroupesAutoApercu(d) {
             const contenu = fam === 'TD'
                 ? `<div style="font-size:.7rem;color:#6b7280;font-weight:400">${['TP12', 'TP8'].map(sous =>
                     (c[sous] || []).map(([g, n]) => `${esc(g)} (${n})`).join(', ')).join('<br>')}</div>` : '';
-            return `<tr${seule ? ' style="background:#fef2f2"' : ''}><td>${esc(c.groupe)}${contenu}</td><td>${c.n}</td>
+            return `<tr${seule ? ' style="background:#fef2f2"' : ''}><td>${esc(c.groupe)}${contenu}</td>
+                <td${c.n % 2 ? ' style="color:#b45309;font-weight:700" title="Effectif impair"' : ''}>${c.n}</td>
                 ${d.mutualise ? `<td>${c.FTP}</td><td>${c.ALT}</td>` : ''}
                 <td style="${seule ? 'color:#b91c1c;font-weight:700' : ''}">${c.F}${c.inconnu ? ` <span style="color:#9ca3af" title="sexe non renseigné">+${c.inconnu} ?</span>` : ''}</td></tr>`;
         }).join('');
@@ -10767,6 +10785,34 @@ async function appliquerGroupesAuto() {
         toast('Erreur : ' + e.message, 'error');
     } finally {
         btn.textContent = 'Appliquer';
+    }
+}
+
+// ----- Vérification des règles sur la répartition affichée -----
+async function verifierGroupes() {
+    if (!_promoId || !_grpSem) return;
+    const el = document.getElementById('grp-verif-contenu');
+    document.getElementById('grp-verif-titre').textContent = `Vérification des règles — ${_grpSem}`;
+    el.innerHTML = '<div class="spinner">Vérification…</div>';
+    openModal('modal-grp-verif');
+    try {
+        const d = await api(`/promotions/${_promoId}/groupes/${_grpSem}/verifier`);
+        const conforme = d.ok === d.total;
+        el.innerHTML = `
+            <div style="font-size:.92rem;margin-bottom:6px;color:${conforme ? '#15803d' : '#b45309'}">
+                <strong>${d.ok} règle(s) sur ${d.total}</strong> respectée(s)${conforme ? ' : la répartition est conforme.' : '.'}</div>
+            <div style="font-size:.78rem;color:#6b7280;margin-bottom:12px">${d.regles_enregistrees
+                ? 'Réglages de la dernière répartition automatique appliquée à ce semestre.'
+                : 'Réglages proposés : aucune répartition automatique n’a encore été appliquée à ce semestre.'}</div>
+            ${d.controles.map(c => `<div style="border:1px solid ${c.ok ? '#bbf7d0' : '#fde68a'};background:${c.ok ? '#f0fdf4' : '#fffbeb'};border-radius:8px;padding:8px 12px;margin-bottom:8px">
+                <div style="font-weight:600;color:${c.ok ? '#15803d' : '#92400e'}">${c.ok ? '✓' : '⚠'} ${esc(c.titre)}</div>
+                ${c.note ? `<div style="font-size:.8rem;color:#92400e;margin-top:4px">${esc(c.note)}</div>` : ''}
+                ${c.details.length ? `<ul style="margin:6px 0 0;padding-left:18px;font-size:.82rem;color:#4b5563">${
+                    c.details.map(x => `<li>${esc(x)}</li>`).join('')}${
+                    c.plus ? `<li style="list-style:none;color:#9ca3af">… et ${c.plus} autre(s)</li>` : ''}</ul>` : ''}
+            </div>`).join('')}`;
+    } catch (e) {
+        el.innerHTML = `<div class="st-note-warn">${esc(e.message)}</div>`;
     }
 }
 

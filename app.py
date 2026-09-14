@@ -6070,17 +6070,29 @@ def import_promotion_groupes(pid, semestre):
 # 4. On remplit d'abord les TP8 — les filles au moins par deux, de préférence dans les
 #    TP8 que le découpage ne coupe pas —, on trie chaque TP8 par ordre alphabétique, puis
 #    on découpe cet ordre en TP12, puis en TD.
+# 5. Effectifs pairs dans la limite du possible (travail en binôme) : un groupe impair
+#    seulement quand le nombre d'étudiants à répartir l'impose, quitte à un écart de 2.
 _GROUPES_AUTO_PREFIXES = {'TD': 'TD', 'TD SAE': 'TDSAE', 'TP12': 'TP12', 'TP12 SAE': 'TP12SAE', 'TP8': 'TP8'}
 _ECHELLE_ALT = ('melange', 'dedie')
 
-def _parts_equilibrees(n, k):
-    """n étudiants en k groupes aussi égaux que possible, les plus grands d'abord."""
+def _parts_equilibrees(n, k, pairs=False):
+    """n étudiants en k groupes aussi égaux que possible, les plus grands d'abord. Avec
+    `pairs`, les effectifs sont pairs dans la limite du possible : un seul groupe impair
+    si n est impair (le premier des plus petits), quitte à un écart de 2 entre groupes
+    (26 en 3 : 10, 8, 8 plutôt que 9, 9, 8). Sans groupe vide : sinon, répartition égale."""
     if n <= 0:
         return []
     k = max(1, min(int(k), n))
-    return [n // k + (1 if i < n % k else 0) for i in range(k)]
+    egales = [n // k + (1 if i < n % k else 0) for i in range(k)]
+    if not pairs:
+        return egales
+    moities = n // 2
+    parts = [2 * (moities // k) + (2 if i < moities % k else 0) for i in range(k)]
+    if n % 2:
+        parts[parts.index(min(parts))] += 1
+    return parts if min(parts) > 0 else egales
 
-def _tailles_emboitees(regions, cap, nominal):
+def _tailles_emboitees(regions, cap, nominal, pairs=False):
     """Tailles des TP d'un bloc d'étudiants découpé en régions de TD (leurs effectifs, dans
     l'ordre). Un TD d'au plus nominal × cap étudiants (24 = 2 TP12 = 3 TP8) contient ses
     propres TP, équilibrés ; au-delà, ses TP sont pleins et le surplus ouvre le TP suivant,
@@ -6100,7 +6112,7 @@ def _tailles_emboitees(regions, cap, nominal):
             k = max(1, math.ceil(dispo / cap))
             if not dernier:
                 k = min(k, nominal)
-            tailles.extend(_parts_equilibrees(dispo, k))
+            tailles.extend(_parts_equilibrees(dispo, k, pairs))
             report = 0
     return tailles
 
@@ -6108,10 +6120,11 @@ def _plan_groupes_auto(nF, nA, regles):
     """Tailles de chaque famille sur l'ordre global des étudiants (les FTP, puis les ALT).
     Des groupes « dédiés » aux alternants imposent une frontière entre les deux blocs."""
     cap, alt, ag = regles['capacites'], regles['alt'], regles['alt_groupes']
+    pairs = regles.get('pairs', True)
     if alt['TD'] == 'dedie':
-        td = _parts_equilibrees(nF, regles['td_groupes']) + _parts_equilibrees(nA, ag['TD'])
+        td = _parts_equilibrees(nF, regles['td_groupes'], pairs) + _parts_equilibrees(nA, ag['TD'], pairs)
     else:
-        td = _parts_equilibrees(nF + nA, regles['td_groupes'])
+        td = _parts_equilibrees(nF + nA, regles['td_groupes'], pairs)
     plan = {'TD': td}
     for fam in ('TP12', 'TP8'):
         c = cap[fam]
@@ -6121,9 +6134,9 @@ def _plan_groupes_auto(nF, nA, regles):
             for t in td:
                 regions.append(max(0, min(pos + t, nF) - pos))
                 pos += t
-            plan[fam] = _tailles_emboitees(regions, c, nominal) + _parts_equilibrees(nA, ag[fam])
+            plan[fam] = _tailles_emboitees(regions, c, nominal, pairs) + _parts_equilibrees(nA, ag[fam], pairs)
         else:
-            plan[fam] = _tailles_emboitees(td, c, nominal)
+            plan[fam] = _tailles_emboitees(td, c, nominal, pairs)
     return plan
 
 def _remplir_tp8_auto(ftp, alt, tailles, bornes, eviter, libelles=('FTP', 'ALT'), unites=()):
@@ -6330,7 +6343,7 @@ def _groupes_regles_defaut(students, svc, semestre):
               'alt': {'TD': 'melange', 'TP12': 'dedie', 'TP8': 'dedie'},
               # semestre non mutualisé : capacités propres aux FTP et aux ALT
               'capacites_faces': {face: {'TD': 24, 'TP12': 12, 'TP8': 8} for face in _SUBCOHORTS},
-              'alt_groupes': {'TD': 1, 'TP12': 1, 'TP8': 1}, 'filles': True, 'covoiturage': True,
+              'alt_groupes': {'TD': 1, 'TP12': 1, 'TP8': 1}, 'filles': True, 'covoiturage': True, 'pairs': True,
               'alt_sae': [x['id'] for x in actifs if semestre == 'S1' and x['formation'] == 'ALT'
                           and (x['groupes'].get('TD SAE') or x['groupes'].get('TP12 SAE'))]}
     if svc:
@@ -6382,6 +6395,8 @@ def _groupes_regles_propres(data, defaut):
         r['filles'] = bool(data['filles'])
     if 'covoiturage' in data:
         r['covoiturage'] = bool(data['covoiturage'])
+    if 'pairs' in data:
+        r['pairs'] = bool(data['pairs'])
     if isinstance(data.get('alt_sae'), list):
         r['alt_sae'] = sorted({entier(x, 0, 0, 10 ** 9) for x in data['alt_sae']} - {0})
     return r
@@ -6535,6 +6550,196 @@ def post_groupes_auto(pid, semestre):
     return jsonify({'apercu': apercu, 'mutualise': p['mutualise'], 'alertes': alertes, 'covoiturage': covoit,
                     'changements': changements, 'regles': regles, 'applique': applique,
                     'repartition': p if applique else None})
+
+def _groupes_verifier(p, regles, svc):
+    """Contrôle la répartition ACTUELLE d'un semestre (automatique, importée ou corrigée à
+    la main) au regard des règles de la répartition automatique. Renvoie une liste de
+    contrôles [{titre, ok, details, plus, note}] ; `details` en donne 25 au plus."""
+    from collections import defaultdict
+    semestre = p['semestre']
+    actifs = [x for x in p['students'] if x['actif']]
+    base = ('TD', 'TP12', 'TP8')
+    nom = lambda x: f"{x['nom'] or ''} {x['prenom'] or ''}".strip()
+
+    def num(g):
+        fin = (g or '').rsplit('_', 1)[-1]
+        return int(fin) if fin.isdigit() else None
+
+    controles = []
+
+    def ajouter(titre, details, note=None):
+        controles.append({'titre': titre, 'ok': not details and not note, 'details': details[:25],
+                          'plus': max(0, len(details) - 25), 'note': note})
+
+    def par_groupe(bloc, fam):
+        d = defaultdict(list)
+        for x in bloc:
+            if x['groupes'].get(fam):
+                d[x['groupes'][fam]].append(x)
+        return dict(sorted(d.items(), key=lambda kv: _groupe_tri(kv[0])))
+
+    tables = [(t, [x for x in actifs if t['face'] is None or x['formation'] == t['face']]) for t in p['tables']]
+    pref = lambda t: '' if t['face'] is None else f"{t['face']} · "
+    caps = lambda t: regles['capacites'] if t['face'] is None else regles['capacites_faces'][t['face']]
+
+    # 1. Complétude
+    manques = []
+    for x in actifs:
+        fams = list(base) + (list(_GROUPES_SAE) if p['sae'] and x['formation'] != 'ALT' else [])
+        absents = [f for f in fams if not x['groupes'].get(f)]
+        if absents:
+            manques.append(f"{nom(x)} ({x['formation']}) : pas de {', '.join(absents)}")
+    ajouter('Chaque étudiant actif a son TD, son TP12 et son TP8'
+            + (' (et, s’il est FTP, ses groupes de SAÉ)' if p['sae'] else ''), manques)
+
+    # 2. Capacité des TP
+    depassements = []
+    for t, bloc in tables:
+        for fam in ('TP12', 'TP8'):
+            for g, m in par_groupe(bloc, fam).items():
+                if len(m) > caps(t)[fam]:
+                    depassements.append(f"{pref(t)}{g} : {len(m)} étudiants pour une capacité de {caps(t)[fam]}")
+    ajouter('Capacité des TP12 et des TP8 respectée', depassements)
+
+    # 3. Emboîtement : un TP à cheval sur deux TD seulement si le premier dépasse sa capacité
+    emboitement = []
+    for t, bloc in tables:
+        taille_td = {g: len(m) for g, m in par_groupe(bloc, 'TD').items()}
+        for fam in ('TP12', 'TP8'):
+            for g, m in par_groupe(bloc, fam).items():
+                tds = sorted({x['groupes']['TD'] for x in m if x['groupes'].get('TD')}, key=_groupe_tri)
+                if len(tds) < 2:
+                    continue
+                debord = (len(tds) == 2 and num(tds[0]) is not None and num(tds[1]) == num(tds[0]) + 1
+                          and taille_td.get(tds[0], 0) > caps(t)['TD'])
+                if not debord:
+                    emboitement.append(f"{pref(t)}{g} : à cheval sur {', '.join(tds)}")
+    ajouter(f"Chaque TP est contenu dans un TD (un TD de plus de {regles['capacites']['TD']} étudiants "
+            "peut prendre sur le TP suivant)", emboitement)
+
+    # 4. Alternants
+    if p['mutualise']:
+        alternants = []
+        for fam in base:
+            groupes = par_groupe(actifs, fam)
+            noms = list(groupes)
+            avec_alt = [i for i, g in enumerate(noms) if any(x['formation'] == 'ALT' for x in groupes[g])]
+            if not avec_alt:
+                continue
+            apres = [noms[i] for i in range(avec_alt[0], len(noms)) if i not in avec_alt]
+            if apres:
+                alternants.append(f"{fam} : {', '.join(apres)} sans alternant après {noms[avec_alt[0]]}, qui en compte")
+            if regles['alt'][fam] == 'dedie':
+                mixtes = [g for g in noms if any(x['formation'] == 'ALT' for x in groupes[g])
+                          and any(x['formation'] != 'ALT' for x in groupes[g])]
+                if mixtes:
+                    alternants.append(f"{fam} : groupes dédiés attendus, mais {', '.join(mixtes)} mêle FTP et ALT")
+        ajouter('Alternants dans les derniers groupes (dédiés ou mélangés selon les réglages)', alternants)
+    else:
+        melanges = [f"{fam} · {g} : mêle FTP et ALT" for fam in base for g, m in par_groupe(actifs, fam).items()
+                    if len({x['formation'] for x in m}) > 1
+                    and not any(t['face'] for t in p['tables'])]
+        ajouter('Semestre non mutualisé : FTP et ALT répartis séparément', melanges)
+
+    # 5. Groupes de SAÉ
+    if p['sae']:
+        sae = []
+        for t, bloc in tables:
+            ftp_groupes = {fam: sorted({x['groupes'][fam] for x in bloc if x['formation'] != 'ALT' and x['groupes'].get(fam)},
+                                       key=_groupe_tri) for fam in ('TD', 'TP12')}
+            for x in bloc:
+                for fam, fam_sae, derniers in (('TD', 'TD SAE', 1), ('TP12', 'TP12 SAE', 2)):
+                    g, gs = x['groupes'].get(fam), x['groupes'].get(fam_sae)
+                    if not g or not gs:
+                        continue
+                    if x['formation'] != 'ALT' or t['face'] is not None or g in ftp_groupes[fam]:
+                        if num(gs) != num(g):
+                            sae.append(f"{nom(x)} : {gs} alors que son {fam} est {g}")
+                    elif num(gs) not in [num(v) for v in ftp_groupes[fam][-derniers:]]:
+                        sae.append(f"{nom(x)} (ALT) : {gs} n'est pas dans les derniers groupes FTP")
+        ajouter('Groupes de SAÉ : n° du TD / TP12, alternants dans les derniers groupes', sae)
+    else:
+        hors = [f"{nom(x)} : {f} {x['groupes'][f]}" for x in actifs for f in _GROUPES_SAE if x['groupes'].get(f)]
+        ajouter(f'Pas de groupes de SAÉ au {semestre}', hors)
+
+    # 6. Filles
+    if regles.get('filles', True):
+        seules = []
+        for t, bloc in tables:
+            for fam in base + (_GROUPES_SAE if p['sae'] else ()):
+                for g, m in par_groupe(bloc, fam).items():
+                    if sum(1 for x in m if x.get('sexe') == 'F') == 1:
+                        seules.append(f"{pref(t)}{fam} · {g}")
+        inconnus = sum(1 for x in actifs if x.get('sexe') not in ('M', 'F'))
+        ajouter("Aucune fille seule dans un groupe", seules,
+                note=f"Sexe non renseigné pour {inconnus} étudiant(s) : contrôle incomplet" if inconnus else None)
+
+    # 7. Covoiturages
+    fam_c = _famille_covoiturage(p['familles'])
+    if regles.get('covoiturage', True) and fam_c:
+        cov = defaultdict(list)
+        for x in actifs:
+            if x['groupes'].get(fam_c):
+                cov[x['groupes'][fam_c]].append(x)
+        covoiturages = []
+        for g, m in sorted(cov.items(), key=lambda kv: _groupe_tri(kv[0])):
+            if len(m) < 2:
+                continue
+            if not p['mutualise'] and len({x['formation'] for x in m}) > 1:
+                covoiturages.append(f"{g} : mêle FTP et ALT alors que le semestre n'est pas mutualisé")
+                continue
+            ecarts = [f for f in base if len({x['groupes'].get(f) for x in m}) > 1]
+            if ecarts:
+                covoiturages.append(f"{g} : pas le même {', '.join(ecarts)} ({', '.join(nom(x) for x in m)})")
+        ajouter('Covoiturages : même TD, même TP12 et même TP8', covoiturages)
+
+    # 8. Effectifs pairs
+    if regles.get('pairs', True):
+        impairs = []
+        for t, bloc in tables:
+            for fam in base:
+                groupes = par_groupe(bloc, fam)
+                liste = [g for g, m in groupes.items() if len(m) % 2]
+                if p['mutualise'] and t['face'] is None and regles['alt'][fam] == 'dedie':
+                    blocs = [[x for x in bloc if x['formation'] != 'ALT'], [x for x in bloc if x['formation'] == 'ALT']]
+                else:
+                    blocs = [bloc]
+                inevitables = sum(sum(1 for x in b if x['groupes'].get(fam)) % 2 for b in blocs)
+                if len(liste) > inevitables:
+                    impairs.append(f"{pref(t)}{fam} : {len(liste)} groupe(s) impair(s) ({', '.join(liste)}), "
+                                   f"{inevitables} inévitable(s)")
+        ajouter('Effectifs pairs dans la limite du possible', impairs)
+
+    # 9. Nombre de groupes et réglage du service
+    composition = {t['cle']: {fam: [{'FTP': sum(1 for x in m if x['formation'] != 'ALT'),
+                                     'ALT': sum(1 for x in m if x['formation'] == 'ALT')}
+                                    for m in par_groupe(bloc, fam).values()] for fam in base}
+                   for t, bloc in tables}
+    if svc:
+        ajouter(f"Nombre de groupes conforme au réglage du service ({svc['semestre']})",
+                _groupes_auto_service_alertes(composition, svc))
+    return controles
+
+@app.route('/api/promotions/<int:pid>/groupes/<semestre>/verifier', methods=['GET'])
+def verifier_promotion_groupes(pid, semestre):
+    """Vérifie que la répartition du semestre respecte les règles — celles de la dernière
+    répartition automatique appliquée, sinon celles proposées. Réservé à l'admin."""
+    err = _require_admin()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    err = _groupes_promo_check(pdb, pid, semestre)
+    if err:
+        return err
+    svc = _groupes_service(pdb, pid, semestre)
+    p = _groupes_payload(pdb, pid, semestre, svc=svc)
+    defaut = _groupes_regles_defaut(p['students'], svc, semestre)
+    row = pdb.execute('SELECT data FROM groupes_regles WHERE promotion_id=? AND semestre=?',
+                      (pid, semestre)).fetchone()
+    regles = _groupes_regles_propres(json.loads(row['data']), defaut) if row else defaut
+    controles = _groupes_verifier(p, regles, svc)
+    return jsonify({'semestre': semestre, 'mutualise': p['mutualise'], 'regles_enregistrees': bool(row),
+                    'controles': controles, 'ok': sum(1 for c in controles if c['ok']), 'total': len(controles)})
 
 @app.route('/api/promotions/<int:pid>/groupes/<semestre>/export', methods=['GET'])
 def export_promotion_groupes(pid, semestre):
