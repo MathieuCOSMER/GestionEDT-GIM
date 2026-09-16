@@ -801,7 +801,7 @@ _STUDENT_CURSUS = ['PREPA', 'BTS', 'LIC', 'BUT', 'REP']
 # lignes déjà saisies pour qu'elles restent des valeurs autorisées. La chaîne se
 # rejoue dans l'ordre : 'PrP' -> 'PP' -> 'PREPA'.
 _STUDENT_CURSUS_RENAMES = {'EI': 'ING', 'RE': 'REP', 'PB': 'BAC', 'PrP': 'PP', 'PP': 'PREPA'}
-_STUDENT_RECRUT = ['PS', 'EC', 'ADIUT']               # ParcourSup / eCandidat / ADIUT (étrangers)
+_STUDENT_RECRUT = ['PS', 'EC', 'ADIUT', 'HP']         # ParcourSup / eCandidat / ADIUT (étrangers) / hors procédure
 # Champs du profil d'entrée SAISISSABLES à l'écran (colonnes du tableau d'effectif).
 # BAC et cursus n'en font plus partie : la série de bac vient désormais du classement
 # ParcourSup (colonne « Série », recopiée dans `bac` pour les statistiques) et le
@@ -816,7 +816,8 @@ _STUDENT_PROFILE_FIELDS = ('sexe', 'recrutement', 'pays', 'bac', 'bac_ecart', 'c
 # du sexe (M/F) n'en ont pas.
 _STUDENT_PROFILE_LABELS = {
     'recrutement': {'PS': 'ParcourSup', 'EC': 'eCandidat',
-                    'ADIUT': 'ADIUT (candidats étrangers)'},
+                    'ADIUT': 'ADIUT (candidats étrangers)',
+                    'HP': 'Hors procédure'},
 }
 # Scolarité antérieure : ce que le candidat a fait AVANT le BUT — où, quel bac,
 # combien d'années avant, avec quelles spécialités et quelles études entre-temps.
@@ -1307,7 +1308,7 @@ def _apply_promotions_migrations(db):
             prenom      TEXT,
             naissance   TEXT,
             sexe        TEXT,
-            recrutement TEXT,                  -- ParcourSup / eCandidat / ADIUT
+            recrutement TEXT,                  -- ParcourSup / eCandidat / ADIUT / hors procédure
             pays        TEXT,                  -- pays de la scolarité antérieure
             bac         TEXT,                  -- série du bac (reprise du classement)
             bac_ecart   INTEGER,               -- années entre le bac et l'entrée en BUT
@@ -4924,7 +4925,7 @@ def update_student(person_id):
     data = request.get_json() or {}
     # Le dossier ParcourSup est saisissable ici : il vient de l'import du
     # classement, qui fait foi, mais reste rattrapable pour qui n'y figure pas
-    # (eCandidat, ADIUT) ou que le rapprochement par nom a manqué.
+    # (eCandidat, ADIUT, hors procédure) ou que le rapprochement par nom a manqué.
     vals = _person_values(data, avec_ps=True)
     if _person_set(db, person_id, vals):
         db.commit()

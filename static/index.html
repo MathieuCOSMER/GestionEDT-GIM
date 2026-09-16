@@ -4581,7 +4581,7 @@ function renderPromoEffectif() {
                             <th rowspan="2" title="Numéro Apogée de l'étudiant">Apogée</th>
                             <th rowspan="2" title="Date de naissance">Naiss.</th>
                             <th rowspan="2" title="Sexe de l'étudiant (M / F)">Sexe</th>
-                            <th rowspan="2" title="Voie de recrutement — PS : ParcourSup · EC : eCandidat · ADIUT : candidats étrangers">Recrut.</th>
+                            <th rowspan="2" title="Voie de recrutement — PS : ParcourSup · EC : eCandidat · ADIUT : candidats étrangers · HP : hors procédure">Recrut.</th>
                             ${scolGroup}
                             <th rowspan="2" title="Mobilité internationale : semestre effectué dans un établissement partenaire. Ses UE sont validées par équivalence, sans note.">MI</th>
                             <th rowspan="2" style="width:190px">Statut</th>
@@ -5722,7 +5722,7 @@ function studentSections(d, opts = {}) {
                 <div style="padding:7px 0;font-size:.9rem">${_ageDepuis(s.naissance) == null
                     ? '<span style="color:#9ca3af">—</span>' : _ageDepuis(s.naissance) + ' ans'}</div></div>
             ${liste('Sexe', 'sexe')}
-            ${liste('Recrutement', 'recrutement', 'PS : ParcourSup · EC : eCandidat · ADIUT : candidats étrangers')}
+            ${liste('Recrutement', 'recrutement', 'PS : ParcourSup · EC : eCandidat · ADIUT : candidats étrangers · HP : hors procédure')}
             ${champ('Pays', 'pays', "Pays de la scolarité antérieure — FR par défaut pour un recrutement ParcourSup")}
             ${liste('Série de bac', 'bac', "Reprise du classement ParcourSup ; à compléter à la main pour qui n'y figure pas")}
             ${nombre('Ans depuis le bac', 'bac_ecart', "Années entre l'obtention du bac et l'entrée en BUT — 0 : entré juste après")}
@@ -5762,7 +5762,7 @@ function studentSections(d, opts = {}) {
         + (cartes || '<div class="empty">Aucune inscription.</div>');
 
     // Dossier ParcourSup : il vient de l'import du classement, mais reste saisissable
-    // — un candidat hors ParcourSup (eCandidat, ADIUT) ou qu'un homonyme a fait
+    // — un candidat hors ParcourSup (eCandidat, ADIUT, hors procédure) ou qu'un homonyme a fait
     // manquer au rapprochement n'a aucun autre moyen d'avoir son dossier.
     const psChamp = c => `<div class="form-group" style="margin:0">
         <label style="font-size:.74rem;color:#6b7280" title="${esc(c.title || '')}">${esc(c.label)}</label>
