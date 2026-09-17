@@ -2744,6 +2744,9 @@ def _require_auth():
         return error_response('Accès en lecture seule', 403)
 
 _WRITE_METHODS = {'POST', 'PUT', 'DELETE', 'PATCH'}
+# POST qui n'enregistrent rien : le brouillon de la répartition calendaire y est
+# seulement essayé (contrôles, export), puis annulé — hors journal d'audit
+_DRY_RUN_POSTS = {'/api/checks/repartition', '/api/export/repartition'}
 
 @app.after_request
 def _security_headers(resp):
@@ -2762,7 +2765,8 @@ def _audit_writes(resp):
     Les connexions sont journalisées séparément dans la route /api/login."""
     try:
         if (request.path.startswith('/api/') and request.method in _WRITE_METHODS
-                and request.path not in ('/api/login', '/api/logout')):
+                and request.path not in ('/api/login', '/api/logout')
+                and request.path not in _DRY_RUN_POSTS):
             _audit('WRITE', ip=_client_ip(), user=session.get('user') or '-',
                    role=session.get('role') or '-', method=request.method,
                    path=request.path, status=resp.status_code)
@@ -11921,6 +11925,68 @@ def upsert_weekly_hours(session_id, week_number):
     except Exception as e:
         return error_response(f'Error upserting weekly hours: {str(e)}', 500)
 
+# ----- Brouillon de la répartition calendaire -----
+# Les cases modifiées dans la répartition calendaire restent dans le navigateur
+# jusqu'à « Enregistrer ». Le brouillon voyage sous la forme
+# {cells: [{session_id, week_number, group_index, hours}, …]} : enregistré d'un
+# bloc, ou simplement essayé le temps d'un Contrôle ou d'un Export.
+
+def _weekly_cells_from_json(data):
+    """Cases du brouillon → [(séance, semaine, groupe, heures)]. ValueError si une case est invalide."""
+    cells = data.get('cells') if isinstance(data, dict) else None
+    if not isinstance(cells, list):
+        raise ValueError('Brouillon invalide : liste de cases attendue')
+    out = []
+    for c in cells:
+        try:
+            sid, wk = int(c['session_id']), int(c['week_number'])
+            grp, h = int(c.get('group_index') or 1), float(c.get('hours') or 0)
+        except (TypeError, ValueError, KeyError, AttributeError):
+            raise ValueError('Brouillon invalide : case mal formée')
+        if not (1 <= wk <= 53) or grp < 1 or not math.isfinite(h) or h < 0:
+            raise ValueError(f'Brouillon invalide : case hors limites (séance {sid}, semaine {wk})')
+        out.append((sid, wk, grp, h))
+    return out
+
+def _write_weekly_cells(db, cells):
+    """Pose les cases (heures > 0 : posée ou remplacée ; 0 : retirée) SANS valider :
+    l'appelant fait commit (enregistrement) ou rollback (essai). Les séances
+    supprimées entre-temps sont ignorées. Retourne (écrites, ignorées)."""
+    ids = list({sid for sid, _, _, _ in cells})
+    known = set()
+    for i in range(0, len(ids), 500):
+        part = ids[i:i + 500]
+        known.update(r['id'] for r in db.execute(
+            f'SELECT id FROM course_sessions WHERE id IN ({",".join("?" * len(part))})', part))
+    written = 0
+    for sid, wk, grp, h in cells:
+        if sid not in known:
+            continue
+        if h > 0:
+            db.execute('''INSERT OR REPLACE INTO weekly_hours (course_session_id, week_number, hours, group_index)
+                          VALUES (?, ?, ?, ?)''', (sid, wk, h, grp))
+        else:
+            db.execute('DELETE FROM weekly_hours WHERE course_session_id = ? AND week_number = ? AND group_index = ?',
+                       (sid, wk, grp))
+        written += 1
+    return written, len(cells) - written
+
+@app.route('/api/weekly-hours/cells', methods=['PUT'])
+def save_weekly_cells():
+    """Enregistre le brouillon de la répartition calendaire, tout ou rien."""
+    try:
+        cells = _weekly_cells_from_json(request.get_json(silent=True))
+    except ValueError as e:
+        return error_response(str(e))
+    db = get_db()
+    try:
+        written, skipped = _write_weekly_cells(db, cells)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        return error_response(f'Enregistrement impossible : {e}', 500)
+    return jsonify({'saved': written, 'skipped': skipped}), 200
+
 # ======================= SERVICE CALCULATION =======================
 
 def _tp_type_label(teaching_type, tp_type):
@@ -13011,11 +13077,19 @@ def set_edt_planned_week():
                     'planned': row is not None,
                     'optimized': bool(row and row['optimized'])}), 200
 
-@app.route('/api/checks/repartition', methods=['GET'])
+@app.route('/api/checks/repartition', methods=['GET', 'POST'])
 def checks_repartition():
-    """Contrôles de validation : charge enseignants par semaine + conflits salles"""
+    """Contrôles de validation : charge enseignants par semaine + conflits salles.
+    En POST ({cells: [...]}) : répartition enregistrée + brouillon en cours, écrit
+    le temps des contrôles puis annulé (rollback) — rien n'est enregistré."""
     try:
-        db = get_db()
+        draft = _weekly_cells_from_json(request.get_json(silent=True)) if request.method == 'POST' else None
+    except ValueError as e:
+        return error_response(str(e))
+    db = get_db()
+    try:
+        if draft:
+            _write_weekly_cells(db, draft)
         cursor = db.cursor()
 
         # 1. Charge enseignants par semaine.
@@ -13111,10 +13185,15 @@ def checks_repartition():
         }), 200
     except Exception as e:
         return error_response(f'Error running checks: {str(e)}', 500)
+    finally:
+        if draft:
+            db.rollback()
 
-@app.route('/api/export/repartition', methods=['GET'])
+@app.route('/api/export/repartition', methods=['GET', 'POST'])
 def export_repartition_excel():
-    """Export la répartition des 6 semestres en fichier Excel (un onglet par année)"""
+    """Export la répartition des 6 semestres en fichier Excel (un onglet par année).
+    En POST ({cells: [...]}) : le brouillon en cours est exporté avec, sans être
+    enregistré (écrit le temps de la lecture, puis annulé)."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
@@ -13143,6 +13222,11 @@ def export_repartition_excel():
         # re-stylée ensuite → sans copie, l'entrée du cache serait corrompue.
         _style_memo[key] = (_copy(cell._style), font, fill, border, alignment)
         return cell
+
+    try:
+        draft = _weekly_cells_from_json(request.get_json(silent=True)) if request.method == 'POST' else None
+    except ValueError as e:
+        return error_response(str(e))
 
     try:
         db = get_db()
@@ -13190,28 +13274,35 @@ def export_repartition_excel():
         cursor.execute('SELECT week_type, code FROM special_category_codes')
         category_codes = {r['week_type']: r['code'] for r in cursor.fetchall()}
 
-        # Charger toutes les sessions avec heures hebdomadaires
-        cursor.execute('''
-            SELECT cs.id AS session_id,
-                   c.code AS course_code, c.name AS course_name,
-                   c.tp_type,
-                   s.code AS semester_code, s.year_group,
-                   cs.teaching_type, cs.formation_type,
-                   cs.total_hours, cs.nb_sessions, cs.slot_duration,
-                   cs.room_name, cs.teacher_id,
-                   t.name AS teacher_name,
-                   wh.week_number, wh.hours, wh.group_index
-            FROM course_sessions cs
-            JOIN courses c ON cs.course_id = c.id
-            JOIN semesters s ON c.semester_id = s.id
-            LEFT JOIN teachers t ON cs.teacher_id = t.id
-            LEFT JOIN weekly_hours wh ON wh.course_session_id = cs.id
-            WHERE cs.nb_sessions > 0 OR cs.total_hours > 0
-            ORDER BY s.year_group, s.code, c.code,
-                     CASE cs.teaching_type WHEN 'CM' THEN 0 WHEN 'TD' THEN 1 WHEN 'TP' THEN 2 WHEN 'PT' THEN 3 ELSE 4 END,
-                     cs.formation_type, wh.week_number
-        ''')
-        raw = cursor.fetchall()
+        # Charger toutes les sessions avec heures hebdomadaires (brouillon compris,
+        # posé juste le temps de la lecture)
+        try:
+            if draft:
+                _write_weekly_cells(db, draft)
+            cursor.execute('''
+                SELECT cs.id AS session_id,
+                       c.code AS course_code, c.name AS course_name,
+                       c.tp_type,
+                       s.code AS semester_code, s.year_group,
+                       cs.teaching_type, cs.formation_type,
+                       cs.total_hours, cs.nb_sessions, cs.slot_duration,
+                       cs.room_name, cs.teacher_id,
+                       t.name AS teacher_name,
+                       wh.week_number, wh.hours, wh.group_index
+                FROM course_sessions cs
+                JOIN courses c ON cs.course_id = c.id
+                JOIN semesters s ON c.semester_id = s.id
+                LEFT JOIN teachers t ON cs.teacher_id = t.id
+                LEFT JOIN weekly_hours wh ON wh.course_session_id = cs.id
+                WHERE cs.nb_sessions > 0 OR cs.total_hours > 0
+                ORDER BY s.year_group, s.code, c.code,
+                         CASE cs.teaching_type WHEN 'CM' THEN 0 WHEN 'TD' THEN 1 WHEN 'TP' THEN 2 WHEN 'PT' THEN 3 ELSE 4 END,
+                         cs.formation_type, wh.week_number
+            ''')
+            raw = cursor.fetchall()
+        finally:
+            if draft:
+                db.rollback()
 
         # Nb de groupes (TP scindés en une ligne par groupe, comme à l'écran)
         sg_map, mut_set, tpsep_set = _load_semester_groups(db)

@@ -349,6 +349,14 @@
         .cell-arrows .cell-val { font-size: .7rem; font-weight: 600; line-height: 1; }
         /* Total restant rouge si != 0 */
         .col-total-bad { color: #dc2626 !important; }
+        /* Brouillon de la répartition : cases modifiées pas encore enregistrées */
+        .repartition-wrap td.cell-draft { box-shadow: inset 0 0 0 2px #b45309; font-weight: 700; }
+        @keyframes repCellFlash { from { box-shadow: inset 0 0 0 3px #4f46e5; } to { box-shadow: inset 0 0 0 3px transparent; } }
+        .repartition-wrap td.cell-flash { animation: repCellFlash 1.2s ease-out; }
+        .rep-draft-bar { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+        .rep-draft-status { font-size: .8rem; font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap; color: #047857; background: #ecfdf5; }
+        .rep-draft-bar.is-dirty .rep-draft-status { color: #92400e; background: #fef3c7; }
+        .rep-draft-bar .btn:disabled { opacity: .45; cursor: default; }
 
         /* Panneau contrôles — sidebar droite */
         #checks-panel:empty { display: none; }
@@ -1077,12 +1085,12 @@
         <div class="filters" id="rep-filters-annuelle">
             <label>Semestres :</label>
             <div id="sem-toggle" class="sem-toggle">
-                <button type="button" class="sem-btn active" data-sem="S1" onclick="toggleSemester('S1',this)">S1</button>
-                <button type="button" class="sem-btn active" data-sem="S2" onclick="toggleSemester('S2',this)">S2</button>
-                <button type="button" class="sem-btn active" data-sem="S3" onclick="toggleSemester('S3',this)">S3</button>
-                <button type="button" class="sem-btn active" data-sem="S4" onclick="toggleSemester('S4',this)">S4</button>
-                <button type="button" class="sem-btn active" data-sem="S5" onclick="toggleSemester('S5',this)">S5</button>
-                <button type="button" class="sem-btn active" data-sem="S6" onclick="toggleSemester('S6',this)">S6</button>
+                <button type="button" class="sem-btn" data-sem="S1" onclick="toggleSemester('S1',this)">S1</button>
+                <button type="button" class="sem-btn" data-sem="S2" onclick="toggleSemester('S2',this)">S2</button>
+                <button type="button" class="sem-btn" data-sem="S3" onclick="toggleSemester('S3',this)">S3</button>
+                <button type="button" class="sem-btn" data-sem="S4" onclick="toggleSemester('S4',this)">S4</button>
+                <button type="button" class="sem-btn" data-sem="S5" onclick="toggleSemester('S5',this)">S5</button>
+                <button type="button" class="sem-btn" data-sem="S6" onclick="toggleSemester('S6',this)">S6</button>
             </div>
             <label style="margin-left:12px">Type :</label>
             <div id="type-toggle" class="sem-toggle">
@@ -1118,7 +1126,7 @@
             <button class="btn btn-secondary btn-sm rep-tool-restricted" style="margin-left:8px" onclick="openOrderingModal()">
                 Ordonnancement
             </button>
-            <button class="btn btn-secondary btn-sm export-btn" style="margin-left:8px" onclick="exportRepartitionExcel()">
+            <button class="btn btn-secondary btn-sm export-btn" style="margin-left:8px" onclick="exportRepartitionExcel(this)">
                 Export Excel
             </button>
             <button class="btn btn-secondary btn-sm rep-tool-restricted" style="margin-left:4px" onclick="document.getElementById('import-excel-input').click()">
@@ -1130,6 +1138,16 @@
     <div class="subtabs" id="rep-subtabs">
         <button type="button" id="rep-subtab-annuelle" class="subtab active" onclick="showRepTab('annuelle')">Répartition annuelle</button>
         <button type="button" id="rep-subtab-jour" class="subtab admin-only" onclick="showRepTab('jour')">Répartition journalière</button>
+        <!-- Brouillon de la répartition annuelle : rien n'est enregistré avant « Enregistrer » -->
+        <div id="rep-draft-bar" class="rep-draft-bar admin-only" style="display:none">
+            <span id="rep-draft-status" class="rep-draft-status"></span>
+            <button type="button" id="rep-undo" class="btn btn-secondary btn-sm" onclick="repUndo()">↶ Retour arrière</button>
+            <button type="button" id="rep-redo" class="btn btn-secondary btn-sm" onclick="repRedo()">↷ Rétablir</button>
+            <button type="button" id="rep-discard" class="btn btn-secondary btn-sm" onclick="askDiscardRepDraft()"
+                    title="Revenir à la version enregistrée">Abandonner</button>
+            <button type="button" id="rep-save" class="btn btn-primary btn-sm" onclick="saveRepDraft()"
+                    title="Enregistrer toutes les modifications (Ctrl+S)">Enregistrer</button>
+        </div>
     </div>
     <div id="rep-pane-annuelle">
         <div class="repartition-layout">
@@ -1503,9 +1521,9 @@
         <h2>Modifications non enregistrées</h2>
         <p id="unsaved-msg" style="color:#374151;font-size:.92rem;margin-top:0"></p>
         <div class="form-actions">
-            <button type="button" class="btn btn-secondary" onclick="resolveUnsaved('cancel')">Rester ici</button>
-            <button type="button" class="btn btn-secondary" onclick="resolveUnsaved('discard')">Quitter sans enregistrer</button>
-            <button type="button" class="btn btn-primary" onclick="resolveUnsaved('save')">Enregistrer et quitter</button>
+            <button type="button" id="unsaved-cancel" class="btn btn-secondary" onclick="resolveUnsaved('cancel')">Rester ici</button>
+            <button type="button" id="unsaved-discard" class="btn btn-secondary" onclick="resolveUnsaved('discard')">Quitter sans enregistrer</button>
+            <button type="button" id="unsaved-save" class="btn btn-primary" onclick="resolveUnsaved('save')">Enregistrer et quitter</button>
         </div>
     </div>
 </div>
@@ -2151,9 +2169,11 @@ async function doLogin() {
     }
 }
 
-async function logout() {
-    try { await fetch('/api/logout', { method: 'POST' }); } catch (e) { /* ignore */ }
-    location.reload();
+function logout() {
+    guardUnsaved(async () => {
+        try { await fetch('/api/logout', { method: 'POST' }); } catch (e) { /* ignore */ }
+        location.reload();
+    });
 }
 
 // ===== TOAST =====
@@ -2196,13 +2216,17 @@ const _DIRTY_ZONES = [
     { mark: 'promo-groups-editor', clean: 'promo-groups-editor', label: 'des groupes de la promotion', save: () => savePromotionGroups() },
     { mark: 'promo-tab-calendrier', clean: 'calendrier-body', label: 'des modifications du calendrier', save: () => saveCalendrier() },
     { mark: 'page-programme', clean: 'prog-content', label: 'des modifications du programme', save: () => saveProg() },
+    // Brouillon de la répartition calendaire : son état vient de la copie de travail
+    // (isDirty), et l'abandonner la ramène à la version enregistrée (discard).
+    { mark: 'rep-pane-annuelle', label: 'des modifications de la répartition calendaire',
+      isDirty: () => _repDraft.cells.size > 0, save: () => saveRepDraft(), discard: () => discardRepDraft() },
 ];
 let _dirtyZones = {};
 
 function initDirtyWatch() {
     _DIRTY_ZONES.forEach(z => {
         const el = document.getElementById(z.mark);
-        if (!el || el.dataset.dirtyWatch) return;
+        if (z.isDirty || !el || el.dataset.dirtyWatch) return;
         el.dataset.dirtyWatch = '1';
         const touch = e => {
             // les filtres (barre d'outils) ne sont pas des données à enregistrer
@@ -2224,19 +2248,26 @@ function initDirtyWatch() {
 function _dirtyZone() {
     return _DIRTY_ZONES.find(z => {
         const el = document.getElementById(z.mark);
-        return _dirtyZones[z.mark] && el && el.offsetParent !== null;
+        return (z.isDirty ? z.isDirty() : _dirtyZones[z.mark]) && el && el.offsetParent !== null;
     }) || null;
 }
 
 function markZoneClean(id) { delete _dirtyZones[id]; }
 
 let _unsavedPending = null;
-function guardUnsaved(action, onCancel) {
+// `labels` : libellés des trois boutons quand l'action n'est pas un départ
+// (ex. { cancel: 'Annuler', discard: 'Abandonner et importer', save: 'Enregistrer et importer' })
+function guardUnsaved(action, onCancel, labels) {
     const z = _dirtyZone();
     if (!z) { action(); return; }
     _unsavedPending = { zone: z, action, onCancel };
     document.getElementById('unsaved-msg').textContent =
         `Vous avez ${z.label} qui n'ont pas été enregistrées.`;
+    const L = Object.assign({ cancel: 'Rester ici', discard: 'Quitter sans enregistrer',
+                              save: 'Enregistrer et quitter' }, labels);
+    ['cancel', 'discard', 'save'].forEach(k => {
+        document.getElementById('unsaved-' + k).textContent = L[k];
+    });
     openModal('modal-unsaved');
 }
 
@@ -2249,6 +2280,8 @@ async function resolveUnsaved(choice) {
     if (choice === 'save') {
         // une saisie invalide (note hors 0–20…) annule le départ : on reste sur place
         if (await p.zone.save() === false) { if (p.onCancel) p.onCancel(); return; }
+    } else if (p.zone.discard) {
+        p.zone.discard();
     }
     markZoneClean(p.zone.mark);
     p.action();
@@ -2406,11 +2439,16 @@ async function loadYears() {
 // Calendaire, Contraintes). Purement local : n'impacte pas les autres onglets,
 // qui travaillent sur l'année active (modifiable dans Paramètres).
 function switchServiceYear() {
-    _serviceYear = document.getElementById('service-year-select').value;
-    state.config = null;
-    _repartitionData = null;
-    showPage(_serviceTab);
-    toast(`Affichage de l'année ${_serviceYear}`);
+    const sel = document.getElementById('service-year-select');
+    // Un brouillon de répartition appartient à l'année affichée : on le règle avant
+    guardUnsaved(() => {
+        _serviceYear = sel.value;
+        state.config = null;
+        _repartitionData = null;
+        repDraftReset();
+        showPage(_serviceTab);
+        toast(`Affichage de l'année ${_serviceYear}`);
+    }, () => { sel.value = _serviceYear; });
 }
 
 // ===== MON COMPTE (enseignant connecté) =====
@@ -9840,7 +9878,9 @@ let _repartitionData = null;
 
 // Correspondance semestre ↔ semestre lié (même année)
 const _semPairs = { S1:'S2', S2:'S1', S3:'S4', S4:'S3', S5:'S6', S6:'S5' };
-let _selectedSemesters = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'];
+// Aucun semestre à la première arrivée : rien à charger tant que l'admin n'a pas
+// choisi. Le choix tient ensuite d'un onglet à l'autre (jusqu'au rechargement).
+let _selectedSemesters = [];
 
 // Ordre d'affichage imposé des matières dans la répartition (S5/S6 entrelacés).
 // Les codes absents de cette liste conservent leur ordre naturel (par code).
@@ -9856,13 +9896,254 @@ _courseDisplayOrder.forEach((c, i) => { _courseOrderIdx[c] = i; });
 // Repositionnements ponctuels « placer ce code juste après cet autre code ».
 const _courseAfter = { 'R3.11': 'R3.08' };
 
+let _repLoadTimer = null;
 function toggleSemester(code, btn) {
     const i = _selectedSemesters.indexOf(code);
     if (i >= 0) _selectedSemesters.splice(i, 1);
     else { _selectedSemesters.push(code); _selectedSemesters.sort(); }
     btn.classList.toggle('active');
-    loadRepartition();
+    // Plusieurs semestres cochés à la suite : un seul chargement, une fois le choix fait
+    clearTimeout(_repLoadTimer);
+    _repLoadTimer = setTimeout(loadRepartition, 300);
 }
+
+// ===== Brouillon de la répartition calendaire =====
+// Les clics ▲/▼ ne partent plus au serveur : ils modifient une copie de travail
+// gardée dans le navigateur. « Enregistrer » envoie d'un bloc les cases modifiées,
+// « Abandonner » revient à la version enregistrée, et chaque clic peut être
+// annulé (retour arrière) puis rétabli. Contrôle et Export portent sur la copie
+// de travail sans l'enregistrer. Le brouillon survit au changement de semestres
+// affichés ; quitter l'onglet, l'année ou la page demande quoi en faire.
+const _repDraft = {
+    cells: new Map(),  // "séance|groupe|semaine" → { sid, week, group, saved, hours }
+    undo: [],          // un pas par clic : { sid, week, group, from, to, label }
+    redo: [],
+    saving: false,
+};
+
+const repDraftKey = (sid, group, week) => sid + '|' + group + '|' + week;
+
+function repDraftTitle(c) {
+    return `Modifié, non enregistré (valeur enregistrée : ${c.saved ? c.saved + ' h' : 'vide'})`;
+}
+
+// Cases du brouillon au format de l'API
+function repDraftPayload() {
+    return [..._repDraft.cells.values()].map(c =>
+        ({ session_id: c.sid, week_number: c.week, group_index: c.group, hours: c.hours }));
+}
+
+// Ligne (session + groupe) de la copie de travail, semestres liés compris
+function repRowFor(sid, group) {
+    if (!_repartitionData) return null;
+    const all = _repartitionData.allRows || _repartitionData.rows;
+    return all.find(r => r.session_id === sid && (r.group_index || 1) === group)
+        || all.find(r => r.session_id === sid) || null;
+}
+
+function repCellLabel(row, week) {
+    const grp = row.n_groups > 1 ? ' ' + (row.group_label || 'gr.' + (row.group_index || 1)) : '';
+    return `${row.course_code} ${typeDisp(row)}${grp} ${row.formation}, semaine ${week}`;
+}
+
+function repDraftReset() {
+    _repDraft.cells.clear();
+    _repDraft.undo = [];
+    _repDraft.redo = [];
+    repDraftBar();
+}
+
+// Barre du brouillon (à droite des sous-onglets) : visible dès qu'il y a
+// quelque chose à enregistrer ou à annuler
+function repDraftBar() {
+    const bar = document.getElementById('rep-draft-bar');
+    if (!bar) return;
+    const n = _repDraft.cells.size, busy = _repDraft.saving;
+    const last = _repDraft.undo[_repDraft.undo.length - 1];
+    const next = _repDraft.redo[_repDraft.redo.length - 1];
+    bar.style.display = (state.role !== 'teacher' && _repTab !== 'jour' && (n || last || next)) ? '' : 'none';
+    bar.classList.toggle('is-dirty', n > 0);
+    document.getElementById('rep-draft-status').textContent = busy ? 'Enregistrement…'
+        : n ? `${n} modification${n > 1 ? 's' : ''} non enregistrée${n > 1 ? 's' : ''}`
+        : 'Tout est enregistré';
+    const undo = document.getElementById('rep-undo');
+    undo.disabled = busy || !last;
+    undo.title = last ? `Annuler : ${last.label} (Ctrl+Z)` : 'Rien à annuler';
+    const redo = document.getElementById('rep-redo');
+    redo.disabled = busy || !next;
+    redo.title = next ? `Rétablir : ${next.label} (Ctrl+Y)` : 'Rien à rétablir';
+    document.getElementById('rep-discard').disabled = busy || !n;
+    document.getElementById('rep-save').disabled = busy || !n;
+}
+
+// Réaffiche une case d'après la copie de travail (valeur, fond, marque de brouillon)
+function repRefreshCell(sid, week, group, td) {
+    td = td || document.querySelector(
+        `#repartition-table td[data-sid="${sid}"][data-week="${week}"][data-group="${group}"]`);
+    if (!td) return null;
+    const row = repRowFor(sid, group);
+    const h = (row && row.by_week[week]) || 0;
+    const val = td.querySelector('.cell-val');   // widget ▲/▼ ouvert sur la case
+    if (val) val.textContent = h || '·';
+    else td.textContent = h || '·';
+    td.classList.toggle('cell-hours', !!h);
+    td.classList.toggle('cell-empty', !h);
+    const c = _repDraft.cells.get(repDraftKey(sid, group, week));
+    td.classList.toggle('cell-draft', !!c);
+    if (c) td.title = repDraftTitle(c); else td.removeAttribute('title');
+    return td;
+}
+
+// Clic ▲/▼ : un nouveau pas dans l'historique
+function repEditCell(sid, week, group, hours) {
+    if (_repDraft.saving) return;
+    const row = repRowFor(sid, group);
+    if (!row) return;
+    const from = row.by_week[week] || 0;
+    if (Math.abs(from - hours) < 1e-9) return;
+    const step = { sid, week, group, from, to: hours, label: repCellLabel(row, week) };
+    _repDraft.undo.push(step);
+    _repDraft.redo = [];
+    repApplyStep(step, hours);
+}
+
+// Joue un pas dans un sens (value = step.to) ou dans l'autre (value = step.from)
+function repApplyStep(step, value) {
+    const { sid, week, group } = step;
+    const key = repDraftKey(sid, group, week);
+    let c = _repDraft.cells.get(key);
+    if (!c) {
+        // Case pas encore touchée depuis le dernier enregistrement : la valeur
+        // d'avant ce pas est la valeur enregistrée
+        c = { sid, week, group, saved: value === step.to ? step.from : step.to };
+        _repDraft.cells.set(key, c);
+    }
+    c.hours = value;
+    if (Math.abs(c.hours - c.saved) < 1e-9) _repDraft.cells.delete(key);
+    repApplyCell(sid, week, group, value);
+    repDraftBar();
+}
+
+function repUndo() {
+    if (_repDraft.saving || !_repDraft.undo.length) return;
+    const step = _repDraft.undo.pop();
+    _repDraft.redo.push(step);
+    repApplyStep(step, step.from);
+    repShowStep(step, 'Retour arrière');
+}
+
+function repRedo() {
+    if (_repDraft.saving || !_repDraft.redo.length) return;
+    const step = _repDraft.redo.pop();
+    _repDraft.undo.push(step);
+    repApplyStep(step, step.to);
+    repShowStep(step, 'Rétabli');
+}
+
+// Montre la case qui vient de changer : défilement jusqu'à elle (hors colonnes et
+// en-têtes figés) et bref halo ; message si elle n'est pas affichée (filtres).
+function repShowStep(step, verb) {
+    const td = document.querySelector(
+        `#repartition-table td[data-sid="${step.sid}"][data-week="${step.week}"][data-group="${step.group}"]`);
+    if (!td) { toast(`${verb} : ${step.label} (hors affichage)`); return; }
+    const wrap = td.closest('.repartition-wrap');
+    if (wrap) {
+        const w = wrap.getBoundingClientRect(), c = td.getBoundingClientRect();
+        const fixedCol = wrap.querySelector('thead tr.hrow-weeks th.col-total');
+        const fixedHead = wrap.querySelector('thead tr.hrow-weeks th');
+        const left = fixedCol ? fixedCol.getBoundingClientRect().right : w.left;
+        const top = fixedHead ? fixedHead.getBoundingClientRect().bottom : w.top;
+        const right = w.left + wrap.clientLeft + wrap.clientWidth;
+        const bottom = w.top + wrap.clientTop + wrap.clientHeight;
+        if (c.left < left) wrap.scrollLeft -= left - c.left + 8;
+        else if (c.right > right) wrap.scrollLeft += c.right - right + 8;
+        if (c.top < top) wrap.scrollTop -= top - c.top + 8;
+        else if (c.bottom > bottom) wrap.scrollTop += c.bottom - bottom + 8;
+    }
+    td.classList.remove('cell-flash');
+    void td.offsetWidth;   // relance l'animation
+    td.classList.add('cell-flash');
+}
+
+// Enregistre le brouillon. Renvoie false en cas d'échec (le départ est alors annulé).
+async function saveRepDraft() {
+    if (_repDraft.saving) return false;
+    const cells = repDraftPayload();
+    if (!cells.length) return true;
+    // Pendant l'envoi, la copie de travail est figée (clics, retour arrière ignorés)
+    _repDraft.saving = true;
+    repDraftBar();
+    try {
+        const res = await api('/weekly-hours/cells' + svcQ(), {
+            method: 'PUT',
+            body: JSON.stringify({ cells }),
+        });
+        const done = [..._repDraft.cells.values()];
+        _repDraft.cells.clear();
+        done.forEach(c => repRefreshCell(c.sid, c.week, c.group));
+        const n = res.saved || 0;
+        toast(`${n} modification${n > 1 ? 's' : ''} enregistrée${n > 1 ? 's' : ''}`);
+        if (res.skipped) toast(`${res.skipped} case(s) ignorée(s) : séance supprimée entre-temps`, 'error');
+        return true;
+    } catch (e) {
+        toast('Enregistrement impossible : ' + e.message, 'error');
+        return false;
+    } finally {
+        _repDraft.saving = false;
+        repDraftBar();
+    }
+}
+
+// Revient à la version enregistrée ; l'historique repart de zéro
+function discardRepDraft() {
+    if (_repDraft.saving) return false;
+    const cells = [..._repDraft.cells.values()];
+    repDraftReset();
+    cells.forEach(c => repApplyCell(c.sid, c.week, c.group, c.saved));
+    return true;
+}
+
+function askDiscardRepDraft() {
+    const n = _repDraft.cells.size;
+    if (!n || _repDraft.saving) return;
+    if (!confirm(`Abandonner ${n} modification${n > 1 ? 's' : ''} non enregistrée${n > 1 ? 's' : ''} ?\n`
+               + 'La répartition revient à la version enregistrée.')) return;
+    discardRepDraft();
+    toast('Modifications abandonnées');
+}
+
+// Données fraîches du serveur : les cases du brouillon y reprennent leur valeur
+// de travail ; celles que le serveur a déjà à l'identique ne sont plus en attente.
+function repDraftOverlay(rows) {
+    if (!_repDraft.cells.size) return;
+    const byGroup = new Map();
+    rows.forEach(r => byGroup.set(r.session_id + '|' + (r.group_index || 1), r));
+    _repDraft.cells.forEach((c, key) => {
+        const row = byGroup.get(c.sid + '|' + c.group);
+        if (!row) return;   // semestre non chargé : la case attend, inchangée
+        c.saved = row.by_week[c.week] || 0;
+        if (Math.abs(c.hours - c.saved) < 1e-9) { _repDraft.cells.delete(key); return; }
+        if (c.hours > 0) row.by_week[c.week] = c.hours;
+        else delete row.by_week[c.week];
+    });
+    repDraftBar();
+}
+
+// Raccourcis de la répartition annuelle : Ctrl+Z, Ctrl+Y (ou Ctrl+Maj+Z), Ctrl+S
+document.addEventListener('keydown', e => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || state.role === 'teacher') return;
+    const pane = document.getElementById('rep-pane-annuelle');
+    if (!pane || pane.offsetParent === null) return;
+    if (document.querySelector('.modal-backdrop.open')) return;
+    // Dans un champ texte (recherche de matière), Ctrl+Z reste celui du champ
+    const t = e.target;
+    if (t && (t.isContentEditable || t.tagName === 'TEXTAREA'
+              || (t.tagName === 'INPUT' && !['checkbox', 'radio', 'button'].includes(t.type)))) return;
+    const k = (e.key || '').toLowerCase();
+    if (k === 'z' && !e.shiftKey) { e.preventDefault(); repUndo(); }
+    else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); repRedo(); }
+    else if (k === 's') { e.preventDefault(); saveRepDraft(); }
+});
 
 // Filtre d'affichage par type de cours (CM/TD/TP/PT). Purement client (pas de
 // rechargement) : masque les lignes des types désélectionnés dans le corps.
@@ -11154,11 +11435,15 @@ async function saveCalendrier() {
     }
 }
 
+let _repLoadSeq = 0;   // seul le dernier chargement lancé s'affiche
 async function loadRepartition() {
+    clearTimeout(_repLoadTimer);
+    const seq = ++_repLoadSeq;
     const sems = _selectedSemesters.slice();
     const el = document.getElementById('repartition-table');
     el.innerHTML = '<div class="spinner">Chargement…</div>';
     document.getElementById('checks-panel').innerHTML = '';
+    repDraftBar();
     if (!sems.length) {
         el.innerHTML = '<div class="empty">Sélectionnez au moins un semestre.</div>';
         _repartitionData = null;
@@ -11183,6 +11468,10 @@ async function loadRepartition() {
             api('/week-comments' + svcQ()), api('/special-calendar' + svcQ()),
             api('/category-codes' + svcQ())
         ]);
+        if (seq !== _repLoadSeq) return;   // une autre sélection est déjà en cours de chargement
+        // Brouillon : les cases modifiées reprennent leur valeur de travail
+        const allRows = promoSet.flatMap(s => datas[s].rows);
+        repDraftOverlay(allRows);
         _weekComments = wc || {};
         _specialCalRaw = calRaw || {};
         _categoryCodes = catCodes || {};
@@ -11228,9 +11517,10 @@ async function loadRepartition() {
             });
         });
 
-        _repartitionData = { weeks, rows, special_weeks, specialBySem, promoRows, selected: sems };
+        _repartitionData = { weeks, rows, allRows, special_weeks, specialBySem, promoRows, selected: sems };
         renderRepartition(_repartitionData); // repeuple aussi les filtres Enseignant/Salle
     } catch(e) {
+        if (seq !== _repLoadSeq) return;
         el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
     }
 }
@@ -11280,7 +11570,14 @@ let _repTab = 'annuelle';
 let _repJourData = null;   // { weeks, rows } de la promo choisie
 
 function showRepTab(tab) {
+    // La journalière lit la répartition enregistrée : un brouillon en cours est réglé avant
+    if (tab === 'jour') guardUnsaved(() => _showRepTab(tab));
+    else _showRepTab(tab);
+}
+
+function _showRepTab(tab) {
     _repTab = tab;
+    repDraftBar();
     document.getElementById('rep-subtab-annuelle').classList.toggle('active', tab === 'annuelle');
     document.getElementById('rep-subtab-jour').classList.toggle('active', tab === 'jour');
     const isJour = tab === 'jour';
@@ -12100,6 +12397,7 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
     }
 
     const headerWeeks = weeks.map((w, i) => `<th class="col-week${sepCls(i)}">${w}</th>`).join('');
+    const hasDraft = _repDraft.cells.size > 0;
 
     function buildDataRow(r, formCls, formCell) {
         const typeKey = (r.type || '').toUpperCase();
@@ -12119,9 +12417,12 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
         const slot = r.slot_duration || 1.5;
         const cells = weeks.map((w, i) => {
             const h = r.by_week[w];
-            const cls = weekDataCls(w, formCls, r.semester) + sepCls(i);
-            return h ? `<td class="cell-hours ${cls}" data-sid="${sid}" data-week="${w}" data-group="${grp}">${h}</td>`
-                     : `<td class="cell-empty ${cls}" data-sid="${sid}" data-week="${w}" data-group="${grp}">·</td>`;
+            // Case modifiée dans le brouillon, pas encore enregistrée
+            const dc = hasDraft && _repDraft.cells.get(repDraftKey(sid, grp, w));
+            const cls = weekDataCls(w, formCls, r.semester) + sepCls(i) + (dc ? ' cell-draft' : '');
+            const attrs = `data-sid="${sid}" data-week="${w}" data-group="${grp}"${dc ? ` title="${esc(repDraftTitle(dc))}"` : ''}`;
+            return h ? `<td class="cell-hours ${cls}" ${attrs}>${h}</td>`
+                     : `<td class="cell-empty ${cls}" ${attrs}>·</td>`;
         }).join('');
         const formTag = formCls === 'row-ftp' ? 'FTP' : formCls === 'row-alt' ? 'ALT' : formCls === 'row-mut' ? 'MUT' : '';
         const totalCls = remaining !== 0 ? ' col-total-bad' : '';
@@ -12375,7 +12676,8 @@ function onRepartitionCellClick(e) {
     const group = parseInt(td.dataset.group) || 1;
     const tr = td.closest('tr');
     const slot = parseFloat(tr.dataset.slot) || 1.5;
-    const currentVal = parseFloat(td.textContent) || 0;
+    // Valeur lue dans la copie de travail (un retour arrière peut la changer widget ouvert)
+    const current = () => { const r = repRowFor(sid, group); return (r && r.by_week[week]) || 0; };
 
     // Créer le widget flèches
     const div = document.createElement('div');
@@ -12385,7 +12687,7 @@ function onRepartitionCellClick(e) {
     btnUp.title = '+' + slot + 'h';
     const valSpan = document.createElement('span');
     valSpan.className = 'cell-val';
-    valSpan.textContent = currentVal || '·';
+    valSpan.textContent = current() || '·';
     const btnDown = document.createElement('button');
     btnDown.innerHTML = '&#9660;';
     btnDown.title = '-' + slot + 'h';
@@ -12397,50 +12699,38 @@ function onRepartitionCellClick(e) {
 
     btnUp.addEventListener('click', ev => {
         ev.stopPropagation();
-        const cur = parseFloat(valSpan.textContent) || 0;
-        const nv = Math.round((cur + slot) * 100) / 100;
-        valSpan.textContent = nv;
-        updateRepartitionCell(sid, week, group, nv, td);
+        repEditCell(sid, week, group, Math.round((current() + slot) * 100) / 100);
     });
     btnDown.addEventListener('click', ev => {
         ev.stopPropagation();
-        const cur = parseFloat(valSpan.textContent) || 0;
-        const nv = Math.max(0, Math.round((cur - slot) * 100) / 100);
-        valSpan.textContent = nv || '·';
-        updateRepartitionCell(sid, week, group, nv, td);
+        repEditCell(sid, week, group, Math.max(0, Math.round((current() - slot) * 100) / 100));
     });
 
     // Fermer le widget si on clique ailleurs
     function closeWidget(ev) {
         if (td.contains(ev.target)) return;
         document.removeEventListener('click', closeWidget, true);
-        const v = parseFloat(valSpan.textContent) || 0;
-        td.textContent = v || '·';
-        if (v) { td.classList.add('cell-hours'); td.classList.remove('cell-empty'); }
-        else   { td.classList.add('cell-empty'); td.classList.remove('cell-hours'); }
+        td.textContent = '';
+        repRefreshCell(sid, week, group, td);
     }
     setTimeout(() => document.addEventListener('click', closeWidget, true), 0);
 }
 
-async function updateRepartitionCell(sid, week, group, newHours, td) {
-    // On met à jour l'état local ET l'affichage de façon SYNCHRONE d'abord, puis on
-    // persiste en arrière-plan. Sinon, avec des clics rapides, les réponses async
-    // pouvaient arriver dans le désordre et laisser la colonne « Reste » (et les
-    // totaux promo) sur une valeur périmée.
-    let revert = null;
+// Pose `newHours` dans la copie de travail et met l'affichage à jour sans re-rendu
+// complet (le défilement du tableau est conservé) : la case, son « Reste », les
+// taux horaires des promos et les lignes h/sem. de l'enseignant ou de la salle filtrés.
+// Rien n'est envoyé au serveur : c'est le rôle de saveRepDraft().
+function repApplyCell(sid, week, group, newHours) {
     if (_repartitionData) {
-        // Toutes les lignes de la session (groupes de TP) partagent le même session_id
-        const groupRows = _repartitionData.rows.filter(r => r.session_id === sid);
+        // Toutes les lignes de la session (groupes de TP) partagent le même session_id ;
+        // les semestres liés (non affichés) comptent dans les taux horaires des promos
+        const groupRows = (_repartitionData.allRows || _repartitionData.rows).filter(r => r.session_id === sid);
         const row = groupRows.find(r => (r.group_index || 1) === group) || groupRows[0];
         if (row) {
             const oldH = row.by_week[week] || 0;
             const delta = newHours - oldH;                    // variation réelle (enseignant/salle)
             if (newHours > 0) row.by_week[week] = newHours;
             else delete row.by_week[week];
-            revert = () => {
-                if (oldH > 0) row.by_week[week] = oldH; else delete row.by_week[week];
-                renderRepartition(_repartitionData);
-            };
 
             // Total restant de CETTE ligne de groupe (sur TOUTES les semaines, pas
             // seulement celles affichées ; arrondi pour éviter le bruit flottant).
@@ -12464,11 +12754,14 @@ async function updateRepartitionCell(sid, week, group, newHours, td) {
             }
             [`FTP${yg}`, `ALT${yg}`].forEach(pk => { recomputePromoCell(pk, week); refreshPromoGroupLabel(pk); });
 
+            // Les lignes h/sem. ne comptent que les semestres affichés
+            const shown = (_repartitionData.selected || []).includes(row.semester);
+
             // Ligne « h/sem. » de l'enseignant : il assure chaque groupe → la
             // variation est multipliée par le nombre de groupes qu'il prend sur la ligne
             const teacherSel = document.getElementById('filter-teacher-repartition');
             const tf = teacherSel ? teacherSel.value : '';
-            const tGroups = tf ? rowTeacherGroups(row, tf) : 0;
+            const tGroups = tf && shown ? rowTeacherGroups(row, tf) : 0;
             if (tGroups && delta !== 0) {
                 const tRow = document.querySelector('tr[data-teacher-total]');
                 const th = tRow && tRow.querySelector(`th[data-teacher-week="${week}"]`);
@@ -12483,7 +12776,7 @@ async function updateRepartitionCell(sid, week, group, newHours, td) {
             // Ligne « h/sem. » de la salle : occupation réelle par groupe → variation réelle
             const roomSel = document.getElementById('filter-room-repartition');
             const rf = roomSel ? roomSel.value : '';
-            if (rf && row.room === rf && delta !== 0) {
+            if (rf && shown && row.room === rf && delta !== 0) {
                 const rRow = document.querySelector('tr[data-room-total]');
                 const th = rRow && rRow.querySelector(`th[data-room-week="${week}"]`);
                 if (th) {
@@ -12493,21 +12786,11 @@ async function updateRepartitionCell(sid, week, group, newHours, td) {
             }
         }
     }
-
-    // Persistance en arrière-plan ; on annule l'affichage en cas d'échec réseau.
-    try {
-        await api(`/weekly-hours/${sid}/${week}` + svcQ(), {
-            method: 'PUT',
-            body: JSON.stringify({ hours: newHours, group_index: group }),
-        });
-    } catch(err) {
-        if (revert) revert();
-        toast('Erreur sauvegarde : ' + err.message, 'error');
-    }
+    repRefreshCell(sid, week, group);
 }
 
 // ===== EXPORT EXCEL =====
-function exportRepartitionExcel() {
+async function exportRepartitionExcel(btn) {
     // L'export reprend uniquement ce qui est à l'affichage : semestres, formation, enseignant
     const params = new URLSearchParams();
     if (_selectedSemesters && _selectedSemesters.length) params.set('semesters', _selectedSemesters.join(','));
@@ -12516,15 +12799,48 @@ function exportRepartitionExcel() {
     const t = (document.getElementById('filter-teacher-repartition') || {}).value || '';
     if (t) params.set('teacher', t);
     if (_serviceYear) params.set('year', _serviceYear);
-    window.location.href = '/api/export/repartition?' + params.toString();
+    const url = '/api/export/repartition?' + params.toString();
+    const cells = repDraftPayload();
+    if (!cells.length) { window.location.href = url; return; }
+    // Brouillon en cours : exporté tel qu'affiché, sans être enregistré. Téléchargé
+    // par fetch — une navigation déclencherait l'alerte « quitter la page ».
+    if (btn) btn.disabled = true;
+    try {
+        const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                     body: JSON.stringify({ cells }) });
+        if (r.status === 401) { showLogin(); throw new Error('Session expirée — reconnectez-vous'); }
+        if (!r.ok) {
+            let msg = null;
+            try { msg = (await r.json()).error; } catch (e) { /* pas du JSON API */ }
+            throw new Error(msg || `Erreur ${r.status}`);
+        }
+        const blob = await r.blob();
+        const m = /filename="?([^";]+)"?/i.exec(r.headers.get('Content-Disposition') || '');
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = m ? m[1] : 'repartition.xlsx';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        const n = cells.length;
+        toast(`Export avec ${n} modification${n > 1 ? 's' : ''} non enregistrée${n > 1 ? 's' : ''}`);
+    } catch (e) {
+        toast('Export impossible : ' + e.message, 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 // ===== IMPORT EXCEL =====
-async function importRepartitionExcel(input) {
+function importRepartitionExcel(input) {
     const file = input.files[0];
     if (!file) return;
     input.value = '';
+    // L'import remplace des heures : un brouillon en cours est réglé avant
+    guardUnsaved(() => runImportRepartition(file), null,
+        { cancel: 'Annuler', discard: 'Abandonner et importer', save: 'Enregistrer et importer' });
+}
 
+async function runImportRepartition(file) {
     if (!confirm('Importer la répartition depuis ce fichier ?\nLes heures existantes seront remplacées par les valeurs du fichier.')) return;
 
     const formData = new FormData();
@@ -12540,6 +12856,7 @@ async function importRepartitionExcel(input) {
             msg += '\n\nErreurs :\n' + data.errors.join('\n');
         }
         alert(msg);
+        repDraftReset();   // l'historique ne s'applique plus aux heures importées
         loadRepartition();
     } catch (e) {
         alert('Erreur réseau : ' + e.message);
@@ -12550,17 +12867,25 @@ async function importRepartitionExcel(input) {
 async function runRepartitionChecks() {
     const panel = document.getElementById('checks-panel');
     panel.innerHTML = '<div class="spinner">Vérification…</div>';
+    // Brouillon en cours : contrôlé avec la répartition enregistrée, sans être enregistré
+    const cells = repDraftPayload();
     try {
-        const data = await api('/checks/repartition' + svcQ());
-        renderChecksPanel(data);
+        const data = cells.length
+            ? await api('/checks/repartition' + svcQ(), { method: 'POST', body: JSON.stringify({ cells }) })
+            : await api('/checks/repartition' + svcQ());
+        renderChecksPanel(data, cells.length);
     } catch(err) {
         panel.innerHTML = '<div class="empty">Erreur : ' + esc(err.message) + '</div>';
     }
 }
 
-function renderChecksPanel({ teacher_load, room_conflicts }) {
+function renderChecksPanel({ teacher_load, room_conflicts }, nDraft = 0) {
     const panel = document.getElementById('checks-panel');
     let html = '';
+    if (nDraft) {
+        html += `<p style="margin:8px 0 0;padding:6px 8px;border-radius:6px;background:#fef3c7;color:#92400e;font-weight:600">
+            Brouillon compris : ${nDraft} modification${nDraft > 1 ? 's' : ''} non enregistrée${nDraft > 1 ? 's' : ''}.</p>`;
+    }
 
     // Table charge enseignants
     html += '<h3 style="margin:12px 0 6px;font-size:.95rem">Charge enseignants par semaine</h3>';
@@ -12595,7 +12920,13 @@ function renderChecksPanel({ teacher_load, room_conflicts }) {
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 document.querySelectorAll('.modal-backdrop').forEach(b => {
-    b.addEventListener('click', e => { if (e.target === b) b.classList.remove('open'); });
+    b.addEventListener('click', e => {
+        if (e.target !== b) return;
+        // Clic à côté de « Modifications non enregistrées » = « Rester ici »
+        // (l'action refusée remet par exemple l'année affichée dans la liste)
+        if (b.id === 'modal-unsaved') resolveUnsaved('cancel');
+        else b.classList.remove('open');
+    });
 });
 
 // ===== UTILS =====
