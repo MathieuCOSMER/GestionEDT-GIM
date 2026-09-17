@@ -11567,7 +11567,7 @@ function typeLabelJour(r) {
 
 // ===== Sous-onglets Répartition : annuelle (tous) / journalière (admin) =====
 let _repTab = 'annuelle';
-let _repJourData = null;   // { weeks, rows } de la promo choisie
+let _repJourData = null;   // { weeks, rows, special } de la promo choisie
 
 function showRepTab(tab) {
     // La journalière lit la répartition enregistrée : un brouillon en cours est réglé avant
@@ -11602,10 +11602,9 @@ function _isoWeekNow() {
 // Simple proposition au chargement, tant que l'admin n'a pas choisi lui-même :
 // sa cohorte tient ensuite (changement de semaine, d'année, retour sur l'onglet).
 let _repJourCohorteChoisie = false;
-function _autoRepJourCohorte() {
+function _autoRepJourCohorte(w) {
     const sel = document.getElementById('repj-cohorte');
     if (!sel || !_repJourData || _repJourCohorteChoisie) return;
-    const w = parseInt(document.getElementById('repj-week').value);
     const mutSems = state.mutSemesters || {};
     const sems = [...new Set(_repJourData.rows
         .filter(r => (r.by_week && r.by_week[w]) > 0)
@@ -11619,11 +11618,12 @@ function onRepJourWeek() {
     renderRepJour();
 }
 
-// Changement de cohorte : le choix de l'admin, gardé ensuite ; le suivi affiché
-// (coches de la liste des semaines, cases, bandeau) passe à cette cohorte
+// Changement de cohorte : le choix de l'admin, gardé ensuite ; la liste des
+// semaines (celles où elle a cours, avec leurs coches), les cases et le bandeau
+// passent à cette cohorte
 function onRepJourCohorte() {
     _repJourCohorteChoisie = true;
-    refreshRepJourWeekLabels();
+    fillRepJourWeeks(parseInt(document.getElementById('repj-week').value));
     syncRepJourStatusBoxes();
     renderRepJour();
 }
@@ -11664,10 +11664,44 @@ function repJourWeekLabel(w) {
     return mark + 'Semaine ' + w;
 }
 
-// Coches de toute la liste des semaines, sans la reconstruire (la sélection tient)
-function refreshRepJourWeekLabels() {
-    [...document.getElementById('repj-week').options]
-        .forEach(o => { o.textContent = repJourWeekLabel(parseInt(o.value)); });
+// La cohorte n'est pas là cette semaine : vacances ou stage (FTP), entreprise (ALT)
+function repJourAbsente(w, cohorte) {
+    const sp = (_repJourData && _repJourData.special) || {};
+    const dans = k => (sp[k] || []).includes(w);
+    return cohorte === 'FTP' ? dans('vacation_ftp') || dans('stage_ftp')
+         : cohorte === 'ALT' ? dans('company_alt') : false;
+}
+
+// Semaines où la cohorte a des cours à placer, dans l'ordre de l'année. Sont
+// écartées les semaines sans cours pour elle et celles où elle n'est pas là,
+// même si des cours communs y sont posés pour l'autre face (TD de SAÉ
+// mutualisés pendant l'entreprise des ALT…). MUT : les semaines de l'une ou de
+// l'autre face.
+function repJourWeeks(cohorte) {
+    if (!_repJourData) return [];
+    const c = cohorte || document.getElementById('repj-cohorte').value;
+    const { weeks, rows } = _repJourData;
+    if (c === 'MUT') {
+        const ftp = repJourWeeks('FTP'), alt = repJourWeeks('ALT');
+        return weeks.filter(w => ftp.includes(w) || alt.includes(w));
+    }
+    return weeks.filter(w => !repJourAbsente(w, c)
+        && rows.some(r => (r.by_week || {})[w] > 0 && repJourInCohorte(r, c)));
+}
+
+// Liste des semaines de la cohorte affichée, avec leurs coches. La semaine
+// voulue est gardée si la cohorte y a cours ; sinon la suivante qui en a, à
+// défaut la dernière.
+function fillRepJourWeeks(wanted) {
+    const sel = document.getElementById('repj-week');
+    const weeks = repJourWeeks();
+    sel.innerHTML = weeks.map(w => `<option value="${w}">${repJourWeekLabel(w)}</option>`).join('');
+    if (!weeks.length) return;
+    const all = _repJourData.weeks;
+    const pos = all.indexOf(wanted);
+    sel.value = String(weeks.includes(wanted) ? wanted
+        : pos < 0 ? weeks[0]
+        : (weeks.find(w => all.indexOf(w) > pos) ?? weeks[weeks.length - 1]));
 }
 
 // Remet les cases « Posée à l'EDT » et « Optimisée » en accord avec la semaine
@@ -11736,10 +11770,9 @@ async function toggleRepJourStatus(kind) {
 // il n'y a rien à y poser.
 function repJourProgressHtml() {
     if (!_repJourData) return '';
-    const { weeks, rows } = _repJourData;
     const cohorte = document.getElementById('repj-cohorte').value;
     const s = repJourSuivi(cohorte);
-    const todo = weeks.filter(w => rows.some(r => (r.by_week || {})[w] > 0 && repJourInCohorte(r, cohorte)));
+    const todo = repJourWeeks(cohorte);
     if (!todo.length) return '';
     const aPoser = todo.filter(w => !s.planned.has(w));
     const aOptimiser = todo.filter(w => s.planned.has(w) && !s.optimized.has(w));
@@ -11813,16 +11846,18 @@ async function loadRepJour() {
         const skey = w => (w >= anchor ? w - anchor : w - anchor + mw);
         const weeks = [...new Set(datas.flatMap(d => d.weeks || []))].sort((a, b) => skey(a) - skey(b));
         const rows = datas.flatMap(d => d.rows || []);
-        _repJourData = { weeks, rows };
-        // Liste des semaines : conserve la sélection, sinon semaine courante si présente.
-        // Les coches suivent la cohorte, connue seulement une fois la semaine choisie.
-        const sel = document.getElementById('repj-week');
-        const cur = parseInt(sel.value);
-        sel.innerHTML = weeks.map(w => `<option value="${w}">Semaine ${w}</option>`).join('');
-        if (weeks.includes(cur)) sel.value = cur;
-        else if (weeks.includes(_isoWeekNow())) sel.value = _isoWeekNow();
-        _autoRepJourCohorte();
-        refreshRepJourWeekLabels();
+        // Semaines de vacances / stage (FTP) et d'entreprise (ALT) de l'année de promo
+        const special = {};
+        ['vacation_ftp', 'stage_ftp', 'company_alt'].forEach(k => {
+            special[k] = [...new Set(datas.flatMap(d => (d.special_weeks || {})[k] || []))];
+        });
+        _repJourData = { weeks, rows, special };
+        // Semaine voulue : celle déjà choisie, sinon la semaine courante. Elle sert à
+        // proposer la cohorte, dont dépend la liste des semaines affichées.
+        const cur = parseInt(document.getElementById('repj-week').value);
+        const wanted = weeks.includes(cur) ? cur : _isoWeekNow();
+        _autoRepJourCohorte(wanted);
+        fillRepJourWeeks(wanted);
         syncRepJourStatusBoxes();
         renderRepJour();
     } catch (e) {
@@ -11924,6 +11959,11 @@ function renderRepJour() {
     if (!_repJourData) { el.innerHTML = '<div class="empty">Aucune donnée.</div>'; return; }
     const w = parseInt(document.getElementById('repj-week').value);
     const cohorte = document.getElementById('repj-cohorte').value;   // 'FTP', 'ALT' ou 'MUT'
+    if (!w) {   // liste vide : la cohorte n'a cours aucune semaine de l'année
+        el.innerHTML = '<div class="empty">Aucune semaine avec des cours à placer pour la cohorte '
+            + esc(cohorte) + '.</div>';
+        return;
+    }
     const list = _repJourData.rows.filter(r => (r.by_week && r.by_week[w]) > 0 && repJourInCohorte(r, cohorte));
     if (!list.length) {
         el.innerHTML = repJourProgressHtml() +
