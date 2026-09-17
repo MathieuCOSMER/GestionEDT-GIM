@@ -2345,21 +2345,40 @@ def _apply_migrations(db):
     ''')
 
     # Semaines déjà planifiées à l'emploi du temps, par année de promotion
-    # (1A / 2A / 3A). Sert de suivi d'avancement dans la répartition journalière,
-    # en deux niveaux : une ligne = la semaine est POSÉE (les cours sont déposés
-    # dans la semaine, sans organisation), optimized=1 = leur placement est en plus
+    # (1A / 2A / 3A) et par cohorte (FTP, ALT, ou MUT = FTP + ALT ensemble). Sert
+    # de suivi d'avancement dans la répartition journalière, en deux niveaux : une
+    # ligne = la semaine est POSÉE pour la cohorte (les cours sont déposés dans la
+    # semaine, sans organisation), optimized=1 = leur placement est en plus
     # OPTIMISÉ (contraintes respectées). Pas de ligne = la semaine reste à faire.
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS edt_planned_weeks (
+    planned_weeks_sql = '''
+        CREATE TABLE IF NOT EXISTS {} (
             year_group  INTEGER NOT NULL,
+            cohort      TEXT NOT NULL,
             week_number INTEGER NOT NULL,
             optimized   INTEGER NOT NULL DEFAULT 0,
             updated_at  TEXT DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (year_group, week_number)
+            PRIMARY KEY (year_group, cohort, week_number)
         )
-    ''')
-    if 'optimized' not in [r[1] for r in db.execute("PRAGMA table_info(edt_planned_weeks)").fetchall()]:
+    '''
+    db.execute(planned_weeks_sql.format('edt_planned_weeks'))
+    pw_cols = [r[1] for r in db.execute("PRAGMA table_info(edt_planned_weeks)").fetchall()]
+    if 'optimized' not in pw_cols:
         db.execute("ALTER TABLE edt_planned_weeks ADD COLUMN optimized INTEGER NOT NULL DEFAULT 0")
+    # Suivi d'abord tenu pour toute l'année de promo : la clé gagne la cohorte, ce
+    # que SQLite ne sait faire qu'en reconstruisant la table. Une semaine cochée
+    # valait alors pour les trois cohortes : elle est recopiée sur chacune (rien
+    # ne se perd ; on décoche ensuite les cohortes qui ne sont pas faites).
+    if 'cohort' not in pw_cols:
+        db.execute('DROP TABLE IF EXISTS edt_planned_weeks_new')  # au cas où un essai précédent a échoué
+        db.execute(planned_weeks_sql.format('edt_planned_weeks_new'))
+        db.execute('''
+            INSERT INTO edt_planned_weeks_new (year_group, cohort, week_number, optimized, updated_at)
+            SELECT p.year_group, c.cohort, p.week_number, p.optimized, p.updated_at
+            FROM edt_planned_weeks p,
+                 (SELECT 'FTP' AS cohort UNION ALL SELECT 'ALT' UNION ALL SELECT 'MUT') c
+        ''')
+        db.execute('DROP TABLE edt_planned_weeks')
+        db.execute('ALTER TABLE edt_planned_weeks_new RENAME TO edt_planned_weeks')
 
     # Appel par QR code : choix de l'enseignant, SOUS-MATIÈRE par sous-matière
     # (Bilan global). Un seul réglage couvre tous les CM / TD / TP / PT du module,
@@ -13012,14 +13031,17 @@ def get_repartition():
     except Exception as e:
         return error_response(f'Error fetching repartition: {str(e)}', 500)
 
+_EDT_COHORTS = ('FTP', 'ALT', 'MUT')   # MUT = FTP + ALT posés ensemble
+
 @app.route('/api/edt-planned-weeks', methods=['GET'])
 def get_edt_planned_weeks():
-    """Suivi des semaines de la répartition journalière, sur deux niveaux :
-    « posée » (les cours sont déposés dans la semaine, sans organisation) et
-    « optimisée » (leur placement est fait, contraintes respectées) — une semaine
-    optimisée est toujours posée. Sans paramètre : toutes les années, sous la forme
-    {'planned': {'1': [36, 37…]}, 'optimized': {'1': [36…]}}. Avec ?year_group=n :
-    {'year_group': n, 'weeks': [...], 'optimized': [...]} pour celle-là."""
+    """Suivi des semaines de la répartition journalière, par cohorte (FTP, ALT ou
+    MUT) et sur deux niveaux : « posée » (les cours sont déposés dans la semaine,
+    sans organisation) et « optimisée » (leur placement est fait, contraintes
+    respectées) — une semaine optimisée est toujours posée. Avec ?year_group=n :
+    {'year_group': n, 'cohorts': {'FTP': {'weeks': [...], 'optimized': [...]}, 'ALT': …, 'MUT': …}}.
+    Sans paramètre : toutes les années, sous la forme
+    {'planned': {'1': {'FTP': [36, 37…]}}, 'optimized': {'1': {'FTP': [36…]}}}."""
     db = get_db()
     yg = request.args.get('year_group')
     if yg:
@@ -13027,53 +13049,59 @@ def get_edt_planned_weeks():
             yg = int(yg)
         except ValueError:
             return error_response('Année de promotion invalide')
-        rows = db.execute('''SELECT week_number, optimized FROM edt_planned_weeks
-                             WHERE year_group = ? ORDER BY week_number''', (yg,)).fetchall()
-        return jsonify({'year_group': yg,
-                        'weeks': [r['week_number'] for r in rows],
-                        'optimized': [r['week_number'] for r in rows if r['optimized']]}), 200
+        cohorts = {c: {'weeks': [], 'optimized': []} for c in _EDT_COHORTS}
+        for r in db.execute('''SELECT cohort, week_number, optimized FROM edt_planned_weeks
+                               WHERE year_group = ? ORDER BY week_number''', (yg,)).fetchall():
+            ch = cohorts.setdefault(r['cohort'], {'weeks': [], 'optimized': []})
+            ch['weeks'].append(r['week_number'])
+            if r['optimized']:
+                ch['optimized'].append(r['week_number'])
+        return jsonify({'year_group': yg, 'cohorts': cohorts}), 200
     planned, optimized = {}, {}
-    for r in db.execute('SELECT year_group, week_number, optimized FROM edt_planned_weeks '
-                        'ORDER BY year_group, week_number').fetchall():
-        planned.setdefault(str(r['year_group']), []).append(r['week_number'])
+    for r in db.execute('SELECT year_group, cohort, week_number, optimized FROM edt_planned_weeks '
+                        'ORDER BY year_group, cohort, week_number').fetchall():
+        planned.setdefault(str(r['year_group']), {}).setdefault(r['cohort'], []).append(r['week_number'])
         if r['optimized']:
-            optimized.setdefault(str(r['year_group']), []).append(r['week_number'])
+            optimized.setdefault(str(r['year_group']), {}).setdefault(r['cohort'], []).append(r['week_number'])
     return jsonify({'planned': planned, 'optimized': optimized}), 200
 
 @app.route('/api/edt-planned-weeks', methods=['PUT'])
 def set_edt_planned_week():
-    """Met à jour le suivi d'une semaine : posée et/ou optimisée.
-    Body : {year_group, week_number, planned, optimized}. « Optimisée » implique
-    « posée » ; retirer « posée » sort la semaine du suivi, optimisation comprise.
-    Le champ optimized absent laisse l'optimisation en l'état. Réservé à l'admin,
-    comme tout le sous-onglet Répartition journalière."""
+    """Met à jour le suivi d'une semaine pour UNE cohorte : posée et/ou optimisée.
+    Body : {year_group, cohort, week_number, planned, optimized}. « Optimisée »
+    implique « posée » ; retirer « posée » sort la semaine du suivi de la cohorte,
+    optimisation comprise. Le champ optimized absent laisse l'optimisation en
+    l'état. Réservé à l'admin, comme tout le sous-onglet Répartition journalière."""
     data = request.get_json() or {}
     try:
         yg = int(data.get('year_group'))
         wk = int(data.get('week_number'))
     except (TypeError, ValueError):
         return error_response('Année de promotion ou semaine manquante')
+    cohort = str(data.get('cohort') or '').upper()
     if yg not in (1, 2, 3):
         return error_response('Année de promotion invalide (1, 2 ou 3)')
+    if cohort not in _EDT_COHORTS:
+        return error_response('Cohorte invalide (FTP, ALT ou MUT)')
     if not (1 <= wk <= 53):
         return error_response('Numéro de semaine invalide (1 à 53)')
     # opt = None : le client ne parle pas d'optimisation, on garde celle en base
     opt = bool(data.get('optimized')) if 'optimized' in data else None
     db = get_db()
     if data.get('planned') or opt:
-        db.execute('''INSERT INTO edt_planned_weeks (year_group, week_number, optimized)
-                      VALUES (?, ?, ?)
-                      ON CONFLICT(year_group, week_number) DO UPDATE SET
+        db.execute('''INSERT INTO edt_planned_weeks (year_group, cohort, week_number, optimized)
+                      VALUES (?, ?, ?, ?)
+                      ON CONFLICT(year_group, cohort, week_number) DO UPDATE SET
                           optimized  = COALESCE(?, optimized),
                           updated_at = CURRENT_TIMESTAMP''',
-                   (yg, wk, 1 if opt else 0, None if opt is None else int(opt)))
+                   (yg, cohort, wk, 1 if opt else 0, None if opt is None else int(opt)))
     else:
-        db.execute('DELETE FROM edt_planned_weeks WHERE year_group = ? AND week_number = ?',
-                   (yg, wk))
+        db.execute('DELETE FROM edt_planned_weeks WHERE year_group = ? AND cohort = ? AND week_number = ?',
+                   (yg, cohort, wk))
     db.commit()
     row = db.execute('SELECT optimized FROM edt_planned_weeks '
-                     'WHERE year_group = ? AND week_number = ?', (yg, wk)).fetchone()
-    return jsonify({'year_group': yg, 'week_number': wk,
+                     'WHERE year_group = ? AND cohort = ? AND week_number = ?', (yg, cohort, wk)).fetchone()
+    return jsonify({'year_group': yg, 'cohort': cohort, 'week_number': wk,
                     'planned': row is not None,
                     'optimized': bool(row and row['optimized'])}), 200
 
