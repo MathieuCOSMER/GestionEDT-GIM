@@ -471,6 +471,7 @@
     <button onclick="showPage('promotions')" id="nav-promotions">Promotions</button>
     <button onclick="showPage('etudiants')" id="nav-etudiants">Étudiants</button>
     <button onclick="showPage('statistiques')" id="nav-statistiques">Statistiques</button>
+    <button onclick="showPage('comparaison')" id="nav-comparaison" class="admin-only">Comparaison</button>
     <button onclick="showPage('parametres')" id="nav-parametres" class="admin-only">Paramètres</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
         <span id="role-badge" class="role-badge" style="display:none"></span>
@@ -571,6 +572,54 @@
         <button class="btn btn-primary" onclick="openRoomModal()">+ Ajouter</button>
     </div>
     <div id="rooms-table"><div class="spinner">Chargement…</div></div>
+</div>
+
+<!-- ===== COMPARAISON HYPERPLANNING ===== -->
+<div class="page" id="page-comparaison">
+    <div class="toolbar">
+        <h1>Comparaison Hyperplanning</h1>
+    </div>
+    <div class="card" style="margin-bottom:14px">
+        <p style="margin:0 0 10px;color:#4b5563;font-size:.85rem;line-height:1.5">
+            Déposez l'<strong>état récapitulatif</strong> exporté d'Hyperplanning
+            (<code>Imports/Exports &gt; TXT/CSV/XML/SQL &gt; Exporter un fichier texte</code>,
+            colonnes d'origine conservées). Les heures y sont confrontées à celles saisies ici,
+            matière par matière et enseignant par enseignant.
+            <strong>Rien n'est enregistré</strong> : cet écran ne fait que montrer les écarts.
+        </p>
+        <div class="filters" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
+            <div>
+                <label style="display:block;font-size:.75rem;color:#6b7280">Fichier</label>
+                <input type="file" id="cmp-file" accept=".csv,.txt,.xlsx,.xlsm">
+            </div>
+            <div>
+                <label style="display:block;font-size:.75rem;color:#6b7280">Année comparée</label>
+                <select id="cmp-year" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px"></select>
+            </div>
+            <div>
+                <label style="display:block;font-size:.75rem;color:#6b7280">Face</label>
+                <select id="cmp-formation" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+                    <option value="">D'après le nom du fichier</option>
+                    <option value="FTP">FTP</option>
+                    <option value="ALT">ALT</option>
+                </select>
+            </div>
+            <div>
+                <label style="display:block;font-size:.75rem;color:#6b7280">Semestres</label>
+                <input type="text" id="cmp-semesters" placeholder="d'après les codes du fichier"
+                       style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;width:190px">
+            </div>
+            <div>
+                <label style="display:block;font-size:.75rem;color:#6b7280">Heures comparées</label>
+                <select id="cmp-base" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+                    <option value="maquette">Maquette (une fois, comme l'état récapitulatif)</option>
+                    <option value="dispensees">Dispensées (× nombre de groupes)</option>
+                </select>
+            </div>
+            <button class="btn btn-primary" id="cmp-submit" onclick="submitCompare()">Comparer</button>
+        </div>
+    </div>
+    <div id="cmp-result"></div>
 </div>
 
 <!-- ===== CONTRAINTES EMPLOI DU TEMPS ===== -->
@@ -2355,6 +2404,7 @@ async function loadPage(name, forceReload) {
         }
         else if (name === 'etudiants') { await loadEtudiants(); }
         else if (name === 'statistiques') { await loadStats(); }
+        else if (name === 'comparaison') { await loadComparaison(); }
         else if (name === 'parametres') { await loadParametres(); }
         else if (name === 'repartition-enseignant') {
             // Vue Service enseignant : données de l'année choisie (_serviceYear)
@@ -9169,6 +9219,209 @@ async function deleteRoom(id) {
         renderRooms();
         toast('Salle supprimée');
     } catch(e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// ===== COMPARAISON HYPERPLANNING =====
+// Confronte un export « état récapitulatif » d'Hyperplanning aux heures saisies
+// ici. Lecture seule de bout en bout : le serveur ne fait qu'analyser le fichier.
+let _cmpData = null;
+let _cmpTab = 'matieres';      // 'matieres' | 'enseignants'
+let _cmpFiltre = 'ecarts';     // 'ecarts' | 'tout'
+
+async function loadComparaison() {
+    try {
+        const data = await api('/years');
+        const sel = document.getElementById('cmp-year');
+        sel.innerHTML = data.years.map(y =>
+            `<option value="${y}" ${y === data.current ? 'selected' : ''}>${y}</option>`).join('');
+    } catch (e) { /* le serveur retombera sur l'année active */ }
+    if (_cmpData) renderCompare();
+}
+
+async function submitCompare() {
+    const f = document.getElementById('cmp-file').files[0];
+    if (!f) { toast('Choisissez le fichier exporté d\'Hyperplanning', 'error'); return; }
+    const btn = document.getElementById('cmp-submit');
+    btn.disabled = true; btn.textContent = 'Analyse…';
+    try {
+        const fd = new FormData();
+        fd.append('file', f);
+        fd.append('formation', document.getElementById('cmp-formation').value);
+        fd.append('semesters', document.getElementById('cmp-semesters').value);
+        fd.append('base', document.getElementById('cmp-base').value);
+        const year = document.getElementById('cmp-year').value;
+        const r = await fetch('/api/compare/hyperplanning' + (year ? '?year=' + encodeURIComponent(year) : ''),
+                              { method: 'POST', body: fd });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'Analyse impossible');
+        _cmpData = data;
+        renderCompare();
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    } finally {
+        btn.disabled = false; btn.textContent = 'Comparer';
+    }
+}
+
+function showCmpTab(t) { _cmpTab = t; renderCompare(); }
+function showCmpFiltre(f) { _cmpFiltre = f; renderCompare(); }
+
+// « 12.5 » → « 12h30 ». Les heures viennent du serveur en décimal.
+function cmpH(h) {
+    if (!h) return '—';
+    const neg = h < 0, a = Math.abs(h);
+    const m = Math.round((a - Math.floor(a)) * 60);
+    return (neg ? '-' : '') + Math.floor(a) + 'h' + String(m).padStart(2, '0');
+}
+
+function cmpEcartCell(v) {
+    if (!v || Math.abs(v) < 0.01) return '<td style="text-align:right;color:#9ca3af">—</td>';
+    const col = v > 0 ? '#b45309' : '#1d4ed8';   // + = en trop dans Hyperplanning
+    return `<td style="text-align:right;font-weight:600;color:${col}">${v > 0 ? '+' : ''}${cmpH(v)}</td>`;
+}
+
+const _CMP_STATUTS = {
+    ok:          ['Concorde',                '#065f46', '#d1fae5'],
+    ecart:       ['Écart',                   '#92400e', '#fef3c7'],
+    absente_ici: ['Absente ici',             '#991b1b', '#fee2e2'],
+    absente_hp:  ['Absente d\'Hyperplanning', '#5b21b6', '#ede9fe'],
+    absent_ici:  ['Absent ici',              '#991b1b', '#fee2e2'],
+    absent_hp:   ['Absent d\'Hyperplanning',  '#5b21b6', '#ede9fe'],
+};
+// Groupes déclarés ici pour la matière, affichés dès qu'il y en a plus d'un :
+// c'est ce qui explique un volume doublé quand on compare en heures dispensées.
+function cmpGroupes(g) {
+    if (!g) return '';
+    const parts = ['CM', 'TD', 'TP', 'PT'].filter(t => g[t] > 1).map(t => `${t} ×${g[t]}`);
+    return parts.length
+        ? ` <span style="color:#b45309">· ${parts.join(' · ')}</span>` : '';
+}
+
+function cmpBadge(st) {
+    const [txt, fg, bg] = _CMP_STATUTS[st] || [st, '#374151', '#f3f4f6'];
+    return `<span style="background:${bg};color:${fg};padding:1px 7px;border-radius:9px;
+            font-size:.68rem;font-weight:600;white-space:nowrap">${esc(txt)}</span>`;
+}
+
+function renderCompare() {
+    const el = document.getElementById('cmp-result');
+    const d = _cmpData;
+    if (!d) { el.innerHTML = ''; return; }
+
+    const chip = (lbl, val, col) => `<div style="background:${col};border-radius:8px;padding:8px 12px;
+        min-width:92px"><div style="font-size:.7rem;color:#4b5563">${esc(lbl)}</div>
+        <div style="font-size:1.15rem;font-weight:700">${val}</div></div>`;
+    const rm = d.resume_matieres, re = d.resume_enseignants;
+
+    // Bandeau : d'où viennent les chiffres comparés.
+    let html = `<div class="card" style="margin-bottom:12px">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+            <div style="font-size:.8rem;color:#4b5563">
+                <strong>${esc(d.fichier)}</strong> · face <strong>${esc(d.formation)}</strong>
+                · semestres <strong>${d.semestres_demandes.join(', ')}</strong>
+                · heures <strong>${d.base === 'dispensees'
+                    ? 'dispensées (× groupes)' : 'maquette (une fois)'}</strong>
+                ${d.semestres_trouves.length ? '' :
+                  '<span style="color:#b91c1c"> — aucun de ces semestres n\'existe dans l\'année choisie</span>'}
+            </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+            ${chip('Matières', rm.total, '#f3f4f6')}
+            ${chip('Concordent', rm.ok, '#d1fae5')}
+            ${chip('En écart', rm.ecart, '#fef3c7')}
+            ${chip('Manquantes', rm.manquant, '#fee2e2')}
+            <div style="width:14px"></div>
+            ${chip('Enseignants', re.total, '#f3f4f6')}
+            ${chip('Concordent', re.ok, '#d1fae5')}
+            ${chip('En écart', re.ecart, '#fef3c7')}
+            ${chip('Manquants', re.manquant, '#fee2e2')}
+        </div>`;
+
+    // Ce que le fichier contient mais que la maquette ne connaît pas.
+    if (d.sans_enseignant && d.sans_enseignant.heures > 0) {
+        html += `<p style="margin:10px 0 0;font-size:.78rem;color:#6b7280">
+            <strong>${esc(d.sans_enseignant.libelle)}</strong> sans enseignant affecté ici
+            (${d.sans_enseignant.matieres.map(esc).join(', ')}) : ces heures comptent
+            dans les matières, pas dans les enseignants.</p>`;
+    }
+    if (d.types_hors_maquette.length) {
+        html += `<p style="margin:10px 0 0;font-size:.78rem;color:#6b7280">
+            Types hors CM/TD/TP/PT, non comptés :
+            ${d.types_hors_maquette.map(t => `<strong>${esc(t.type)}</strong> ${esc(t.libelle)}`).join(' · ')}</p>`;
+    }
+    if (d.alertes.length) {
+        html += `<div style="margin-top:10px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;
+                 padding:8px 12px;font-size:.78rem;color:#92400e">
+            <strong>Lecture du fichier — ${d.alertes.length} incohérence(s) :</strong>
+            <ul style="margin:4px 0 0;padding-left:18px">
+                ${d.alertes.slice(0, 8).map(a => `<li>${esc(a)}</li>`).join('')}
+            </ul>${d.alertes.length > 8 ? '<div>…</div>' : ''}</div>`;
+    }
+    html += '</div>';
+
+    // Onglets + filtre
+    const tabBtn = (id, lbl) => `<button class="btn btn-sm ${_cmpTab === id ? 'btn-primary' : 'btn-secondary'}"
+        onclick="showCmpTab('${id}')">${lbl}</button>`;
+    const filBtn = (id, lbl) => `<button class="btn btn-sm ${_cmpFiltre === id ? 'btn-primary' : 'btn-secondary'}"
+        onclick="showCmpFiltre('${id}')">${lbl}</button>`;
+    html += `<div style="display:flex;gap:6px;margin-bottom:10px;align-items:center;flex-wrap:wrap">
+        ${tabBtn('matieres', 'Matières')} ${tabBtn('enseignants', 'Enseignants')}
+        <div style="width:18px"></div>
+        ${filBtn('ecarts', 'Écarts seuls')} ${filBtn('tout', 'Tout')}
+        <span style="margin-left:auto;font-size:.72rem;color:#6b7280">
+            Écart = Hyperplanning − ici · <span style="color:#b45309">+ en trop dans Hyperplanning</span>
+            · <span style="color:#1d4ed8">− manquant dans Hyperplanning</span></span>
+    </div>`;
+
+    const lignes = (_cmpTab === 'matieres' ? d.matieres : d.enseignants)
+        .filter(l => _cmpFiltre === 'tout' || l.statut !== 'ok');
+    if (!lignes.length) {
+        html += `<div class="empty">${_cmpFiltre === 'ecarts'
+            ? 'Aucun écart : tout concorde.' : 'Aucune ligne.'}</div>`;
+        el.innerHTML = html;
+        return;
+    }
+
+    // Deux blocs de colonnes : Hyperplanning, puis ici, puis l'écart par type.
+    const th3 = t => `<th style="text-align:right">${t}</th>`;
+    html += `<table><thead>
+        <tr>
+            <th rowspan="2">${_cmpTab === 'matieres' ? 'Matière' : 'Enseignant'}</th>
+            <th rowspan="2">Statut</th>
+            <th colspan="5" style="text-align:center;background:#eff6ff">Hyperplanning</th>
+            <th colspan="5" style="text-align:center;background:#f0fdf4">Ici</th>
+            <th colspan="5" style="text-align:center;background:#fffbeb">Écart</th>
+        </tr>
+        <tr>
+            ${['CM','TD','TP','PT','Total'].map(th3).join('')}
+            ${['CM','TD','TP','PT','Total'].map(th3).join('')}
+            ${['CM','TD','TP','PT','Total'].map(th3).join('')}
+        </tr></thead><tbody>`;
+
+    for (const l of lignes) {
+        const nom = _cmpTab === 'matieres'
+            ? `<strong>${esc(l.code || l.code_hp || '?')}</strong>
+               <div style="font-size:.72rem;color:#6b7280">
+                 ${esc(l.libelle_hp || '')}${l.libelle_hp && l.nom ? ' · ' : ''}
+                 ${l.nom ? esc(l.nom) : ''}
+                 ${l.sous_matieres && l.sous_matieres.length > 1
+                    ? ' <em>(' + l.sous_matieres.map(esc).join(', ') + ')</em>' : ''}
+                 ${cmpGroupes(l.groupes)}</div>`
+            : `<strong>${esc(l.nom)}</strong>${l.nom_hp
+                 ? `<div style="font-size:.72rem;color:#6b7280">${esc(l.nom_hp)}</div>` : ''}`;
+        const cells = b => ['cm','td','tp','pt','total'].map(k =>
+            `<td style="text-align:right">${cmpH(b[k])}</td>`).join('');
+        const ec = l.ecart || {};
+        html += `<tr>
+            <td>${nom}</td>
+            <td>${cmpBadge(l.statut)}</td>
+            ${cells(l.hp)}
+            ${cells(l.app)}
+            ${['cm','td','tp','pt','total'].map(k => cmpEcartCell(ec[k])).join('')}
+        </tr>`;
+    }
+    html += '</tbody></table>';
+    el.innerHTML = html;
 }
 
 // ===== SESSIONS =====

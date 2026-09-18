@@ -2723,6 +2723,7 @@ _YEAR_OVERRIDE_PREFIXES = (
     '/api/edt-planned-weeks',    # suivi posées / optimisées (répartition journalière)
     '/api/export/repartition',
     '/api/import/repartition',
+    '/api/compare/hyperplanning',  # comparaison d'un export Hyperplanning
 )
 
 @app.before_request
@@ -12385,6 +12386,405 @@ def get_all_service():
         return jsonify(_service_rows(get_db())), 200
     except Exception as e:
         return error_response(f'Error calculating services: {str(e)}', 500)
+
+# ======================= COMPARAISON HYPERPLANNING =======================
+# Confronte l'« état récapitulatif » exporté d'Hyperplanning au service et aux
+# volumes horaires saisis ici. Strictement en lecture : rien n'est enregistré.
+#
+# Format de l'export (Hyperplanning 2025.x, CSV « ; ») : un ARBRE APLATI en
+# profondeur, chaque parent étant répété sur les lignes de ses enfants —
+#     T3IR503:RES - Mécanique et Matériaux 5   25h30   (total matière)
+#       M. BOTTIN Fabrice                      12h00   (total enseignant)
+#         TD                                    3h00   (sous-total du type)
+#           <séance>                            1h30
+#           <séance>                            1h30
+# Les enfants somment exactement au parent : additionner toutes les lignes
+# compterait donc les heures 3 à 4 fois. Les lignes « séance » ne portent une
+# salle que si elle est affectée, on ne peut donc pas s'en servir pour repérer
+# les niveaux. Règle retenue, vérifiée sur l'export : pour un trio
+# (matière, enseignant, type), la PREMIÈRE ligne rencontrée est le sous-total,
+# les suivantes sont ses séances. La somme des séances est recalculée pour
+# contrôle et tout écart est remonté dans « alertes ».
+
+_HP_ALLOWED_EXT = {'.csv', '.txt', '.xlsx', '.xlsm'}
+_HP_MAX_FILE = 15 * 1024 * 1024   # 15 Mo
+
+# Colonnes de l'export → rôle interne.
+_HP_FIELDS = {
+    'mat_lib': 'LIBELLE_MAT', 'mat_uid': 'UID_MAT', 'mat_full': 'NOMPERSO_MAT',
+    'ens_nom': 'NOM_ENS', 'ens_prenom': 'PRENOM_ENS', 'ens_full': 'NOMPERSO_ENS',
+    'type': 'TYPE', 'salle': 'NOM_SAL', 'duree': 'DUREE',
+}
+# Types d'Hyperplanning → types d'enseignement d'ici. Les autres (Conférence,
+# Forum, Aucun…) sont comptés à part et signalés, jamais fondus dans un total.
+_HP_TYPES = {'cm': 'CM', 'td': 'TD', 'tp': 'TP', 'projettutore': 'PT', 'pt': 'PT'}
+
+_HP_VIDE = {'CM': 0.0, 'TD': 0.0, 'TP': 0.0, 'PT': 0.0}
+
+def _hp_hours(txt):
+    """« 21h00 », « 1h30 », « 7h », « - 2h00 » → heures décimales. 0.0 si vide."""
+    s = ('' if txt is None else str(txt)).strip()
+    if not s:
+        return 0.0
+    neg = s.startswith('-')
+    m = re.search(r'(\d+)\s*h\s*(\d{1,2})?', s)
+    if m:
+        v = int(m.group(1)) + int(m.group(2) or 0) / 60.0
+    else:
+        m2 = re.search(r'(\d+(?:[.,]\d+)?)', s)
+        if not m2:
+            return 0.0
+        v = float(m2.group(1).replace(',', '.'))
+    return -v if neg else v
+
+def _hp_fmt(h):
+    """Heures décimales → « 12h30 » (signe conservé)."""
+    neg = h < 0
+    h = abs(round(h, 2))
+    return ('-' if neg else '') + '%dh%02d' % (int(h), int(round((h - int(h)) * 60)))
+
+def _hp_read_rows(path, ext):
+    """Lignes de l'export en dictionnaires {EN-TÊTE: valeur}. CSV (« ; » ou
+    « , », UTF-8/BOM ou cp1252) et classeurs Excel acceptés."""
+    import csv
+    if ext in ('.xlsx', '.xlsm'):
+        wb = _load_workbook_lenient(path, data_only=True)
+        ws = wb.worksheets[0]
+        rows = [[_cell_txt(v) for v in r] for r in ws.iter_rows(values_only=True)]
+        if not rows:
+            return [], []
+        head = rows[0]
+        return head, [dict(zip(head, r)) for r in rows[1:]]
+    with open(path, 'rb') as fh:
+        raw = fh.read()
+    txt = None
+    for enc in ('utf-8-sig', 'utf-8', 'cp1252', 'latin-1'):
+        try:
+            txt = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if txt is None:
+        raise ValueError('encodage du fichier non reconnu')
+    first = txt.split('\n', 1)[0]
+    delim = ';' if first.count(';') >= first.count(',') else ','
+    rdr = csv.DictReader(io.StringIO(txt), delimiter=delim)
+    return (rdr.fieldnames or []), list(rdr)
+
+def _hp_course_code(uid):
+    """Code d'ici déduit du code Hyperplanning : « T3IR501:IUT » → « R5.01 »,
+    « T3IS501:IUT » → « SAE5.01 » (clé de regroupement, cf. _mat_base_key).
+    None si le code ne suit pas cette nomenclature."""
+    code = (uid or '').split(':')[0].strip().upper()
+    m = re.search(r'([RS])(\d)(\d{1,2})$', code)
+    if not m:
+        return None
+    kind, sem, num = m.group(1), m.group(2), int(m.group(3))
+    return _mat_base_key(('R' if kind == 'R' else 'SAE') + '%s.%02d' % (sem, num))
+
+def _hp_parse(head, rows):
+    """Agrège l'export par (matière, enseignant, type) en ne retenant que les
+    lignes de sous-total. Renvoie (matieres, alertes, types_hors_maquette)."""
+    missing = [c for c in ('NOMPERSO_MAT', 'TYPE', 'DUREE') if c not in (head or [])]
+    if missing:
+        raise ValueError('colonnes absentes : ' + ', '.join(missing) +
+                         ". Exportez l'état récapitulatif sans renommer les colonnes.")
+    fld = _HP_FIELDS
+    get = lambda r, k: (r.get(fld[k]) or '').strip()
+
+    mats, seen, detail, alertes, autres = {}, set(), {}, [], {}
+    for r in rows:
+        mat_full = get(r, 'mat_full') or get(r, 'mat_lib')
+        if not mat_full:
+            continue
+        ens_nom, ens_full = get(r, 'ens_nom'), get(r, 'ens_full')
+        typ_raw = get(r, 'type')
+        if not typ_raw:
+            continue                     # lignes de total matière / enseignant
+        heures = _hp_hours(get(r, 'duree'))
+        key = (mat_full, ens_full, _profile_key(typ_raw))
+        if key in seen:                  # séance : sert au contrôle, pas au total
+            detail[key] = detail.get(key, 0.0) + heures
+            continue
+        seen.add(key)
+        typ = _HP_TYPES.get(_profile_key(typ_raw))
+        m = mats.setdefault(mat_full, {
+            'libelle': get(r, 'mat_lib') or mat_full,
+            'uid': get(r, 'mat_uid'), 'nomperso': mat_full,
+            'code': _hp_course_code(get(r, 'mat_uid') or mat_full),
+            'heures': dict(_HP_VIDE), 'enseignants': {},
+        })
+        if typ is None:
+            autres[typ_raw] = autres.get(typ_raw, 0.0) + heures
+            continue
+        m['heures'][typ] += heures
+        if ens_nom or ens_full:
+            e = m['enseignants'].setdefault(ens_full, {
+                'nom': ens_nom, 'prenom': get(r, 'ens_prenom'), 'affiche': ens_full,
+                'heures': dict(_HP_VIDE),
+            })
+            e['heures'][typ] += heures
+
+    # Contrôle : la somme des séances doit retomber sur le sous-total.
+    for (mat, ens, typ), tot in detail.items():
+        t = _HP_TYPES.get(typ)
+        mm = mats.get(mat)
+        if not (t and mm and ens in mm['enseignants']):
+            continue
+        sub = mm['enseignants'][ens]['heures'][t]
+        if tot > sub + 0.01:
+            alertes.append('%s · %s · %s : les séances totalisent %s pour un '
+                           'sous-total de %s' % (mat, ens, typ, _hp_fmt(tot), _hp_fmt(sub)))
+    return mats, alertes, autres
+
+def _hp_app_totals(db, formation, semesters, base='maquette'):
+    """Volumes d'ici, sur la base demandée. Renvoie (par_matiere, par_enseignant,
+    semestres_vus) ; chaque matière porte aussi le nb de groupes par type.
+
+    L'état récapitulatif d'Hyperplanning donne les heures DU MODULE : pour
+    R5.02, « TP 15h00 » recouvre exactement dix séances de 1h30, une seule fois,
+    quel que soit le nombre de groupes de TP. Deux bases sont donc possibles :
+
+      'maquette'   — heures du module, sans multiplier par les groupes.
+                     C'est la base d'un tel export, et le défaut.
+      'dispensees' — heures réellement délivrées, multipliées par le nombre de
+                     groupes (la base du service enseignant, cf. _service_rows).
+                     À choisir si l'export détaille chaque groupe.
+
+    En base « maquette », les heures d'un type sont réparties entre les
+    enseignants au prorata des groupes qu'ils assurent, pour que la somme par
+    enseignant retombe sur le volume du module."""
+    fts = (1, 2) if formation == 'ALT' else (0, 2)
+    rows = db.execute('''
+        SELECT cs.id AS session_id, cs.teacher_id, cs.teaching_type,
+               cs.total_hours, cs.formation_type,
+               c.code AS course_code, c.name AS course_name, c.tp_type,
+               s.code AS semester_code
+        FROM course_sessions cs
+        JOIN courses c ON cs.course_id = c.id
+        JOIN semesters s ON c.semester_id = s.id
+        WHERE cs.formation_type IN (%s) AND s.code IN (%s)
+    ''' % (','.join('?' * len(fts)), ','.join('?' * len(semesters))),
+        list(fts) + list(semesters)).fetchall()
+
+    sg_map, mut_set, tpsep_set = _load_semester_groups(db)
+    gt_map = _load_group_teachers(db)
+    names = {r['id']: r['name'] for r in db.execute('SELECT id, name FROM teachers').fetchall()}
+
+    par_mat, par_ens, sems = {}, {}, set()
+    orphelines = []   # sessions sans enseignant : comptées en matière, pas en service
+    for r in rows:
+        tt = (r['teaching_type'] or '').upper().replace(' ', '')
+        tt = 'TP' if tt.startswith('TP') else tt
+        if tt not in ('CM', 'TD', 'TP', 'PT'):
+            continue
+        h = r['total_hours'] or 0
+        if not h:
+            continue
+        sems.add(r['semester_code'])
+        mult = _group_multiplier(sg_map, mut_set, tpsep_set, r['semester_code'],
+                                 r['formation_type'], r['teaching_type'], r['tp_type'])
+        key = _mat_base_key(r['course_code'])
+        m = par_mat.setdefault(key, {
+            'code': key, 'nom': r['course_name'], 'semestre': r['semester_code'],
+            'sous_matieres': set(), 'heures': dict(_HP_VIDE), 'enseignants': {},
+            'groupes': {'CM': 1, 'TD': 1, 'TP': 1, 'PT': 1},
+        })
+        m['sous_matieres'].add(r['course_code'])
+        m['groupes'][tt] = max(m['groupes'][tt], mult)
+        # « maquette » : le volume du module, une fois. « dispensees » : une fois
+        # par groupe. La part de chaque enseignant suit la même base, de sorte
+        # que la somme des enseignants retombe toujours sur le total du module.
+        part = h if base == 'dispensees' else h / max(1, mult)
+        m['heures'][tt] += h * (mult if base == 'dispensees' else 1)
+        for tid in _group_teacher_list(r['teacher_id'], gt_map.get(r['session_id']), mult):
+            if not tid or tid not in names:
+                orphelines.append({'code': r['course_code'], 'type': tt,
+                                   'heures': round(part, 2)})
+                continue
+            m['enseignants'].setdefault(names[tid], dict(_HP_VIDE))
+            m['enseignants'][names[tid]][tt] += part
+            e = par_ens.setdefault(names[tid], {
+                'nom': names[tid], 'teacher_id': tid, 'heures': dict(_HP_VIDE),
+            })
+            e['heures'][tt] += part
+    for m in par_mat.values():
+        m['sous_matieres'] = sorted(m['sous_matieres'])
+    return par_mat, par_ens, sorted(sems), orphelines
+
+def _hp_bloc(heures, coeffs):
+    """Restitution d'un jeu d'heures CM/TD/TP/PT, avec total et HETD."""
+    hetd = (heures['CM'] * coeffs['cm'] + heures['TD'] * coeffs['td'] +
+            heures['TP'] * coeffs['tp'] + heures['PT'] * coeffs['pt'])
+    d = {k.lower(): round(v, 2) for k, v in heures.items()}
+    d.update({'total': round(sum(heures.values()), 2), 'hetd': round(hetd, 2)})
+    return d
+
+def _hp_ecart(hp, app_):
+    """Écart Hyperplanning − ici, par type. None si tout concorde."""
+    d = {k: round(hp[k] - app_[k], 2) for k in ('cm', 'td', 'tp', 'pt', 'total', 'hetd')}
+    return d if any(abs(v) > 0.01 for k, v in d.items() if k != 'hetd') else None
+
+def _hp_resume(lignes):
+    return {
+        'total': len(lignes),
+        'ok': sum(1 for l in lignes if l['statut'] == 'ok'),
+        'ecart': sum(1 for l in lignes if l['statut'] == 'ecart'),
+        'manquant': sum(1 for l in lignes if l['statut'].startswith('absent')),
+    }
+
+@app.route('/api/compare/hyperplanning', methods=['POST'])
+def compare_hyperplanning():
+    """Compare un export « état récapitulatif » d'Hyperplanning aux données de
+    l'année active. Lecture seule : aucun enregistrement, aucune modification.
+
+    Champs du formulaire : `file` (obligatoire), `formation` (FTP/ALT, déduite
+    du nom du fichier à défaut), `semesters` (liste séparée par des virgules ;
+    déduite des codes matière du fichier à défaut), `mapping` (JSON
+    {libellé Hyperplanning: code d'ici} pour les matières non rapprochées)."""
+    err = _require_admin()
+    if err:
+        return err
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return error_response('Aucun fichier reçu', 400)
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in _HP_ALLOWED_EXT:
+        return error_response('Type de fichier non autorisé (.csv, .xlsx)', 400)
+    if request.content_length and request.content_length > _HP_MAX_FILE:
+        return error_response('Fichier trop volumineux (max 15 Mo)', 400)
+
+    fd, tmp = tempfile.mkstemp(suffix=ext)
+    os.close(fd)
+    f.save(tmp)
+    try:
+        head, rows = _hp_read_rows(tmp, ext)
+        mats_hp, alertes, autres = _hp_parse(head, rows)
+    except ValueError as e:
+        return error_response('Lecture impossible : %s' % e, 400)
+    except Exception as e:
+        return error_response('Lecture impossible : %s' % e, 400)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+    if not mats_hp:
+        return error_response("Aucune ligne exploitable : l'export ne contient "
+                              'ni matière ni type de cours.', 400)
+
+    formation = (request.form.get('formation') or '').strip().upper()
+    if formation not in ('FTP', 'ALT'):
+        formation = 'ALT' if 'ALT' in (f.filename or '').upper() else 'FTP'
+    try:
+        mapping = json.loads(request.form.get('mapping') or '{}')
+    except ValueError:
+        mapping = {}
+    for m in mats_hp.values():
+        if m['nomperso'] in mapping and mapping[m['nomperso']]:
+            m['code'] = _mat_base_key(mapping[m['nomperso']])
+
+    sems = [s.strip().upper() for s in (request.form.get('semesters') or '').split(',') if s.strip()]
+    if not sems:
+        sems = sorted({'S' + m['code'][-4] for m in mats_hp.values()
+                       if m['code'] and re.search(r'\d\.\d\d$', m['code'])})
+    if not sems:
+        return error_response('Semestres indéterminables : précisez-les.', 400)
+
+    base = (request.form.get('base') or '').strip().lower()
+    if base not in ('maquette', 'dispensees'):
+        base = 'maquette'
+
+    db = get_db()
+    coeffs = _get_hetd_coeffs(db)
+    par_mat, par_ens, sems_vus, orphelines = _hp_app_totals(db, formation, sems, base)
+    bloc_vide = _hp_bloc(dict(_HP_VIDE), coeffs)
+
+    # --- Matières : une ligne par matière, Hyperplanning face à ici ---
+    lignes_mat, vus = [], set()
+    for m in sorted(mats_hp.values(), key=lambda x: (x['code'] or 'zzz', x['libelle'])):
+        app_m = par_mat.get(m['code']) if m['code'] else None
+        if app_m:
+            vus.add(m['code'])
+        hp_b = _hp_bloc(m['heures'], coeffs)
+        app_b = _hp_bloc(app_m['heures'] if app_m else dict(_HP_VIDE), coeffs)
+        ecart = _hp_ecart(hp_b, app_b)
+        # Matière sans la moindre heure CM/TD/TP/PT des deux côtés : elle ne
+        # porte que des types hors maquette (Forum, Conférence…), déjà totalisés
+        # à part. L'afficher à 0h face à 0h n'apprendrait rien.
+        if not hp_b['total'] and not app_b['total']:
+            continue
+        lignes_mat.append({
+            'code_hp': (m['uid'] or '').split(':')[0], 'libelle_hp': m['libelle'],
+            'nomperso_hp': m['nomperso'],
+            'code': m['code'], 'nom': app_m['nom'] if app_m else None,
+            'sous_matieres': app_m['sous_matieres'] if app_m else [],
+            'groupes': app_m['groupes'] if app_m else None,
+            'hp': hp_b, 'app': app_b, 'ecart': ecart,
+            'statut': 'ok' if app_m and not ecart else ('absente_ici' if not app_m else 'ecart'),
+        })
+    for code, a in sorted(par_mat.items()):
+        if code in vus:
+            continue
+        app_b = _hp_bloc(a['heures'], coeffs)
+        lignes_mat.append({
+            'code_hp': None, 'libelle_hp': None, 'nomperso_hp': None,
+            'code': code, 'nom': a['nom'], 'sous_matieres': a['sous_matieres'],
+            'groupes': a['groupes'],
+            'hp': bloc_vide, 'app': app_b, 'ecart': _hp_ecart(bloc_vide, app_b),
+            'statut': 'absente_hp',
+        })
+
+    # --- Enseignants : rapprochés sur le nom de famille ---
+    hp_ens = {}
+    for m in mats_hp.values():
+        for e in m['enseignants'].values():
+            k = _profile_key(e['nom']) or _profile_key(e['affiche'])
+            if not k:
+                continue
+            cur = hp_ens.setdefault(k, {'affiche': e['affiche'], 'nom': e['nom'],
+                                        'prenom': e['prenom'], 'heures': dict(_HP_VIDE)})
+            for t, h in e['heures'].items():
+                cur['heures'][t] += h
+    app_ens = {_profile_key(n): v for n, v in par_ens.items()}
+
+    lignes_ens = []
+    for k in sorted(set(hp_ens) | set(app_ens)):
+        h, a = hp_ens.get(k), app_ens.get(k)
+        hp_b = _hp_bloc(h['heures'] if h else dict(_HP_VIDE), coeffs)
+        app_b = _hp_bloc(a['heures'] if a else dict(_HP_VIDE), coeffs)
+        ecart = _hp_ecart(hp_b, app_b)
+        lignes_ens.append({
+            'nom_hp': h['affiche'] if h else None,
+            'nom': a['nom'] if a else (h['nom'] if h else ''),
+            'teacher_id': a['teacher_id'] if a else None,
+            'hp': hp_b, 'app': app_b, 'ecart': ecart,
+            'statut': 'ok' if h and a and not ecart
+                      else ('absent_ici' if not a else ('absent_hp' if not h else 'ecart')),
+        })
+
+    return jsonify({
+        'fichier': f.filename,
+        'formation': formation,
+        'base': base,
+        'semestres_demandes': sems,
+        'semestres_trouves': sems_vus,
+        'coeffs': coeffs,
+        'alertes': alertes,
+        # Heures présentes ici mais sans enseignant affecté : elles pèsent dans
+        # le tableau des matières et pas dans celui des enseignants. Sans cette
+        # mention, l'écart entre les deux totaux resterait inexplicable.
+        'sans_enseignant': {
+            'heures': round(sum(o['heures'] for o in orphelines), 2),
+            'libelle': _hp_fmt(sum(o['heures'] for o in orphelines)),
+            'matieres': sorted({o['code'] for o in orphelines}),
+        },
+        'types_hors_maquette': [{'type': t, 'heures': round(h, 2), 'libelle': _hp_fmt(h)}
+                                for t, h in sorted(autres.items())],
+        'matieres': lignes_mat, 'resume_matieres': _hp_resume(lignes_mat),
+        'enseignants': lignes_ens, 'resume_enseignants': _hp_resume(lignes_ens),
+    }), 200
 
 # ======================= TIMETABLE GENERATION =======================
 
