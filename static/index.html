@@ -9123,7 +9123,7 @@ function renderRooms() {
         <thead><tr><th>Nom</th><th>Type</th><th>Capacité</th><th>Actions</th></tr></thead>
         <tbody>${state.rooms.map(r => `<tr>
             <td><strong>${esc(r.name||'')}</strong></td>
-            <td>${esc(r.type||'')}</td>
+            <td>${esc(r.room_type||'')}</td>
             <td>${r.capacity||''}</td>
             <td>
                 <button class="btn btn-secondary btn-sm" onclick="openRoomModal(${r.id})">Éditer</button>
@@ -9138,7 +9138,7 @@ function openRoomModal(id = null) {
     document.getElementById('modal-room-title').textContent = r ? 'Modifier la salle' : 'Ajouter une salle';
     document.getElementById('room-id').value = r ? r.id : '';
     document.getElementById('room-name').value = r ? r.name || '' : '';
-    document.getElementById('room-type').value = r ? r.type || '' : '';
+    document.getElementById('room-type').value = r ? r.room_type || '' : '';
     document.getElementById('room-capacity').value = r ? r.capacity || '' : '';
     openModal('modal-room');
 }
@@ -9148,7 +9148,7 @@ async function submitRoom(e) {
     const id = document.getElementById('room-id').value;
     const data = {
         name: document.getElementById('room-name').value,
-        type: document.getElementById('room-type').value,
+        room_type: document.getElementById('room-type').value,
         capacity: document.getElementById('room-capacity').value,
     };
     try {
