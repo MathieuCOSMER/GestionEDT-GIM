@@ -10913,10 +10913,15 @@ function renderGroupesCorpsTable(t) {
             return `<td${c.cle === 'prenom' ? '' : ' style="color:#4b5563"'}>${v ? esc(v) : '<span style="color:#d1d5db">—</span>'}</td>`;
         }
         const v = s.groupes[c.famille] || '';
-        if (!admin) return `<td style="text-align:center">${v ? esc(v) : '<span style="color:#d1d5db">—</span>'}</td>`;
+        // Famille qui en suit une autre (le projet tutoré se fait dans le groupe de TD) :
+        // rien à choisir, le numéro suit celui de la colonne source.
+        const suit = (d.suivent || {})[c.famille];
+        if (!admin || suit) return `<td style="text-align:center${suit ? ';color:#6b7280;font-style:italic' : ''}"${
+            suit ? ` title="Numéro repris du groupe de ${esc(suit)}"` : ''}>${
+            v ? esc(v) : '<span style="color:#d1d5db">—</span>'}</td>`;
         const champ = `data-sid="${s.id}" data-famille="${esc(c.famille)}" onchange="setGroupe(this)"
             style="width:96px;padding:2px 4px;font-size:.8rem;text-align:center;border:1px solid #d1d5db;border-radius:4px"`;
-        // Familles du service (TD, TP12, TP8, PT…) : le nombre de groupes est connu, on
+        // Familles du service (TD, TP12, TP8…) : le nombre de groupes est connu, on
         // choisit dans la liste. Les autres (Covoiturage…) restent en saisie libre.
         const choix = _grpChoix(t, c.famille, v);
         if (!choix.length) {
@@ -10936,7 +10941,8 @@ function renderGroupesCorpsTable(t) {
                 : `<tr><td colspan="${cols.length + 1}" style="text-align:center;color:#9ca3af;padding:14px">Aucun étudiant ne correspond aux filtres</td></tr>`}</tbody>
         </table></div>
         <div style="font-size:.78rem;color:#6b7280;margin-top:6px">${admin
-            ? "Chaque case s'enregistre dès qu'on la quitte ; « — » retire l'étudiant du groupe. Les familles du service (TD, TP12, TP8, PT) proposent leurs groupes dans une liste — leur nombre se règle plus haut ; une famille libre (Covoiturage…) se saisit au clavier, un nom nouveau crée le groupe. Une famille à groupe unique est remplie d'office. "
+            ? `Chaque case s'enregistre dès qu'on la quitte ; « — » retire l'étudiant du groupe. Les familles du service (TD, TP12, TP8) proposent leurs groupes dans une liste — leur nombre se règle plus haut ; une famille libre (Covoiturage…) se saisit au clavier, un nom nouveau crée le groupe. Une famille à groupe unique est remplie d'office.${
+                Object.entries(d.suivent || {}).map(([f, src]) => ` Le groupe de ${esc(f)} porte le numéro du ${esc(src)}.`).join('')} `
             : ''}Cliquez sur un en-tête pour trier, sur ▾ pour trier et filtrer.</div>`;
 }
 

@@ -5772,6 +5772,15 @@ def _groupes_attendus(svc, face, famille):
         n = nb(2)                              # groupes « Promo »
     return ['%s_%d' % (famille, k) for k in range(1, n + 1)] if n else []
 
+# Famille dont le numéro de groupe n'est pas choisi mais repris d'une autre : le projet
+# tutoré se fait dans le groupe de TD (PT_2 pour le TD_2), il n'y a donc rien à saisir.
+_GROUPES_SUIVENT = {'PT': 'TD'}
+
+def _groupe_numero(nom):
+    """Numéro d'un nom de groupe : Â« TD_2 Â» → '2', Â« TD2 Â» → '2'. None sans numéro."""
+    m = re.search(r'(\d+)\s*$', str(nom or ''))
+    return m.group(1) if m else None
+
 def _groupes_familles_svc(svc, semestre):
     """Familles de base, augmentées de « PT » quand le service prévoit plusieurs groupes
     de projet : sans cela, un seul groupe de PT n'a rien à répartir."""
@@ -5843,6 +5852,8 @@ def _groupes_payload(pdb, pid, semestre, svc=None):
             'mutualise': mutualise, 'sae': semestre == 'S1',
             'service': {k: svc[k] for k in ('semestre', 'annee', 'mutualise', 'tp_distincts')} if svc else None,
             'familles': familles, 'students': students,
+            'suivent': {f: src for f, src in _GROUPES_SUIVENT.items()
+                        if f in familles and src in familles},
             'tables': _groupes_tables(students, familles, mutualise, svc)}
 
 def _groupes_promo_check(pdb, pid, semestre):
@@ -5885,7 +5896,8 @@ def _groupes_changements(students, nouveaux, familles=None):
 def _groupes_completer_uniques(pdb, semestre, payload):
     """Famille à groupe unique (le service n'en prévoit qu'un) : il n'y a rien à choisir,
     tous les étudiants actifs y sont placés d'office. Renvoie le nombre d'affectations
-    écrites. Évite de faire saisir soixante fois « TD_1 »."""
+    écrites. Évite de faire saisir soixante fois « TD_1 ». Aligne aussi les familles qui
+    en suivent une autre : le groupe de projet tutoré porte le numéro du groupe de TD."""
     ecritures = []
     for t in payload['tables']:
         membres = [st for st in payload['students']
@@ -5896,10 +5908,29 @@ def _groupes_completer_uniques(pdb, semestre, payload):
             for st in membres:
                 if not st['groupes'].get(f):
                     ecritures.append((st['id'], f, attendus[0]))
+    # Le numéro du projet tutoré est celui du TD : on le recopie plutôt que de le faire
+    # choisir, et on le corrige si le TD a changé.
+    for f, source in _GROUPES_SUIVENT.items():
+        if f not in payload['familles']:
+            continue
+        for st in payload['students']:
+            num = _groupe_numero(st['groupes'].get(source)) if st['actif'] else None
+            attendu = '%s_%s' % (f, num) if num else ''
+            if (st['groupes'].get(f) or '') != attendu:
+                ecritures.append((st['id'], f, attendu))
     if ecritures:
         _groupes_ecrire(pdb, semestre, ecritures)
         pdb.commit()
     return len(ecritures)
+
+def _groupes_payload_complet(pdb, pid, semestre, svc=None):
+    """Répartition après remplissage des familles à groupe unique et alignement de celles
+    qui en suivent une autre (le projet tutoré sur le TD). Pour les routes d'écriture,
+    où un TD qui change doit entraîner son PT."""
+    p = _groupes_payload(pdb, pid, semestre, svc=svc)
+    if p and _groupes_completer_uniques(pdb, semestre, p):
+        p = _groupes_payload(pdb, pid, semestre, svc=svc)
+    return p
 
 @app.route('/api/promotions/<int:pid>/groupes/<semestre>', methods=['GET'])
 def get_promotion_groupes(pid, semestre):
@@ -5948,7 +5979,7 @@ def set_promotion_groupe(pid, semestre):
     pdb.commit()
     _audit('GROUPE_SET', ip=_client_ip(), user=session.get('user'), promo=pid, semestre=semestre,
            student=sid, famille=famille, groupe=groupe)
-    return jsonify(_groupes_payload(pdb, pid, semestre))
+    return jsonify(_groupes_payload_complet(pdb, pid, semestre))
 
 @app.route('/api/promotions/<int:pid>/groupes/<semestre>/famille', methods=['DELETE'])
 def delete_promotion_groupe_famille(pid, semestre):
@@ -5967,7 +5998,7 @@ def delete_promotion_groupe_famille(pid, semestre):
     pdb.commit()
     _audit('GROUPE_FAMILLE_DELETE', ip=_client_ip(), user=session.get('user'), promo=pid,
            semestre=semestre, famille=famille)
-    return jsonify(_groupes_payload(pdb, pid, semestre))
+    return jsonify(_groupes_payload_complet(pdb, pid, semestre))
 
 @app.route('/api/promotions/<int:pid>/groupes/<semestre>/copier', methods=['POST'])
 def copier_promotion_groupes(pid, semestre):
@@ -5994,7 +6025,7 @@ def copier_promotion_groupes(pid, semestre):
     pdb.commit()
     _audit('GROUPES_COPIE', ip=_client_ip(), user=session.get('user'), promo=pid, semestre=semestre,
            depuis=depuis, **changements)
-    payload = _groupes_payload(pdb, pid, semestre)
+    payload = _groupes_payload_complet(pdb, pid, semestre)
     payload['copie'] = {'depuis': depuis, 'changements': changements}
     return jsonify(payload)
 
@@ -6134,7 +6165,7 @@ def import_promotion_groupes(pid, semestre):
         pdb.commit()
         _audit('GROUPES_IMPORT', ip=_client_ip(), user=session.get('user'), promo=pid, semestre=semestre,
                fichier=f.filename, retrouves=len(nouveaux), **changements)
-        payload = _groupes_payload(pdb, pid, semestre)
+        payload = _groupes_payload_complet(pdb, pid, semestre)
     return jsonify({'rapport': rapport, 'applique': appliquer,
                     'repartition': payload if appliquer else None})
 
@@ -6629,7 +6660,7 @@ def post_groupes_auto(pid, semestre):
         pdb.commit()
         _audit('GROUPES_AUTO', ip=_client_ip(), user=session.get('user'), promo=pid, semestre=semestre,
                **changements)
-        p = _groupes_payload(pdb, pid, semestre, svc=svc)
+        p = _groupes_payload_complet(pdb, pid, semestre, svc=svc)
     return jsonify({'apercu': apercu, 'mutualise': p['mutualise'], 'alertes': alertes, 'covoiturage': covoit,
                     'changements': changements, 'regles': regles, 'applique': applique,
                     'repartition': p if applique else None})
