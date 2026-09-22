@@ -12537,6 +12537,11 @@ def _hp_parse(head, rows):
                            'sous-total de %s' % (mat, ens, typ, _hp_fmt(tot), _hp_fmt(sub)))
     return mats, alertes, autres
 
+def _hp_tt(teaching_type):
+    """Type d'enseignement ramené à CM/TD/TP/PT (TP8, TP 12… → TP)."""
+    tt = (teaching_type or '').upper().replace(' ', '')
+    return 'TP' if tt.startswith('TP') else tt
+
 def _hp_app_totals(db, formation, semesters, base='maquette'):
     """Volumes d'ici, sur la base demandée. Renvoie (par_matiere, par_enseignant,
     semestres_vus) ; chaque matière porte aussi le nb de groupes par type.
@@ -12554,33 +12559,47 @@ def _hp_app_totals(db, formation, semesters, base='maquette'):
     En base « maquette », les heures d'un type sont réparties entre les
     enseignants au prorata des groupes qu'ils assurent, pour que la somme par
     enseignant retombe sur le volume du module."""
-    fts = (1, 2) if formation == 'ALT' else (0, 2)
     rows = db.execute('''
         SELECT cs.id AS session_id, cs.teacher_id, cs.teaching_type,
                cs.total_hours, cs.formation_type,
-               c.code AS course_code, c.name AS course_name, c.tp_type,
-               s.code AS semester_code
+               c.id AS course_id, c.code AS course_code, c.name AS course_name,
+               c.tp_type, s.code AS semester_code
         FROM course_sessions cs
         JOIN courses c ON cs.course_id = c.id
         JOIN semesters s ON c.semester_id = s.id
-        WHERE cs.formation_type IN (%s) AND s.code IN (%s)
-    ''' % (','.join('?' * len(fts)), ','.join('?' * len(semesters))),
-        list(fts) + list(semesters)).fetchall()
+        WHERE s.code IN (%s)
+    ''' % (','.join('?' * len(semesters)),), list(semesters)).fetchall()
 
     sg_map, mut_set, tpsep_set = _load_semester_groups(db)
+    # Face demandée : ses propres séances (ft) + les séances promo (ft=2).
+    # Semestre mutualisé : FTP et ALT suivent le cours ensemble, et une séance
+    # n'y est souvent saisie que d'un côté (SAÉ5.01 : PT 37h30 côté FTP) alors
+    # qu'elle est bien planifiée pour toute la promo. Elle compte donc pour
+    # l'autre face aussi — sauf si celle-ci a déjà sa propre séance pour la même
+    # matière et le même type (SAÉ5.03a : 1h de TD de chaque côté), signe que
+    # l'enseignement y est réellement dédoublé.
+    face = 1 if formation == 'ALT' else 0
+    propres = {(r['course_id'], _hp_tt(r['teaching_type']))
+               for r in rows if r['formation_type'] in (face, 2)}
     gt_map = _load_group_teachers(db)
     names = {r['id']: r['name'] for r in db.execute('SELECT id, name FROM teachers').fetchall()}
 
     par_mat, par_ens, sems = {}, {}, set()
     orphelines = []   # sessions sans enseignant : comptées en matière, pas en service
     for r in rows:
-        tt = (r['teaching_type'] or '').upper().replace(' ', '')
-        tt = 'TP' if tt.startswith('TP') else tt
+        tt = _hp_tt(r['teaching_type'])
         if tt not in ('CM', 'TD', 'TP', 'PT'):
             continue
         h = r['total_hours'] or 0
         if not h:
             continue
+        ft = r['formation_type']
+        empruntee = False          # séance de l'autre face, suivie par la promo
+        if ft not in (face, 2):
+            if (r['semester_code'] not in mut_set
+                    or (r['course_id'], tt) in propres):
+                continue
+            empruntee = True
         sems.add(r['semester_code'])
         mult = _group_multiplier(sg_map, mut_set, tpsep_set, r['semester_code'],
                                  r['formation_type'], r['teaching_type'], r['tp_type'])
@@ -12589,7 +12608,10 @@ def _hp_app_totals(db, formation, semesters, base='maquette'):
             'code': key, 'nom': r['course_name'], 'semestre': r['semester_code'],
             'sous_matieres': set(), 'heures': dict(_HP_VIDE), 'enseignants': {},
             'groupes': {'CM': 1, 'TD': 1, 'TP': 1, 'PT': 1},
+            'mutualisee': False,
         })
+        if empruntee:
+            m['mutualisee'] = True
         m['sous_matieres'].add(r['course_code'])
         m['groupes'][tt] = max(m['groupes'][tt], mult)
         # « maquette » : le volume du module, une fois. « dispensees » : une fois
@@ -12721,6 +12743,7 @@ def compare_hyperplanning():
             'code': m['code'], 'nom': app_m['nom'] if app_m else None,
             'sous_matieres': app_m['sous_matieres'] if app_m else [],
             'groupes': app_m['groupes'] if app_m else None,
+            'mutualisee': bool(app_m and app_m.get('mutualisee')),
             'hp': hp_b, 'app': app_b, 'ecart': ecart,
             'statut': 'ok' if app_m and not ecart else ('absente_ici' if not app_m else 'ecart'),
         })
@@ -12731,7 +12754,7 @@ def compare_hyperplanning():
         lignes_mat.append({
             'code_hp': None, 'libelle_hp': None, 'nomperso_hp': None,
             'code': code, 'nom': a['nom'], 'sous_matieres': a['sous_matieres'],
-            'groupes': a['groupes'],
+            'groupes': a['groupes'], 'mutualisee': bool(a.get('mutualisee')),
             'hp': bloc_vide, 'app': app_b, 'ecart': _hp_ecart(bloc_vide, app_b),
             'statut': 'absente_hp',
         })

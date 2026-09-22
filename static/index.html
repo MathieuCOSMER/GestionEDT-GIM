@@ -471,7 +471,6 @@
     <button onclick="showPage('promotions')" id="nav-promotions">Promotions</button>
     <button onclick="showPage('etudiants')" id="nav-etudiants">Étudiants</button>
     <button onclick="showPage('statistiques')" id="nav-statistiques">Statistiques</button>
-    <button onclick="showPage('comparaison')" id="nav-comparaison" class="admin-only">Comparaison</button>
     <button onclick="showPage('parametres')" id="nav-parametres" class="admin-only">Paramètres</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
         <span id="role-badge" class="role-badge" style="display:none"></span>
@@ -488,6 +487,7 @@
     <button type="button" id="svc-tab-matieres" class="subtab" onclick="showPage('matieres')">Matières</button>
     <button type="button" id="svc-tab-contraintes" class="subtab" onclick="showPage('contraintes')">Contraintes Enseignant</button>
     <button type="button" id="svc-tab-contraintes-matiere" class="subtab" onclick="showPage('contraintes-matiere')">Contraintes Matière</button>
+    <button type="button" id="svc-tab-comparaison" class="subtab admin-only" onclick="showPage('comparaison')">Comparaison</button>
     <span class="svc-year">Année :
         <select id="service-year-select" onchange="switchServiceYear()"
                 style="padding:4px 10px;border-radius:6px;border:1px solid #c7d2fe;background:#eef2ff;color:#4f46e5;font-weight:700;font-size:.88rem;cursor:pointer">
@@ -2236,11 +2236,12 @@ function toast(msg, type = 'success') {
 
 // ===== NAVIGATION =====
 // Onglet « Service enseignant » : regroupe Bilan Global, Répartition Calendaire,
-// Matières et les contraintes (Enseignant / Matière) en sous-onglets, avec sa
+// Matières, les contraintes (Enseignant / Matière) et la Comparaison Hyperplanning
+// en sous-onglets, avec sa
 // propre année de consultation (_serviceYear, passée en ?year= aux API de ces
 // vues uniquement).
 const _servicePages = ['repartition-enseignant', 'repartition', 'matieres', 'contraintes',
-                       'contraintes-matiere'];
+                       'contraintes-matiere', 'comparaison'];
 let _serviceTab = 'repartition';   // dernier sous-onglet Service visité
 let _serviceYear = '';             // année affichée dans Service enseignant
 
@@ -9231,9 +9232,11 @@ let _cmpFiltre = 'ecarts';     // 'ecarts' | 'tout'
 async function loadComparaison() {
     try {
         const data = await api('/years');
+        // Sous-onglet du Service enseignant : on s'aligne sur son année de consultation.
+        const cur = _serviceYear || data.current;
         const sel = document.getElementById('cmp-year');
         sel.innerHTML = data.years.map(y =>
-            `<option value="${y}" ${y === data.current ? 'selected' : ''}>${y}</option>`).join('');
+            `<option value="${y}" ${y === cur ? 'selected' : ''}>${y}</option>`).join('');
     } catch (e) { /* le serveur retombera sur l'année active */ }
     if (_cmpData) renderCompare();
 }
@@ -9274,18 +9277,19 @@ function cmpH(h) {
     return (neg ? '-' : '') + Math.floor(a) + 'h' + String(m).padStart(2, '0');
 }
 
-function cmpEcartCell(v) {
-    if (!v || Math.abs(v) < 0.01) return '<td style="text-align:right;color:#9ca3af">—</td>';
+function cmpEcartCell(v, sty = '') {
+    if (!v || Math.abs(v) < 0.01)
+        return `<td style="text-align:right;color:#9ca3af;${sty}">—</td>`;
     const col = v > 0 ? '#b45309' : '#1d4ed8';   // + = en trop dans Hyperplanning
-    return `<td style="text-align:right;font-weight:600;color:${col}">${v > 0 ? '+' : ''}${cmpH(v)}</td>`;
+    return `<td style="text-align:right;font-weight:600;color:${col};${sty}">${v > 0 ? '+' : ''}${cmpH(v)}</td>`;
 }
 
 const _CMP_STATUTS = {
     ok:          ['Concorde',                '#065f46', '#d1fae5'],
     ecart:       ['Écart',                   '#92400e', '#fef3c7'],
-    absente_ici: ['Absente ici',             '#991b1b', '#fee2e2'],
+    absente_ici: ['Absente du planifié',   '#991b1b', '#fee2e2'],
     absente_hp:  ['Absente d\'Hyperplanning', '#5b21b6', '#ede9fe'],
-    absent_ici:  ['Absent ici',              '#991b1b', '#fee2e2'],
+    absent_ici:  ['Absent du planifié',    '#991b1b', '#fee2e2'],
     absent_hp:   ['Absent d\'Hyperplanning',  '#5b21b6', '#ede9fe'],
 };
 // Groupes déclarés ici pour la matière, affichés dès qu'il y en a plus d'un :
@@ -9369,7 +9373,7 @@ function renderCompare() {
         <div style="width:18px"></div>
         ${filBtn('ecarts', 'Écarts seuls')} ${filBtn('tout', 'Tout')}
         <span style="margin-left:auto;font-size:.72rem;color:#6b7280">
-            Écart = Hyperplanning − ici · <span style="color:#b45309">+ en trop dans Hyperplanning</span>
+            Écart = Hyperplanning − planifié · <span style="color:#b45309">+ en trop dans Hyperplanning</span>
             · <span style="color:#1d4ed8">− manquant dans Hyperplanning</span></span>
     </div>`;
 
@@ -9382,22 +9386,18 @@ function renderCompare() {
         return;
     }
 
-    // Deux blocs de colonnes : Hyperplanning, puis ici, puis l'écart par type.
+    // Une entrée = trois lignes empilées (Hyperplanning, planifié, écart) : l'écart se lit
+    // en colonne, juste sous les deux valeurs qu'il confronte.
     const th3 = t => `<th style="text-align:right">${t}</th>`;
-    html += `<table><thead>
+    html += `<div class="overflow-x"><table><thead>
         <tr>
-            <th rowspan="2">${_cmpTab === 'matieres' ? 'Matière' : 'Enseignant'}</th>
-            <th rowspan="2">Statut</th>
-            <th colspan="5" style="text-align:center;background:#eff6ff">Hyperplanning</th>
-            <th colspan="5" style="text-align:center;background:#f0fdf4">Ici</th>
-            <th colspan="5" style="text-align:center;background:#fffbeb">Écart</th>
-        </tr>
-        <tr>
-            ${['CM','TD','TP','PT','Total'].map(th3).join('')}
-            ${['CM','TD','TP','PT','Total'].map(th3).join('')}
+            <th>${_cmpTab === 'matieres' ? 'Matière' : 'Enseignant'}</th>
+            <th>Statut</th>
+            <th>Source</th>
             ${['CM','TD','TP','PT','Total'].map(th3).join('')}
         </tr></thead><tbody>`;
 
+    const SEP = 'border-top:2px solid #cbd5e1;';   // sépare deux entrées
     for (const l of lignes) {
         const nom = _cmpTab === 'matieres'
             ? `<strong>${esc(l.code || l.code_hp || '?')}</strong>
@@ -9406,21 +9406,33 @@ function renderCompare() {
                  ${l.nom ? esc(l.nom) : ''}
                  ${l.sous_matieres && l.sous_matieres.length > 1
                     ? ' <em>(' + l.sous_matieres.map(esc).join(', ') + ')</em>' : ''}
-                 ${cmpGroupes(l.groupes)}</div>`
+                 ${cmpGroupes(l.groupes)}${l.mutualisee
+                    ? ' <span style="color:#0f766e" title="Semestre mutualisé : séance saisie sur une seule face, suivie par toute la promo — comptée ici aussi">· mutualisée</span>' : ''}</div>`
             : `<strong>${esc(l.nom)}</strong>${l.nom_hp
                  ? `<div style="font-size:.72rem;color:#6b7280">${esc(l.nom_hp)}</div>` : ''}`;
-        const cells = b => ['cm','td','tp','pt','total'].map(k =>
-            `<td style="text-align:right">${cmpH(b[k])}</td>`).join('');
+        // Étiquette de ligne + les cinq valeurs, sur le fond de la source.
+        const src = (lbl, bg, sty) => `<td style="background:${bg};font-size:.72rem;font-weight:600;
+            color:#4b5563;white-space:nowrap;${sty}">${lbl}</td>`;
+        const cells = (b, bg, sty) => ['cm','td','tp','pt','total'].map(k =>
+            `<td style="text-align:right;background:${bg};${k === 'total' ? 'font-weight:600;' : ''}${sty}">${cmpH(b[k])}</td>`).join('');
         const ec = l.ecart || {};
         html += `<tr>
-            <td>${nom}</td>
-            <td>${cmpBadge(l.statut)}</td>
-            ${cells(l.hp)}
-            ${cells(l.app)}
-            ${['cm','td','tp','pt','total'].map(k => cmpEcartCell(ec[k])).join('')}
+            <td rowspan="3" style="${SEP}vertical-align:top">${nom}</td>
+            <td rowspan="3" style="${SEP}vertical-align:top">${cmpBadge(l.statut)}</td>
+            ${src('Hyperplanning', '#eff6ff', SEP)}
+            ${cells(l.hp, '#eff6ff', SEP)}
+        </tr>
+        <tr>
+            ${src('Planifié', '#f0fdf4', '')}
+            ${cells(l.app, '#f0fdf4', '')}
+        </tr>
+        <tr>
+            ${src('Écart', '#fffbeb', '')}
+            ${['cm','td','tp','pt','total'].map(k =>
+                cmpEcartCell(ec[k], 'background:#fffbeb;')).join('')}
         </tr>`;
     }
-    html += '</tbody></table>';
+    html += '</tbody></table></div>';
     el.innerHTML = html;
 }
 
