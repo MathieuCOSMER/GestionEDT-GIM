@@ -5752,7 +5752,35 @@ def _groupes_service(pdb, pid, semestre):
             'tp_distincts': not sm or sm['tp_separate'] is None or bool(sm['tp_separate']),
             'groupes': g}
 
-def _groupes_tables(students, familles, mutualise):
+def _groupes_attendus(svc, face, famille):
+    """Groupes que le service prévoit pour une famille et une face (« FTP », « ALT », ou
+    None pour la promo d'un semestre mutualisé) : ['TD_1', 'TD_2']. Liste vide si le
+    service ne dit rien de cette famille (Covoiturage, Anglais…) : la case reste libre."""
+    champ = {'TD': 'td_groups', 'TD SAE': 'td_groups', 'TP12': 'tp_groups',
+             'TP12 SAE': 'tp_groups', 'TP8': 'tp8_groups', 'PT': 'pt_groups'}.get(famille)
+    if not svc or not champ:
+        return []
+    g = svc['groupes']
+    nb = lambda ft: int((g.get(ft) or {}).get(champ) or 0)
+    if face is not None:                       # semestre non mutualisé : la face décide
+        n = nb(0 if face == 'FTP' else 1)
+    elif svc.get('tp_distincts') and famille.startswith('TP'):
+        # Promo d'un semestre mutualisé dont les TP restent distincts : chaque face a ses
+        # propres groupes de TP (cf. _group_multiplier), ils s'additionnent.
+        n = nb(0) + nb(1)
+    else:
+        n = nb(2)                              # groupes « Promo »
+    return ['%s_%d' % (famille, k) for k in range(1, n + 1)] if n else []
+
+def _groupes_familles_svc(svc, semestre):
+    """Familles de base, augmentées de « PT » quand le service prévoit plusieurs groupes
+    de projet : sans cela, un seul groupe de PT n'a rien à répartir."""
+    familles = list(_groupe_familles_base(semestre))
+    if svc and any(int((r or {}).get('pt_groups') or 0) > 1 for r in svc['groupes'].values()):
+        familles.append('PT')
+    return familles
+
+def _groupes_tables(students, familles, mutualise, svc=None):
     """Tableaux de la répartition : un pour la promo si le semestre est mutualisé, sinon un
     par sous-cohorte, chacun avec ses groupes (effectifs FTP / ALT des étudiants actifs)."""
     faces = ([('PROMO', 'Promotion (FTP + ALT)', None)] if mutualise
@@ -5776,6 +5804,9 @@ def _groupes_tables(students, familles, mutualise):
                             c['inconnu'] += 1
             groupes[f] = [dict(groupe=g, **compte[g]) for g in sorted(compte, key=_groupe_tri)]
         tables.append({'cle': cle, 'titre': titre, 'face': face, 'groupes': groupes,
+                       # Groupes que le service prévoit : ce que proposent les listes
+                       # déroulantes de la répartition, même vides d'étudiants.
+                       'attendus': {f: _groupes_attendus(svc, face, f) for f in familles},
                        'effectif': len(membres), 'actifs': sum(1 for st in membres if st['actif']),
                        'sans_groupe': {f: sum(1 for st in membres if st['actif'] and not st['groupes'].get(f))
                                        for f in familles}})
@@ -5797,7 +5828,7 @@ def _groupes_payload(pdb, pid, semestre, svc=None):
                             JOIN promotion_students s ON s.id = g.student_id
                             WHERE s.promotion_id=? AND g.semestre=?''', (pid, semestre)):
         affect.setdefault(r['student_id'], {})[r['famille']] = r['groupe']
-    familles = list(_groupe_familles_base(semestre))
+    familles = _groupes_familles_svc(svc, semestre)
     for gs in affect.values():
         for f in sorted(gs):
             if f not in familles:
@@ -5812,7 +5843,7 @@ def _groupes_payload(pdb, pid, semestre, svc=None):
             'mutualise': mutualise, 'sae': semestre == 'S1',
             'service': {k: svc[k] for k in ('semestre', 'annee', 'mutualise', 'tp_distincts')} if svc else None,
             'familles': familles, 'students': students,
-            'tables': _groupes_tables(students, familles, mutualise)}
+            'tables': _groupes_tables(students, familles, mutualise, svc)}
 
 def _groupes_promo_check(pdb, pid, semestre):
     if semestre not in _PROMO_SEMESTERS:
@@ -5851,6 +5882,25 @@ def _groupes_changements(students, nouveaux, familles=None):
             ecritures.append((st['id'], fam, nouveau))
     return changements, ecritures
 
+def _groupes_completer_uniques(pdb, semestre, payload):
+    """Famille à groupe unique (le service n'en prévoit qu'un) : il n'y a rien à choisir,
+    tous les étudiants actifs y sont placés d'office. Renvoie le nombre d'affectations
+    écrites. Évite de faire saisir soixante fois « TD_1 »."""
+    ecritures = []
+    for t in payload['tables']:
+        membres = [st for st in payload['students']
+                   if st['actif'] and (not t['face'] or st['formation'] == t['face'])]
+        for f, attendus in (t.get('attendus') or {}).items():
+            if len(attendus) != 1:
+                continue
+            for st in membres:
+                if not st['groupes'].get(f):
+                    ecritures.append((st['id'], f, attendus[0]))
+    if ecritures:
+        _groupes_ecrire(pdb, semestre, ecritures)
+        pdb.commit()
+    return len(ecritures)
+
 @app.route('/api/promotions/<int:pid>/groupes/<semestre>', methods=['GET'])
 def get_promotion_groupes(pid, semestre):
     err = _require_promo_read()
@@ -5860,7 +5910,15 @@ def get_promotion_groupes(pid, semestre):
     err = _groupes_promo_check(pdb, pid, semestre)
     if err:
         return err
-    return jsonify(_groupes_payload(pdb, pid, semestre))
+    p = _groupes_payload(pdb, pid, semestre)
+    # Les familles à groupe unique se remplissent seules, dès que l'admin ouvre l'écran.
+    if p and session.get('role') == 'admin':
+        ecrites = _groupes_completer_uniques(pdb, semestre, p)
+        if ecrites:
+            _audit('GROUPE_AUTO_UNIQUE', ip=_client_ip(), user=session.get('user'), promo=pid,
+                   semestre=semestre, affectations=ecrites)
+            p = _groupes_payload(pdb, pid, semestre)
+    return jsonify(p)
 
 @app.route('/api/promotions/<int:pid>/groupes/<semestre>', methods=['PUT'])
 def set_promotion_groupe(pid, semestre):

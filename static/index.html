@@ -10837,6 +10837,16 @@ function renderGroupesCorps() {
     ((_grpRep && _grpRep.tables) || []).forEach(renderGroupesCorpsTable);
 }
 
+// Groupes proposables pour une famille : ceux que le service prévoit (leur nombre est
+// réglé dans Service enseignant), plus ceux déjà utilisés — import ou répartition d'avant
+// un changement de réglage. Vide pour une famille libre (Covoiturage…).
+function _grpChoix(t, famille, valeur) {
+    const choix = ((t.attendus || {})[famille] || []).slice();
+    ((t.groupes || {})[famille] || []).forEach(g => { if (!choix.includes(g.groupe)) choix.push(g.groupe); });
+    if (valeur && !choix.includes(valeur)) choix.push(valeur);
+    return choix.sort(_grpCompare);
+}
+
 function renderGroupesCorpsTable(t) {
     const el = document.getElementById('grp-corps-' + t.cle);
     const d = _grpRep;
@@ -10904,9 +10914,19 @@ function renderGroupesCorpsTable(t) {
         }
         const v = s.groupes[c.famille] || '';
         if (!admin) return `<td style="text-align:center">${v ? esc(v) : '<span style="color:#d1d5db">—</span>'}</td>`;
-        return `<td style="text-align:center;padding:2px 4px"><input list="grp-dl-${t.cle}-${familles.indexOf(c.famille)}" value="${esc(v)}"
-            data-sid="${s.id}" data-famille="${esc(c.famille)}" onchange="setGroupe(this)"
-            style="width:96px;padding:2px 4px;font-size:.8rem;text-align:center;border:1px solid #d1d5db;border-radius:4px"></td>`;
+        const champ = `data-sid="${s.id}" data-famille="${esc(c.famille)}" onchange="setGroupe(this)"
+            style="width:96px;padding:2px 4px;font-size:.8rem;text-align:center;border:1px solid #d1d5db;border-radius:4px"`;
+        // Familles du service (TD, TP12, TP8, PT…) : le nombre de groupes est connu, on
+        // choisit dans la liste. Les autres (Covoiturage…) restent en saisie libre.
+        const choix = _grpChoix(t, c.famille, v);
+        if (!choix.length) {
+            return `<td style="text-align:center;padding:2px 4px"><input list="grp-dl-${t.cle}-${familles.indexOf(c.famille)}"
+                value="${esc(v)}" ${champ}></td>`;
+        }
+        return `<td style="text-align:center;padding:2px 4px"><select ${champ}>
+            <option value="">—</option>
+            ${choix.map(g => `<option value="${esc(g)}" ${g === v ? 'selected' : ''}>${esc(g)}</option>`).join('')}
+            </select></td>`;
     };
     el.innerHTML = bandeau + `<div style="overflow:auto;max-height:62vh;border:1px solid #e5e7eb;border-radius:8px;margin-top:10px">
         <table class="pn-table" style="width:100%;table-layout:auto">
@@ -10916,7 +10936,7 @@ function renderGroupesCorpsTable(t) {
                 : `<tr><td colspan="${cols.length + 1}" style="text-align:center;color:#9ca3af;padding:14px">Aucun étudiant ne correspond aux filtres</td></tr>`}</tbody>
         </table></div>
         <div style="font-size:.78rem;color:#6b7280;margin-top:6px">${admin
-            ? "Chaque case s'enregistre dès qu'on la quitte ; une case vidée retire l'étudiant du groupe. La liste propose les groupes existants, un nom nouveau crée le groupe. "
+            ? "Chaque case s'enregistre dès qu'on la quitte ; « — » retire l'étudiant du groupe. Les familles du service (TD, TP12, TP8, PT) proposent leurs groupes dans une liste — leur nombre se règle plus haut ; une famille libre (Covoiturage…) se saisit au clavier, un nom nouveau crée le groupe. Une famille à groupe unique est remplie d'office. "
             : ''}Cliquez sur un en-tête pour trier, sur ▾ pour trier et filtrer.</div>`;
 }
 
