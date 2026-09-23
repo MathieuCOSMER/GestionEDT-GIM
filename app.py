@@ -9332,6 +9332,47 @@ def get_promotion_saisie(pid, semester):
         return error_response('Promotion introuvable', 404)
     return jsonify(_saisie_payload(pdb, pid, semester, formation, teacher))
 
+def _saisie_scope(pdb, year_label):
+    """(promotion, nom, semestre) d'une année universitaire : chaque cohorte
+    présente cette année-là avec ses deux semestres (1re année → S1/S2, 2e →
+    S3/S4, 3e → S5/S6). C'est l'ensemble de ce qu'un enseignant a à saisir."""
+    try:
+        start = int(str(year_label).split('-')[0])
+    except (ValueError, TypeError):
+        return []
+    out = []
+    for year_group in (1, 2, 3):
+        row = pdb.execute('''SELECT id, name FROM promotions WHERE start_year=?
+                             ORDER BY id LIMIT 1''', (start - (year_group - 1),)).fetchone()
+        if not row:
+            continue
+        for n in (year_group * 2 - 1, year_group * 2):
+            out.append((row['id'], row['name'], 'S%d' % n))
+    return out
+
+@app.route('/api/saisie/tout', methods=['GET'])
+def get_saisie_tout():
+    """Toutes les grilles de saisie d'une année en une fois (onglet Saisie Notes
+    de l'enseignant) : une grille par cohorte × semestre × sous-cohorte, celles
+    sans matière à sa charge ou sans étudiant étant écartées. L'admin obtiendrait
+    ici toutes les matières : son écran reste le sous-onglet de Promotions."""
+    teacher, err = _saisie_teacher_ctx()
+    if err:
+        return err
+    year_label = (request.args.get('year') or '').strip()
+    if not (year_label and _is_year(year_label)):
+        year_label = get_current_year() or ''
+    pdb = get_promotions_db()
+    blocks = []
+    for pid, pname, semester in _saisie_scope(pdb, year_label):
+        for formation in _SUBCOHORTS:
+            p = _saisie_payload(pdb, pid, semester, formation, teacher)
+            if not (p.get('available') and p['groups'] and p['students']):
+                continue
+            p.update({'pid': pid, 'promotion': pname})
+            blocks.append(p)
+    return jsonify({'year': year_label, 'blocks': blocks})
+
 @app.route('/api/promotions/<int:pid>/saisie/<semester>/notes', methods=['PUT'])
 def save_promotion_saisie(pid, semester):
     """Enregistre des colonnes de saisie {formation, columns: [{code, notes:

@@ -663,7 +663,7 @@
 <div class="page" id="page-promotions">
     <div class="toolbar">
         <h1 id="promo-title">Promotions</h1>
-        <div class="filters">
+        <div class="filters" id="promo-select-box">
             <label for="promo-select">Promotion :</label>
             <select id="promo-select" onchange="guardPromoChange()" style="min-width:230px;font-weight:600">
                 <option value="">—</option></select>
@@ -810,22 +810,36 @@
     <div id="promo-tab-saisie" style="display:none">
         <div class="toolbar">
             <div class="filters">
-                <label>Sous-cohorte :</label>
-                <select id="saisie-sub-select" onchange="guardSaisieReload()">
-                    <option value="FTP">FTP</option><option value="ALT">ALT</option>
-                </select>
-                <label style="margin-left:12px">Semestre :</label>
-                <select id="saisie-sem-select" onchange="guardSaisieReload()">
-                    <option value="">—</option>
-                    <option selected>S1</option><option>S2</option><option>S3</option>
-                    <option>S4</option><option>S5</option><option>S6</option>
-                </select>
+                <!-- Admin : une grille à la fois (promotion + semestre + sous-cohorte) -->
+                <span id="saisie-one-filters">
+                    <label>Sous-cohorte :</label>
+                    <select id="saisie-sub-select" onchange="guardSaisieReload()">
+                        <option value="FTP">FTP</option><option value="ALT">ALT</option>
+                    </select>
+                    <label style="margin-left:12px">Semestre :</label>
+                    <select id="saisie-sem-select" onchange="guardSaisieReload()">
+                        <option value="">—</option>
+                        <option selected>S1</option><option>S2</option><option>S3</option>
+                        <option>S4</option><option>S5</option><option>S6</option>
+                    </select>
+                </span>
+                <!-- Enseignant : toutes ses grilles de l'année, filtrables -->
+                <span id="saisie-all-filters" style="display:none">
+                    <input type="search" id="saisie-q" placeholder="🔍 Matière, sous-matière, enseignant…"
+                        oninput="applySaisieFilter()" style="width:230px"
+                        title="N'afficher que les matières dont le code, le nom, le référent ou l'enseignant contient ce texte">
+                    <span id="saisie-sem-boxes" style="margin-left:12px"></span>
+                    <span id="saisie-face-boxes"></span>
+                </span>
                 <button class="btn btn-primary btn-sm" style="margin-left:14px" id="saisie-save-btn" onclick="saveSaisie()" disabled>💾 Enregistrer</button>
-                <button class="btn btn-secondary btn-sm" style="margin-left:6px" id="saisie-tpl-btn" onclick="downloadSaisieTemplate()" disabled
-                    title="Télécharger un fichier Excel vide : les étudiants de la sous-cohorte en lignes, vos sous-matières en colonnes">⤓ Modèle vide</button>
-                <button class="btn btn-secondary btn-sm" style="margin-left:6px" id="saisie-import-btn" onclick="document.getElementById('saisie-import-file').click()" disabled
-                    title="Importer un fichier de notes (modèle rempli) : la grille est remplie, rien n'est enregistré avant « Enregistrer »">⤒ Importer</button>
+                <span id="saisie-one-io">
+                    <button class="btn btn-secondary btn-sm" style="margin-left:6px" id="saisie-tpl-btn" onclick="downloadSaisieTemplate(0)" disabled
+                        title="Télécharger un fichier Excel vide : les étudiants de la sous-cohorte en lignes, vos sous-matières en colonnes">⤓ Modèle vide</button>
+                    <button class="btn btn-secondary btn-sm" style="margin-left:6px" id="saisie-import-btn" onclick="saisiePickImport(0)" disabled
+                        title="Importer un fichier de notes (modèle rempli) : la grille est remplie, rien n'est enregistré avant « Enregistrer »">⤒ Importer</button>
+                </span>
                 <input type="file" id="saisie-import-file" accept=".xlsx,.xlsm" style="display:none" onchange="importSaisieFile(this)">
+                <span id="saisie-all-summary" style="margin-left:12px;font-size:.82rem"></span>
                 <span style="margin-left:14px;font-size:.8rem;color:#6b7280">
                     Notes par sous-matière — la note matière (Bulletins) est la moyenne pondérée.
                     <span style="color:#b45309">⏳ provisoire</span> · <span style="color:#15803d">✓ définitif</span>
@@ -2400,8 +2414,15 @@ async function loadPage(name, forceReload) {
             // Enseignant : Saisie Notes a son propre onglet, Promotions ne la montre plus
             const tab = _promoSaisieOnly ? 'saisie'
                       : (_promoTabAllowed(_promoTab) ? _promoTab : 'effectif');
-            if (tab !== _promoTab) _showPromoTab(tab);
-            await loadPromotions();
+            const switched = tab !== _promoTab;
+            if (switched) _showPromoTab(tab);
+            // titre, sous-onglets et sélecteur de promotion selon le rôle : en
+            // Saisie Notes rien d'autre ne les règle (la liste n'est pas chargée)
+            applyPromoSubtabsForRole();
+            // Saisie Notes montre TOUTES les grilles de l'année : pas de
+            // sélecteur de promotion, donc pas de liste des promotions à charger.
+            if (_promoSaisieOnly) { if (!switched) await loadSaisieGrid(); }
+            else await loadPromotions();
         }
         else if (name === 'etudiants') { await loadEtudiants(); }
         else if (name === 'statistiques') { await loadStats(); }
@@ -3253,6 +3274,8 @@ function applyPromoSubtabsForRole() {
     const saisieOnly = state.role === 'teacher' && _promoSaisieOnly;
     document.getElementById('promo-subtabs').style.display = saisieOnly ? 'none' : '';
     document.getElementById('promo-title').textContent = saisieOnly ? 'Saisie Notes' : 'Promotions';
+    // Saisie Notes : les grilles portent leur cohorte, le sélecteur n'a plus d'objet
+    document.getElementById('promo-select-box').style.display = saisieOnly ? 'none' : '';
 }
 // Enseignant : consultation seule — désactive toute édition dans les grilles
 // Promotions et masque les boutons d'action (appelé après chaque rendu).
@@ -6091,36 +6114,265 @@ async function deletePromotion() {
 // ===== NOTES (sous-onglet Promotions) — liées à l'effectif + référence coeff =====
 let _notesData = null;
 
-// ===== SOUS-ONGLET SAISIE NOTES (notes par sous-matière, enseignants) =====
+// ===== SAISIE NOTES (notes par sous-matière, enseignants) =====
 // Chaque enseignant saisit les notes des sous-matières qu'il a en charge ; la
 // note matière (Bulletins) = moyenne pondérée (pondération fixée par le
 // référent, 0 = exclue). Colonnes des autres enseignants visibles en lecture
 // seule. Statut provisoire/définitif par colonne.
-let _saisieData = null;
+//
+// Deux écrans, un seul rendu :
+//  • admin      : sous-onglet de Promotions — UNE grille (promotion + semestre
+//                 + sous-cohorte choisis dans la barre d'outils) ;
+//  • enseignant : onglet « Saisie Notes » — TOUTES ses grilles de l'année à la
+//    suite (GET /api/saisie/tout), repliables, filtrables par matière et par
+//    semestre : il voit d'un coup ce qu'il lui reste à saisir.
+// `_saisieBlocks` est la liste des grilles affichées ; l'INDEX du bloc préfixe
+// les `data-` des cellules — un même code de sous-matière apparaissant en FTP
+// et en ALT, les sélecteurs seraient sinon ambigus d'une grille à l'autre.
+let _saisieBlocks = [];        // [{d: payload, pid, sem, sub}]
+let _saisieData = null;        // grille courante en mode admin (= _saisieBlocks[0].d)
+let _saisieYear = '';          // année universitaire des grilles (mode enseignant)
+let _saisieImportTarget = 0;   // grille visée par « ⤒ Importer »
+let _saisieVis = [];           // par grille : indices des matières visibles (filtre), ou null
+let _saisieShown = [];         // index des grilles actuellement affichées (filtre)
+const _saisieShut = new Set(); // grilles repliées (clé promotion|semestre|face)
+
+// L'enseignant voit toutes ses grilles ; l'admin garde ses sélecteurs.
+function _saisieAllMode() { return state.role === 'teacher'; }
+function _saisieKey(d) { return d.pid + '|' + d.semester + '|' + d.formation; }
+function _sbd(i) { return (_saisieBlocks[i] || {}).d; }
+
+function _saisieSetToolbar(all) {
+    const set = (id, on) => { const e = document.getElementById(id); if (e) e.style.display = on ? '' : 'none'; };
+    set('saisie-one-filters', !all);
+    set('saisie-one-io', !all);
+    set('saisie-all-filters', all);
+    set('saisie-all-summary', all);
+    if (!all) { _saisieShown = []; document.getElementById('saisie-all-summary').innerHTML = ''; }
+}
 
 async function loadSaisieGrid() {
+    if (_saisieAllMode()) return loadSaisieAll();
     const pid = document.getElementById('promo-select').value;
     const sem = document.getElementById('saisie-sem-select').value;
     const sub = (document.getElementById('saisie-sub-select') || {}).value || 'FTP';
     const saveBtn = document.getElementById('saisie-save-btn');
     const el = document.getElementById('saisie-content');
+    _saisieSetToolbar(false);
     _saisieImportReport(null);
     _saisieIoButtons(false);
     if (!pid || !sem) {
-        _saisieData = null; saveBtn.disabled = true;
+        _saisieData = null; _saisieBlocks = []; saveBtn.disabled = true;
         el.innerHTML = '<div class="empty">Choisissez une promotion, une sous-cohorte et un semestre.</div>';
         return;
     }
     el.innerHTML = '<div class="spinner">Chargement…</div>';
     try { _saisieData = await api(`/promotions/${pid}/saisie/${sem}?formation=${encodeURIComponent(sub)}`); }
     catch (e) { toast('Erreur : ' + e.message, 'error'); saveBtn.disabled = true; return; }
+    _saisieData.pid = parseInt(pid, 10);
+    _saisieBlocks = [{ d: _saisieData, pid, sem, sub }];
+    _saisieVis = [null];
     renderSaisieGrid();
 }
 
+// Enseignant : toutes les grilles de l'année (cohorte × semestre × sous-cohorte)
+async function loadSaisieAll() {
+    const el = document.getElementById('saisie-content');
+    const saveBtn = document.getElementById('saisie-save-btn');
+    _saisieSetToolbar(true);
+    _saisieImportReport(null);
+    saveBtn.disabled = true;
+    el.innerHTML = '<div class="spinner">Chargement de vos grilles…</div>';
+    let r;
+    try { r = await api('/saisie/tout'); }
+    catch (e) { el.innerHTML = `<div class="empty">Erreur : ${esc(e.message)}</div>`; return; }
+    _saisieYear = r.year || '';
+    _saisieBlocks = (r.blocks || []).map(d => ({ d, pid: d.pid, sem: d.semester, sub: d.formation }));
+    _saisieData = _sbd(0) || null;
+    renderSaisieAll();
+}
+
+function renderSaisieAll() {
+    const el = document.getElementById('saisie-content');
+    const saveBtn = document.getElementById('saisie-save-btn');
+    _saisieSetToolbar(true);
+    _saisieFilterBoxes();
+    if (!_saisieBlocks.length) {
+        saveBtn.disabled = true;
+        el.innerHTML = `<div class="empty">Aucune note à saisir pour ${esc(_saisieYear || 'cette année')}.<br>
+            <span style="font-size:.85rem">Aucune matière n'est à votre charge sur les semestres de l'année,
+            ou les effectifs des promotions ne sont pas encore renseignés.</span></div>`;
+        return;
+    }
+    saveBtn.disabled = false;
+    // Les grilles se placent CÔTE À CÔTE tant que la largeur le permet : chacune
+    // refait sa colonne « Étudiant », les empiler gaspillait l'écran. Chaque
+    // grille garde sa largeur de contenu (pas de rétrécissement) et passe à la
+    // ligne quand elle ne tient plus ; une grille plus large que l'écran défile.
+    el.innerHTML = '<style id="saisie-style"></style>'
+        + `<p style="margin:0 0 10px;font-size:.82rem;color:#6b7280">Vos grilles de l'année
+           <strong>${esc(_saisieYear)}</strong> — cliquez sur un bandeau pour replier une grille.
+           <button class="btn btn-secondary btn-sm" onclick="toggleAllSaisieBlocks(false)">Tout replier</button>
+           <button class="btn btn-secondary btn-sm" onclick="toggleAllSaisieBlocks(true)">Tout déplier</button></p>`
+        + '<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start">'
+        + _saisieBlocks.map((b, i) => _saisieBlockHtml(i)).join('')
+        + '</div>'
+        + _saisieLegend();
+    applySaisieFilter();
+}
+
+// Cases à cocher des semestres (et des sous-cohortes quand les deux sont là),
+// construites à partir des grilles reçues ; l'état coché survit au rendu.
+function _saisieFilterBoxes() {
+    const prev = id => {
+        const m = {};
+        document.querySelectorAll('#' + id + ' input').forEach(i => { m[i.value] = i.checked; });
+        return m;
+    };
+    const pv = prev('saisie-sem-boxes'), pf = prev('saisie-face-boxes');
+    const box = (v, on) => `<label style="margin-right:8px;cursor:pointer;white-space:nowrap">
+        <input type="checkbox" value="${esc(v)}" ${on ? 'checked' : ''} onchange="applySaisieFilter()"> ${esc(v)}</label>`;
+    const sems = [...new Set(_saisieBlocks.map(b => b.d.semester))].sort();
+    const faces = [...new Set(_saisieBlocks.map(b => b.d.formation))].sort();
+    const semsEl = document.getElementById('saisie-sem-boxes');
+    const facesEl = document.getElementById('saisie-face-boxes');
+    semsEl.innerHTML = sems.length
+        ? '<span style="color:#6b7280;font-size:.82rem;margin-right:6px">Semestres :</span>'
+          + sems.map(s => box(s, pv[s] !== false)).join('') : '';
+    facesEl.innerHTML = faces.length > 1
+        ? '<span style="color:#6b7280;font-size:.82rem;margin-right:6px">Sous-cohortes :</span>'
+          + faces.map(f => box(f, pf[f] !== false)).join('') : '';
+}
+
+// Une matière répond à la recherche par son code, son libellé, son référent, ou
+// le code / nom / enseignant d'une de ses sous-matières.
+function _saisieGroupHit(g, q) {
+    const hay = [g.key, g.label, g.referent || ''].concat(
+        g.subs.map(s => `${s.code} ${s.name} ${(s.teachers || []).join(' ')}`)).join(' ');
+    return _sansAccent(hay).includes(q);
+}
+
+// Filtre : rien n'est re-rendu (les notes en cours de saisie seraient perdues),
+// tout passe par des règles CSS sur les classes de grille et de colonne.
+function applySaisieFilter() {
+    const st = document.getElementById('saisie-style');
+    if (!st) return;
+    const q = _sansAccent((document.getElementById('saisie-q').value || '').trim());
+    const checked = id => new Set([...document.querySelectorAll('#' + id + ' input:checked')].map(i => i.value));
+    const sems = checked('saisie-sem-boxes'), faces = checked('saisie-face-boxes');
+    const rules = [];
+    const shown = [];
+    _saisieVis = [];
+    _saisieBlocks.forEach((blk, i) => {
+        const d = blk.d;
+        const vis = new Set();
+        d.groups.forEach((g, j) => {
+            if (!q || _saisieGroupHit(g, q)) vis.add(j);
+            else rules.push(`.sg${i}_${j}{display:none}`);
+        });
+        _saisieVis[i] = q ? vis : null;
+        if (!sems.has(d.semester) || (faces.size && !faces.has(d.formation)) || !vis.size) {
+            rules.push(`.sblk${i}{display:none}`);
+            return;
+        }
+        shown.push(i);
+    });
+    st.textContent = rules.join('\n');
+    _saisieShown = shown;
+    _saisieBlocks.forEach((b, i) => _saisieBadge(i));
+    _saisieSummary();
+}
+
+// Compte rendu global (barre d'outils), sur les seules grilles affichées
+function _saisieSummary() {
+    const sum = document.getElementById('saisie-all-summary');
+    if (!sum || !_saisieAllMode()) return;   // grille unique (admin) : pas de résumé
+    let tot = 0, rest = 0;
+    _saisieShown.forEach(i => {
+        const s = _saisieBlockStats(i);
+        tot += s.tot; rest += s.tot - s.done;
+    });
+    sum.innerHTML = !_saisieShown.length
+        ? '<span style="color:#b91c1c">Aucune grille ne correspond au filtre</span>'
+        : `${_saisieShown.length} grille(s) affichée(s) · ` + (rest
+            ? `<strong style="color:#b45309">${rest} note(s) à saisir</strong> sur ${tot}`
+            : `<strong style="color:#15803d">✓ tout est saisi</strong> (${tot} notes)`);
+}
+
+// Notes attendues / déjà présentes dans une grille (cellules éditables), telles
+// qu'elles sont À L'ÉCRAN : une note tapée mais pas encore enregistrée compte.
+// Le filtre par matière restreint le décompte aux colonnes visibles.
+function _saisieBlockStats(i) {
+    const body = document.getElementById('saisie-body-' + i);
+    let tot = 0, done = 0;
+    if (!body) return { tot, done };
+    const vis = _saisieVis[i];
+    body.querySelectorAll('input[data-note]').forEach(inp => {
+        if (vis && !vis.has(+inp.dataset.g)) return;
+        tot++;
+        if (inp.value.trim() !== '') done++;
+    });
+    return { tot, done };
+}
+
+function _saisieBadge(i) {
+    const el = document.getElementById('saisie-badge-' + i);
+    if (!el) return;
+    const { tot, done } = _saisieBlockStats(i);
+    el.innerHTML = !tot ? '<span style="color:#9ca3af">lecture seule</span>'
+        : done < tot ? `<span style="color:#b45309">${tot - done} à saisir</span>
+            <span style="color:#9ca3af">(${done}/${tot})</span>`
+        : `<span style="color:#15803d">✓ complet (${tot})</span>`;
+}
+
+function _saisieBlockHtml(i) {
+    const d = _sbd(i);
+    const shut = _saisieShut.has(_saisieKey(d));
+    const io = d.groups.some(g => g.subs.some(s => s.editable));
+    return `<section class="sblk${i}" style="flex:0 0 auto;min-width:340px;max-width:100%;border:1px solid #ddd6fe;border-radius:8px;overflow:hidden">
+        <div onclick="toggleSaisieBlock(${i})" title="Replier / déplier cette grille"
+             style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 12px;background:#f5f3ff;cursor:pointer;border-bottom:1px solid #ddd6fe">
+            <span id="saisie-caret-${i}" style="color:#6d28d9">${shut ? '▸' : '▾'}</span>
+            <strong style="color:#4c1d95">${esc(d.semester)} · ${esc(d.formation)}</strong>
+            <span style="color:#6b7280;font-size:.82rem">${esc(d.promotion || '')}</span>
+            <span id="saisie-badge-${i}" style="font-size:.78rem"></span>
+            <span style="flex:1"></span>
+            ${io ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();downloadSaisieTemplate(${i})"
+                        title="Fichier Excel vide : les étudiants en lignes, vos sous-matières en colonnes">⤓ Modèle vide</button>
+                    <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();saisiePickImport(${i})"
+                        title="Importer un modèle rempli dans cette grille : rien n'est enregistré avant « Enregistrer »">⤒ Importer</button>` : ''}
+        </div>
+        <div id="saisie-body-${i}" ${shut ? 'style="display:none"' : ''}>${_saisieGridHtml(i, '70vh')}</div>
+    </section>`;
+}
+
+function toggleSaisieBlock(i) {
+    const k = _saisieKey(_sbd(i));
+    const shut = !_saisieShut.has(k);
+    if (shut) _saisieShut.add(k); else _saisieShut.delete(k);
+    const body = document.getElementById('saisie-body-' + i);
+    const caret = document.getElementById('saisie-caret-' + i);
+    if (body) body.style.display = shut ? 'none' : '';
+    if (caret) caret.textContent = shut ? '▸' : '▾';
+}
+
+function toggleAllSaisieBlocks(open) {
+    _saisieBlocks.forEach((b, i) => {
+        const k = _saisieKey(b.d);
+        if (open) _saisieShut.delete(k); else _saisieShut.add(k);
+        const body = document.getElementById('saisie-body-' + i);
+        const caret = document.getElementById('saisie-caret-' + i);
+        if (body) body.style.display = open ? '' : 'none';
+        if (caret) caret.textContent = open ? '▾' : '▸';
+    });
+}
+
+// Admin : rendu d'une seule grille (celle des sélecteurs)
 function renderSaisieGrid() {
     const d = _saisieData;
     const el = document.getElementById('saisie-content');
     const saveBtn = document.getElementById('saisie-save-btn');
+    _saisieSetToolbar(false);
     saveBtn.disabled = true;
     if (!d.available) {
         el.innerHTML = `<div class="empty">Base de l'année ${esc(d.year || '?')} introuvable — les sous-matières de ce semestre ne sont pas connues.</div>`;
@@ -6140,72 +6392,85 @@ function renderSaisieGrid() {
     const anyRef = d.groups.some(g => g.is_referent);
     saveBtn.disabled = !(editable || anyRef);
     _saisieIoButtons(editable);
+    el.innerHTML = _saisieGridHtml(0, 'calc(100vh - 210px)') + _saisieLegend();
+}
+
+// Tableau d'une grille : étudiants en lignes, sous-matières groupées par matière
+// en colonnes. `i` = index de la grille : il préfixe tous les `data-` (une même
+// sous-matière existe en FTP et en ALT) et sert aux classes de filtrage
+// (`sg<i>_<j>` = colonnes de la matière j, masquées par la recherche).
+function _saisieGridHtml(i, maxh) {
+    const d = _sbd(i);
     const CW = 74;
     // Ligne 1 : matières (groupes) ; ligne 2 : sous-matières + Moy. ;
     // ligne 3 : pondérations (référent) + case « définitif » (enseignant de la colonne)
     let h1 = '<tr><th class="nz-sticky" rowspan="3" style="min-width:165px;max-width:165px;vertical-align:bottom">Étudiant</th>';
     let h2 = '<tr>', h3 = '<tr>';
-    d.groups.forEach(g => {
+    d.groups.forEach((g, j) => {
+        const cls = `sg${i}_${j}`;
         const multi = g.subs.length > 1;
-        h1 += `<th colspan="${g.subs.length + 1}" style="background:#ede9fe;color:#4c1d95;text-align:center;font-size:.8rem;padding:4px 6px;border-left:4px solid #8b5cf6;border-bottom:2px solid #8b5cf6"
+        h1 += `<th class="${cls}" colspan="${g.subs.length + 1}" style="background:#ede9fe;color:#4c1d95;text-align:center;font-size:.8rem;padding:4px 6px;border-left:4px solid #8b5cf6;border-bottom:2px solid #8b5cf6"
                    title="${esc(g.label)}${g.referent ? ' — référent : ' + esc(g.referent) : ''}">${esc(g.key)}<br>
                    <span style="font-weight:400;font-size:.7rem">${g.referent ? 'réf. ' + esc(g.referent) : '<span style="color:#b91c1c">réf. à définir</span>'}</span><br>
                    <span style="font-weight:400;font-size:.68rem">${g.source === 'saisie'
                        ? '<span style="color:#166534" title="La moyenne pondérée est reportée dans la note matière (Bulletins)">→ note matière</span>'
                        : '<span style="color:#b45309" title="La note matière (Bulletins) vient d\'un import ou d\'une saisie de l\'administration : cette moyenne n\'est PAS reportée tant que l\'admin ne rebascule pas la matière">⚠ note importée</span>'}</span></th>`;
-        g.subs.forEach((s, i) => {
+        g.subs.forEach((s, k) => {
             const off = !s.counted;
             const defColor = s.definitive ? '#15803d' : '#b45309';
-            h2 += `<th style="text-align:center;font-size:.75rem;padding:4px 2px;width:${CW}px;min-width:${CW}px${i === 0 ? ';border-left:4px solid #8b5cf6' : ''}${off ? ';opacity:.45' : ''}"
+            h2 += `<th class="${cls}" style="text-align:center;font-size:.75rem;padding:4px 2px;width:${CW}px;min-width:${CW}px${k === 0 ? ';border-left:4px solid #8b5cf6' : ''}${off ? ';opacity:.45' : ''}"
                        title="${esc(s.name)}${s.teachers.length ? ' — ' + esc(s.teachers.join(', ')) : ''}${off ? ' — exclue de la moyenne (pondération 0)' : ''}">
                    ${esc(s.code)}${s.editable ? '' : ' 🔒'}<br>
                    <span style="font-weight:400;font-size:.68rem;color:#6b7280">${esc(s.teachers.join(', ') || '—')}</span></th>`;
             const wInput = multi
-                ? `<input type="number" min="0" step="0.5" value="${s.weight}" data-w="${esc(g.key)}|${esc(s.code)}"
-                       ${g.is_referent ? '' : 'disabled'} onchange="renderSaisieDirty()"
+                ? `<input type="number" min="0" step="0.5" value="${s.weight}" data-w="${esc(i + '|' + g.key + '|' + s.code)}"
+                       ${g.is_referent ? '' : 'disabled'} onchange="renderSaisieDirty(${i})"
                        title="Pondération dans la moyenne de ${esc(g.key)} (0 = exclue)${g.is_referent ? '' : ' — modifiable par le référent'}"
                        style="width:44px;font-size:.72rem;text-align:center">`
                 : '<span style="color:#9ca3af">—</span>';
-            h3 += `<th style="text-align:center;padding:3px 2px;font-size:.7rem;font-weight:400${i === 0 ? ';border-left:4px solid #8b5cf6' : ''}${off ? ';opacity:.45' : ''}">
+            h3 += `<th class="${cls}" style="text-align:center;padding:3px 2px;font-size:.7rem;font-weight:400${k === 0 ? ';border-left:4px solid #8b5cf6' : ''}${off ? ';opacity:.45' : ''}">
                    ${wInput}<br>
                    <label title="Cocher pour rendre les notes définitives (case vide = provisoires)" style="cursor:pointer;color:${defColor};white-space:nowrap">
                        <span>${s.definitive ? '✓ définitif' : '⏳ prov.'}</span>
-                       <input type="checkbox" data-def="${esc(s.code)}" ${s.definitive ? 'checked' : ''} ${s.editable ? '' : 'disabled'}
+                       <input type="checkbox" data-def="${esc(i + '|' + s.code)}" ${s.definitive ? 'checked' : ''} ${s.editable ? '' : 'disabled'}
                            onchange="_saisieDefLabel(this)"></label></th>`;
         });
-        h2 += `<th style="text-align:center;font-size:.75rem;background:#f0fdf4;color:#166534;width:${CW}px" rowspan="2"
+        h2 += `<th class="${cls}" style="text-align:center;font-size:.75rem;background:#f0fdf4;color:#166534;width:${CW}px" rowspan="2"
                    title="Note matière : moyenne pondérée des sous-notes dès qu'elles sont toutes saisies, sinon la note actuelle de Bulletins (📥 importée ou saisie par l'administration)">Moy.<br>${esc(g.key)}</th>`;
     });
     h1 += '</tr>'; h2 += '</tr>'; h3 += '</tr>';
     const rows = d.students.map(st => {
         let tr = `<tr><td class="nz-sticky" style="font-size:.82rem;white-space:nowrap">${esc(st.nom)} ${esc(st.prenom)}${st.statut && st.statut !== 'Actif' ? ` <span style="font-size:.68rem;color:#9ca3af">(${esc(st.statut)})</span>` : ''}</td>`;
-        d.groups.forEach(g => {
-            g.subs.forEach((s, i) => {
+        d.groups.forEach((g, j) => {
+            const cls = `sg${i}_${j}`;
+            g.subs.forEach((s, k) => {
                 const v = d.marks[`${st.id}_${s.code}`];
                 const vs = v === undefined ? '' : v;
-                const bl = i === 0 ? 'border-left:4px solid #ede9fe;' : '';
+                const bl = k === 0 ? 'border-left:4px solid #ede9fe;' : '';
                 if (s.editable) {
-                    tr += `<td style="${bl}padding:2px;text-align:center">
+                    tr += `<td class="${cls}" style="${bl}padding:2px;text-align:center">
                            <input type="text" inputmode="decimal" value="${esc(String(vs))}"
-                               data-note="${esc(s.code)}|${st.id}" data-grp="${esc(g.key)}"
+                               data-note="${esc(i + '|' + s.code + '|' + st.id)}" data-grp="${esc(g.key)}" data-g="${j}"
                                oninput="updateSaisieAvg(this)"
                                style="width:${CW - 14}px;text-align:center;font-size:.82rem;border:1px solid #d1d5db;border-radius:4px;padding:3px 2px"></td>`;
                 } else {
-                    tr += `<td style="${bl}text-align:center;font-size:.82rem;color:#374151${s.counted ? '' : ';opacity:.45'}">${vs === '' ? '<span style="color:#d1d5db">—</span>' : esc(String(vs))}</td>`;
+                    tr += `<td class="${cls}" style="${bl}text-align:center;font-size:.82rem;color:#374151${s.counted ? '' : ';opacity:.45'}">${vs === '' ? '<span style="color:#d1d5db">—</span>' : esc(String(vs))}</td>`;
                 }
             });
-            const c = _saisieNoteCell(g, st.id);
-            tr += `<td data-avg="${esc(g.key)}|${st.id}" title="${esc(c.title)}"
+            const c = _saisieNoteCell(i, g, st.id);
+            tr += `<td class="${cls}" data-avg="${esc(i + '|' + g.key + '|' + st.id)}" title="${esc(c.title)}"
                        style="text-align:center;font-size:.82rem;font-weight:600;${c.style}">${c.html}</td>`;
         });
         return tr + '</tr>';
     }).join('');
-    el.innerHTML = `<div style="overflow:auto;max-height:calc(100vh - 210px)">
+    return `<div style="overflow:auto;max-height:${maxh}">
         <table class="notes-grid" style="border-collapse:collapse;font-size:.85rem">
-        <thead>${h1}${h2}${h3}</thead><tbody>${rows}</tbody></table></div>
-        <p style="font-size:.78rem;color:#6b7280;margin:8px 2px">Notes sur 20, ou <strong>ABI</strong>
+        <thead>${h1}${h2}${h3}</thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function _saisieLegend() {
+    return `<p style="font-size:.78rem;color:#6b7280;margin:8px 2px">Notes sur 20, ou <strong>ABI</strong>
         (absence injustifiée : comptée 0 ; si toutes les sous-notes comptées sont ABI, la note matière l'est aussi).
-        
         🔒 = colonne d'un autre enseignant (lecture seule). La colonne <strong>Moy.</strong> affiche la
         <span style="color:#166534">moyenne pondérée</span> dès que toutes les sous-notes comptées sont saisies ;
         sinon elle montre la note matière actuelle de Bulletins (<span style="color:#1e40af">📥 importée</span>
@@ -6215,18 +6480,15 @@ function renderSaisieGrid() {
 }
 
 // Contenu brut d'une cellule (input éditable ou note chargée), en majuscules
-function _saisieCellRaw(code, sid) {
-    const inp = document.querySelector(`[data-note="${CSS.escape(code + '|' + sid)}"]`);
-    const raw = inp ? inp.value : (( _saisieData.marks[`${sid}_${code}`] ?? '') + '');
+function _saisieCellRaw(i, code, sid) {
+    const inp = document.querySelector(`[data-note="${CSS.escape(i + '|' + code + '|' + sid)}"]`);
+    const raw = inp ? inp.value : ((_sbd(i).marks[`${sid}_${code}`] ?? '') + '');
     return String(raw).trim().toUpperCase();
 }
 
-// Valeur courante d'une cellule pour la moyenne live (ABI = 0)
-function _saisieCellVal(code, sid) { return _sortNum(_saisieCellRaw(code, sid)); }
-
 // Pondération courante d'une sous-matière (input du référent ou valeur chargée)
-function _saisieWeight(g, s) {
-    const inp = document.querySelector(`[data-w="${CSS.escape(g.key + '|' + s.code)}"]`);
+function _saisieWeight(i, g, s) {
+    const inp = document.querySelector(`[data-w="${CSS.escape(i + '|' + g.key + '|' + s.code)}"]`);
     const w = inp ? parseFloat(inp.value) : s.weight;
     return isNaN(w) ? s.weight : w;
 }
@@ -6235,13 +6497,13 @@ function _saisieWeight(g, s) {
 // sous-notes comptées sont des absences injustifiées (la note vaut 0, mais
 // l'absence reste lisible), `null` si une note manque encore (moyenne non
 // calculable), `undefined` si aucune sous-matière ne compte sur cette face.
-function _saisieAvgVal(g, sid) {
+function _saisieAvgVal(i, g, sid) {
     let sw = 0, sum = 0, abi = true;
     for (const s of g.subs) {
         if (!s.face_ok) continue;                    // pas de séance sur cette face
-        const w = _saisieWeight(g, s);
+        const w = _saisieWeight(i, g, s);
         if (!(w > 0)) continue;                      // pondération 0 : exclue
-        const raw = _saisieCellRaw(s.code, sid);
+        const raw = _saisieCellRaw(i, s.code, sid);
         const v = _sortNum(raw);
         if (v === null) return null;                 // saisie incomplète
         if (raw !== 'ABI') abi = false;
@@ -6254,10 +6516,10 @@ function _saisieAvgVal(g, sid) {
 // Colonne « Moy. » d'une matière : la moyenne pondérée quand elle est calculable
 // ET qu'elle fait foi ; sinon la note matière actuelle de Bulletins (📥) — c'est
 // ce qui remplit la colonne après un import, avant toute saisie des enseignants.
-function _saisieNoteCell(g, sid) {
-    const off = ((_saisieData || {}).official || {})[sid + '_' + g.key];
+function _saisieNoteCell(i, g, sid) {
+    const off = ((_sbd(i) || {}).official || {})[sid + '_' + g.key];
     const hasOff = off !== undefined && off !== null && off !== '';
-    const live = _saisieAvgVal(g, sid);
+    const live = _saisieAvgVal(i, g, sid);
     const GREEN = 'background:#f0fdf4;color:#166534';
     const BLUE = 'background:#eff6ff;color:#1e40af';
     const showOff = hasOff && (g.source !== 'saisie' || live === null || live === undefined);
@@ -6280,19 +6542,21 @@ function _saisieNoteCell(g, sid) {
 }
 
 // Réécrit une cellule « Moy. » (contenu, couleur, info-bulle)
-function _saisieNoteApply(td, g, sid) {
-    const c = _saisieNoteCell(g, sid);
+function _saisieNoteApply(td, i, g, sid) {
+    const c = _saisieNoteCell(i, g, sid);
     td.innerHTML = c.html;
     td.title = c.title;
     td.style.cssText = 'text-align:center;font-size:.82rem;font-weight:600;' + c.style;
 }
 
 function updateSaisieAvg(inp) {
-    const key = inp.dataset.grp;
-    const sid = inp.dataset.note.split('|')[1];
-    const g = _saisieData.groups.find(x => x.key === key);
-    const td = document.querySelector(`[data-avg="${CSS.escape(key + '|' + sid)}"]`);
-    if (g && td) _saisieNoteApply(td, g, sid);
+    const parts = inp.dataset.note.split('|');
+    const i = +parts[0], sid = parts[2], key = inp.dataset.grp;
+    const g = (_sbd(i).groups || []).find(x => x.key === key);
+    const td = document.querySelector(`[data-avg="${CSS.escape(i + '|' + key + '|' + sid)}"]`);
+    if (g && td) _saisieNoteApply(td, i, g, sid);
+    _saisieBadge(i);
+    _saisieSummary();
 }
 
 // Case « définitif » : l'état affiché AVANT la case suit la case tout de suite
@@ -6302,85 +6566,109 @@ function _saisieDefLabel(cb) {
     label.querySelector('span').textContent = cb.checked ? '✓ définitif' : '⏳ prov.';
 }
 
-// Un changement de pondération : rafraîchit toutes les moyennes du groupe
-function renderSaisieDirty() {
-    if (!_saisieData) return;
-    _saisieData.students.forEach(st => {
-        _saisieData.groups.forEach(g => {
-            const td = document.querySelector(`[data-avg="${CSS.escape(g.key + '|' + st.id)}"]`);
-            if (td) _saisieNoteApply(td, g, st.id);
+// Un changement de pondération : rafraîchit toutes les moyennes de la grille
+function renderSaisieDirty(i) {
+    const d = _sbd(i);
+    if (!d) return;
+    d.students.forEach(st => {
+        d.groups.forEach(g => {
+            const td = document.querySelector(`[data-avg="${CSS.escape(i + '|' + g.key + '|' + st.id)}"]`);
+            if (td) _saisieNoteApply(td, i, g, st.id);
         });
     });
 }
 
+// Deux valeurs de note disent-elles la même chose ? (vide, ABI, 12 / 12.0 / 12,0)
+function _saisieSameNote(raw, loaded) {
+    const a = String(raw ?? '').trim().replace(',', '.').toUpperCase();
+    const b = String(loaded ?? '').trim().replace(',', '.').toUpperCase();
+    if (a === '' || b === '' || a === 'ABI' || b === 'ABI') return a === b;
+    return parseFloat(a) === parseFloat(b);
+}
+
+// Enregistre TOUTES les grilles affichées, en n'envoyant que ce qui a changé
+// (une seule grille en mode admin). Renvoie false si une note est invalide :
+// le départ de la page est alors annulé.
 async function saveSaisie() {
-    const d = _saisieData;
-    if (!d) return;
-    const pid = document.getElementById('promo-select').value;
-    const sem = document.getElementById('saisie-sem-select').value;
-    const sub = (document.getElementById('saisie-sub-select') || {}).value || 'FTP';
+    if (!_saisieBlocks.length) return;
     const btn = document.getElementById('saisie-save-btn');
     btn.disabled = true;
-    try {
-        // 1) Pondérations modifiées (groupes dont on est référent)
+    let invalid = false, touched = 0;
+    const jobs = [];   // [{i, weights: [...], columns: [...]}]
+    _saisieBlocks.forEach((blk, i) => {
+        const d = blk.d;
+        // 1) Pondérations modifiées (matières dont on est référent)
+        const weights = [];
         for (const g of d.groups) {
             if (!g.is_referent || g.subs.length < 2) continue;
-            const weights = {}; let changed = false;
+            const w = {}; let changed = false;
             for (const s of g.subs) {
-                const w = _saisieWeight(g, s);
-                weights[s.code] = w;
-                if (w !== s.weight) changed = true;
+                w[s.code] = _saisieWeight(i, g, s);
+                if (w[s.code] !== s.weight) changed = true;
             }
-            if (changed) {
-                await api(`/promotions/${pid}/saisie/${sem}/weights`, {
-                    method: 'PUT',
-                    body: JSON.stringify({ formation: sub, matiere_key: g.key, weights })
-                });
-            }
+            if (changed) weights.push({ matiere_key: g.key, weights: w });
         }
         // 2) Colonnes éditables : notes + statut définitif. Une valeur qui n'est
         // ni vide, ni ABI, ni une note de 0 à 20 serait ignorée par le serveur :
         // on la signale au lieu de la laisser disparaître au rechargement.
-        const columns = []; let invalid = false;
+        const columns = [];
         for (const g of d.groups) {
             for (const s of g.subs) {
                 if (!s.editable) continue;
-                const notes = {};
-                document.querySelectorAll(`[data-note^="${CSS.escape(s.code + '|')}"]`).forEach(inp => {
+                const notes = {}; let changed = false;
+                document.querySelectorAll(`[data-note^="${CSS.escape(i + '|' + s.code + '|')}"]`).forEach(inp => {
                     const raw = inp.value.trim().replace(',', '.');
                     const n = parseFloat(raw);
                     if (raw !== '' && raw.toUpperCase() !== 'ABI' && (isNaN(n) || n < 0 || n > 20)) {
                         invalid = true; inp.style.borderColor = '#ef4444'; return;
                     }
                     inp.style.borderColor = '#d1d5db';
-                    notes[inp.dataset.note.split('|')[1]] = raw;
+                    const sid = inp.dataset.note.split('|')[2];
+                    notes[sid] = raw;
+                    if (!_saisieSameNote(raw, d.marks[`${sid}_${s.code}`])) changed = true;
                 });
-                const defCb = document.querySelector(`[data-def="${CSS.escape(s.code)}"]`);
-                columns.push({ code: s.code, notes, definitive: !!(defCb && defCb.checked) });
+                const defCb = document.querySelector(`[data-def="${CSS.escape(i + '|' + s.code)}"]`);
+                const def = !!(defCb && defCb.checked);
+                if (changed || def !== !!s.definitive) columns.push({ code: s.code, notes, definitive: def });
             }
         }
-        if (invalid) {
-            toast('Notes invalides : une note de 0 à 20, ou ABI (absence injustifiée).', 'error');
-            btn.disabled = false;
-            return false;
-        }
-        if (columns.length) {
-            _saisieData = await api(`/promotions/${pid}/saisie/${sem}/notes`, {
-                method: 'PUT',
-                body: JSON.stringify({ formation: sub, columns })
-            });
-        } else {
-            _saisieData = await api(`/promotions/${pid}/saisie/${sem}?formation=${encodeURIComponent(sub)}`);
-        }
-        renderSaisieGrid();
+        if (weights.length || columns.length) jobs.push({ i, weights, columns });
+    });
+    if (invalid) {
+        toast('Notes invalides : une note de 0 à 20, ou ABI (absence injustifiée).', 'error');
+        btn.disabled = false;
+        return false;
+    }
+    if (!jobs.length) {
         markZoneClean('saisie-content');
-        toast('Saisie enregistrée');
+        btn.disabled = false;
+        toast('Aucune modification à enregistrer');
         return true;
+    }
+    try {
+        for (const job of jobs) {
+            const blk = _saisieBlocks[job.i];
+            const base = `/promotions/${blk.pid}/saisie/${blk.sem}`;
+            for (const w of job.weights) {
+                await api(`${base}/weights`, { method: 'PUT', body: JSON.stringify({ formation: blk.sub, ...w }) });
+            }
+            const fresh = job.columns.length
+                ? await api(`${base}/notes`, { method: 'PUT', body: JSON.stringify({ formation: blk.sub, columns: job.columns }) })
+                : await api(`${base}?formation=${encodeURIComponent(blk.sub)}`);
+            // la réponse ne porte pas l'identité de la grille (promotion, pid) : on fusionne
+            blk.d = Object.assign({}, blk.d, fresh);
+            touched++;
+        }
     } catch (e) {
         toast('Erreur : ' + e.message, 'error');
         btn.disabled = false;
         return false;
     }
+    if (_saisieAllMode()) renderSaisieAll();
+    else { _saisieData = _sbd(0); renderSaisieGrid(); }
+    markZoneClean('saisie-content');
+    toast(touched > 1 ? `${touched} grilles enregistrées` : 'Saisie enregistrée');
+    return true;
 }
 
 // ----- Import de notes (modèle Excel vide + import dans la grille) -----
@@ -6390,21 +6678,19 @@ function _saisieIoButtons(on) {
     });
 }
 
-function _saisieQuery() {
-    return {
-        pid: document.getElementById('promo-select').value,
-        sem: document.getElementById('saisie-sem-select').value,
-        sub: (document.getElementById('saisie-sub-select') || {}).value || 'FTP',
-    };
+function downloadSaisieTemplate(i) {
+    const blk = _saisieBlocks[i];
+    if (!blk || !blk.pid || !blk.sem) return;
+    window.location.href = `/api/promotions/${blk.pid}/saisie/${blk.sem}/modele?formation=${encodeURIComponent(blk.sub)}`;
 }
 
-function downloadSaisieTemplate() {
-    const { pid, sem, sub } = _saisieQuery();
-    if (!pid || !sem) return;
-    window.location.href = `/api/promotions/${pid}/saisie/${sem}/modele?formation=${encodeURIComponent(sub)}`;
+// Le sélecteur de fichier est unique : on retient la grille visée
+function saisiePickImport(i) {
+    _saisieImportTarget = i;
+    document.getElementById('saisie-import-file').click();
 }
 
-// Compte rendu d'import au-dessus de la grille (null = masqué)
+// Compte rendu d'import au-dessus des grilles (null = masqué)
 function _saisieImportReport(html) {
     const el = document.getElementById('saisie-import-report');
     if (!el) return;
@@ -6420,12 +6706,13 @@ function _saisieImportReport(html) {
 async function importSaisieFile(input) {
     const f = input.files[0];
     input.value = '';
-    if (!f || !_saisieData) return;
-    const { pid, sem, sub } = _saisieQuery();
+    const i = _saisieImportTarget;
+    const blk = _saisieBlocks[i];
+    if (!f || !blk) return;
     let d;
     try {
-        const fd = new FormData(); fd.append('file', f); fd.append('formation', sub);
-        const r = await fetch(`/api/promotions/${pid}/saisie/${sem}/import`, { method: 'POST', body: fd });
+        const fd = new FormData(); fd.append('file', f); fd.append('formation', blk.sub);
+        const r = await fetch(`/api/promotions/${blk.pid}/saisie/${blk.sem}/import`, { method: 'POST', body: fd });
         const body = await r.text();
         if (r.status === 401) { showLogin(); return; }
         if (!r.ok) {
@@ -6441,7 +6728,7 @@ async function importSaisieFile(input) {
     let added = 0, replaced = 0, same = 0;
     Object.entries(d.notes || {}).forEach(([code, notes]) => {
         Object.entries(notes).forEach(([sid, val]) => {
-            const inp = document.querySelector(`[data-note="${CSS.escape(code + '|' + sid)}"]`);
+            const inp = document.querySelector(`[data-note="${CSS.escape(i + '|' + code + '|' + sid)}"]`);
             if (!inp) return;
             const nv = String(val);
             const old = inp.value.trim().replace(',', '.');
@@ -6456,6 +6743,8 @@ async function importSaisieFile(input) {
     });
     const list = (arr, max = 8) => esc(arr.slice(0, max).join(' · ')) + (arr.length > max ? ` … (+${arr.length - max})` : '');
     const li = [];
+    const where = _saisieAllMode()
+        ? ` <span style="color:#6b7280">→ ${esc(blk.d.semester)} · ${esc(blk.d.formation)} (${esc(blk.d.promotion || '')})</span>` : '';
     li.push(`<li><strong style="color:#166534">${added}</strong> note(s) ajoutée(s)`
         + (replaced ? ` · <strong style="color:#b45309">${replaced}</strong> note(s) remplaçant une note différente (surlignées en ambre)` : '')
         + (same ? ` · ${same} identique(s) à la note déjà saisie` : '') + '</li>');
@@ -6464,11 +6753,12 @@ async function importSaisieFile(input) {
     if (d.locked_columns.length) li.push(`<li style="color:#92400e">🔒 Colonne(s) non modifiable(s) par vous, ignorée(s) : ${list(d.locked_columns)}</li>`);
     if (d.unknown_columns.length) li.push(`<li style="color:#6b7280">Colonne(s) non reconnue(s), ignorée(s) : ${list(d.unknown_columns)}</li>`);
     if (d.missing.length) li.push(`<li style="color:#6b7280">${d.missing.length} étudiant(s) absent(s) du fichier : ${list(d.missing)}</li>`);
-    _saisieImportReport(`<strong>Import de « ${esc(f.name)} »</strong><ul style="margin:6px 0 6px 18px;padding:0">${li.join('')}</ul>
+    _saisieImportReport(`<strong>Import de « ${esc(f.name)} »</strong>${where}<ul style="margin:6px 0 6px 18px;padding:0">${li.join('')}</ul>
         <strong>Rien n'est encore enregistré</strong> : vérifiez la grille, puis cliquez sur 💾 Enregistrer.`);
     toast(added + replaced ? `${added + replaced} note(s) importée(s) — à enregistrer` : 'Aucune nouvelle note dans ce fichier',
           added + replaced ? 'success' : 'error');
 }
+
 
 async function loadNotes() {
     // La promotion est pilotée par le sélecteur partagé en haut de l'onglet.
