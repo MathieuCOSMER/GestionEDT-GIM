@@ -382,6 +382,9 @@
         .role-badge { font-size: .78rem; font-weight: 700; padding: 3px 9px; border-radius: 6px; white-space: nowrap; }
         .role-badge.admin { background: #dcfce7; color: #166534; }
         .role-badge.teacher { background: #dbeafe; color: #1e40af; }
+        .role-badge.superadmin { background: #fef3c7; color: #92400e; }
+        /* Réservé au superadmin (compte Admin) : masqué pour les enseignants administrateurs */
+        body:not(.role-superadmin) .superadmin-only { display: none !important; }
         /* Enseignant : gestion d'année masquée + outils de répartition masqués
            (l'accès en écriture est filtré par rôle/onglet, pas par cette règle) */
         body.role-teacher .admin-only,
@@ -472,7 +475,7 @@
     <button onclick="showServicePage()" class="active" id="nav-service">Service enseignant</button>
     <button onclick="showPage('salles')" id="nav-salles">Salles</button>
     <button onclick="showPage('enseignants')" id="nav-enseignants">Gestion enseignant</button>
-    <button onclick="showPage('journal')" id="nav-journal" class="admin-only">Journal</button>
+    <button onclick="showPage('journal')" id="nav-journal" class="admin-only superadmin-only">Journal</button>
     <button onclick="showPage('programme')" id="nav-programme">Programme</button>
     <button onclick="showPage('mon-compte')" id="nav-mon-compte" style="display:none">Mon Compte</button>
     <button onclick="showPage('saisie')" id="nav-saisie" style="display:none">Saisie Notes</button>
@@ -814,7 +817,7 @@
     <div id="promo-tab-actions" style="display:none">
         <div style="padding:20px;display:flex;gap:12px;flex-wrap:wrap">
             <button class="btn btn-primary" onclick="openNewPromotion()">+ Nouvelle promotion</button>
-            <button class="btn btn-secondary" id="promo-delete-btn" onclick="deletePromotion()" disabled>🗑 Supprimer la promotion sélectionnée</button>
+            <button class="btn btn-secondary superadmin-only" id="promo-delete-btn" onclick="deletePromotion()" disabled>🗑 Supprimer la promotion sélectionnée</button>
         </div>
     </div>
     <div id="promo-tab-saisie" style="display:none">
@@ -934,7 +937,7 @@
                 <button class="btn btn-primary" onclick="openNewProgramme()">+ Nouveau programme</button>
                 <button class="btn btn-secondary" id="prog-rename-btn" onclick="renameProgramme()" disabled>Renommer</button>
                 <button class="btn btn-secondary" id="prog-dup-btn" onclick="duplicateProgramme()" disabled>Dupliquer</button>
-                <button class="btn btn-danger" id="prog-del-btn" onclick="deleteProgramme()" disabled>🗑 Supprimer</button>
+                <button class="btn btn-danger superadmin-only" id="prog-del-btn" onclick="deleteProgramme()" disabled>🗑 Supprimer</button>
             </div>
             <div class="section-title">Matières du programme</div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
@@ -1006,6 +1009,7 @@
 <div class="page" id="page-parametres">
     <div class="toolbar"><h1>Paramètres</h1></div>
     <div style="max-width:560px">
+        <div class="superadmin-only">
         <h3 style="color:#374151;margin:8px 0">Année universitaire active</h3>
         <p style="color:#6b7280;font-size:.9rem;margin-top:0">
             Année de travail de tous les onglets (Matières, Salles, Gestion enseignant, Journal…).
@@ -1019,7 +1023,9 @@
             </select>
             <button class="btn btn-primary" onclick="applyDefaultYear()">Appliquer</button>
         </div>
+        </div>
 
+        <div class="superadmin-only">
         <h3 style="color:#374151;margin:8px 0">Coefficients de conversion en HETD</h3>
         <p style="color:#6b7280;font-size:.9rem;margin-top:0">
             Heures Équivalent TD utilisées pour le calcul du service (onglet <strong>Bilan global</strong>)
@@ -1034,6 +1040,7 @@
         </div>
         <div style="font-size:.8rem;color:#6b7280;margin-bottom:12px">Valeurs usuelles : CM 1,5 · TD 1 · TP 0,667 (2/3) · PT 1.</div>
         <button class="btn btn-primary" id="hetd-save-btn" onclick="saveHetdCoefs()">💾 Enregistrer</button>
+        </div>
 
         <h3 style="color:#374151;margin:32px 0 8px">Sauvegarde complète du site</h3>
         <p style="color:#6b7280;font-size:.9rem;margin-top:0">
@@ -1051,10 +1058,10 @@
         </p>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">
             <a class="btn btn-primary" href="/api/backup/full" download style="text-decoration:none">⤓ Télécharger la sauvegarde</a>
-            <button class="btn btn-danger" onclick="document.getElementById('fullbackup-file').click()">⤒ Restaurer depuis un fichier…</button>
+            <button class="btn btn-danger superadmin-only" onclick="document.getElementById('fullbackup-file').click()">⤒ Restaurer depuis un fichier…</button>
             <input type="file" id="fullbackup-file" accept=".zip,application/zip" style="display:none" onchange="importFullBackup(this)">
         </div>
-        <p style="color:#b91c1c;font-size:.8rem;margin:0">
+        <p class="superadmin-only" style="color:#b91c1c;font-size:.8rem;margin:0">
             ⚠ La restauration <strong>écrase les données actuelles</strong> par celles du fichier.
             Une copie de sécurité de l'existant est mise de côté sur le serveur (« avant-import »)
             juste avant l'écrasement.
@@ -1757,7 +1764,7 @@
                     <option value="Vacataire">Vacataire</option>
                 </select>
             </div>
-            <div class="form-group admin-only" id="teacher-pwd-block">
+            <div class="form-group admin-only superadmin-only" id="teacher-pwd-block">
                 <label>Accès Promotions <span id="teacher-password-state" style="font-weight:400;color:#6b7280"></span></label>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
                     <button type="button" class="btn btn-secondary btn-sm" id="teacher-pwd-allow"
@@ -1778,7 +1785,9 @@
                     Droits d'administration <span id="teacher-admin-state" style="font-weight:400;color:#6b7280"></span>
                 </label>
                 <div style="font-size:.78rem;color:#6b7280;margin-top:4px">
-                    Donne à cet enseignant les mêmes droits que l'administrateur. Exige un mot de
+                    Donne à cet enseignant les droits d'administration (hors droits réservés au
+                    superadmin : droits admin, mots de passe, restauration, journal, années, HETD,
+                    suppressions de promotions et de programmes). Exige un mot de
                     passe défini, et ne s'applique qu'aux connexions faites AVEC ce mot de passe :
                     entrer son seul nom de famille ouvre toujours une session enseignante.
                     Supprimer ou révoquer le mot de passe retire les droits.
@@ -2145,9 +2154,11 @@ async function submitPwdInit() {
     }
 }
 
-function applyRole(role, user, teacher, status, promoAccess, adminEligible) {
+function applyRole(role, user, teacher, status, promoAccess, adminEligible, superadmin) {
     state.role = role;
     state.adminEligible = !!adminEligible;
+    state.superadmin = role === 'admin' && !!superadmin;
+    document.body.classList.toggle('role-superadmin', state.superadmin);
     // Enseignant administrateur : bascule session admin ⇄ session normale
     const switchBtn = document.getElementById('mode-switch-btn');
     if (switchBtn) {
@@ -2164,10 +2175,10 @@ function applyRole(role, user, teacher, status, promoAccess, adminEligible) {
     const badge = document.getElementById('role-badge');
     if (badge) {
         badge.style.display = '';
-        badge.className = 'role-badge ' + role;
+        badge.className = 'role-badge ' + (state.superadmin ? 'superadmin' : role);
         badge.textContent = role === 'teacher'
             ? (user + ' · ' + (status === 'Vacataire' ? 'vacataire' : 'titulaire'))
-            : (teacher ? teacher + ' · admin' : 'Admin');
+            : (state.superadmin ? 'Superadmin' : (teacher ? teacher + ' · admin' : 'Admin'));
     }
     // Enseignant : onglets Service enseignant (Bilan Global / Calendaire /
     // Contraintes), Programme (consultation), Statistiques (agrégées) et Mon Compte.
@@ -2196,7 +2207,7 @@ async function checkAuth() {
     try {
         const me = await api('/me');
         document.getElementById('login-overlay').style.display = 'none';
-        applyRole(me.role, me.username, me.teacher, me.status, me.promo_access, me.admin_eligible);
+        applyRole(me.role, me.username, me.teacher, me.status, me.promo_access, me.admin_eligible, me.superadmin);
         goHome();
     } catch (e) {
         showLogin();
@@ -2207,7 +2218,7 @@ async function checkAuth() {
 function finishLogin(me) {
     document.getElementById('login-pass').value = '';
     document.getElementById('login-overlay').style.display = 'none';
-    applyRole(me.role, me.username, me.teacher, me.status, me.promo_access, me.admin_eligible);
+    applyRole(me.role, me.username, me.teacher, me.status, me.promo_access, me.admin_eligible, me.superadmin);
     goHome();
 }
 

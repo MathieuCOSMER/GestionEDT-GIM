@@ -79,6 +79,7 @@ AUTH_USERS = {
     'Admin': {
         'password': os.environ.get('EDT_ADMIN_PASSWORD', 'GestionEDT22#'),
         'role': 'admin',
+        'superadmin': True,
     },
 }
 # Routes API accessibles sans être connecté
@@ -587,7 +588,7 @@ def full_backup_export():
 
 @app.route('/api/backup/full', methods=['POST'])
 def full_backup_import():
-    err = _require_admin()
+    err = _require_superadmin()
     if err:
         return err
     f = request.files.get('file')
@@ -2857,9 +2858,10 @@ def login():
         session.permanent = True
         session['user'] = key
         session['role'] = user['role']
+        session['superadmin'] = bool(user.get('superadmin'))
         session.pop('teacher_name', None)
-        _audit('LOGIN_OK', ip=ip, user=key, role='admin')
-        return jsonify({'username': key, 'role': user['role']})
+        _audit('LOGIN_OK', ip=ip, user=key, role='admin', superadmin=int(session['superadmin']))
+        return jsonify({'username': key, 'role': user['role'], 'superadmin': session['superadmin']})
     # Sinon : connexion enseignant par nom de famille (insensible à la casse).
     # Sans mot de passe : accès EDT habituel. Avec mot de passe (défini par
     # l'admin dans la fiche enseignant) : la session débloque en plus l'onglet
@@ -2892,6 +2894,7 @@ def login():
             session['teacher_status'] = status
             session['promo_access'] = promo_access
             session['admin_eligible'] = admin_eligible
+            session['superadmin'] = False
             _audit('LOGIN_OK', ip=ip, user=row['name'], role=role, promo=int(promo_access),
                    admin_eligible=int(admin_eligible))
             return jsonify({'username': row['name'], 'role': role,
@@ -2975,7 +2978,8 @@ def me():
                         'teacher': session.get('teacher_name'),
                         'status': session.get('teacher_status'),
                         'promo_access': bool(session.get('promo_access')),
-                        'admin_eligible': bool(session.get('admin_eligible'))})
+                        'admin_eligible': bool(session.get('admin_eligible')),
+                        'superadmin': bool(session.get('superadmin'))})
     return error_response('Non authentifié', 401)
 
 @app.route('/api/session-mode', methods=['POST'])
@@ -3005,8 +3009,9 @@ def session_mode():
 @app.route('/api/audit-log', methods=['GET'])
 def audit_log_view():
     """Renvoie les dernières lignes du journal d'audit (admin uniquement)."""
-    if session.get('role') != 'admin':
-        return error_response('Accès réservé à l\'administrateur', 403)
+    err = _require_superadmin()
+    if err:
+        return err
     try:
         n = max(1, min(int(request.args.get('lines', 200)), 2000))
     except (TypeError, ValueError):
@@ -3057,8 +3062,9 @@ def create_backup_now():
 def restore_backup():
     """Restaure une sauvegarde dans la base de son année (admin).
     Une copie de sécurité de l'état courant est créée avant écrasement."""
-    if session.get('role') != 'admin':
-        return error_response('Accès réservé à l\'administrateur', 403)
+    err = _require_superadmin()
+    if err:
+        return err
     data = request.get_json() or {}
     year = (data.get('year') or '').strip()
     fname = (data.get('file') or '').strip()
@@ -3089,8 +3095,9 @@ def restore_backup():
 @app.route('/api/backups', methods=['DELETE'])
 def delete_backup():
     """Supprime une sauvegarde (admin)."""
-    if session.get('role') != 'admin':
-        return error_response('Accès réservé à l\'administrateur', 403)
+    err = _require_superadmin()
+    if err:
+        return err
     data = request.get_json() or {}
     year = (data.get('year') or '').strip()
     fname = (data.get('file') or '').strip()
@@ -3338,6 +3345,15 @@ def _require_admin():
     """Renvoie une réponse 403 si l'utilisateur courant n'est pas admin, sinon None."""
     if session.get('role') != 'admin':
         return error_response('Accès réservé à l\'administrateur', 403)
+    return None
+
+def _require_superadmin():
+    """403 si l'utilisateur n'est pas le superadmin (compte fixe Admin). Réservé à
+    ce qui touche au système entier, à la sécurité ou est irréversible : droits
+    admin, mots de passe, restauration, audit, années, HETD, suppressions en cascade.
+    Les enseignants administrateurs gardent tout le travail courant."""
+    if session.get('role') != 'admin' or not session.get('superadmin'):
+        return error_response('Accès réservé au superadministrateur', 403)
     return None
 
 def _require_promo_read():
@@ -4579,7 +4595,7 @@ def get_promotion(pid):
 
 @app.route('/api/promotions/<int:pid>', methods=['DELETE'])
 def delete_promotion(pid):
-    err = _require_admin()
+    err = _require_superadmin()
     if err:
         return err
     db = get_promotions_db()
@@ -8310,7 +8326,7 @@ def import_programmes():
 
 @app.route('/api/programmes/<int:prog_id>', methods=['DELETE'])
 def delete_programme(prog_id):
-    err = _require_admin()
+    err = _require_superadmin()
     if err:
         return err
     grdb = get_programmes_db()
@@ -10471,7 +10487,7 @@ def set_teacher_password_access(teacher_id):
                  réapparaît au login, l'autorisation est conservée) ;
       • revoke → supprime le mot de passe ET retire l'autorisation.
     Le mot de passe lui-même n'est jamais choisi ni connu de l'admin."""
-    err = _require_admin()
+    err = _require_superadmin()
     if err:
         return err
     db = get_db()
@@ -10513,7 +10529,7 @@ def set_teacher_admin(teacher_id):
     droits ne s'appliquent d'ailleurs qu'à une session ouverte AVEC ce mot de passe.
     La table teachers étant propre à chaque année universitaire, la promotion vaut
     pour l'année active (comme le mot de passe lui-même)."""
-    err = _require_admin()
+    err = _require_superadmin()
     if err:
         return err
     db = get_db()
@@ -13392,7 +13408,7 @@ def get_hetd_coeffs():
 
 @app.route('/api/hetd-coeffs', methods=['PUT'])
 def put_hetd_coeffs():
-    err = _require_admin()
+    err = _require_superadmin()
     if err:
         return err
     data = request.get_json() or {}
@@ -14669,6 +14685,9 @@ def get_years():
 
 @app.route('/api/years', methods=['POST'])
 def create_year():
+    err = _require_superadmin()
+    if err:
+        return err
     data = request.get_json() or {}
     new_year = (data.get('year') or '').strip()
     copy_from = (data.get('copy_from') or '').strip()
@@ -14699,7 +14718,7 @@ def create_year():
 @app.route('/api/years/current', methods=['PUT'])
 def set_current_year():
     """Change le défaut global de l'établissement (admin uniquement)."""
-    err = _require_admin()
+    err = _require_superadmin()
     if err:
         return err
     data = request.get_json() or {}
