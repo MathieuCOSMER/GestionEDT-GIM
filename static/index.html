@@ -450,6 +450,14 @@
             <button class="btn btn-primary" onclick="submitPwdInit()">Enregistrer et se connecter</button>
             <button class="btn btn-secondary" style="margin-left:6px" onclick="cancelPwdInit()">Annuler</button>
         </div>
+        <!-- Enseignant administrateur : choix du type de session après connexion -->
+        <div id="login-mode-choice" style="display:none">
+            <div style="font-size:.85rem;color:#374151;margin-bottom:12px">
+                Vous disposez des droits d'administration. Quelle session souhaitez-vous ouvrir ?
+            </div>
+            <button class="btn btn-primary" onclick="chooseSessionMode('admin')">Session admin</button>
+            <button class="btn btn-secondary" style="margin-top:8px" onclick="chooseSessionMode('teacher')">Session normale (enseignant)</button>
+        </div>
         <div id="login-error"></div>
         <div id="login-main-actions">
             <button class="btn btn-primary" id="login-submit-btn" onclick="doLogin()">Se connecter</button>
@@ -474,6 +482,8 @@
     <button onclick="showPage('parametres')" id="nav-parametres" class="admin-only">Paramètres</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
         <span id="role-badge" class="role-badge" style="display:none"></span>
+        <button id="mode-switch-btn" class="btn btn-secondary btn-sm" onclick="switchSessionMode()"
+                style="display:none;white-space:nowrap"></button>
         <button class="btn btn-secondary btn-sm" onclick="logout()" title="Se déconnecter" style="white-space:nowrap">
             Déconnexion
         </button>
@@ -1990,7 +2000,8 @@ async function api(endpoint, opts = {}) {
     // Exceptions : choix d'année de session, et saisie de notes par sous-matière
     // (l'autorisation fine — colonne éditable, référent — est vérifiée côté serveur)
     if (state.role === 'teacher' && method !== 'GET' && method !== 'HEAD'
-            && endpoint !== '/years/session' && !endpoint.startsWith('/my-account')
+            && endpoint !== '/years/session' && endpoint !== '/session-mode'
+            && !endpoint.startsWith('/my-account')
             && !endpoint.startsWith('/qr-attendance')
             && !/\/saisie\/S[1-6]\//.test(endpoint)) {
         toast('Lecture seule', 'error');
@@ -2134,8 +2145,15 @@ async function submitPwdInit() {
     }
 }
 
-function applyRole(role, user, teacher, status, promoAccess) {
+function applyRole(role, user, teacher, status, promoAccess, adminEligible) {
     state.role = role;
+    state.adminEligible = !!adminEligible;
+    // Enseignant administrateur : bascule session admin ⇄ session normale
+    const switchBtn = document.getElementById('mode-switch-btn');
+    if (switchBtn) {
+        switchBtn.style.display = state.adminEligible ? '' : 'none';
+        switchBtn.textContent = role === 'admin' ? 'Passer en session normale' : 'Passer en session admin';
+    }
     state.user = user;
     state.teacherName = teacher || null;
     state.teacherStatus = status || null;
@@ -2149,7 +2167,7 @@ function applyRole(role, user, teacher, status, promoAccess) {
         badge.className = 'role-badge ' + role;
         badge.textContent = role === 'teacher'
             ? (user + ' · ' + (status === 'Vacataire' ? 'vacataire' : 'titulaire'))
-            : 'Admin';
+            : (teacher ? teacher + ' · admin' : 'Admin');
     }
     // Enseignant : onglets Service enseignant (Bilan Global / Calendaire /
     // Contraintes), Programme (consultation), Statistiques (agrégées) et Mon Compte.
@@ -2178,11 +2196,53 @@ async function checkAuth() {
     try {
         const me = await api('/me');
         document.getElementById('login-overlay').style.display = 'none';
-        applyRole(me.role, me.username, me.teacher, me.status, me.promo_access);
+        applyRole(me.role, me.username, me.teacher, me.status, me.promo_access, me.admin_eligible);
         goHome();
     } catch (e) {
         showLogin();
     }
+}
+
+// Entrée dans l'application une fois la session ouverte (et son type choisi)
+function finishLogin(me) {
+    document.getElementById('login-pass').value = '';
+    document.getElementById('login-overlay').style.display = 'none';
+    applyRole(me.role, me.username, me.teacher, me.status, me.promo_access, me.admin_eligible);
+    goHome();
+}
+
+// Enseignant administrateur : propose session admin ou session normale
+function showSessionModeChoice() {
+    document.getElementById('login-pass-group').style.display = 'none';
+    document.getElementById('login-main-actions').style.display = 'none';
+    document.getElementById('login-mode-choice').style.display = '';
+}
+
+async function chooseSessionMode(mode) {
+    const errEl = document.getElementById('login-error');
+    errEl.textContent = '';
+    try {
+        const me = await api('/session-mode', { method: 'POST', body: JSON.stringify({ mode }) });
+        document.getElementById('login-mode-choice').style.display = 'none';
+        document.getElementById('login-pass-group').style.display = '';
+        document.getElementById('login-main-actions').style.display = '';
+        finishLogin(me);
+    } catch (e) {
+        errEl.textContent = e.message || 'Impossible d\'ouvrir cette session';
+    }
+}
+
+// Bascule en cours de session : rechargement pour repartir d'un état propre
+function switchSessionMode() {
+    const mode = state.role === 'admin' ? 'teacher' : 'admin';
+    guardUnsaved(async () => {
+        try {
+            await api('/session-mode', { method: 'POST', body: JSON.stringify({ mode }) });
+            location.reload();
+        } catch (e) {
+            toast(e.message || 'Bascule de session impossible', 'error');
+        }
+    });
 }
 
 let _loginLockTimer = null;
@@ -2218,9 +2278,8 @@ async function doLogin() {
     try {
         const me = await api('/login', { method: 'POST', body: JSON.stringify({ username, password }) });
         document.getElementById('login-pass').value = '';
-        document.getElementById('login-overlay').style.display = 'none';
-        applyRole(me.role, me.username, me.teacher, me.status, me.promo_access);
-        goHome();
+        if (me.admin_eligible) { showSessionModeChoice(); return; }
+        finishLogin(me);
     } catch (e) {
         // Message renvoyé par le serveur (ex. throttle « Réessayez dans N s »)
         let msg = 'Identifiant ou mot de passe incorrect';

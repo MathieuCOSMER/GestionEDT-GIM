@@ -2760,6 +2760,9 @@ def _require_auth():
         # Le choix de l'année universitaire est personnel à la session : autorisé à tous
         if path == '/api/years/session':
             return
+        # Bascule session normale → admin : le handler vérifie l'éligibilité
+        if path == '/api/session-mode':
+            return
         # Toute autre écriture (y compris la liste des enseignants) est réservée à l'admin
         return error_response('Accès en lecture seule', 403)
 
@@ -2878,17 +2881,23 @@ def login():
             status = row['status'] or 'Titulaire'
             # Les droits d'administration ne s'ouvrent QUE sur mot de passe vérifié :
             # se connecter au seul nom de famille reste une session enseignante.
-            role = 'admin' if (promo_access and row['is_admin']) else 'teacher'
+            # L'enseignant administrateur choisit ensuite sa session (admin ou
+            # normale, /api/session-mode) : on démarre en session normale.
+            admin_eligible = bool(promo_access and row['is_admin'])
+            role = 'teacher'
             session.permanent = True
             session['user'] = row['name']
             session['role'] = role
             session['teacher_name'] = row['name']
             session['teacher_status'] = status
             session['promo_access'] = promo_access
-            _audit('LOGIN_OK', ip=ip, user=row['name'], role=role, promo=int(promo_access))
+            session['admin_eligible'] = admin_eligible
+            _audit('LOGIN_OK', ip=ip, user=row['name'], role=role, promo=int(promo_access),
+                   admin_eligible=int(admin_eligible))
             return jsonify({'username': row['name'], 'role': role,
                             'teacher': row['name'], 'status': status,
-                            'promo_access': promo_access})
+                            'promo_access': promo_access,
+                            'admin_eligible': admin_eligible})
     _register_login_failure(ip)
     _audit('LOGIN_FAIL', ip=ip, user=username, role='-')
     return error_response('Identifiant ou mot de passe incorrect', 401)
@@ -2965,8 +2974,33 @@ def me():
         return jsonify({'username': session.get('user'), 'role': session.get('role'),
                         'teacher': session.get('teacher_name'),
                         'status': session.get('teacher_status'),
-                        'promo_access': bool(session.get('promo_access'))})
+                        'promo_access': bool(session.get('promo_access')),
+                        'admin_eligible': bool(session.get('admin_eligible'))})
     return error_response('Non authentifié', 401)
+
+@app.route('/api/session-mode', methods=['POST'])
+def session_mode():
+    """Enseignant administrateur connecté avec son mot de passe : bascule entre
+    session admin et session normale. Le droit est revérifié en base, pour qu'un
+    retrait de l'accès admin prenne effet sans attendre la reconnexion."""
+    name = session.get('teacher_name')
+    if not session.get('admin_eligible') or not name:
+        return error_response('Session admin non autorisée', 403)
+    row = get_db().execute('SELECT is_admin, password_hash FROM teachers WHERE name = ?',
+                           (name,)).fetchone()
+    if not row or not row['is_admin'] or not row['password_hash']:
+        session['admin_eligible'] = False
+        session['role'] = 'teacher'
+        return error_response('Session admin non autorisée', 403)
+    mode = (request.get_json() or {}).get('mode')
+    if mode not in ('admin', 'teacher'):
+        return error_response('Mode de session invalide')
+    session['role'] = mode
+    _audit('SESSION_MODE', ip=_client_ip(), user=name, role=mode)
+    return jsonify({'username': session.get('user'), 'role': mode,
+                    'teacher': name, 'status': session.get('teacher_status'),
+                    'promo_access': bool(session.get('promo_access')),
+                    'admin_eligible': True})
 
 @app.route('/api/audit-log', methods=['GET'])
 def audit_log_view():
