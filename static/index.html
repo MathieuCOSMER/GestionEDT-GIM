@@ -383,12 +383,32 @@
         .role-badge.admin { background: #dcfce7; color: #166534; }
         .role-badge.teacher { background: #dbeafe; color: #1e40af; }
         .role-badge.superadmin { background: #fef3c7; color: #92400e; }
+        .role-badge.resp { background: #ede9fe; color: #5b21b6; }
+        /* Droits étendus d'un enseignant (liste Gestion enseignant, vue superadmin) */
+        .right-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px;
+                     font-size: .7rem; font-weight: 600; background: #ede9fe; color: #5b21b6; }
+        .right-tag.admin { background: #dcfce7; color: #166534; }
         /* Réservé au superadmin (compte Admin) : masqué pour les enseignants administrateurs */
         body:not(.role-superadmin) .superadmin-only { display: none !important; }
+        /* Onglet masqué par le superadmin pour le profil connecté (Paramètres › Visibilité) */
+        .tabvis-hidden { display: none !important; }
+        .tabvis-wrap { overflow-x: auto; margin: 10px 0 12px; }
+        .tabvis-table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+        .tabvis-table th, .tabvis-table td { border-bottom: 1px solid #e5e7eb; padding: 5px 6px; }
+        .tabvis-table th { background: #f9fafb; font-size: .76rem; color: #374151; text-align: center; }
+        .tabvis-table th:first-child { text-align: left; }
+        .tabvis-table td:first-child { white-space: nowrap; }
+        .tabvis-table td.tv-cell { text-align: center; width: 44px; }
+        .tabvis-table th.tv-prof { border-left: 2px solid #e5e7eb; }
+        .tabvis-table td.tv-cell:not(.tv-edit), .tabvis-table thead tr:last-child th:not(.tv-edit) { border-left: 2px solid #e5e7eb; }
+        .tabvis-table td.tv-none { background: #f9fafb; }
+        .tabvis-table tr.tv-top td { background: #f5f3ff; font-weight: 700; }
+        .tabvis-table .tv-na { color: #d1d5db; }
+        .tabvis-table td.tv-extra { background: #fffbeb; }
         /* Enseignant : gestion d'année masquée + outils de répartition masqués
            (l'accès en écriture est filtré par rôle/onglet, pas par cette règle) */
-        body.role-teacher .admin-only,
-        body.role-teacher .rep-tool-restricted { display: none !important; }
+        body.role-teacher:not(.tab-edit) .admin-only,
+        body.role-teacher:not(.tab-edit) .rep-tool-restricted { display: none !important; }
         /* Ordre des onglets pour l'enseignant : Service, Programme, Mon Compte.
            Le sous-onglet Matières du Service reste réservé à l'admin. */
         body.role-teacher #svc-tab-matieres { display: none !important; }
@@ -453,13 +473,11 @@
             <button class="btn btn-primary" onclick="submitPwdInit()">Enregistrer et se connecter</button>
             <button class="btn btn-secondary" style="margin-left:6px" onclick="cancelPwdInit()">Annuler</button>
         </div>
-        <!-- Enseignant administrateur : choix du type de session après connexion -->
+        <!-- Enseignant administrateur ou responsable : choix de la session après connexion
+             (boutons construits par showSessionModeChoice) -->
         <div id="login-mode-choice" style="display:none">
-            <div style="font-size:.85rem;color:#374151;margin-bottom:12px">
-                Vous disposez des droits d'administration. Quelle session souhaitez-vous ouvrir ?
-            </div>
-            <button class="btn btn-primary" onclick="chooseSessionMode('admin')">Session admin</button>
-            <button class="btn btn-secondary" style="margin-top:8px" onclick="chooseSessionMode('teacher')">Session normale (enseignant)</button>
+            <div id="login-mode-text" style="font-size:.85rem;color:#374151;margin-bottom:12px"></div>
+            <div id="login-mode-buttons"></div>
         </div>
         <div id="login-error"></div>
         <div id="login-main-actions">
@@ -485,8 +503,11 @@
     <button onclick="showPage('parametres')" id="nav-parametres" class="admin-only">Paramètres</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
         <span id="role-badge" class="role-badge" style="display:none"></span>
-        <button id="mode-switch-btn" class="btn btn-secondary btn-sm" onclick="switchSessionMode()"
+        <button id="mode-switch-btn" class="btn btn-secondary btn-sm" onclick="switchSessionMode(this.dataset.mode)"
                 style="display:none;white-space:nowrap"></button>
+        <!-- Trois sessions possibles (admin, responsable, normale) : liste plutôt que bouton -->
+        <select id="mode-switch-select" onchange="switchSessionMode(this.value)" title="Changer de session"
+                style="display:none;padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.8rem"></select>
         <button class="btn btn-secondary btn-sm" onclick="logout()" title="Se déconnecter" style="white-space:nowrap">
             Déconnexion
         </button>
@@ -538,7 +559,7 @@
 <div class="page" id="page-enseignants">
     <div class="toolbar">
         <h1>Gestion enseignant</h1>
-        <button class="btn btn-primary admin-only" onclick="openTeacherModal()">+ Ajouter</button>
+        <button class="btn btn-primary admin-only" id="teacher-add-btn" onclick="openTeacherModal()">+ Ajouter</button>
     </div>
     <div id="teachers-table"><div class="spinner">Chargement…</div></div>
 </div>
@@ -1008,7 +1029,7 @@
 <!-- ===== PARAMÈTRES (admin) ===== -->
 <div class="page" id="page-parametres">
     <div class="toolbar"><h1>Paramètres</h1></div>
-    <div style="max-width:560px">
+    <div style="max-width:900px">
         <div class="superadmin-only">
         <h3 style="color:#374151;margin:8px 0">Année universitaire active</h3>
         <p style="color:#6b7280;font-size:.9rem;margin-top:0">
@@ -1040,6 +1061,25 @@
         </div>
         <div style="font-size:.8rem;color:#6b7280;margin-bottom:12px">Valeurs usuelles : CM 1,5 · TD 1 · TP 0,667 (2/3) · PT 1.</div>
         <button class="btn btn-primary" id="hetd-save-btn" onclick="saveHetdCoefs()">💾 Enregistrer</button>
+        </div>
+
+        <div class="superadmin-only">
+        <h3 style="color:#374151;margin:32px 0 8px">Accès aux onglets</h3>
+        <p style="color:#6b7280;font-size:.9rem;margin-top:0">
+            Pour chaque profil : <strong>Voir</strong> affiche l'onglet (consultation),
+            <strong>Modifier</strong> autorise à y enregistrer des changements — contrôlé par le
+            serveur. Le superadmin a toujours tous les droits. Les profils <strong>Resp.</strong>
+            s'appliquent aux sessions responsable (responsabilités confiées dans la fiche de
+            l'enseignant, Gestion enseignant) ; un responsable de plusieurs domaines cumule leurs
+            accès, et les tuteurs restent partagés : alternants pour le responsable ALT, stagiaires
+            FTP pour le responsable des stages. Fond jaune : fermé par défaut au profil. « — » :
+            sans objet ; un enseignant connecté sans mot de passe ne peut recevoir aucun droit de
+            modification (n'importe qui peut se connecter sous son nom).
+            Un onglet dont tous les sous-onglets sont décochés disparaît aussi.
+            Pris en compte à la prochaine connexion (ou au rechargement de la page).
+        </p>
+        <div id="tabvis-table" class="tabvis-wrap"><div class="spinner">Chargement…</div></div>
+        <button class="btn btn-primary" id="tabvis-save-btn" onclick="saveTabVisibility()">💾 Enregistrer les accès</button>
         </div>
 
         <h3 style="color:#374151;margin:32px 0 8px">Sauvegarde complète du site</h3>
@@ -1781,7 +1821,7 @@
                     fait réapparaître le bouton ; révoquer retire tout accès.
                 </div>
                 <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-weight:600">
-                    <input type="checkbox" id="teacher-admin" onchange="teacherAdminToggle(this)">
+                    <input type="checkbox" id="teacher-admin" onchange="teacherAdminToggle(this)" style="width:auto">
                     Droits d'administration <span id="teacher-admin-state" style="font-weight:400;color:#6b7280"></span>
                 </label>
                 <div style="font-size:.78rem;color:#6b7280;margin-top:4px">
@@ -1791,6 +1831,24 @@
                     passe défini, et ne s'applique qu'aux connexions faites AVEC ce mot de passe :
                     entrer son seul nom de famille ouvre toujours une session enseignante.
                     Supprimer ou révoquer le mot de passe retire les droits.
+                </div>
+                <div style="margin-top:12px;font-weight:600;font-size:.85rem;color:#374151">
+                    Responsabilités <span id="teacher-resp-state" style="font-weight:400;color:#6b7280"></span>
+                </div>
+                <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px" id="teacher-resp-boxes">
+                    <label style="display:flex;align-items:center;gap:6px;font-weight:400">
+                        <input type="checkbox" class="teacher-resp" value="ftp" onchange="teacherRespToggle(this)" style="width:auto"> Formation FTP</label>
+                    <label style="display:flex;align-items:center;gap:6px;font-weight:400">
+                        <input type="checkbox" class="teacher-resp" value="alt" onchange="teacherRespToggle(this)" style="width:auto"> Formation ALT</label>
+                    <label style="display:flex;align-items:center;gap:6px;font-weight:400">
+                        <input type="checkbox" class="teacher-resp" value="stage" onchange="teacherRespToggle(this)" style="width:auto"> Stages</label>
+                </div>
+                <div style="font-size:.78rem;color:#6b7280;margin-top:4px">
+                    Propose, à la connexion avec mot de passe, une « session responsable » limitée à
+                    ces domaines — FTP : EDT, matières, services enseignant, groupes, effectifs, jury
+                    et devenir (FTP et ALT) ; ALT : tuteurs des alternants, jury et devenir ;
+                    Stages : tuteurs des stages FTP. Cumulables. Détail réglable dans Paramètres ›
+                    Accès aux onglets. Mêmes conditions que les droits d'administration (mot de passe).
                 </div>
             </div>
             <div class="form-actions">
@@ -2008,7 +2066,9 @@ async function api(endpoint, opts = {}) {
     // Exception : le choix de l'année universitaire est personnel à la session.
     // Exceptions : choix d'année de session, et saisie de notes par sous-matière
     // (l'autorisation fine — colonne éditable, référent — est vérifiée côté serveur)
+    // (lorsque le superadmin a ouvert des droits de modification, le serveur tranche seul)
     if (state.role === 'teacher' && method !== 'GET' && method !== 'HEAD'
+            && !(state.tabs && state.tabs.editExtra.size)
             && endpoint !== '/years/session' && endpoint !== '/session-mode'
             && !endpoint.startsWith('/my-account')
             && !endpoint.startsWith('/qr-attendance')
@@ -2154,31 +2214,70 @@ async function submitPwdInit() {
     }
 }
 
-function applyRole(role, user, teacher, status, promoAccess, adminEligible, superadmin) {
-    state.role = role;
-    state.adminEligible = !!adminEligible;
-    state.superadmin = role === 'admin' && !!superadmin;
-    document.body.classList.toggle('role-superadmin', state.superadmin);
-    // Enseignant administrateur : bascule session admin ⇄ session normale
-    const switchBtn = document.getElementById('mode-switch-btn');
-    if (switchBtn) {
-        switchBtn.style.display = state.adminEligible ? '' : 'none';
-        switchBtn.textContent = role === 'admin' ? 'Passer en session normale' : 'Passer en session admin';
+// Responsabilités de formation (session responsable) : libellés courts
+const RESP_LABELS = { ftp: 'FTP', alt: 'ALT', stage: 'stages' };
+function respLabel(list) { return (list || []).map(r => RESP_LABELS[r] || r).join(' + '); }
+// Sessions d'un enseignant doté de droits étendus : libellé complet (écran de
+// connexion, liste de la barre) et court (« Passer en … »)
+function sessionModeLabel(mode) {
+    return mode === 'admin' ? 'Session admin'
+         : mode === 'resp' ? 'Session responsable ' + respLabel(state.respEligible)
+         : 'Session normale (enseignant)';
+}
+const SESSION_MODE_SHORT = { admin: 'session admin', resp: 'session responsable', teacher: 'session normale' };
+
+// Bascule entre les sessions ouvertes par les droits : bouton s'il n'y a qu'une
+// autre session, liste s'il y en a deux (admin, responsable, normale)
+function applySessionSwitch(modes) {
+    const btn = document.getElementById('mode-switch-btn');
+    const sel = document.getElementById('mode-switch-select');
+    if (!btn || !sel) return;
+    const other = modes.filter(m => m !== state.sessionMode);
+    btn.style.display = modes.length === 2 ? '' : 'none';
+    sel.style.display = modes.length > 2 ? '' : 'none';
+    if (modes.length === 2) {
+        btn.dataset.mode = other[0];
+        btn.textContent = 'Passer en ' + SESSION_MODE_SHORT[other[0]];
+    } else if (modes.length > 2) {
+        sel.innerHTML = modes.map(m => `<option value="${m}"${m === state.sessionMode ? ' selected' : ''}>${
+            esc(sessionModeLabel(m))}</option>`).join('');
     }
+}
+
+// Applique la session renvoyée par /login, /me ou /session-mode
+function applyRole(me) {
+    const role = me.role, user = me.username, teacher = me.teacher, status = me.status;
+    state.role = role;
+    state.adminEligible = !!me.admin_eligible;
+    state.respEligible = me.resp_eligible || [];
+    // Session responsable : interface d'admin restreinte à ses domaines (state.tabs)
+    state.resp = role === 'admin' ? (me.resp || []) : [];
+    state.sessionMode = me.mode || role;
+    state.superadmin = role === 'admin' && !!me.superadmin;
+    // Accès aux onglets calculés par le serveur (null = superadmin : tout permis)
+    const tabs = me.tabs;
+    state.tabs = (!state.superadmin && tabs) ? {
+        all: tabs.all || [], visible: new Set(tabs.visible || []), edit: new Set(tabs.edit || []),
+        viewExtra: new Set(tabs.view_extra || []), editExtra: new Set(tabs.edit_extra || []),
+    } : null;
+    document.body.classList.toggle('role-superadmin', state.superadmin);
+    applySessionSwitch(me.modes || []);
     state.user = user;
     state.teacherName = teacher || null;
     state.teacherStatus = status || null;
     state.teacherTitulaire = (role === 'teacher' && status === 'Titulaire');
-    state.promoAccess = (role === 'admin') || !!promoAccess;
+    state.promoAccess = (role === 'admin') || !!me.promo_access;
     document.body.classList.toggle('role-teacher', role === 'teacher');
     document.body.classList.toggle('role-vacataire', role === 'teacher' && status !== 'Titulaire');
     const badge = document.getElementById('role-badge');
     if (badge) {
         badge.style.display = '';
-        badge.className = 'role-badge ' + (state.superadmin ? 'superadmin' : role);
+        badge.className = 'role-badge ' + (state.superadmin ? 'superadmin' : state.resp.length ? 'resp' : role);
         badge.textContent = role === 'teacher'
             ? (user + ' · ' + (status === 'Vacataire' ? 'vacataire' : 'titulaire'))
-            : (state.superadmin ? 'Superadmin' : (teacher ? teacher + ' · admin' : 'Admin'));
+            : state.superadmin ? 'Superadmin'
+            : state.resp.length ? teacher + ' · resp. ' + respLabel(state.resp)
+            : (teacher ? teacher + ' · admin' : 'Admin');
     }
     // Enseignant : onglets Service enseignant (Bilan Global / Calendaire /
     // Contraintes), Programme (consultation), Statistiques (agrégées) et Mon Compte.
@@ -2194,20 +2293,199 @@ function applyRole(role, user, teacher, status, promoAccess, adminEligible, supe
         else show = !(role === 'teacher' && !teacherTabs.includes(b.id));
         b.style.display = show ? '' : 'none';
     });
+    applyTabVisibility();
+    // Session responsable : Promotions s'ouvre sur son premier sous-onglet modifiable
+    if (state.resp.length) { _promoTab = _firstPromoTab(); _syncPromoSubtabs(); }
+}
+
+// ===== Accès aux onglets par profil : voir / modifier (réglé par le superadmin) =====
+// Le serveur calcule, pour le profil connecté, les onglets visibles et modifiables
+// (state.tabs, clés « groupe:onglet ») ; l'arbre et les défauts sont dans app.py
+// (_TAB_TREE). Le superadmin (state.tabs = null) voit et modifie tout.
+// Élément de la barre d'onglets correspondant à une clé
+function _tvEl(key) {
+    const [grp, tab] = key.split(':');
+    const prefix = { nav: 'nav-', svc: 'svc-tab-', rep: 'rep-subtab-', prog: 'prog-subtab-',
+                     promo: 'promo-subtab-', st: 'st-subtab-' }[grp];
+    return prefix ? document.getElementById(prefix + tab) : null;
+}
+function tabHidden(key) { return !!state.tabs && !state.tabs.visible.has(key); }
+// Ouvert par le superadmin au-delà des droits par défaut du rôle
+function tabGranted(key) { return !!state.tabs && state.tabs.viewExtra.has(key); }
+// Droit de modification sur l'onglet (défaut du rôle ou réglage du superadmin)
+function canEditTab(key) { return !state.tabs || state.tabs.edit.has(key); }
+// Modification accordée au-delà du défaut (enseignant : l'interface se déverrouille)
+function tabEditGranted(key) { return !!state.tabs && state.tabs.editExtra.has(key); }
+// Commandes d'édition « admin » d'un onglet : l'admin selon son droit « modifier »
+// (retirable par le superadmin), l'enseignant seulement si ce droit lui est accordé
+function editUI(key) { return state.role === 'admin' ? canEditTab(key) : tabEditGranted(key); }
+function applyTabVisibility() {
+    if (!state.tabs) return;
+    state.tabs.all.forEach(key => {
+        const el = _tvEl(key);
+        if (!el) return;
+        el.classList.toggle('tabvis-hidden', tabHidden(key));
+        // Style en ligne !important : l'emporte sur les règles de rôle (.admin-only…)
+        if (tabGranted(key)) el.style.setProperty('display', 'inline-block', 'important');
+    });
+}
+// Onglet affiché en ce moment (clé « groupe:onglet »), pour les droits de modification
+function _currentTabKey() {
+    const page = (document.querySelector('.page.active') || {}).id || '';
+    const name = page.replace(/^page-/, '');
+    if (name === 'repartition') return 'rep:' + _repTab;
+    if (_servicePages.includes(name)) return 'svc:' + name;
+    if (name === 'promotions') return _promoSaisieOnly ? 'nav:saisie' : 'promo:' + _promoTab;
+    if (name === 'programme') return 'prog:' + _progTab;
+    return name ? 'nav:' + name : null;
+}
+// Enseignant à qui le superadmin a ouvert la modification de l'onglet courant :
+// les commandes réservées à l'admin (.admin-only, outils de répartition) réapparaissent
+function refreshTabEditMode() {
+    const key = _currentTabKey();
+    document.body.classList.toggle('tab-edit', state.role === 'teacher' && !!key && tabEditGranted(key));
+}
+// Premier sous-onglet affichable d'un groupe (repli quand l'onglet courant est masqué)
+function _firstVisibleTab(prefix, tabs, allowed = () => true) {
+    return tabs.find(t => !tabHidden(prefix + t) && allowed(t)) || tabs[0];
+}
+// Page réellement affichable : repli sur la première page visible si `name` est masquée
+function _visiblePage(name) {
+    if (_servicePages.includes(name)) {
+        if (!tabHidden('svc:' + name) && !tabHidden('nav:service')) return name;
+        const alt = _servicePages.find(p => {
+            const b = document.getElementById('svc-tab-' + p);
+            return !tabHidden('svc:' + p) && b && getComputedStyle(b).display !== 'none';
+        });
+        if (alt && !tabHidden('nav:service')) return alt;
+    } else if (!tabHidden('nav:' + name)) {
+        return name;
+    }
+    const order = ['service', 'programme', 'statistiques', 'mon-compte', 'saisie', 'promotions',
+                   'etudiants', 'salles', 'enseignants', 'parametres'];
+    for (const p of order) {
+        const b = document.getElementById('nav-' + p);
+        if (!b || b.style.display === 'none' || tabHidden('nav:' + p)) continue;
+        if (p !== 'service') return p;
+        const alt = _servicePages.find(sp => {
+            const sb = document.getElementById('svc-tab-' + sp);
+            return !tabHidden('svc:' + sp) && sb && getComputedStyle(sb).display !== 'none';
+        });
+        if (alt) return alt;
+    }
+    return name;
+}
+
+// ----- Réglage (superadmin, Paramètres) -----
+let _tabAccess = null;   // {tree, profiles, conf: {profil: {view: {clé: bool}, edit: {…}}}}
+let _tabAccessNodes = {};
+const TAB_PROFILE_LABELS = { admin: 'Admin', resp_ftp: 'Resp. FTP', resp_alt: 'Resp. ALT',
+                             resp_stage: 'Resp. stages', teacher_pwd: 'Enseignant avec mdp',
+                             teacher: 'Enseignant sans mdp' };
+async function loadTabVisibility() {
+    const el = document.getElementById('tabvis-table');
+    try {
+        _tabAccess = await api('/tab-access');
+        _tabAccessNodes = {};
+        const idx = nodes => nodes.forEach(n => { _tabAccessNodes[n.key] = n; idx(n.children); });
+        idx(_tabAccess.tree);
+        renderTabVisibility();
+    } catch (e) {
+        el.innerHTML = '<div class="empty">Réglage indisponible : ' + esc(e.message) + '</div>';
+    }
+}
+const _taNever = (n, p) => n.never.includes(p);
+function _taOwnView(n, p) {
+    if (_taNever(n, p)) return false;
+    const ov = _tabAccess.conf[p].view;
+    return n.key in ov ? ov[n.key] : n.view.includes(p);
+}
+function _taOwnEdit(n, p) {
+    if (!n.edit_grantable.includes(p)) return false;
+    const ov = _tabAccess.conf[p].edit;
+    return n.key in ov ? ov[n.key] : n.edit.includes(p);
+}
+function renderTabVisibility() {
+    const profiles = _tabAccess.profiles;
+    const rows = [];
+    const walk = (nodes, depth, parents) => nodes.forEach(n => {
+        const cells = profiles.map(p => {
+            if (_taNever(n, p)) return '<td class="tv-cell tv-na" title="Sans objet pour ce profil">—</td>'
+                                     + '<td class="tv-cell tv-na tv-edit">—</td>';
+            const parentOff = parents.some(k => !_taOwnView(_tabAccessNodes[k], p));
+            const vExtra = !n.view.includes(p);
+            const view = `<td class="tv-cell${vExtra ? ' tv-extra' : ''}"${vExtra ? ` title="Fermé par défaut à ce profil"` : ''}>
+                <input type="checkbox" ${_taOwnView(n, p) ? 'checked' : ''}
+                ${parentOff ? 'disabled title="Onglet parent décoché"' : ''}
+                onchange="toggleTabAccess('view','${p}','${n.key}',this.checked)"></td>`;
+            let edit;
+            if (n.edit === null) edit = '<td class="tv-cell tv-edit tv-none" title="Onglet de consultation : rien à modifier"></td>';
+            else if (!n.edit_grantable.includes(p)) edit = '<td class="tv-cell tv-edit tv-na" title="'
+                + (p === 'teacher' ? 'Sans mot de passe, aucun droit de modification ne peut être accordé' : 'Sans objet')
+                + '">—</td>';
+            else {
+                const eExtra = !n.edit.includes(p);
+                const off = parentOff || !_taOwnView(n, p);
+                edit = `<td class="tv-cell tv-edit${eExtra ? ' tv-extra' : ''}"${eExtra ? ' title="Non modifiable par défaut par ce profil"' : ''}>
+                    <input type="checkbox" ${_taOwnEdit(n, p) && !off ? 'checked' : ''}
+                    ${off ? 'disabled title="Onglet non visible"' : ''}
+                    onchange="toggleTabAccess('edit','${p}','${n.key}',this.checked)"></td>`;
+            }
+            return view + edit;
+        }).join('');
+        rows.push(`<tr class="${depth === 0 ? 'tv-top' : ''}"><td style="padding-left:${8 + depth * 18}px">${esc(n.label)}</td>${cells}</tr>`);
+        walk(n.children, depth + 1, parents.concat(n.key));
+    });
+    walk(_tabAccess.tree, 0, []);
+    document.getElementById('tabvis-table').innerHTML = `<table class="tabvis-table"><thead>
+        <tr><th rowspan="2">Onglet</th>${profiles.map(p => `<th colspan="2" class="tv-prof">${esc(TAB_PROFILE_LABELS[p] || p)}</th>`).join('')}</tr>
+        <tr>${profiles.map(() => '<th>Voir</th><th class="tv-edit" title="Modifier">Modif.</th>').join('')}</tr>
+        </thead><tbody>${rows.join('')}</tbody></table>`;
+}
+function _taSet(kind, prof, key, value) {
+    // On ne garde que les écarts au défaut du rôle
+    const n = _tabAccessNodes[key];
+    const dflt = (kind === 'view' ? n.view : n.edit).includes(prof);
+    const ov = _tabAccess.conf[prof][kind];
+    if (value === dflt) delete ov[key]; else ov[key] = value;
+}
+function toggleTabAccess(kind, prof, key, value) {
+    _taSet(kind, prof, key, value);
+    if (kind === 'view' && value) {
+        // Ouvrir un onglet dont aucun sous-onglet n'est coché : on les coche tous
+        // (sinon l'onglet resterait invisible, faute de contenu)
+        const openKids = n => {
+            const kids = n.children.filter(c => !_taNever(c, prof));
+            if (!kids.length || kids.some(c => _taOwnView(c, prof))) return;
+            kids.forEach(c => { _taSet('view', prof, c.key, true); openKids(c); });
+        };
+        openKids(_tabAccessNodes[key]);
+    }
+    renderTabVisibility();
+}
+async function saveTabVisibility() {
+    if (!_tabAccess) return;
+    try {
+        _tabAccess.conf = await api('/tab-access', { method: 'PUT', body: JSON.stringify(_tabAccess.conf) });
+        renderTabVisibility();
+        toast('Accès aux onglets enregistrés');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
 function goHome() {
     // Liste des années universitaires (contexte de travail global)
     loadYears();
-    // Premier onglet selon le rôle : admin → Répartition Calendaire ; enseignant → Globale
-    showPage(state.role === 'teacher' ? 'repartition-enseignant' : 'repartition');
+    // Premier onglet selon le rôle : admin → Répartition Calendaire ; enseignant →
+    // Bilan Global ; session responsable sans Service enseignant → Promotions
+    showPage(state.role === 'teacher' ? 'repartition-enseignant'
+             : tabHidden('nav:service') ? 'promotions' : 'repartition');
 }
 
 async function checkAuth() {
     try {
         const me = await api('/me');
         document.getElementById('login-overlay').style.display = 'none';
-        applyRole(me.role, me.username, me.teacher, me.status, me.promo_access, me.admin_eligible, me.superadmin);
+        applyRole(me);
         goHome();
     } catch (e) {
         showLogin();
@@ -2218,12 +2496,22 @@ async function checkAuth() {
 function finishLogin(me) {
     document.getElementById('login-pass').value = '';
     document.getElementById('login-overlay').style.display = 'none';
-    applyRole(me.role, me.username, me.teacher, me.status, me.promo_access, me.admin_eligible, me.superadmin);
+    applyRole(me);
     goHome();
 }
 
-// Enseignant administrateur : propose session admin ou session normale
-function showSessionModeChoice() {
+// Enseignant administrateur et/ou responsable : propose ses sessions (me.modes)
+function showSessionModeChoice(me) {
+    state.respEligible = me.resp_eligible || [];
+    const modes = me.modes || [];
+    const rights = [me.admin_eligible ? 'des droits d\'administration' : '',
+                    state.respEligible.length ? 'de responsabilités (' + respLabel(state.respEligible) + ')' : '']
+                   .filter(Boolean).join(' et ');
+    document.getElementById('login-mode-text').textContent =
+        `Vous disposez ${rights}. Quelle session souhaitez-vous ouvrir ?`;
+    document.getElementById('login-mode-buttons').innerHTML = modes.map((m, i) =>
+        `<button class="btn ${m === 'teacher' ? 'btn-secondary' : 'btn-primary'}"${i ? ' style="margin-top:8px"' : ''}
+            onclick="chooseSessionMode('${m}')">${esc(sessionModeLabel(m))}</button>`).join('');
     document.getElementById('login-pass-group').style.display = 'none';
     document.getElementById('login-main-actions').style.display = 'none';
     document.getElementById('login-mode-choice').style.display = '';
@@ -2244,8 +2532,11 @@ async function chooseSessionMode(mode) {
 }
 
 // Bascule en cours de session : rechargement pour repartir d'un état propre
-function switchSessionMode() {
-    const mode = state.role === 'admin' ? 'teacher' : 'admin';
+function switchSessionMode(mode) {
+    // La liste garde la session en cours tant que la bascule n'a pas eu lieu
+    const sel = document.getElementById('mode-switch-select');
+    if (sel) sel.value = state.sessionMode;
+    if (!mode || mode === state.sessionMode) return;
     guardUnsaved(async () => {
         try {
             await api('/session-mode', { method: 'POST', body: JSON.stringify({ mode }) });
@@ -2289,7 +2580,7 @@ async function doLogin() {
     try {
         const me = await api('/login', { method: 'POST', body: JSON.stringify({ username, password }) });
         document.getElementById('login-pass').value = '';
-        if (me.admin_eligible) { showSessionModeChoice(); return; }
+        if ((me.modes || []).length > 1) { showSessionModeChoice(me); return; }
         finishLogin(me);
     } catch (e) {
         // Message renvoyé par le serveur (ex. throttle « Réessayez dans N s »)
@@ -2432,6 +2723,7 @@ function showPage(name) {
 }
 
 function _showPage(name) {
+    name = _visiblePage(name);
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
     // « Saisie Notes » (enseignant) : la page Promotions réduite à ce sous-onglet
@@ -2445,6 +2737,7 @@ function _showPage(name) {
         const b = document.getElementById('svc-tab-' + p);
         if (b) b.classList.toggle('active', name === p);
     });
+    refreshTabEditMode();
     loadPage(name);
 }
 
@@ -2476,14 +2769,17 @@ async function loadPage(name, forceReload) {
         else if (name === 'contraintes') { await loadConstraints(); }
         else if (name === 'contraintes-matiere') { await loadCourseConstraints(); }
         else if (name === 'programme') {
+            if (tabHidden('prog:' + _progTab))
+                _progTab = _firstVisibleTab('prog:', ['coeff', 'matieres', 'contenu', 'actions'],
+                                            t => t !== 'actions' || state.role === 'admin');
             await loadProgramme();
-            if (_progTab === 'contenu') await showProgTab('contenu');
+            if (_progTab !== 'coeff') await showProgTab(_progTab);
         }
         else if (name === 'promotions' || name === 'saisie') {
             _promoSaisieOnly = name === 'saisie';
             // Enseignant : Saisie Notes a son propre onglet, Promotions ne la montre plus
             const tab = _promoSaisieOnly ? 'saisie'
-                      : (_promoTabAllowed(_promoTab) ? _promoTab : 'effectif');
+                      : (_promoTabAllowed(_promoTab) ? _promoTab : _firstPromoTab());
             const switched = tab !== _promoTab;
             if (switched) _showPromoTab(tab);
             // titre, sous-onglets et sélecteur de promotion selon le rôle : en
@@ -2495,7 +2791,12 @@ async function loadPage(name, forceReload) {
             else await loadPromotions();
         }
         else if (name === 'etudiants') { await loadEtudiants(); }
-        else if (name === 'statistiques') { await loadStats(); }
+        else if (name === 'statistiques') {
+            if (tabHidden('st:' + _statsTab))
+                _statsTab = _firstVisibleTab('st:', ['apercu', 'etudiants', 'recrutement', 'parcours',
+                                                     'resultats', 'enseignement', 'annees']);
+            await loadStats();
+        }
         else if (name === 'comparaison') { await loadComparaison(); }
         else if (name === 'parametres') { await loadParametres(); }
         else if (name === 'repartition-enseignant') {
@@ -2534,7 +2835,8 @@ async function loadPage(name, forceReload) {
         else if (name === 'mon-compte') { await loadMonCompte(); }
         else if (name === 'repartition') {
             await loadRepartition();
-            if (_repTab === 'jour') await loadRepJour();
+            if (tabHidden('rep:' + _repTab)) _showRepTab(_repTab === 'jour' ? 'annuelle' : 'jour');
+            else if (_repTab === 'jour') await loadRepJour();
         }
     } catch (e) {
         toast('Erreur de chargement : ' + e.message, 'error');
@@ -2601,7 +2903,8 @@ let _myAccount = null;
 
 async function loadMonCompte() {
     const el = document.getElementById('mon-compte-content');
-    if (state.role !== 'teacher') {
+    // Enseignant, ou enseignant administrateur à qui le superadmin a ouvert l'onglet
+    if (!state.teacherName) {
         el.innerHTML = '<div class="empty">Onglet réservé aux enseignants connectés.</div>';
         return;
     }
@@ -2736,24 +3039,34 @@ async function delMonCompteExt(id) {
 }
 
 // ===== ENSEIGNANTS =====
+// Droits étendus d'un enseignant (admin, responsabilités), montrés au superadmin
+function teacherRightTags(t) {
+    if (!state.superadmin) return '';
+    return (t.is_admin ? '<span class="right-tag admin">admin</span>' : '')
+        + (t.responsabilites || []).map(r => `<span class="right-tag">resp. ${esc(RESP_LABELS[r] || r)}</span>`).join('');
+}
+
 function renderTeachers() {
     const el = document.getElementById('teachers-table');
+    // Session sans droit de modification (responsable) : pas d'ajout
+    const addBtn = document.getElementById('teacher-add-btn');
+    if (addBtn) addBtn.style.display = editUI('nav:enseignants') ? '' : 'none';
     if (!state.teachers.length) { el.innerHTML = '<div class="empty">Aucun enseignant</div>'; return; }
     el.innerHTML = `<table>
         <thead><tr>
             <th>Nom</th><th>Email</th><th>Téléphone</th>
             <th title="Préférence de contact déclarée par l'enseignant dans son onglet Mon Compte">Contact préféré</th>
-            <th>Structure</th><th>Corps</th><th>Statut</th>${state.role === 'admin' ? '<th>Actions</th>' : ''}
+            <th>Structure</th><th>Corps</th><th>Statut</th>${editUI('nav:enseignants') ? '<th>Actions</th>' : ''}
         </tr></thead>
         <tbody>${state.teachers.map(t => `<tr>
-            <td><strong>${esc(t.name)}</strong></td>
+            <td><strong>${esc(t.name)}</strong>${teacherRightTags(t)}</td>
             <td>${esc(t.email||'')}</td>
             <td>${esc(t.phone||'')}</td>
             <td style="color:#6b7280;font-size:.84rem">${esc(t.contact_pref||'')}</td>
             <td>${esc(t.structure||'')}</td>
             <td>${esc(t.corps_code||'')}</td>
             <td>${esc(t.status||'Titulaire')}</td>
-            ${state.role === 'admin' ? `<td>
+            ${editUI('nav:enseignants') ? `<td>
                 <button class="btn btn-secondary btn-sm" onclick="openTeacherModal(${t.id})">Éditer</button>
                 <button class="btn btn-danger btn-sm" onclick="deleteTeacher(${t.id})">Supprimer</button>
             </td>` : ''}
@@ -2796,6 +3109,35 @@ function refreshTeacherPwdBlock(t) {
     document.getElementById('teacher-admin-state').textContent =
         t.has_password ? (t.is_admin ? '— accordés' : '')
                        : '— indisponible tant qu\'aucun mot de passe n\'est défini';
+    // Responsabilités : mêmes conditions que les droits d'administration
+    const resp = t.responsabilites || [];
+    document.querySelectorAll('#teacher-resp-boxes .teacher-resp').forEach(cb => {
+        cb.checked = resp.includes(cb.value);
+        cb.disabled = !t.has_password;
+    });
+    document.getElementById('teacher-resp-state').textContent =
+        t.has_password ? (resp.length ? '— ' + respLabel(resp) : '')
+                       : '— indisponibles tant qu\'aucun mot de passe n\'est défini';
+}
+
+async function teacherRespToggle(cb) {
+    const id = document.getElementById('teacher-id').value;
+    const t = state.teachers.find(x => x.id === parseInt(id));
+    if (!id) { cb.checked = false; return; }
+    const voulu = [...document.querySelectorAll('#teacher-resp-boxes .teacher-resp')]
+        .filter(x => x.checked).map(x => x.value);
+    try {
+        const r = await api('/teachers/' + id + '/responsabilites',
+            { method: 'PUT', body: JSON.stringify({ responsabilites: voulu }) });
+        if (t) t.responsabilites = r.responsabilites;
+        refreshTeacherPwdBlock(t || r);
+        renderTeachers();
+        toast(r.responsabilites.length ? 'Responsabilités : ' + respLabel(r.responsabilites)
+                                       : 'Responsabilités retirées');
+    } catch (e) {
+        cb.checked = !cb.checked;
+        toast('Erreur : ' + e.message, 'error');
+    }
 }
 
 async function teacherAdminToggle(cb) {
@@ -2812,6 +3154,7 @@ async function teacherAdminToggle(cb) {
             { method: 'PUT', body: JSON.stringify({ admin: veut }) });
         if (t) t.is_admin = r.is_admin;
         refreshTeacherPwdBlock(t || r);
+        renderTeachers();
         toast(r.is_admin ? 'Droits d\'administration accordés' : 'Droits d\'administration retirés');
     } catch (e) {
         cb.checked = !veut;
@@ -2828,8 +3171,12 @@ async function teacherPwdAction(action) {
         const r = await api('/teachers/' + id + '/password-access',
             { method: 'PUT', body: JSON.stringify({ action }) });
         const t = state.teachers.find(x => x.id === parseInt(id));
-        if (t) { t.has_password = r.has_password; t.password_allowed = r.password_allowed; t.is_admin = r.is_admin; }
+        if (t) {
+            t.has_password = r.has_password; t.password_allowed = r.password_allowed;
+            t.is_admin = r.is_admin; t.responsabilites = r.responsabilites || [];
+        }
         refreshTeacherPwdBlock(t || r);
+        renderTeachers();
         toast(action === 'allow' ? 'Création du mot de passe autorisée'
             : action === 'reset' ? 'Mot de passe réinitialisé'
             : 'Accès Promotions révoqué');
@@ -2914,9 +3261,10 @@ function toggleContEditSemester(code, btn) {
     renderContentEdit();
 }
 
-// L'admin édite tout ; un enseignant édite uniquement les matières où il intervient
+// L'admin édite tout (session responsable : selon son droit sur l'onglet Contenu) ;
+// un enseignant édite uniquement les matières où il intervient
 function canEditCourseContent(c) {
-    if (state.role === 'admin') return true;
+    if (state.role === 'admin') return canEditTab('prog:contenu');
     if (state.role !== 'teacher' || !state.teacherName) return false;
     const names = (c.teacher_names || '').split(',').map(s => s.trim().toLowerCase());
     return names.includes(state.teacherName.trim().toLowerCase());
@@ -3037,7 +3385,7 @@ function renderBackups(backups) {
     const el = document.getElementById('journal-backups');
     let html = `<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
             <h3 style="margin:0;color:#374151">Sauvegardes</h3>
-            <button class="btn btn-secondary btn-sm" onclick="createBackupNow()">Créer une sauvegarde maintenant</button>
+            <button class="btn btn-secondary btn-sm admin-only" onclick="createBackupNow()">Créer une sauvegarde maintenant</button>
         </div>`;
     if (!backups.length) {
         html += '<div class="empty">Aucune sauvegarde pour le moment.</div>';
@@ -3057,8 +3405,8 @@ function renderBackups(backups) {
             <td>${b.size_kb} Ko</td>
             <td style="font-family:ui-monospace,monospace;font-size:.8rem">${esc(b.file)}</td>
             <td style="white-space:nowrap">
-                <button class="btn btn-secondary btn-sm" onclick="restoreBackup('${esc(b.year)}','${esc(b.file)}')">Restaurer</button>
-                <button class="btn btn-secondary btn-sm" style="margin-left:4px;color:#b91c1c" onclick="deleteBackup('${esc(b.year)}','${esc(b.file)}')">Supprimer</button>
+                <button class="btn btn-secondary btn-sm superadmin-only" onclick="restoreBackup('${esc(b.year)}','${esc(b.file)}')">Restaurer</button>
+                <button class="btn btn-secondary btn-sm superadmin-only" style="margin-left:4px;color:#b91c1c" onclick="deleteBackup('${esc(b.year)}','${esc(b.file)}')">Supprimer</button>
             </td>
         </tr>`).join('') +
         `</tbody></table>`;
@@ -3333,8 +3681,16 @@ let _promoTab = 'effectif';
 const _promoTeacherTabs = ['effectif', 'groupes', 'notes', 'jury'];
 let _promoSaisieOnly = false;   // page ouverte depuis l'onglet « Saisie Notes »
 function _promoTabAllowed(t) {
+    if (!_promoSaisieOnly && tabHidden('promo:' + t)) return false;
     if (state.role !== 'teacher') return true;
-    return _promoSaisieOnly ? t === 'saisie' : _promoTeacherTabs.includes(t);
+    return _promoSaisieOnly ? t === 'saisie'
+         : (_promoTeacherTabs.includes(t) || tabGranted('promo:' + t));
+}
+function _firstPromoTab() {
+    const order = ['effectif', 'tuteurs', 'groupes', 'calendrier', 'saisie', 'notes', 'jury', 'devenir', 'actions'];
+    // De préférence un sous-onglet où l'on peut travailler (session responsable)
+    return order.find(t => _promoTabAllowed(t) && editUI('promo:' + t))
+        || _firstVisibleTab('promo:', order, _promoTabAllowed);
 }
 function applyPromoSubtabsForRole() {
     ['effectif', 'tuteurs', 'groupes', 'calendrier', 'saisie', 'notes', 'jury', 'devenir', 'actions'].forEach(t => {
@@ -3347,10 +3703,11 @@ function applyPromoSubtabsForRole() {
     // Saisie Notes : les grilles portent leur cohorte, le sélecteur n'a plus d'objet
     document.getElementById('promo-select-box').style.display = saisieOnly ? 'none' : '';
 }
-// Enseignant : consultation seule — désactive toute édition dans les grilles
-// Promotions et masque les boutons d'action (appelé après chaque rendu).
+// Sous-onglet en consultation seule (enseignant, ou session responsable hors de son
+// domaine) : désactive toute édition dans les grilles Promotions et masque les
+// boutons d'action (appelé après chaque rendu).
 function applyPromoReadOnly() {
-    if (state.role !== 'teacher') return;
+    if (editUI('promo:' + _promoTab)) return;
     ['promo-content', 'tuteurs-content', 'notes-content', 'jury-content', 'devenir-content'].forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -3368,14 +3725,20 @@ function showPromoTab(tab) {
     guardUnsaved(() => _showPromoTab(tab));
 }
 
-function _showPromoTab(tab) {
-    if (!_promoTabAllowed(tab)) tab = _promoSaisieOnly ? 'saisie' : 'effectif';
-    _promoTab = tab;
-    applyPromoSubtabsForRole();
+// Bouton actif et volet affiché conformes à _promoTab
+function _syncPromoSubtabs() {
     ['effectif', 'tuteurs', 'groupes', 'calendrier', 'saisie', 'notes', 'jury', 'devenir', 'actions'].forEach(t => {
-        document.getElementById('promo-subtab-' + t).classList.toggle('active', tab === t);
-        document.getElementById('promo-tab-' + t).style.display = tab === t ? '' : 'none';
+        document.getElementById('promo-subtab-' + t).classList.toggle('active', _promoTab === t);
+        document.getElementById('promo-tab-' + t).style.display = _promoTab === t ? '' : 'none';
     });
+}
+
+function _showPromoTab(tab) {
+    if (!_promoTabAllowed(tab)) tab = _promoSaisieOnly ? 'saisie' : _firstPromoTab();
+    _promoTab = tab;
+    refreshTabEditMode();
+    applyPromoSubtabsForRole();
+    _syncPromoSubtabs();
     if (tab === 'effectif') loadEffectif();
     else if (tab === 'tuteurs') loadTuteurs();
     else if (tab === 'saisie') loadSaisieGrid();
@@ -3782,6 +4145,7 @@ async function showProgTab(tab) {
     // conserve les saisies de l'onglet courant (grilles Coefficients / Matières)
     if (_progData && _progTab !== 'contenu' && _progTab !== 'actions') _collectProg();
     _progTab = tab;
+    refreshTabEditMode();
     ['coeff', 'matieres', 'contenu', 'actions'].forEach(t =>
         document.getElementById('prog-subtab-' + t).classList.toggle('active', t === tab));
     document.getElementById('prog-content').style.display = (tab === 'coeff' || tab === 'matieres') ? '' : 'none';
@@ -3801,12 +4165,16 @@ function renderProgCurrent() {
     if (_progTab === 'contenu' || _progTab === 'actions') return;   // panes séparés gérés par showProgTab
     if (_progTab === 'matieres') renderProgMatieres();
     else renderProgCoeffs();
-    // Enseignant : consultation seule — désactive toute édition dans les grilles
-    if (state.role === 'teacher') {
+    // Consultation seule (enseignant, session responsable) : désactive toute édition
+    // dans les grilles
+    const ro = !editUI('prog:' + _progTab);
+    if (ro) {
         const el = document.getElementById('prog-content');
         el.querySelectorAll('input, select, textarea').forEach(i => i.disabled = true);
         el.querySelectorAll('button').forEach(b => b.style.display = 'none');
     }
+    const save = document.getElementById('prog-save-btn');
+    if (save) save.style.display = ro ? 'none' : '';
 }
 // Compat : anciens appels
 function renderProgTables() { renderProgCurrent(); }
@@ -4443,27 +4811,32 @@ function renderTuteurs() {
         // Tuteur enregistré mais absent de la liste (ancien enseignant) : conservé
         + (cur && !d.teachers.includes(cur) ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : '');
     const inputStyle = 'width:95%;padding:4px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:.82rem';
-    const section = (title, subtitle, list) => {
+    // Section modifiable ou non selon la session, calculé par le serveur : le
+    // responsable ALT gère les alternants, le responsable des stages les stagiaires FTP
+    const canEdit = f => d.editable ? !!d.editable[f] : editUI('promo:tuteurs');
+    const section = (title, subtitle, list, editable) => {
         if (!list.length) return '';
+        const dis = editable ? '' : ' disabled';
         const rows = list.map((s, i) => `<tr data-tut-sid="${s.id}">
             <td style="color:#9ca3af">${i + 1}</td>
             <td><strong>${esc(s.nom || '')}</strong></td>
             <td>${esc(s.prenom || '')}</td>
-            <td><select class="tut-univ" onchange="saveTuteurRow(${s.id})"
+            <td><select class="tut-univ" onchange="saveTuteurRow(${s.id})"${dis}
                 style="padding:4px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:.82rem;max-width:180px">${univOptions(s.tuteur_univ)}</select></td>
-            <td><input class="tut-ent" value="${esc(s.tuteur_entreprise)}" onchange="saveTuteurRow(${s.id})"
+            <td><input class="tut-ent" value="${esc(s.tuteur_entreprise)}" onchange="saveTuteurRow(${s.id})"${dis}
                 placeholder="Nom du tuteur" style="${inputStyle}"></td>
-            <td><input class="tut-soc" value="${esc(s.entreprise)}" onchange="saveTuteurRow(${s.id})"
+            <td><input class="tut-soc" value="${esc(s.entreprise)}" onchange="saveTuteurRow(${s.id})"${dis}
                 placeholder="Entreprise / organisme" style="${inputStyle}"></td>
-            <td><input class="tut-ville" value="${esc(s.ville || '')}" onchange="saveTuteurRow(${s.id})"
+            <td><input class="tut-ville" value="${esc(s.ville || '')}" onchange="saveTuteurRow(${s.id})"${dis}
                 placeholder="Ville" style="${inputStyle}"></td>
-            <td><input class="tut-dep" value="${esc(s.departement || '')}" onchange="saveTuteurRow(${s.id})"
+            <td><input class="tut-dep" value="${esc(s.departement || '')}" onchange="saveTuteurRow(${s.id})"${dis}
                 placeholder="83" title="Département : numéro ou nom" style="${inputStyle};text-align:center"></td>
             <td class="tut-badge" style="font-size:.72rem;color:#6b7280;white-space:nowrap">${
                 s.inherited_from ? `hérité de l'année ${s.inherited_from}` : ''}</td>
         </tr>`).join('');
         return `<h3 style="margin:14px 0 4px;color:#374151">${title}
-                <span style="font-weight:400;font-size:.8rem;color:#6b7280">${subtitle}</span></h3>
+                <span style="font-weight:400;font-size:.8rem;color:#6b7280">${subtitle}${
+                    editable ? '' : ' — consultation'}</span></h3>
             <div style="overflow:auto;max-height:38vh;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px">
             <table class="pn-table" style="table-layout:auto;width:100%">
                 <thead><tr><th style="width:36px">#</th><th>Nom</th><th>Prénom</th>
@@ -4479,10 +4852,10 @@ function renderTuteurs() {
     const alt = d.students.filter(s => s.formation === 'ALT');
     const ftp = d.students.filter(s => s.formation !== 'ALT');
     let html = section('ALT — Alternants',
-        'saisie conservée les années suivantes sauf changement', alt);
+        'saisie conservée les années suivantes sauf changement', alt, canEdit('ALT'));
     if (_tutYear >= 2) {
         html += section(`FTP — Stage ${_tutYear}ᵉ année`,
-            'saisie propre à ce stage (pas de report)', ftp);
+            'saisie propre à ce stage (pas de report)', ftp, canEdit('FTP'));
     } else if (ftp.length) {
         html += `<h3 style="margin:14px 0 4px;color:#374151">FTP</h3>
             <div class="empty" style="margin:6px 0">Pas de stage en 1ʳᵉ année — les tuteurs FTP se saisissent
@@ -5876,7 +6249,7 @@ function _ageDepuis(naissance) {
 
 function studentSections(d, opts = {}) {
     const s = d.student;
-    const dis = state.role !== 'admin' ? ' disabled' : '';
+    const dis = !editUI('nav:etudiants') ? ' disabled' : '';
     const champ = (label, field, aide) => `<div class="form-group" style="margin:0">
         <label style="font-size:.78rem" title="${esc(aide || '')}">${label}</label>
         <input value="${esc(s[field] || '')}"${dis} onchange="changeRegistreField('${field}', this.value)"></div>`;
@@ -7069,7 +7442,7 @@ function _notesGap(d, code) {
 function _notesSourceBar(d, mats) {
     const list = mats.filter(m => (d.saisie_status || {})[m.code] || _noteSource(d, m.code) === 'saisie');
     if (!list.length) return '';
-    const admin = state.role === 'admin';
+    const admin = editUI('promo:notes');
     const chips = list.map(m => {
         const src = _noteSource(d, m.code);
         const gap = src === 'saisie' ? 0 : _notesGap(d, m.code);
@@ -8301,7 +8674,7 @@ function renderContentEdit() {
     if (!list.length) { el.innerHTML = '<div class="empty">Aucune matière pour cette sélection.</div>'; return; }
     list.sort((a, b) => (_SEM_ORDER.indexOf(a.semester_code) - _SEM_ORDER.indexOf(b.semester_code))
                         || (a.code || '').localeCompare(b.code || ''));
-    const isAdmin = state.role === 'admin';
+    const isAdmin = state.role === 'admin' && canEditTab('prog:contenu');
     const bySem = {};
     list.forEach(c => { (bySem[c.semester_code] = bySem[c.semester_code] || []).push(c); });
     let html = '';
@@ -9854,6 +10227,7 @@ async function loadParametres() {
     document.getElementById('hetd-td').value = c.td;
     document.getElementById('hetd-tp').value = Math.round(c.tp * 1000) / 1000;
     document.getElementById('hetd-pt').value = c.pt;
+    if (state.superadmin) await loadTabVisibility();
 }
 
 // Change l'année universitaire ACTIVE de l'établissement (défaut global du
@@ -10586,7 +10960,7 @@ function repDraftBar() {
     const n = _repDraft.cells.size, busy = _repDraft.saving;
     const last = _repDraft.undo[_repDraft.undo.length - 1];
     const next = _repDraft.redo[_repDraft.redo.length - 1];
-    bar.style.display = (state.role !== 'teacher' && _repTab !== 'jour' && (n || last || next)) ? '' : 'none';
+    bar.style.display = (editUI('rep:annuelle') && _repTab !== 'jour' && (n || last || next)) ? '' : 'none';
     bar.classList.toggle('is-dirty', n > 0);
     document.getElementById('rep-draft-status').textContent = busy ? 'Enregistrement…'
         : n ? `${n} modification${n > 1 ? 's' : ''} non enregistrée${n > 1 ? 's' : ''}`
@@ -10756,7 +11130,7 @@ function repDraftOverlay(rows) {
 
 // Raccourcis de la répartition annuelle : Ctrl+Z, Ctrl+Y (ou Ctrl+Maj+Z), Ctrl+S
 document.addEventListener('keydown', e => {
-    if (!(e.ctrlKey || e.metaKey) || e.altKey || state.role === 'teacher') return;
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || !editUI('rep:annuelle')) return;
     const pane = document.getElementById('rep-pane-annuelle');
     if (!pane || pane.offsetParent === null) return;
     if (document.querySelector('.modal-backdrop.open')) return;
@@ -10985,7 +11359,7 @@ async function loadPromoGroups() {
     const el = document.getElementById('promo-groups-editor');
     // Enseignant : le nombre de groupes est affiché en consultation (non éditable),
     // au-dessus de la répartition des étudiants.
-    const enseignant = state.role === 'teacher';
+    const enseignant = !editUI('promo:groupes');
     const hint = document.getElementById('grp-hint');
     if (hint) hint.style.display = enseignant ? 'none' : '';
     if (!_promoData || !_promoData.promotion) {
@@ -11069,7 +11443,7 @@ function renderGroupesRepartition() {
     const el = document.getElementById('grp-repartition');
     const d = _grpRep;
     if (!el || !d) return;
-    const admin = state.role === 'admin';
+    const admin = editUI('promo:groupes');
     const familles = _grpFamilles();
     if (!familles.includes(_grpFamille)) _grpFamille = familles[0];
     const actifs = d.students.filter(s => s.actif).length;
@@ -11129,7 +11503,7 @@ function renderGroupesRepartition() {
 function renderGroupesResume() {
     const d = _grpRep;
     if (!d) return;
-    const admin = state.role === 'admin';
+    const admin = editUI('promo:groupes');
     const familles = _grpFamilles();
     d.tables.forEach(t => {
         const el = document.getElementById('grp-resume-' + t.cle);
@@ -11215,7 +11589,7 @@ function renderGroupesCorpsTable(t) {
         el.innerHTML = `<div class="empty">Aucun étudiant ${t.face ? t.face + ' ' : ''}dans l'effectif de l'année ${d.year}.</div>`;
         return;
     }
-    const admin = state.role === 'admin';
+    const admin = editUI('promo:groupes');
     const familles = _grpFamilles();
     const cols = _grpColonnes(t);
     const lignes = _grpLignes(t);
@@ -12228,6 +12602,7 @@ function showRepTab(tab) {
 
 function _showRepTab(tab) {
     _repTab = tab;
+    refreshTabEditMode();
     repDraftBar();
     document.getElementById('rep-subtab-annuelle').classList.toggle('active', tab === 'annuelle');
     document.getElementById('rep-subtab-jour').classList.toggle('active', tab === 'jour');
@@ -13393,7 +13768,7 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
 
 function onRepartitionCellClick(e) {
     // Enseignant (lecture seule) : pas d'édition des cases
-    if (state.role === 'teacher') return;
+    if (!editUI('rep:annuelle')) return;
     // Ignorer si clic sur un bouton flèche déjà présent
     if (e.target.closest('.cell-arrows')) return;
     const td = e.target.closest('td[data-sid][data-week]');

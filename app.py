@@ -553,6 +553,10 @@ def full_backup_export():
     err = _require_admin()
     if err:
         return err
+    # Toutes les bases, empreintes de mots de passe comprises : pas pour une
+    # session responsable, cantonnée à son domaine
+    if session.get('resp'):
+        return error_response('Accès réservé à l\'administrateur', 403)
     years = list_years()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -2100,6 +2104,14 @@ def _apply_migrations(db):
         db.execute("ALTER TABLE teachers ADD COLUMN is_admin INTEGER DEFAULT 0")
     # Garde-fou rejoué au démarrage : jamais d'administrateur sans mot de passe.
     db.execute("UPDATE teachers SET is_admin = 0 WHERE is_admin = 1 AND password_hash IS NULL")
+    # Responsabilités de formation confiées à un enseignant (« ftp,alt,stage ») : à la
+    # connexion AVEC mot de passe, elles ouvrent une session responsable limitée à
+    # leur domaine (profils resp_* de l'accès aux onglets). Même garde-fou que les
+    # droits d'administration : sans mot de passe, pas de responsabilité.
+    if 'responsabilites' not in [r[1] for r in db.execute("PRAGMA table_info(teachers)").fetchall()]:
+        db.execute("ALTER TABLE teachers ADD COLUMN responsabilites TEXT")
+    db.execute("UPDATE teachers SET responsabilites = NULL "
+               "WHERE responsabilites IS NOT NULL AND password_hash IS NULL")
     # Préférence de contact déclarée par l'enseignant : texte libre (« de préférence
     # par mail », « tél. le matin »…). Il la saisit dans son onglet Mon Compte ;
     # elle s'affiche dans la liste des enseignants, à côté du mail et du téléphone.
@@ -2748,23 +2760,38 @@ def _require_auth():
     role = session.get('role')
     if not role:
         return error_response('Authentification requise', 401)
-    if role != 'admin' and request.method not in ('GET', 'HEAD'):
-        # Exception : l'enseignant intervenant peut éditer le contenu de SA matière.
-        # L'autorisation fine (intervenant ou non) est vérifiée dans le handler.
-        # L'enseignant règle aussi l'appel par QR code de SES matières (Bilan global) :
-        # le handler vérifie qu'il s'agit bien des siennes.
-        if role == 'teacher' and (_is_course_content_path(path) or _is_constraints_self_path(path)
-                                  or path.startswith('/api/my-account')
-                                  or path == '/api/qr-attendance'
-                                  or (_is_saisie_write_path(path) and session.get('promo_access'))):
-            return
-        # Le choix de l'année universitaire est personnel à la session : autorisé à tous
-        if path == '/api/years/session':
-            return
-        # Bascule session normale → admin : le handler vérifie l'éligibilité
-        if path == '/api/session-mode':
-            return
-        # Toute autre écriture (y compris la liste des enseignants) est réservée à l'admin
+    if request.method in ('GET', 'HEAD'):
+        return
+    # Le choix de l'année universitaire est personnel à la session : autorisé à tous
+    if path == '/api/years/session':
+        return
+    # Choix de session (admin, responsable, normale) : le handler vérifie les droits
+    if path == '/api/session-mode':
+        return
+    tabs = _session_tabs()
+    if tabs is None:
+        return      # superadmin
+    # Écriture rattachée à un onglet : droit « modifier » du profil (réglable par le
+    # superadmin). Les vérifications fines restent dans les handlers : l'enseignant
+    # n'édite que le contenu / les contraintes / l'appel QR de SES matières, ses
+    # propres contraintes, et ses notes selon la saisie autorisée.
+    rule = _write_tab_rule(path)
+    if rule:
+        keys, opts = rule
+        if 'readlike' in opts:
+            ok = any(k in tabs['visible'] for k in keys)
+        elif 'strict' in opts and role == 'teacher':
+            ok = any(k in tabs['edit_extra'] for k in keys)
+        else:
+            ok = any(k in tabs['edit'] for k in keys)
+        if not ok:
+            return error_response('Modification non autorisée pour votre profil', 403)
+        # Laisse passer les handlers protégés par _require_admin()
+        g._tab_write_ok = True
+        return
+    # Toute autre écriture est réservée à l'admin — pas à la session responsable,
+    # cantonnée aux onglets de son domaine
+    if role != 'admin' or session.get('resp'):
         return error_response('Accès en lecture seule', 403)
 
 _WRITE_METHODS = {'POST', 'PUT', 'DELETE', 'PATCH'}
@@ -2833,6 +2860,59 @@ def _reset_login_failures(ip):
     with _LOGIN_LOCK:
         _login_state.pop(ip, None)
 
+# ---- Sessions : responsabilités, modes, identité renvoyée à l'interface ----
+# Responsabilités de formation (colonne teachers.responsabilites), dans l'ordre
+# d'affichage. Chacune a son profil d'onglets « resp_<clé> » (_TAB_TREE).
+_RESP_KEYS = ('ftp', 'alt', 'stage')
+
+def _resp_parse(value):
+    """Responsabilités connues d'une valeur stockée (« ftp,alt » → ['ftp', 'alt'])."""
+    got = {p.strip() for p in (value or '').split(',')}
+    return [k for k in _RESP_KEYS if k in got]
+
+def _teacher_rights(name):
+    """(droits d'administration, responsabilités) de l'enseignant, lus dans la base de
+    l'année ACTIVE — celle de la connexion, même si la session consulte une autre
+    année. Rien sans mot de passe : la connexion au seul nom ne prouve rien."""
+    q = 'SELECT is_admin, responsabilites, password_hash FROM teachers WHERE name = ?'
+    year = get_settings().get('current_year', '')
+    path = db_path_for_year(year) if year else ''
+    if path and os.path.isfile(path):
+        db = _open_connection(path)
+        try:
+            row = db.execute(q, (name,)).fetchone()
+        finally:
+            db.close()
+    else:
+        row = get_db().execute(q, (name,)).fetchone()
+    if not row or not row['password_hash']:
+        return False, []
+    return bool(row['is_admin']), _resp_parse(row['responsabilites'])
+
+def _session_modes():
+    """Sessions que l'enseignant connecté AVEC son mot de passe peut choisir, quand
+    il en a plusieurs : admin, resp (responsable), teacher (normale). Sinon []."""
+    if not session.get('teacher_name') or not session.get('promo_access'):
+        return []
+    modes = ((['admin'] if session.get('admin_eligible') else [])
+             + (['resp'] if session.get('resp_eligible') else []))
+    return modes + ['teacher'] if modes else []
+
+def _session_payload():
+    """Identité et droits de la session (réponse de login, me et session-mode)."""
+    role = session.get('role')
+    return {'username': session.get('user'), 'role': role,
+            'teacher': session.get('teacher_name'),
+            'status': session.get('teacher_status'),
+            'promo_access': bool(session.get('promo_access')),
+            'admin_eligible': bool(session.get('admin_eligible')),
+            'resp_eligible': list(session.get('resp_eligible') or []),
+            'resp': list(session.get('resp') or []),
+            'mode': 'resp' if session.get('resp') else role,
+            'modes': _session_modes(),
+            'superadmin': bool(session.get('superadmin')),
+            'tabs': _session_tabs_payload()}
+
 @app.route('/api/login', methods=['POST'])
 def login():
     ip = _client_ip()
@@ -2855,13 +2935,13 @@ def login():
             _audit('LOGIN_FAIL', ip=ip, user=username, role='admin')
             return error_response('Identifiant ou mot de passe incorrect', 401)
         _reset_login_failures(ip)
+        session.clear()      # rien d'une session précédente (responsabilités, année…)
         session.permanent = True
         session['user'] = key
         session['role'] = user['role']
         session['superadmin'] = bool(user.get('superadmin'))
-        session.pop('teacher_name', None)
         _audit('LOGIN_OK', ip=ip, user=key, role='admin', superadmin=int(session['superadmin']))
-        return jsonify({'username': key, 'role': user['role'], 'superadmin': session['superadmin']})
+        return jsonify(_session_payload())
     # Sinon : connexion enseignant par nom de famille (insensible à la casse).
     # Sans mot de passe : accès EDT habituel. Avec mot de passe (défini par
     # l'admin dans la fiche enseignant) : la session débloque en plus l'onglet
@@ -2869,8 +2949,8 @@ def login():
     # incorrect refuse TOUTE connexion (pas de session dégradée silencieuse).
     if username:
         db = get_db()
-        row = db.execute('''SELECT name, status, password_hash, is_admin FROM teachers
-                            WHERE LOWER(name) = LOWER(?)''', (username,)).fetchone()
+        row = db.execute('''SELECT name, status, password_hash, is_admin, responsabilites
+                            FROM teachers WHERE LOWER(name) = LOWER(?)''', (username,)).fetchone()
         if row:
             promo_access = False
             if password:
@@ -2881,12 +2961,15 @@ def login():
                 promo_access = True
             _reset_login_failures(ip)
             status = row['status'] or 'Titulaire'
-            # Les droits d'administration ne s'ouvrent QUE sur mot de passe vérifié :
-            # se connecter au seul nom de famille reste une session enseignante.
-            # L'enseignant administrateur choisit ensuite sa session (admin ou
-            # normale, /api/session-mode) : on démarre en session normale.
+            # Les droits d'administration et les responsabilités ne s'ouvrent QUE sur
+            # mot de passe vérifié : se connecter au seul nom de famille reste une
+            # session enseignante. L'enseignant qui en dispose choisit ensuite sa
+            # session (admin, responsable ou normale, /api/session-mode) : on démarre
+            # en session normale.
             admin_eligible = bool(promo_access and row['is_admin'])
+            resp_eligible = _resp_parse(row['responsabilites']) if promo_access else []
             role = 'teacher'
+            session.clear()
             session.permanent = True
             session['user'] = row['name']
             session['role'] = role
@@ -2894,13 +2977,11 @@ def login():
             session['teacher_status'] = status
             session['promo_access'] = promo_access
             session['admin_eligible'] = admin_eligible
+            session['resp_eligible'] = resp_eligible
             session['superadmin'] = False
             _audit('LOGIN_OK', ip=ip, user=row['name'], role=role, promo=int(promo_access),
-                   admin_eligible=int(admin_eligible))
-            return jsonify({'username': row['name'], 'role': role,
-                            'teacher': row['name'], 'status': status,
-                            'promo_access': promo_access,
-                            'admin_eligible': admin_eligible})
+                   admin_eligible=int(admin_eligible), resp=','.join(resp_eligible) or '-')
+            return jsonify(_session_payload())
     _register_login_failure(ip)
     _audit('LOGIN_FAIL', ip=ip, user=username, role='-')
     return error_response('Identifiant ou mot de passe incorrect', 401)
@@ -2974,42 +3055,328 @@ def password_init():
 @app.route('/api/me', methods=['GET'])
 def me():
     if session.get('role'):
-        return jsonify({'username': session.get('user'), 'role': session.get('role'),
-                        'teacher': session.get('teacher_name'),
-                        'status': session.get('teacher_status'),
-                        'promo_access': bool(session.get('promo_access')),
-                        'admin_eligible': bool(session.get('admin_eligible')),
-                        'superadmin': bool(session.get('superadmin'))})
+        return jsonify(_session_payload())
     return error_response('Non authentifié', 401)
 
 @app.route('/api/session-mode', methods=['POST'])
 def session_mode():
-    """Enseignant administrateur connecté avec son mot de passe : bascule entre
-    session admin et session normale. Le droit est revérifié en base, pour qu'un
-    retrait de l'accès admin prenne effet sans attendre la reconnexion."""
+    """Enseignant connecté avec son mot de passe : choisit sa session parmi celles
+    que ses droits ouvrent — admin (droits d'administration), resp (session
+    responsable, limitée aux domaines de ses responsabilités) ou teacher (session
+    normale). Les droits sont relus en base : un retrait prend effet sans attendre
+    la reconnexion, et un droit accordé depuis la connexion devient disponible."""
     name = session.get('teacher_name')
-    if not session.get('admin_eligible') or not name:
-        return error_response('Session admin non autorisée', 403)
-    row = get_db().execute('SELECT is_admin, password_hash FROM teachers WHERE name = ?',
-                           (name,)).fetchone()
-    if not row or not row['is_admin'] or not row['password_hash']:
-        session['admin_eligible'] = False
-        session['role'] = 'teacher'
-        return error_response('Session admin non autorisée', 403)
+    if not name or not session.get('promo_access'):
+        return error_response('Changement de session non autorisé', 403)
     mode = (request.get_json() or {}).get('mode')
-    if mode not in ('admin', 'teacher'):
+    if mode not in ('admin', 'resp', 'teacher'):
         return error_response('Mode de session invalide')
-    session['role'] = mode
-    _audit('SESSION_MODE', ip=_client_ip(), user=name, role=mode)
-    return jsonify({'username': session.get('user'), 'role': mode,
-                    'teacher': name, 'status': session.get('teacher_status'),
-                    'promo_access': bool(session.get('promo_access')),
-                    'admin_eligible': True})
+    admin_ok, resp = _teacher_rights(name)
+    session['admin_eligible'] = admin_ok
+    session['resp_eligible'] = resp
+    if (mode == 'admin' and not admin_ok) or (mode == 'resp' and not resp):
+        session['role'] = 'teacher'
+        session.pop('resp', None)
+        return error_response('Session non autorisée', 403)
+    # Session responsable : interface d'administration, restreinte par ses profils
+    # d'onglets (_session_tab_profiles) et par _require_auth pour les écritures
+    session['role'] = 'teacher' if mode == 'teacher' else 'admin'
+    if mode == 'resp':
+        session['resp'] = resp
+    else:
+        session.pop('resp', None)
+    g.pop('_tabs_cache', None)
+    _audit('SESSION_MODE', ip=_client_ip(), user=name, role=session['role'], mode=mode,
+           resp=','.join(session.get('resp') or []) or '-')
+    return jsonify(_session_payload())
+
+# ===== Accès aux onglets par profil : voir / modifier (réglé par le superadmin) =====
+# Profils : admin (enseignant administrateur), resp_ftp / resp_alt / resp_stage
+# (session responsable de la formation FTP, de la formation ALT, des stages),
+# teacher_pwd (enseignant connecté avec son mot de passe), teacher (enseignant
+# connecté par son seul nom). Une session responsable cumule les profils de toutes
+# les responsabilités de l'enseignant.
+# _TAB_TREE fixe les onglets et, pour chacun, les profils qui le VOIENT et le
+# MODIFIENT par défaut (droits historiques des rôles). Le superadmin enregistre
+# des écarts (settings « tab_access » = {profil: {view: {clé: bool}, edit: {…}}}) :
+#   • voir : masque un onglet, ou l'ouvre en consultation (lectures élargies) ;
+#   • modifier : contrôlé côté serveur par _WRITE_TAB_RULES dans _require_auth.
+# Un enseignant connecté SANS mot de passe ne reçoit jamais de droit de
+# modification au-delà du défaut : n'importe qui peut se connecter sous son nom.
+# Le superadmin (compte Admin) n'est soumis à rien de tout cela.
+_TA, _TP, _TT = 'admin', 'teacher_pwd', 'teacher'
+_RF, _RA, _RS = 'resp_ftp', 'resp_alt', 'resp_stage'
+_TAB_PROFILES = (_TA, _RF, _RA, _RS, _TP, _TT)
+_TALL = [_TA, _TP, _TT]
+_TRESP = [_RF, _RA, _RS]
+
+def _tn(key, label, view, edit=None, never=(), children=None):
+    """edit=None : onglet sans modification propre (consultation seule)."""
+    return {'key': key, 'label': label, 'view': list(view),
+            'edit': None if edit is None else list(edit),
+            'never': list(never), 'children': children or []}
+
+# Défauts des sessions responsable :
+#   • FTP  : EDT (répartition, calendrier), matières, services et contraintes,
+#            groupes, effectifs, étudiants, jury et devenir (FTP et ALT) ;
+#   • ALT  : tuteurs des alternants, jury et devenir (FTP et ALT) ;
+#   • stages : tuteurs des stages (étudiants FTP).
+# Ce qui éclaire ces tâches (programme, bulletins, statistiques…) s'affiche en
+# consultation. Le partage des tuteurs entre alternants et stagiaires est vérifié
+# par _tuteurs_formations().
+_TAB_TREE = [
+    _tn('nav:service', 'Service enseignant', _TALL + [_RF], children=[
+        _tn('svc:repartition-enseignant', 'Bilan Global', _TALL + [_RF], _TALL + [_RF]),
+        _tn('svc:repartition', 'Répartition Calendaire', _TALL + [_RF], children=[
+            _tn('rep:annuelle', 'Répartition annuelle', _TALL + [_RF], [_TA, _RF]),
+            _tn('rep:jour', 'Répartition journalière', [_TA, _RF], [_TA, _RF]),
+        ]),
+        _tn('svc:matieres', 'Matières', [_TA, _RF], [_TA, _RF]),
+        _tn('svc:contraintes', 'Contraintes Enseignant', _TALL + [_RF], _TALL + [_RF]),
+        _tn('svc:contraintes-matiere', 'Contraintes Matière', _TALL + [_RF], _TALL + [_RF]),
+        _tn('svc:comparaison', 'Comparaison', [_TA, _RF]),
+    ]),
+    _tn('nav:salles', 'Salles', [_TA], [_TA]),
+    _tn('nav:enseignants', 'Gestion enseignant', [_TA, _RF], [_TA]),
+    _tn('nav:journal', 'Journal (audit, sauvegardes)', [], []),
+    _tn('nav:programme', 'Programme', _TALL + _TRESP, children=[
+        _tn('prog:coeff', 'Coefficients', _TALL + _TRESP, [_TA]),
+        _tn('prog:matieres', 'Matières', _TALL + _TRESP, [_TA]),
+        _tn('prog:contenu', 'Contenu', _TALL + _TRESP, _TALL),
+        _tn('prog:actions', 'Actions', [_TA], [_TA], never=[_TP, _TT] + _TRESP),
+    ]),
+    _tn('nav:mon-compte', 'Mon Compte', [_TP, _TT], [_TP, _TT]),
+    _tn('nav:saisie', 'Saisie Notes', [_TP], [_TP], never=[_TA, _TT] + _TRESP),
+    _tn('nav:promotions', 'Promotions', [_TA, _TP] + _TRESP, children=[
+        _tn('promo:effectif', 'Effectifs', [_TA, _TP] + _TRESP, [_TA, _RF]),
+        _tn('promo:tuteurs', 'Tuteurs', [_TA] + _TRESP, [_TA, _RA, _RS]),
+        _tn('promo:groupes', 'Groupes', [_TA, _TP] + _TRESP, [_TA, _RF]),
+        _tn('promo:calendrier', 'Calendrier', [_TA, _RF], [_TA, _RF]),
+        _tn('promo:saisie', 'Saisie Notes', [_TA], [_TA], never=[_TP, _TT] + _TRESP),
+        _tn('promo:notes', 'Bulletins', [_TA, _TP] + _TRESP, [_TA]),
+        _tn('promo:jury', 'Jury', [_TA, _TP] + _TRESP, [_TA, _RF, _RA]),
+        _tn('promo:devenir', 'Devenir', [_TA, _RF, _RA], [_TA, _RF, _RA]),
+        _tn('promo:actions', 'Actions', [_TA], [_TA], never=[_TP, _TT] + _TRESP),
+    ]),
+    _tn('nav:etudiants', 'Étudiants', [_TA, _TP] + _TRESP, [_TA, _RF]),
+    _tn('nav:statistiques', 'Statistiques', _TALL + _TRESP, children=[
+        _tn('st:apercu', "Vue d'ensemble", _TALL + _TRESP),
+        _tn('st:etudiants', 'Étudiants', _TALL + _TRESP),
+        _tn('st:recrutement', 'Recrutement', _TALL + _TRESP),
+        _tn('st:parcours', 'Parcours & jury', _TALL + _TRESP),
+        _tn('st:resultats', 'Résultats', _TALL + _TRESP),
+        _tn('st:enseignement', 'Enseignement', _TALL + _TRESP),
+        _tn('st:annees', 'Années', _TALL + _TRESP),
+    ]),
+    _tn('nav:parametres', 'Paramètres', [_TA], never=[_TP, _TT] + _TRESP),
+]
+_TAB_NODES = {}
+def _index_tab_tree(nodes):
+    for n in nodes:
+        _TAB_NODES[n['key']] = n
+        _index_tab_tree(n['children'])
+_index_tab_tree(_TAB_TREE)
+
+def _edit_grantable(n, prof):
+    """Case « modifier » réglable pour ce profil (sinon « — »)."""
+    if n['edit'] is None or prof in n['never']:
+        return False
+    # Sans mot de passe : on peut retirer un droit par défaut, jamais en accorder
+    return prof != _TT or prof in n['edit']
+
+# Écritures → onglet(s) dont le droit « modifier » les autorise (premier motif qui
+# correspond). readlike : POST de consultation (comparaison, contrôle, export) —
+# il suffit de VOIR l'onglet. strict : pour un enseignant, il faut un droit
+# accordé explicitement (le défaut enseignant de l'onglet couvre d'autres routes).
+# Écriture sans motif : réservée au rôle admin, comme avant.
+_WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
+    (r'^/api/rooms(/\d+)?$', ['nav:salles'], ''),
+    (r'^/api/teachers(/\d+)?$', ['nav:enseignants'], ''),
+    (r'^/api/teachers/\d+/availability$', ['nav:enseignants'], ''),
+    (r'^/api/courses/\d+/content$', ['prog:contenu'], ''),
+    (r'^/api/courses/\d+/constraints$', ['svc:contraintes-matiere'], ''),
+    (r'^/api/course-orderings(/\d+)?$', ['svc:contraintes-matiere'], 'strict'),
+    (r'^/api/courses(/\d+)?$', ['svc:matieres'], ''),
+    (r'^/api/courses/\d+/(teaching-hours|weekly-distribution)$', ['svc:matieres'], ''),
+    (r'^/api/course-sessions(/\d+)?$', ['svc:matieres'], ''),
+    (r'^/api/matiere-referents$', ['svc:matieres'], ''),
+    (r'^/api/semesters/[^/]+/(mutualized|tp-separate)$', ['promo:groupes'], ''),
+    (r'^/api/semester-groups$', ['promo:groupes'], ''),
+    (r'^/api/semesters(/\d+)?(/special-weeks)?$', ['svc:matieres'], ''),
+    (r'^/api/weekly-hours(/.*)?$', ['rep:annuelle'], ''),
+    (r'^/api/import/repartition$', ['rep:annuelle'], ''),
+    (r'^/api/optimize$', ['rep:annuelle'], ''),
+    (r'^/api/(checks|export)/repartition$', ['rep:annuelle'], 'readlike'),
+    (r'^/api/edt-planned-weeks$', ['rep:jour'], ''),
+    (r'^/api/compare/hyperplanning$', ['svc:comparaison'], 'readlike'),
+    (r'^/api/constraints/me(/file)?$', ['svc:contraintes'], ''),
+    (r'^/api/qr-attendance$', ['svc:repartition-enseignant'], ''),
+    (r'^/api/my-account(/.*)?$', ['nav:mon-compte'], ''),
+    (r'^/api/(special-calendar|week-comments|category-codes|config)$', ['promo:calendrier'], ''),
+    (r'^/api/programmes/\d+/data(/reset)?$', ['prog:coeff', 'prog:matieres'], ''),
+    (r'^/api/programmes(/.*)?$', ['prog:actions'], ''),
+    (r'^/api/promotions/\d+/saisie/S[1-6]/(notes|weights|import)$', ['nav:saisie', 'promo:saisie'], ''),
+    (r'^/api/promotions/\d+/tuteurs/', ['promo:tuteurs'], ''),
+    (r'^/api/promotions/\d+/groupes/', ['promo:groupes'], ''),
+    (r'^/api/promotions/\d+/jury/', ['promo:jury'], ''),
+    (r'^/api/promotions/\d+/(red-ue|red/|devenir/|cesure/)', ['promo:devenir'], ''),
+    (r'^/api/promotions/\d+/notes/', ['promo:notes'], ''),
+    (r'^/api/notes/import/sheets$', ['promo:notes'], ''),
+    (r'^/api/promotions/\d+/(effectif/|students)', ['promo:effectif'], ''),
+    (r'^/api/students/\d+$', ['nav:etudiants'], ''),
+    (r'^/api/promotions/\d+/(coefficients|programme)', ['promo:actions'], ''),
+    (r'^/api/promotions(/\d+)?$', ['promo:actions'], ''),
+    (r'^/api/backups$', ['nav:journal'], ''),
+]]
+
+def _write_tab_rule(path):
+    for rx, keys, opts in _WRITE_TAB_RULES:
+        if rx.match(path):
+            return keys, opts
+    return None
+
+def _tab_access_conf():
+    """Écarts enregistrés, nettoyés : {profil: {'view': {clé: bool}, 'edit': {…}}}."""
+    raw = get_settings().get('tab_access') or {}
+    out = {}
+    for prof in _TAB_PROFILES:
+        d = raw.get(prof) if isinstance(raw.get(prof), dict) else {}
+        out[prof] = {kind: {k: bool(v) for k, v in (d.get(kind) or {}).items() if k in _TAB_NODES}
+                     for kind in ('view', 'edit')}
+    return out
+
+def _tab_effective(prof, conf):
+    """Onglets visibles / modifiables d'un profil, et ceux ouverts au-delà du défaut."""
+    view_ov, edit_ov = conf['view'], conf['edit']
+    res = {'visible': set(), 'edit': set(), 'view_extra': set(), 'edit_extra': set()}
+
+    def walk(n):
+        if prof in n['never'] or not view_ov.get(n['key'], prof in n['view']):
+            return False
+        kids = [c for c in n['children'] if prof not in c['never']]
+        shown = [walk(c) for c in kids]
+        if kids and not any(shown):
+            return False       # onglet vide : tous ses sous-onglets sont masqués
+        res['visible'].add(n['key'])
+        if prof not in n['view']:
+            res['view_extra'].add(n['key'])
+        if _edit_grantable(n, prof):
+            dflt = prof in n['edit']
+            if edit_ov.get(n['key'], dflt):
+                res['edit'].add(n['key'])
+                if not dflt:
+                    res['edit_extra'].add(n['key'])
+        return True
+    for n in _TAB_TREE:
+        walk(n)
+    return res
+
+def _session_tab_profiles():
+    """Profils d'onglets de la session ; None pour le superadmin (tout permis)."""
+    role = session.get('role')
+    if role == 'admin':
+        if session.get('superadmin'):
+            return None
+        resp = session.get('resp')
+        return [f'resp_{r}' for r in resp] if resp else [_TA]
+    if role == 'teacher':
+        return [_TP if session.get('promo_access') else _TT]
+    return None
+
+def _session_tabs():
+    """Accès effectifs de la session (None = superadmin, tout est permis). Plusieurs
+    profils (responsable de plusieurs domaines) : union de leurs accès ; un onglet
+    n'est « au-delà du défaut » que s'il ne l'est pour aucun d'eux par défaut."""
+    profs = _session_tab_profiles()
+    if not profs:
+        return None
+    cache = getattr(g, '_tabs_cache', None)
+    if cache is None:
+        conf = _tab_access_conf()
+        effs = [_tab_effective(p, conf[p]) for p in profs]
+        cache = {k: set().union(*(e[k] for e in effs))
+                 for k in ('visible', 'edit', 'view_extra', 'edit_extra')}
+        cache['view_extra'] -= set().union(*(e['visible'] - e['view_extra'] for e in effs))
+        cache['edit_extra'] -= set().union(*(e['edit'] - e['edit_extra'] for e in effs))
+        g._tabs_cache = cache
+    return cache
+
+def _session_tabs_payload():
+    t = _session_tabs()
+    if t is None:
+        return None
+    return dict({k: sorted(v) for k, v in t.items()}, all=sorted(_TAB_NODES))
+
+def _tab_visible(key):
+    """Vrai si le profil connecté voit cet onglet (lectures élargies en conséquence)."""
+    t = _session_tabs()
+    return bool(t) and key in t['visible']
+
+# Tuteurs : sous-cohortes dont chaque responsabilité gère les tuteurs, si son profil
+# a le droit de modifier l'onglet — ALT : les alternants ; stages : les stagiaires
+# FTP ; FTP (droit accordé par le superadmin) : ses étudiants FTP.
+_RESP_TUTEURS = {'ftp': {'FTP'}, 'alt': {'ALT'}, 'stage': {'FTP'}}
+
+def _tuteurs_formations():
+    """Sous-cohortes dont la session peut modifier les tuteurs. None = toutes (admin,
+    superadmin, enseignant à qui le superadmin a ouvert l'onglet) ; une session
+    responsable est limitée à celles de ses responsabilités."""
+    resp = session.get('resp') if session.get('role') == 'admin' else None
+    if not resp:
+        return None
+    conf = _tab_access_conf()
+    out = set()
+    for r in resp:
+        if 'promo:tuteurs' in _tab_effective(f'resp_{r}', conf[f'resp_{r}'])['edit']:
+            out |= _RESP_TUTEURS.get(r, set())
+    return None if out >= set(_SUBCOHORTS) else out
+
+@app.route('/api/tab-access', methods=['GET'])
+def get_tab_access():
+    err = _require_superadmin()
+    if err:
+        return err
+    tree = json.loads(json.dumps(_TAB_TREE))
+    def mark(nodes):
+        for n in nodes:
+            n['edit_grantable'] = [p for p in _TAB_PROFILES if _edit_grantable(_TAB_NODES[n['key']], p)]
+            mark(n['children'])
+    mark(tree)
+    return jsonify({'tree': tree, 'profiles': list(_TAB_PROFILES), 'conf': _tab_access_conf()})
+
+@app.route('/api/tab-access', methods=['PUT'])
+def put_tab_access():
+    err = _require_superadmin()
+    if err:
+        return err
+    data = request.get_json() or {}
+    conf = {}
+    for prof in _TAB_PROFILES:
+        d = data.get(prof) or {}
+        if not isinstance(d, dict):
+            return error_response('Réglage des onglets invalide')
+        conf[prof] = {}
+        for kind in ('view', 'edit'):
+            m = d.get(kind) or {}
+            if not isinstance(m, dict):
+                return error_response('Réglage des onglets invalide')
+            bad = [k for k in m if k not in _TAB_NODES]
+            if bad:
+                return error_response(f'Onglet inconnu : {bad[0]}')
+            conf[prof][kind] = {k: bool(v) for k, v in sorted(m.items())}
+    settings = dict(get_settings())
+    settings['tab_access'] = conf
+    settings.pop('tab_visibility', None)
+    save_settings(settings)
+    _audit('TAB_ACCESS', user=session.get('user'),
+           **{prof: f"{len(conf[prof]['view'])}v/{len(conf[prof]['edit'])}e" for prof in _TAB_PROFILES})
+    return jsonify(_tab_access_conf())
 
 @app.route('/api/audit-log', methods=['GET'])
 def audit_log_view():
-    """Renvoie les dernières lignes du journal d'audit (admin uniquement)."""
-    err = _require_superadmin()
+    """Renvoie les dernières lignes du journal d'audit (superadmin, ou profil
+    auquel le superadmin a ouvert l'onglet Journal)."""
+    err = None if _tab_visible('nav:journal') else _require_superadmin()
     if err:
         return err
     try:
@@ -3024,8 +3391,10 @@ def audit_log_view():
 
 @app.route('/api/backups', methods=['GET'])
 def list_backups():
-    """Liste les sauvegardes disponibles, toutes années (admin uniquement)."""
-    if session.get('role') != 'admin':
+    """Liste les sauvegardes disponibles, toutes années (admin hors session
+    responsable, ou profil auquel le superadmin a ouvert l'onglet Journal)."""
+    if ((session.get('role') != 'admin' or session.get('resp'))
+            and not _tab_visible('nav:journal')):
         return error_response('Accès réservé à l\'administrateur', 403)
     items = []
     for year in list_years():
@@ -3089,6 +3458,16 @@ def restore_backup():
     finally:
         src.close()
         dst.close()
+    # Une sauvegarde ancienne précède parfois des colonnes récentes (is_admin,
+    # responsabilites…) : sans remise à niveau du schéma, la connexion des
+    # enseignants échouerait jusqu'au prochain redémarrage.
+    db = sqlite3.connect(target)
+    db.row_factory = sqlite3.Row
+    try:
+        _apply_migrations(db)
+        db.commit()
+    finally:
+        db.close()
     _audit('RESTORE', ip=_client_ip(), user=session.get('user'), year=year, file=fname)
     return jsonify({'restored': fname, 'year': year})
 
@@ -3342,8 +3721,10 @@ def _seed_promo_competences(db, promo_id, semester):
                            (cid, eid, coeff))
 
 def _require_admin():
-    """Renvoie une réponse 403 si l'utilisateur courant n'est pas admin, sinon None."""
-    if session.get('role') != 'admin':
+    """Renvoie une réponse 403 si l'utilisateur courant n'est pas admin, sinon None.
+    Une écriture autorisée par le droit « modifier » d'un onglet (réglé par le
+    superadmin, vérifié dans _require_auth) passe aussi."""
+    if session.get('role') != 'admin' and not getattr(g, '_tab_write_ok', False):
         return error_response('Accès réservé à l\'administrateur', 403)
     return None
 
@@ -3362,7 +3743,9 @@ def _require_promo_read():
     role = session.get('role')
     if role == 'admin':
         return None
-    if role == 'teacher' and session.get('promo_access') and request.method in ('GET', 'HEAD'):
+    if role == 'teacher' and request.method in ('GET', 'HEAD') and (
+            session.get('promo_access')
+            or _tab_visible('nav:promotions') or _tab_visible('nav:etudiants')):
         return None
     return error_response('Accès réservé', 403)
 
@@ -5364,7 +5747,7 @@ def get_year_tuteurs(pid, year):
     ALT : une saisie faite une année reste valable les années suivantes tant
     qu'elle n'est pas remplacée (inherited_from = année d'origine). FTP : la
     saisie vaut uniquement pour l'année du stage (pas de report)."""
-    err = _require_admin()
+    err = (_require_promo_read() if _tab_visible('promo:tuteurs') else _require_admin())
     if err:
         return err
     if year not in (1, 2, 3):
@@ -5407,8 +5790,13 @@ def get_year_tuteurs(pid, year):
             'departement': (entry['departement'] if entry else '') or '',
             'inherited_from': inherited,
         })
+    # Sous-cohortes dont la session peut modifier les tuteurs (sections de l'écran)
+    tabs = _session_tabs()
+    can = tabs is None or 'promo:tuteurs' in tabs['edit']
+    scope = _tuteurs_formations()
+    editable = {f: can and (scope is None or f in scope) for f in _SUBCOHORTS}
     return jsonify({'year': year, 'students': students,
-                    'subcohorts': payload['subcohorts']})
+                    'subcohorts': payload['subcohorts'], 'editable': editable})
 
 @app.route('/api/promotions/<int:pid>/tuteurs/<int:year>/<int:sid>', methods=['PUT'])
 def set_year_tuteurs(pid, year, sid):
@@ -5425,6 +5813,14 @@ def set_year_tuteurs(pid, year, sid):
     if not pdb.execute('SELECT 1 FROM promotion_students WHERE id = ? AND promotion_id = ?',
                        (sid, pid)).fetchone():
         return error_response('Étudiant introuvable', 404)
+    # Session responsable : alternants pour le responsable ALT, stagiaires FTP pour
+    # le responsable des stages (sous-cohorte de l'étudiant CETTE année)
+    scope = _tuteurs_formations()
+    if scope is not None:
+        face = _year_formation_map(pdb, pid, year).get(sid, 'FTP')
+        if face not in scope:
+            return error_response(f'Les tuteurs des étudiants {face} ne relèvent pas '
+                                  f'de vos responsabilités', 403)
     data = request.get_json() or {}
     tu = (data.get('tuteur_univ') or '').strip()
     te = (data.get('tuteur_entreprise') or '').strip()
@@ -10361,6 +10757,7 @@ def _teacher_public(d):
     d['has_password'] = bool(d.pop('password_hash', None))
     d['password_allowed'] = bool(d.get('password_allowed'))
     d['is_admin'] = bool(d.get('is_admin'))
+    d['responsabilites'] = _resp_parse(d.get('responsabilites'))
     return d
 
 @app.route('/api/teachers', methods=['GET'])
@@ -10500,24 +10897,27 @@ def set_teacher_password_access(teacher_id):
                    (teacher_id,))
         event = 'TEACHER_PWD_ALLOWED'
     elif action == 'reset':
-        # Plus de mot de passe, donc plus de droits d'administration : les laisser
-        # rendrait l'administration accessible au seul nom de famille.
+        # Plus de mot de passe, donc plus de droits d'administration ni de
+        # responsabilités : les laisser les rendrait accessibles au seul nom de famille.
         db.execute('''UPDATE teachers SET password_hash = NULL, password_allowed = 1,
-                      is_admin = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?''', (teacher_id,))
+                      is_admin = 0, responsabilites = NULL, updated_at = CURRENT_TIMESTAMP
+                      WHERE id = ?''', (teacher_id,))
         event = 'TEACHER_PWD_RESET'
     elif action == 'revoke':
         db.execute('''UPDATE teachers SET password_hash = NULL, password_allowed = 0,
-                      is_admin = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?''', (teacher_id,))
+                      is_admin = 0, responsabilites = NULL, updated_at = CURRENT_TIMESTAMP
+                      WHERE id = ?''', (teacher_id,))
         event = 'TEACHER_PWD_REVOKED'
     else:
         return error_response('Action invalide (allow, reset ou revoke)')
     db.commit()
     _audit(event, ip=_client_ip(), teacher=row['name'])
-    t = db.execute('SELECT password_allowed, password_hash, is_admin FROM teachers WHERE id = ?',
-                   (teacher_id,)).fetchone()
+    t = db.execute('''SELECT password_allowed, password_hash, is_admin, responsabilites
+                      FROM teachers WHERE id = ?''', (teacher_id,)).fetchone()
     return jsonify({'password_allowed': bool(t['password_allowed']),
                     'has_password': bool(t['password_hash']),
-                    'is_admin': bool(t['is_admin'])}), 200
+                    'is_admin': bool(t['is_admin']),
+                    'responsabilites': _resp_parse(t['responsabilites'])}), 200
 
 @app.route('/api/teachers/<int:teacher_id>/admin', methods=['PUT'])
 def set_teacher_admin(teacher_id):
@@ -10552,6 +10952,39 @@ def set_teacher_admin(teacher_id):
            ip=_client_ip(), user=session.get('user'), teacher=row['name'])
     return jsonify({'is_admin': veut_admin, 'has_password': bool(row['password_hash'])}), 200
 
+@app.route('/api/teachers/<int:teacher_id>/responsabilites', methods=['PUT'])
+def set_teacher_responsabilites(teacher_id):
+    """Confie ou retire des responsabilités de formation à un enseignant (superadmin).
+    Body {responsabilites: ['ftp', 'alt', 'stage']} — la liste complète voulue.
+
+    Comme les droits d'administration, elles exigent un mot de passe défini et ne
+    s'appliquent qu'aux sessions ouvertes AVEC ce mot de passe : l'enseignant y
+    choisit alors une « session responsable », limitée aux onglets de ces domaines
+    (profils resp_* de Paramètres › Accès aux onglets). Propres à l'année active."""
+    err = _require_superadmin()
+    if err:
+        return err
+    db = get_db()
+    row = db.execute('SELECT name, password_hash, responsabilites FROM teachers WHERE id = ?',
+                     (teacher_id,)).fetchone()
+    if not row:
+        return error_response('Teacher not found', 404)
+    voulu = (request.get_json() or {}).get('responsabilites')
+    if not isinstance(voulu, list) or any(r not in _RESP_KEYS for r in voulu):
+        return error_response('Responsabilités invalides (ftp, alt, stage)', 400)
+    voulu = _resp_parse(','.join(voulu))
+    if voulu and not row['password_hash']:
+        return error_response(
+            "Cet enseignant n'a pas encore de mot de passe : autorisez-en la création "
+            "et attendez qu'il le définisse avant de lui confier une responsabilité.", 400)
+    avant = _resp_parse(row['responsabilites'])
+    db.execute('UPDATE teachers SET responsabilites = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+               (','.join(voulu) or None, teacher_id))
+    db.commit()
+    _audit('TEACHER_RESP', ip=_client_ip(), user=session.get('user'), teacher=row['name'],
+           avant=','.join(avant) or '-', apres=','.join(voulu) or '-')
+    return jsonify({'responsabilites': voulu, 'has_password': bool(row['password_hash'])}), 200
+
 # ======================= MON COMPTE (enseignant connecté) =======================
 # Fiche contact + heures HETD effectuées hors GIM. Ces heures sont personnelles :
 # elles ne sont renvoyées que par ces endpoints, à l'enseignant lui-même — sauf
@@ -10560,7 +10993,7 @@ def set_teacher_admin(teacher_id):
 def _my_teacher_row(db):
     """Fiche teachers (base de l'année consultée) de l'enseignant connecté, ou None."""
     name = session.get('teacher_name')
-    if session.get('role') != 'teacher' or not name:
+    if session.get('role') not in ('teacher', 'admin') or not name:
         return None
     return db.execute('SELECT * FROM teachers WHERE LOWER(name) = LOWER(?)', (name,)).fetchone()
 
