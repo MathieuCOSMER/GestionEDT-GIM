@@ -5915,24 +5915,20 @@ def _suivi_cohorts(pdb, start):
             out.append((row['id'], row['name'], yg))
     return out
 
-def _suivi_stats(pdb, kind, current, other, start):
+def _suivi_stats(pdb, kind, current, start):
     """Statistiques d'un onglet de suivi. `current` : fiches de l'année affichée
-    (alternants : fiche héritée comprise) ; `other` : celles de l'autre onglet, pour
-    le total des suivis de chaque enseignant."""
-    def per_teacher(rows):
-        out = {}
-        for r in rows:
-            if r['tuteur_univ']:
-                out.setdefault(_suivi_key(r['tuteur_univ']), []).append(r)
-        return out
-    mine, autres = per_teacher(current), per_teacher(other)
+    (alternants : fiche héritée comprise). Les suivis par enseignant ne comptent que
+    ceux de l'onglet : stages pour Stages, alternants pour Alternance."""
+    mine = {}
+    for r in current:
+        if r['tuteur_univ']:
+            mine.setdefault(_suivi_key(r['tuteur_univ']), []).append(r)
     suivis = []
-    for k, rows in mine.items():
+    for rows in mine.values():
         par_annee = {}
         for r in rows:
             par_annee[r['year']] = par_annee.get(r['year'], 0) + 1
-        suivis.append({'enseignant': rows[0]['tuteur_univ'], 'n': len(rows),
-                       'par_annee': par_annee, 'autre': len(autres.get(k, []))})
+        suivis.append({'enseignant': rows[0]['tuteur_univ'], 'n': len(rows), 'par_annee': par_annee})
     suivis.sort(key=lambda x: (-x['n'], _suivi_key(x['enseignant'])))
 
     # Entreprises : toutes les fiches enregistrées, toutes années, plus les fiches
@@ -6014,8 +6010,7 @@ def get_suivi(kind):
     except ValueError:
         return error_response('Année universitaire inconnue', 400)
     pdb = get_promotions_db()
-    other_kind = 'stages' if kind == 'alternance' else 'alternance'
-    cohorts, current, other = [], [], []
+    cohorts, current = [], []
     for pid, name, yg in _suivi_cohorts(pdb, start):
         data = _tuteurs_students(pdb, pid, yg)
         if not data:
@@ -6025,14 +6020,12 @@ def get_suivi(kind):
             s.update(pid=pid, year=yg, promotion=name)
             if _suivi_concerne(kind, s['formation'], yg):
                 mine.append(s)
-            elif _suivi_concerne(other_kind, s['formation'], yg):
-                other.append(s)
         current += mine
         if mine:
             cohorts.append({'pid': pid, 'promotion': name, 'year': yg, 'students': mine})
     return jsonify({'kind': kind, 'year_label': year_label, 'cohorts': cohorts,
                     'editable': tabs is None or key in tabs['edit'],
-                    'stats': _suivi_stats(pdb, kind, current, other, start)})
+                    'stats': _suivi_stats(pdb, kind, current, start)})
 
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>/students', methods=['POST'])
 def add_year_student(pid, year):

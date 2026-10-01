@@ -4974,8 +4974,8 @@ function renderTuteurs() {
 // ALT) ; l'admin voit les deux. Les fiches sont celles de Promotions › Tuteurs
 // (même table), complétées des coordonnées du tuteur entreprise et de la mission.
 const SUIVI_KINDS = {
-    stages: { who: 'stagiaire', mission: 'Sujet du stage', autre: 'alternance', years: [2, 3] },
-    alternance: { who: 'alternant', mission: 'Poste et missions', autre: 'stages', years: [1, 2, 3] },
+    stages: { who: 'stagiaire', mission: 'Sujet du stage', years: [2, 3] },
+    alternance: { who: 'alternant', mission: 'Poste et missions', years: [1, 2, 3] },
 };
 const SUIVI_FIELDS = ['entreprise', 'ville', 'departement', 'tuteur_entreprise', 'tuteur_fonction',
                       'tuteur_email', 'tuteur_tel', 'mission', 'tuteur_univ'];
@@ -5216,7 +5216,6 @@ function renderSuiviStats(kind) {
     const st = _suiviState(kind), d = st.data, s = d.stats, k = SUIVI_KINDS[kind];
     const el = document.getElementById(`suivi-${kind}-content`);
     const pct = n => s.total ? ` <span style="color:#6b7280">(${Math.round(100 * n / s.total)} %)</span>` : '';
-    const autreLabel = kind === 'stages' ? 'Alternants' : 'Stagiaires';
     const couverture = `<div class="card">
         <h3 style="margin:0 0 8px;color:#374151">Fiches ${esc(d.year_label)}</h3>
         <table class="pn-table" style="table-layout:auto;width:100%"><tbody>
@@ -5233,17 +5232,16 @@ function renderSuiviStats(kind) {
             </tbody></table>` : '<div class="empty">Aucun lieu renseigné.</div>'}</div>`;
     const suivis = `<div class="card">
         <h3 style="margin:0 0 4px;color:#374151">Suivis par enseignant</h3>
-        <p style="color:#6b7280;font-size:.8rem;margin:0 0 8px">Tuteur universitaire, année ${esc(d.year_label)}.
-            La dernière colonne y ajoute les ${autreLabel.toLowerCase()} qu'il suit.</p>
+        <p style="color:#6b7280;font-size:.8rem;margin:0 0 8px">${kind === 'stages' ? 'Stages' : 'Alternants'}
+            suivis comme tuteur universitaire, année ${esc(d.year_label)}.</p>
         ${s.suivis.length ? `<table class="pn-table" style="table-layout:auto;width:100%">
             <thead><tr><th>Enseignant</th>${k.years.map(y => `<th style="text-align:right">${_suiviYearLabel(y)}</th>`).join('')}
-                <th style="text-align:right">Total</th><th style="text-align:right" title="Stagiaires et alternants suivis par l'enseignant">Stages + alternance</th></tr></thead><tbody>
+                <th style="text-align:right">Total</th></tr></thead><tbody>
             ${s.suivis.map(t => `<tr><td>${esc(t.enseignant)}</td>${k.years.map(y =>
                 `<td style="text-align:right">${t.par_annee[y] || ''}</td>`).join('')}
-                <td style="text-align:right"><strong>${t.n}</strong></td>
-                <td style="text-align:right;color:#6b7280">${t.n + t.autre}</td></tr>`).join('')}
+                <td style="text-align:right"><strong>${t.n}</strong></td></tr>`).join('')}
             <tr><td style="color:#b45309">Sans tuteur universitaire</td>${k.years.map(() => '<td></td>').join('')}
-                <td style="text-align:right;color:#b45309"><strong>${s.non_attribues}</strong></td><td></td></tr>
+                <td style="text-align:right;color:#b45309"><strong>${s.non_attribues}</strong></td></tr>
             </tbody></table>` : '<div class="empty">Aucun tuteur universitaire attribué.</div>'}</div>`;
     el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:16px">
             ${couverture}${deps}</div>
