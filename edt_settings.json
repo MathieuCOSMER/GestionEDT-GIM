@@ -1,3 +1,21 @@
 {
-  "current_year": "2026-2027"
+  "current_year": "2026-2027",
+  "tab_access": {
+    "admin": {
+      "view": {},
+      "edit": {}
+    },
+    "teacher_pwd": {
+      "view": {
+        "promo:calendrier": true,
+        "promo:devenir": true,
+        "promo:tuteurs": true
+      },
+      "edit": {}
+    },
+    "teacher": {
+      "view": {},
+      "edit": {}
+    }
+  }
 }

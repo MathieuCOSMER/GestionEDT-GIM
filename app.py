@@ -3130,8 +3130,9 @@ def _tn(key, label, view, edit=None, never=(), children=None):
 #   • ALT  : onglet Alternance (fiches des alternants), jury et devenir (FTP et ALT) ;
 #   • stages : onglet Stages (fiches des stagiaires FTP).
 # Onglets Stages et Alternance : fiches de suivi (entreprise, tuteurs, contacts,
-# mission) et statistiques, pour le responsable du domaine et l'admin. C'est là,
-# et là seulement, qu'elles se modifient : Promotions › Tuteurs les montre.
+# mission) et statistiques, pour le responsable du domaine et l'admin ; l'enseignant
+# avec mot de passe les consulte et modifie celles des étudiants qu'il suit. C'est
+# là, et là seulement, qu'elles se modifient : Promotions › Tuteurs les montre.
 # Ce qui éclaire ces tâches (programme, bulletins, statistiques…) s'affiche en
 # consultation. Le partage des tuteurs entre alternants et stagiaires est vérifié
 # par _tuteurs_formations().
@@ -3161,8 +3162,10 @@ _TAB_TREE = [
         _tn('promo:actions', 'Actions', [_TA], [_TA], never=[_TP, _TT] + _TRESP),
     ]),
     _tn('nav:etudiants', 'Étudiants', [_TA, _TP] + _TRESP, [_TA, _RF]),
-    _tn('nav:stages', 'Stages', [_TA, _RS], [_TA, _RS]),
-    _tn('nav:alternance', 'Alternance', [_TA, _RA], [_TA, _RA]),
+    # Enseignant avec mot de passe : tout voir, modifier les fiches qu'il suit
+    # comme tuteur universitaire (contrôle dans set_year_tuteurs)
+    _tn('nav:stages', 'Stages', [_TA, _RS, _TP], [_TA, _RS, _TP]),
+    _tn('nav:alternance', 'Alternance', [_TA, _RA, _TP], [_TA, _RA, _TP]),
     _tn('nav:programme', 'Programme', _TALL + _TRESP, children=[
         _tn('prog:coeff', 'Coefficients', _TALL + _TRESP, [_TA]),
         _tn('prog:matieres', 'Matières', _TALL + _TRESP, [_TA]),
@@ -3358,13 +3361,16 @@ def _admin_view(key):
 _SUIVI_KINDS = {'stages': ('nav:stages', 'FTP'), 'alternance': ('nav:alternance', 'ALT')}
 
 def _tuteurs_formations():
-    """Sous-cohortes dont la session peut modifier les fiches de suivi (tuteurs,
-    entreprise…). None = toutes (superadmin). Onglet Stages : stagiaires FTP ;
-    onglet Alternance : alternants — Promotions › Tuteurs est en consultation."""
+    """Sous-cohortes dont la session peut modifier TOUTES les fiches de suivi
+    (tuteurs, entreprise…). None = toutes (superadmin). Onglet Stages : stagiaires
+    FTP ; onglet Alternance : alternants — pour qui y a un droit d'administration
+    (admin, responsable du domaine). Le droit « modifier » par défaut de
+    l'enseignant ne couvre que les fiches qu'il suit (set_year_tuteurs).
+    Promotions › Tuteurs est en consultation."""
     tabs = _session_tabs()
     if tabs is None:
         return None
-    out = set(face for key, face in _SUIVI_KINDS.values() if key in tabs['edit'])
+    out = set(face for key, face in _SUIVI_KINDS.values() if key in tabs['power'])
     return None if out >= set(_SUBCOHORTS) else out
 
 @app.route('/api/tab-access', methods=['GET'])
@@ -5815,7 +5821,8 @@ def _tuteurs_students(pdb, pid, year):
         elif (s.get('formation') or 'FTP') == 'ALT' and t:
             prev = max(t.keys())
             entry, inherited = t[prev], prev
-        row = {'id': s['id'], 'numero': s['numero'], 'nom': s['nom'], 'prenom': s['prenom'],
+        row = {'id': s['id'], 'person_id': s.get('person_id'), 'numero': s['numero'],
+               'nom': s['nom'], 'prenom': s['prenom'],
                'formation': s.get('formation') or 'FTP', 'statut': s['statut'],
                'inherited_from': inherited}
         row.update({f: (entry[f] if entry else '') or '' for f in _TUTOR_FIELDS})
@@ -5844,6 +5851,8 @@ def set_year_tuteurs(pid, year, sid):
     entreprise et lieu (ville, département), coordonnées du tuteur entreprise,
     mission — depuis les onglets Stages et Alternance. Seuls les champs envoyés
     changent (le tuteur universitaire se choisit seul, dans la liste).
+    Admin et responsable du domaine : toutes les fiches. Enseignant : celles dont
+    il est le tuteur universitaire, sans pouvoir changer ce tuteur.
     Un alternant sans fiche cette année part de la fiche héritée. Une fiche vidée
     (coordonnées seules exceptées) est supprimée : un ALT retombe alors sur la
     fiche héritée de l'année précédente, s'il y en a une."""
@@ -5860,11 +5869,19 @@ def set_year_tuteurs(pid, year, sid):
     # l'onglet Stages et le responsable des stages (sous-cohorte de CETTE année)
     face = _year_formation_map(pdb, pid, year).get(sid, 'FTP')
     scope = _tuteurs_formations()
-    if scope is not None and face not in scope:
-        return error_response(f'Les tuteurs des étudiants {face} ne relèvent pas '
-                              f'de vos responsabilités', 403)
+    tuteur_seul = scope is not None and face not in scope
+    if tuteur_seul:
+        # Tuteur universitaire : la fiche d'un étudiant qu'il suit, et elle seule
+        key = 'nav:alternance' if face == 'ALT' else 'nav:stages'
+        me = _suivi_key(session.get('teacher_name'))
+        actuel = _suivi_tuteur_univ(pdb, sid, year, face)
+        if not (me and key in _session_tabs()['edit'] and _suivi_key(actuel) == me):
+            return error_response("Vous ne pouvez modifier que les fiches des étudiants "
+                                  "dont vous êtes le tuteur universitaire", 403)
     data = request.get_json() or {}
     sent = {f: str(data.get(f) or '').strip()[:n] for f, n in _TUTOR_FIELDS.items() if f in data}
+    if tuteur_seul and 'tuteur_univ' in sent and _suivi_key(sent['tuteur_univ']) != _suivi_key(actuel):
+        return error_response('Le tuteur universitaire est attribué par le responsable', 403)
     cols = ', '.join(_TUTOR_FIELDS)
     row = pdb.execute(f'SELECT {cols} FROM student_tutors WHERE student_id = ? AND year = ?',
                       (sid, year)).fetchone()
@@ -5898,6 +5915,16 @@ def set_year_tuteurs(pid, year, sid):
 def _suivi_key(text):
     """Clé de regroupement d'un nom (entreprise, enseignant) : casse et espaces."""
     return ' '.join(str(text or '').split()).casefold()
+
+def _suivi_tuteur_univ(pdb, sid, year, face):
+    """Tuteur universitaire de la fiche qui s'applique à l'étudiant cette année
+    d'étude (alternant : fiche héritée d'une année précédente comprise)."""
+    r = pdb.execute('SELECT tuteur_univ FROM student_tutors WHERE student_id = ? AND year = ?',
+                    (sid, year)).fetchone()
+    if r is None and face == 'ALT':
+        r = pdb.execute('''SELECT tuteur_univ FROM student_tutors WHERE student_id = ? AND year < ?
+                           ORDER BY year DESC LIMIT 1''', (sid, year)).fetchone()
+    return (r['tuteur_univ'] if r else '') or ''
 
 def _suivi_concerne(kind, face, year):
     """La fiche d'un étudiant (sous-cohorte `face`, année d'étude `year`) relève-t-elle
@@ -5995,7 +6022,9 @@ def _suivi_stats(pdb, kind, current, start):
 def get_suivi(kind):
     """Onglet Stages ou Alternance : fiches de suivi des étudiants concernés pour une
     année universitaire (?year=AAAA-AAAA, défaut : l'année de la session), par
-    cohorte, et statistiques. Lisible par les profils qui voient l'onglet."""
+    cohorte, et statistiques. Lisible par les profils qui voient l'onglet.
+    editable : toutes les fiches modifiables (et le tuteur universitaire attribuable) ;
+    sinon can_edit marque, fiche par fiche, celles que l'enseignant suit."""
     if kind not in _SUIVI_KINDS:
         return error_response('Onglet inconnu', 404)
     key = _SUIVI_KINDS[kind][0]
@@ -6010,6 +6039,8 @@ def get_suivi(kind):
     except ValueError:
         return error_response('Année universitaire inconnue', 400)
     pdb = get_promotions_db()
+    power = tabs is None or key in tabs['power']
+    me = _suivi_key(session.get('teacher_name')) if (tabs is not None and key in tabs['edit']) else ''
     cohorts, current = [], []
     for pid, name, yg in _suivi_cohorts(pdb, start):
         data = _tuteurs_students(pdb, pid, yg)
@@ -6017,15 +6048,15 @@ def get_suivi(kind):
             continue
         mine = []
         for s in data['students']:
-            s.update(pid=pid, year=yg, promotion=name)
+            s.update(pid=pid, year=yg, promotion=name,
+                     can_edit=power or (bool(me) and _suivi_key(s['tuteur_univ']) == me))
             if _suivi_concerne(kind, s['formation'], yg):
                 mine.append(s)
         current += mine
         if mine:
             cohorts.append({'pid': pid, 'promotion': name, 'year': yg, 'students': mine})
     return jsonify({'kind': kind, 'year_label': year_label, 'cohorts': cohorts,
-                    'editable': tabs is None or key in tabs['edit'],
-                    'stats': _suivi_stats(pdb, kind, current, start)})
+                    'editable': power, 'stats': _suivi_stats(pdb, kind, current, start)})
 
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>/students', methods=['POST'])
 def add_year_student(pid, year):

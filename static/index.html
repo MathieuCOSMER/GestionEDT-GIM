@@ -2149,7 +2149,8 @@ async function api(endpoint, opts = {}) {
             && endpoint !== '/years/session' && endpoint !== '/session-mode'
             && !endpoint.startsWith('/my-account')
             && !endpoint.startsWith('/qr-attendance')
-            && !/\/saisie\/S[1-6]\//.test(endpoint)) {
+            && !/\/saisie\/S[1-6]\//.test(endpoint)
+            && !/^\/promotions\/\d+\/tuteurs\//.test(endpoint)) {
         toast('Lecture seule', 'error');
         throw new Error('Lecture seule');
     }
@@ -2362,7 +2363,8 @@ function applyRole(me) {
     // Contraintes), Programme (consultation), Statistiques (agrégées) et Mon Compte.
     const teacherTabs = ['nav-service', 'nav-programme', 'nav-statistiques', 'nav-mon-compte'];
     // Connexion avec mot de passe : Promotions en lecture seule (Effectifs/Notes/Jury)
-    if (role === 'teacher' && state.promoAccess) teacherTabs.push('nav-saisie', 'nav-promotions', 'nav-etudiants');
+    if (role === 'teacher' && state.promoAccess) teacherTabs.push('nav-saisie', 'nav-promotions', 'nav-etudiants',
+                                                                  'nav-stages', 'nav-alternance');
     document.querySelectorAll('nav button[id^="nav-"]').forEach(b => {
         let show;
         // Enseignants seuls (session normale d'un responsable comprise)
@@ -4984,12 +4986,15 @@ let _suiviEdit = null;   // fiche ouverte dans le modal : {kind, pid, year, sid}
 
 function _suiviState(kind) {
     return _suivi[kind] || (_suivi[kind] = { data: null, tab: 'fiches', q: '', missing: false,
-                                              eq: '', year: '', teachers: [] });
+                                              mine: false, eq: '', year: '', teachers: [] });
 }
 // Comparaison de noms sans casse ni accents (recherche, entreprises connues)
 function _suiviNorm(v) {
     return String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
         .replace(/\s+/g, ' ').trim().toLowerCase();
+}
+function _suiviMine(s) {
+    return !!state.teacherName && _suiviNorm(s.tuteur_univ) === _suiviNorm(state.teacherName);
 }
 function _suiviYearLabel(y) { return y === 1 ? '1ʳᵉ année' : y + 'ᵉ année'; }
 function _suiviLieu(ville, dep) {
@@ -5036,6 +5041,7 @@ function onSuiviFilter(kind) {
     const st = _suiviState(kind);
     st.q = (document.getElementById(`suivi-${kind}-q`) || {}).value || '';
     st.missing = !!(document.getElementById(`suivi-${kind}-missing`) || {}).checked;
+    st.mine = !!(document.getElementById(`suivi-${kind}-mine`) || {}).checked;
     renderSuiviBody(kind);
 }
 
@@ -5047,6 +5053,7 @@ function renderSuivi(kind) {
     if (!d) return;
     if (st.tab === 'stats') { renderSuiviStats(kind); return; }
     const s = d.stats, who = SUIVI_KINDS[kind].who;
+    const nMine = d.cohorts.reduce((n, c) => n + c.students.filter(_suiviMine).length, 0);
     el.innerHTML = `<div class="toolbar" style="margin-bottom:8px">
             <div class="filters">
                 <input type="search" id="suivi-${kind}-q" value="${esc(st.q)}" oninput="onSuiviFilter('${kind}')"
@@ -5056,10 +5063,14 @@ function renderSuivi(kind) {
                        title="Fiches sans entreprise, sans tuteur entreprise ou sans tuteur universitaire">
                     <input type="checkbox" id="suivi-${kind}-missing" ${st.missing ? 'checked' : ''}
                            onchange="onSuiviFilter('${kind}')" style="width:auto"> À compléter seulement</label>
+                ${state.teacherName ? `<label style="display:inline-flex;align-items:center;gap:6px;font-size:.85rem;color:#374151;cursor:pointer"
+                       title="Étudiants dont vous êtes le tuteur universitaire">
+                    <input type="checkbox" id="suivi-${kind}-mine" ${st.mine ? 'checked' : ''}
+                           onchange="onSuiviFilter('${kind}')" style="width:auto"> Mes suivis (${nMine})</label>` : ''}
             </div>
             <span style="color:#6b7280;font-size:.85rem">${_suiviPlural(s.total, who)} ·
                 ${s.avec_entreprise} avec entreprise · ${s.non_attribues} sans tuteur universitaire${
-                d.editable ? '' : ' — consultation'}</span>
+                d.editable ? '' : nMine ? ' — vous modifiez les fiches des étudiants que vous suivez' : ' — consultation'}</span>
         </div>
         <div id="suivi-${kind}-body"></div>`;
     renderSuiviBody(kind);
@@ -5084,7 +5095,8 @@ function renderSuiviBody(kind) {
     const missing = '<span style="color:#b45309;font-size:.8rem">à renseigner</span>';
     let html = '';
     d.cohorts.forEach(c => {
-        const list = c.students.filter(s => match(s) && (!st.missing || incomplete(s)));
+        const list = c.students.filter(s => match(s) && (!st.missing || incomplete(s))
+                                            && (!st.mine || _suiviMine(s)));
         if (!list.length) return;
         const rows = list.map((s, i) => {
             const contact = [s.tuteur_email ? `<a href="mailto:${esc(s.tuteur_email)}">${esc(s.tuteur_email)}</a>` : '',
@@ -5093,9 +5105,12 @@ function renderSuiviBody(kind) {
                 ? `<select onchange="saveSuiviUniv('${kind}', ${c.pid}, ${c.year}, ${s.id}, this)"
                        style="padding:4px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:.82rem;max-width:180px">${univOptions(s.tuteur_univ)}</select>`
                 : (s.tuteur_univ ? esc(s.tuteur_univ) : missing);
-            return `<tr>
+            const fiche = `openStudentCard(${s.person_id || 0})`;
+            return `<tr${_suiviMine(s) ? ' style="background:#f5f3ff" title="Étudiant que vous suivez"' : ''}>
                 <td style="color:#9ca3af">${i + 1}</td>
-                <td><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${s.inherited_from
+                <td><span onclick="${fiche}" title="Fiche de renseignements de l'étudiant"
+                    style="cursor:pointer;color:#1d4ed8;text-decoration:underline dotted"><strong>${
+                    esc(s.nom || '')}</strong> ${esc(s.prenom || '')}</span>${s.inherited_from
                     ? `<div style="font-size:.72rem;color:#6b7280">fiche reprise de la ${_suiviYearLabel(s.inherited_from)}</div>` : ''}</td>
                 <td>${s.entreprise ? `<strong>${esc(s.entreprise)}</strong>` : missing}${
                     s.ville || s.departement ? `<div style="font-size:.78rem;color:#6b7280">${esc(_suiviLieu(s.ville, s.departement))}</div>` : ''}</td>
@@ -5105,8 +5120,12 @@ function renderSuiviBody(kind) {
                 <td style="font-size:.8rem;color:#374151;max-width:260px" title="${esc(s.mission || '')}">${
                     esc((s.mission || '').length > 90 ? s.mission.slice(0, 90) + '…' : (s.mission || ''))}</td>
                 <td>${univ}</td>
-                <td style="white-space:nowrap"><button class="btn btn-secondary btn-sm"
-                    onclick="openSuiviModal('${kind}', ${c.pid}, ${c.year}, ${s.id})">${edit ? 'Modifier' : 'Voir'}</button></td>
+                <td style="white-space:nowrap">
+                    <button class="btn btn-secondary btn-sm" onclick="${fiche}"
+                        title="Fiche de renseignements de l'étudiant : dossier et parcours">Fiche</button>
+                    <button class="btn btn-secondary btn-sm" onclick="openSuiviModal('${kind}', ${c.pid}, ${c.year}, ${s.id})"
+                        title="Fiche de suivi : entreprise, tuteurs, ${esc(SUIVI_KINDS[kind].mission.toLowerCase())}">${
+                        s.can_edit ? 'Modifier' : 'Suivi'}</button></td>
             </tr>`;
         }).join('');
         html += `<h3 style="margin:16px 0 6px;color:#374151">${_suiviYearLabel(c.year)} — promotion ${esc(c.promotion)}
@@ -5115,7 +5134,7 @@ function renderSuiviBody(kind) {
             <table class="pn-table" style="table-layout:auto;width:100%">
                 <thead><tr><th style="width:36px">#</th><th>Étudiant</th><th>Entreprise</th>
                     <th>Tuteur entreprise</th><th>${esc(SUIVI_KINDS[kind].mission)}</th>
-                    <th style="width:190px">Tuteur universitaire</th><th style="width:80px"></th></tr></thead>
+                    <th style="width:190px">Tuteur universitaire</th><th style="width:150px"></th></tr></thead>
                 <tbody>${rows}</tbody>
             </table></div>`;
     });
@@ -5155,9 +5174,12 @@ function openSuiviModal(kind, pid, year, sid) {
     document.getElementById('suivi-entreprises').innerHTML = st.data.stats.entreprises
         .map(e => `<option value="${esc(e.entreprise)}">`).join('');
     suiviRefreshTuteurs();
-    const ro = !st.data.editable;
+    const ro = !s.can_edit;
     document.querySelectorAll('#modal-suivi input, #modal-suivi select, #modal-suivi textarea')
         .forEach(i => { i.disabled = ro; });
+    // Le tuteur universitaire est attribué par le responsable (ou l'admin)
+    univ.disabled = ro || !st.data.editable;
+    univ.title = st.data.editable ? '' : 'Attribué par le responsable';
     document.querySelector('#modal-suivi button[type="submit"]').style.display = ro ? 'none' : '';
     openModal('modal-suivi');
 }
@@ -5201,6 +5223,7 @@ async function submitSuivi(ev) {
     const { kind, pid, year, sid } = _suiviEdit;
     const body = {};
     SUIVI_FIELDS.forEach(f => { body[f] = document.getElementById('suivi-' + f).value.trim(); });
+    if (!_suiviState(kind).data.editable) delete body.tuteur_univ;   // attribué par le responsable
     try {
         await api(`/promotions/${pid}/tuteurs/${year}/${sid}`, { method: 'PUT', body: JSON.stringify(body) });
         closeModal('modal-suivi');
