@@ -409,7 +409,9 @@
         /* Enseignant : gestion d'année masquée + outils de répartition masqués
            (l'accès en écriture est filtré par rôle/onglet, pas par cette règle) */
         body.role-teacher:not(.tab-edit) .admin-only,
-        body.role-teacher:not(.tab-edit) .rep-tool-restricted { display: none !important; }
+        body.role-teacher:not(.tab-edit) .rep-tool-restricted,
+        body.tab-teacher .admin-only,
+        body.tab-teacher .rep-tool-restricted { display: none !important; }
         /* Ordre des onglets pour l'enseignant : Service, Programme, Mon Compte.
            Le sous-onglet Matières du Service reste réservé à l'admin. */
         body.role-teacher #svc-tab-matieres { display: none !important; }
@@ -1070,9 +1072,10 @@
             Pour chaque profil : <strong>Voir</strong> affiche l'onglet (consultation),
             <strong>Modifier</strong> autorise à y enregistrer des changements — contrôlé par le
             serveur. Le superadmin a toujours tous les droits. Les profils <strong>Resp.</strong>
-            s'appliquent aux sessions responsable (responsabilités confiées dans la fiche de
-            l'enseignant, Gestion enseignant) ; un responsable de plusieurs domaines cumule leurs
-            accès, et les tuteurs restent partagés : alternants pour le responsable ALT, stagiaires
+            s'ajoutent, dans sa session normale, au profil « Enseignant avec mdp » de l'enseignant
+            à qui ces responsabilités sont confiées (fiche de l'enseignant, Gestion enseignant) ;
+            un responsable de plusieurs domaines cumule leurs accès, et les tuteurs restent
+            partagés : alternants pour le responsable ALT, stagiaires
             FTP pour le responsable des stages. Fond jaune : fermé par défaut au profil. « — » :
             sans objet ; un enseignant connecté sans mot de passe ne peut recevoir aucun droit de
             modification (n'importe qui peut se connecter sous son nom).
@@ -1846,8 +1849,9 @@
                         <input type="checkbox" class="teacher-resp" value="stage" onchange="teacherRespToggle(this)" style="width:auto"> Stages</label>
                 </div>
                 <div style="font-size:.78rem;color:#6b7280;margin-top:4px">
-                    Propose, à la connexion avec mot de passe, une « session responsable » limitée à
-                    ces domaines — FTP : EDT, matières, services enseignant, groupes, effectifs, jury
+                    Ajoute à sa session normale (connexion avec mot de passe) les droits de ces
+                    domaines, en plus de ce que fait tout enseignant — FTP : EDT, matières,
+                    services enseignant, groupes, effectifs, jury
                     et devenir (FTP et ALT) ; ALT : tuteurs des alternants, jury et devenir ;
                     Stages : tuteurs des stages FTP. Cumulables. Détail réglable dans Paramètres ›
                     Accès aux onglets. Mêmes conditions que les droits d'administration (actives
@@ -2057,7 +2061,7 @@
 
 <script>
 // ===== STATE =====
-const state = { teachers: [], courses: [], rooms: [], sessions: [], semesters: [], config: null, semesterGroups: [], mutSemesters: {}, role: null, user: null };
+const state = { teachers: [], courses: [], rooms: [], sessions: [], semesters: [], config: null, semesterGroups: [], mutSemesters: {}, role: null, user: null, resp: [], respEligible: [] };
 
 // Dernière semaine de la 1re année civile (52 ou 53 selon le calendrier ISO ; ex: 2026-2027 → 53)
 function maxWeek() { return (state.config && state.config.academic_max_week) || 52; }
@@ -2217,20 +2221,20 @@ async function submitPwdInit() {
     }
 }
 
-// Responsabilités de formation (session responsable) : libellés courts
+// Responsabilités de formation (ajoutées à la session normale) : libellés courts
 const RESP_LABELS = { ftp: 'FTP', alt: 'ALT', stage: 'stages' };
 function respLabel(list) { return (list || []).map(r => RESP_LABELS[r] || r).join(' + '); }
-// Sessions d'un enseignant doté de droits étendus : libellé complet (écran de
-// connexion, liste de la barre) et court (« Passer en … »)
+// Sessions d'un enseignant administrateur : libellé complet (écran de connexion,
+// liste de la barre) et court (« Passer en … »)
 function sessionModeLabel(mode) {
     return mode === 'admin' ? 'Session admin'
-         : mode === 'resp' ? 'Session responsable ' + respLabel(state.respEligible)
+         : state.respEligible.length ? 'Session normale (enseignant, resp. ' + respLabel(state.respEligible) + ')'
          : 'Session normale (enseignant)';
 }
-const SESSION_MODE_SHORT = { admin: 'session admin', resp: 'session responsable', teacher: 'session normale' };
+const SESSION_MODE_SHORT = { admin: 'session admin', teacher: 'session normale' };
 
 // Bascule entre les sessions ouvertes par les droits : bouton s'il n'y a qu'une
-// autre session, liste s'il y en a deux (admin, responsable, normale)
+// autre session, liste au-delà
 function applySessionSwitch(modes) {
     const btn = document.getElementById('mode-switch-btn');
     const sel = document.getElementById('mode-switch-select');
@@ -2253,7 +2257,8 @@ function applyRole(me) {
     state.role = role;
     state.adminEligible = !!me.admin_eligible;
     state.respEligible = me.resp_eligible || [];
-    // Session responsable : interface d'admin restreinte à ses domaines (state.tabs)
+    // Session normale d'un responsable : interface d'admin restreinte à ses domaines
+    // (state.tabs), plus ce que fait tout enseignant (Mon Compte, ses notes…)
     state.resp = role === 'admin' ? (me.resp || []) : [];
     state.sessionMode = me.mode || role;
     state.superadmin = role === 'admin' && !!me.superadmin;
@@ -2262,13 +2267,14 @@ function applyRole(me) {
     state.tabs = (!state.superadmin && tabs) ? {
         all: tabs.all || [], visible: new Set(tabs.visible || []), edit: new Set(tabs.edit || []),
         viewExtra: new Set(tabs.view_extra || []), editExtra: new Set(tabs.edit_extra || []),
+        power: new Set(tabs.power || []), adminView: new Set(tabs.admin_view || []),
     } : null;
     document.body.classList.toggle('role-superadmin', state.superadmin);
     applySessionSwitch(me.modes || []);
     state.user = user;
     state.teacherName = teacher || null;
     state.teacherStatus = status || null;
-    state.teacherTitulaire = (role === 'teacher' && status === 'Titulaire');
+    state.teacherTitulaire = (role === 'teacher' || state.resp.length > 0) && status === 'Titulaire';
     state.promoAccess = (role === 'admin') || !!me.promo_access;
     document.body.classList.toggle('role-teacher', role === 'teacher');
     document.body.classList.toggle('role-vacataire', role === 'teacher' && status !== 'Titulaire');
@@ -2289,15 +2295,16 @@ function applyRole(me) {
     if (role === 'teacher' && state.promoAccess) teacherTabs.push('nav-saisie', 'nav-promotions', 'nav-etudiants');
     document.querySelectorAll('nav button[id^="nav-"]').forEach(b => {
         let show;
-        if (b.id === 'nav-mon-compte') show = role === 'teacher';            // enseignants seuls
+        // Enseignants seuls (session normale d'un responsable comprise)
+        if (b.id === 'nav-mon-compte') show = role === 'teacher' || state.resp.length > 0;
         // Admin : la saisie reste un sous-onglet de Promotions
-        else if (b.id === 'nav-saisie') show = role === 'teacher' && state.promoAccess;
+        else if (b.id === 'nav-saisie') show = (role === 'teacher' && state.promoAccess) || state.resp.length > 0;
         else if (b.id === 'nav-enseignants') show = role === 'admin';        // admin seul
         else show = !(role === 'teacher' && !teacherTabs.includes(b.id));
         b.style.display = show ? '' : 'none';
     });
     applyTabVisibility();
-    // Session responsable : Promotions s'ouvre sur son premier sous-onglet modifiable
+    // Responsable : Promotions s'ouvre sur son premier sous-onglet modifiable
     if (state.resp.length) { _promoTab = _firstPromoTab(); _syncPromoSubtabs(); }
 }
 
@@ -2322,6 +2329,22 @@ function tabEditGranted(key) { return !!state.tabs && state.tabs.editExtra.has(k
 // Commandes d'édition « admin » d'un onglet : l'admin selon son droit « modifier »
 // (retirable par le superadmin), l'enseignant seulement si ce droit lui est accordé
 function editUI(key) { return state.role === 'admin' ? canEditTab(key) : tabEditGranted(key); }
+// La session agit-elle en administrateur sur l'onglet, au-delà de ce qu'un
+// enseignant fait sur SES matières ? Admin : selon son droit « modifier » ; session
+// normale d'un responsable : sur les onglets que ses responsabilités modifient
+// (miroir de _admin_power côté serveur). Jamais un rôle enseignant.
+function adminPower(key) {
+    if (state.role !== 'admin') return false;
+    return !state.tabs || (state.resp.length ? state.tabs.power.has(key) : canEditTab(key));
+}
+// Vue d'administration (tous les enseignants) de l'onglet : admin, ou responsable
+// dont les responsabilités montrent l'onglet (miroir de _admin_view)
+function adminView(key) {
+    if (state.role !== 'admin') return false;
+    return !state.tabs || !state.resp.length || state.tabs.adminView.has(key);
+}
+// Session d'enseignant : rôle enseignant, ou session normale d'un responsable
+function teacherSession() { return state.role === 'teacher' || state.resp.length > 0; }
 function applyTabVisibility() {
     if (!state.tabs) return;
     state.tabs.all.forEach(key => {
@@ -2347,6 +2370,10 @@ function _currentTabKey() {
 function refreshTabEditMode() {
     const key = _currentTabKey();
     document.body.classList.toggle('tab-edit', state.role === 'teacher' && !!key && tabEditGranted(key));
+    // Session normale d'un responsable, hors des onglets de ses responsabilités :
+    // l'interface d'enseignant (commandes d'admin masquées, sauf droit accordé)
+    document.body.classList.toggle('tab-teacher', state.resp.length > 0 && !!key
+        && !adminView(key) && !tabEditGranted(key));
 }
 // Premier sous-onglet affichable d'un groupe (repli quand l'onglet courant est masqué)
 function _firstVisibleTab(prefix, tabs, allowed = () => true) {
@@ -2478,10 +2505,11 @@ async function saveTabVisibility() {
 function goHome() {
     // Liste des années universitaires (contexte de travail global)
     loadYears();
-    // Premier onglet selon le rôle : admin → Répartition Calendaire ; enseignant →
-    // Bilan Global ; session responsable sans Service enseignant → Promotions
+    // Premier onglet selon le rôle : admin → Répartition Calendaire ; enseignant
+    // (responsable compris) → Bilan Global ; sans Service enseignant → Promotions
     showPage(state.role === 'teacher' ? 'repartition-enseignant'
-             : tabHidden('nav:service') ? 'promotions' : 'repartition');
+             : tabHidden('nav:service') ? 'promotions'
+             : state.resp.length ? 'repartition-enseignant' : 'repartition');
 }
 
 async function checkAuth() {
@@ -2822,13 +2850,13 @@ async function loadPage(name, forceReload) {
             state.tpSeparate = sg.tp_separate || {};
             // Heures hors GIM du connecté (personnelles : visibles par lui seul)
             state.myExternal = [];
-            if (state.role === 'teacher') {
+            if (teacherSession()) {
                 try { state.myExternal = (await api('/my-account' + svcQ())).external_hours || []; }
                 catch (e) { /* pas de fiche cette année : silencieux */ }
             }
-            // Admin : lignes hors GIM déclarées publiques par les enseignants
+            // Vue d'administration : lignes hors GIM déclarées publiques par les enseignants
             state.publicExternal = [];
-            if (state.role === 'admin') {
+            if (adminView('svc:repartition-enseignant')) {
                 try { state.publicExternal = await api('/external-hours/public' + svcQ()); }
                 catch (e) { /* silencieux */ }
             }
@@ -3269,14 +3297,16 @@ function toggleContEditSemester(code, btn) {
     renderContentEdit();
 }
 
-// L'admin édite tout (session responsable : selon son droit sur l'onglet Contenu) ;
-// un enseignant édite uniquement les matières où il intervient
-function canEditCourseContent(c) {
-    if (state.role === 'admin') return canEditTab('prog:contenu');
-    if (state.role !== 'teacher' || !state.teacherName) return false;
+// Matière modifiable sur l'onglet `key` (contenu, contraintes de la matière) :
+// l'admin édite tout selon son droit sur l'onglet ; un enseignant — responsable
+// compris, hors des onglets de ses responsabilités — les matières où il intervient
+function canEditCourse(c, key) {
+    if (adminPower(key)) return true;
+    if (!teacherSession() || !state.teacherName || !canEditTab(key)) return false;
     const names = (c.teacher_names || '').split(',').map(s => s.trim().toLowerCase());
     return names.includes(state.teacherName.trim().toLowerCase());
 }
+function canEditCourseContent(c) { return canEditCourse(c, 'prog:contenu'); }
 
 let _contTab = 'view';
 
@@ -3461,10 +3491,16 @@ async function loadConstraints() {
     const el = document.getElementById('contraintes-content');
     el.innerHTML = '<div class="spinner">Chargement…</div>';
     try {
-        if (state.role === 'admin') {
-            renderConstraintsAdmin(await api('/constraints' + svcQ()) || []);
-        } else {
+        if (!adminView('svc:contraintes')) {
             renderConstraintsTeacher(await api('/constraints/me' + svcQ()) || {});
+        } else if (state.resp.length) {
+            // Responsable : ses propres contraintes, puis celles de tous les enseignants
+            const [mine, list] = await Promise.all([api('/constraints/me' + svcQ()),
+                                                    api('/constraints' + svcQ())]);
+            renderConstraintsTeacher(mine || {});
+            renderConstraintsAdmin(list || [], true);
+        } else {
+            renderConstraintsAdmin(await api('/constraints' + svcQ()) || []);
         }
     } catch (e) {
         el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
@@ -3546,15 +3582,19 @@ async function deleteConstraintFile() {
     }
 }
 
-// Vue admin : consultation des contraintes de tous les enseignants
-function renderConstraintsAdmin(list) {
-    document.getElementById('contraintes-title').textContent = 'Contraintes des enseignants';
+// Vue admin : consultation des contraintes de tous les enseignants. below : sous
+// le formulaire de l'enseignant connecté (session normale d'un responsable)
+function renderConstraintsAdmin(list, below = false) {
     const el = document.getElementById('contraintes-content');
+    let html = '';
+    if (below) html = '<h3 style="color:#374151;margin:28px 0 8px">Contraintes des enseignants</h3>';
+    else document.getElementById('contraintes-title').textContent = 'Contraintes des enseignants';
     if (!list.length) {
-        el.innerHTML = '<div class="empty">Aucune contrainte renseignée pour le moment.</div>';
+        html += '<div class="empty">Aucune contrainte renseignée pour le moment.</div>';
+        if (below) el.insertAdjacentHTML('beforeend', html); else el.innerHTML = html;
         return;
     }
-    el.innerHTML = `<table class="pn-table"><thead><tr>
+    html += `<table class="pn-table"><thead><tr>
             <th style="width:18%">Enseignant</th>
             <th>Contraintes (texte)</th>
             <th style="width:18%">Fichier</th>
@@ -3569,6 +3609,7 @@ function renderConstraintsAdmin(list) {
             <td style="white-space:nowrap;color:#6b7280;font-size:.8rem">${esc(c.updated_at || '')}</td>
         </tr>`).join('') +
         `</tbody></table>`;
+    if (below) el.insertAdjacentHTML('beforeend', html); else el.innerHTML = html;
 }
 
 // ===== CONTRAINTES PAR MATIÈRE =====
@@ -3598,7 +3639,7 @@ async function loadCourseConstraints() {
 
 function renderCourseConstraints() {
     const el = document.getElementById('contraintes-matiere-content');
-    let list = (state.courses || []).filter(canEditCourseContent);
+    let list = (state.courses || []).filter(c => canEditCourse(c, 'svc:contraintes-matiere'));
     if (!list.length) {
         el.innerHTML = '<div class="empty">Aucune matière modifiable pour votre compte.</div>';
         return;
@@ -3690,13 +3731,14 @@ const _promoTeacherTabs = ['effectif', 'groupes', 'notes', 'jury'];
 let _promoSaisieOnly = false;   // page ouverte depuis l'onglet « Saisie Notes »
 function _promoTabAllowed(t) {
     if (!_promoSaisieOnly && tabHidden('promo:' + t)) return false;
+    // Onglet Saisie Notes d'un enseignant (responsable compris) : la saisie seule
+    if (_promoSaisieOnly && teacherSession()) return t === 'saisie';
     if (state.role !== 'teacher') return true;
-    return _promoSaisieOnly ? t === 'saisie'
-         : (_promoTeacherTabs.includes(t) || tabGranted('promo:' + t));
+    return _promoTeacherTabs.includes(t) || tabGranted('promo:' + t);
 }
 function _firstPromoTab() {
     const order = ['effectif', 'tuteurs', 'groupes', 'calendrier', 'saisie', 'notes', 'jury', 'devenir', 'actions'];
-    // De préférence un sous-onglet où l'on peut travailler (session responsable)
+    // De préférence un sous-onglet où l'on peut travailler (responsable)
     return order.find(t => _promoTabAllowed(t) && editUI('promo:' + t))
         || _firstVisibleTab('promo:', order, _promoTabAllowed);
 }
@@ -3705,13 +3747,13 @@ function applyPromoSubtabsForRole() {
         const btn = document.getElementById('promo-subtab-' + t);
         if (btn) btn.style.display = _promoTabAllowed(t) ? '' : 'none';
     });
-    const saisieOnly = state.role === 'teacher' && _promoSaisieOnly;
+    const saisieOnly = teacherSession() && _promoSaisieOnly;
     document.getElementById('promo-subtabs').style.display = saisieOnly ? 'none' : '';
     document.getElementById('promo-title').textContent = saisieOnly ? 'Saisie Notes' : 'Promotions';
     // Saisie Notes : les grilles portent leur cohorte, le sélecteur n'a plus d'objet
     document.getElementById('promo-select-box').style.display = saisieOnly ? 'none' : '';
 }
-// Sous-onglet en consultation seule (enseignant, ou session responsable hors de son
+// Sous-onglet en consultation seule (enseignant, ou responsable hors de son
 // domaine) : désactive toute édition dans les grilles Promotions et masque les
 // boutons d'action (appelé après chaque rendu).
 function applyPromoReadOnly() {
@@ -4173,7 +4215,7 @@ function renderProgCurrent() {
     if (_progTab === 'contenu' || _progTab === 'actions') return;   // panes séparés gérés par showProgTab
     if (_progTab === 'matieres') renderProgMatieres();
     else renderProgCoeffs();
-    // Consultation seule (enseignant, session responsable) : désactive toute édition
+    // Consultation seule (enseignant, responsable hors de son domaine) : désactive toute édition
     // dans les grilles
     const ro = !editUI('prog:' + _progTab);
     if (ro) {
@@ -6589,7 +6631,7 @@ let _saisieShown = [];         // index des grilles actuellement affichées (fil
 const _saisieShut = new Set(); // grilles repliées (clé promotion|semestre|face)
 
 // L'enseignant voit toutes ses grilles ; l'admin garde ses sélecteurs.
-function _saisieAllMode() { return state.role === 'teacher'; }
+function _saisieAllMode() { return teacherSession(); }
 function _saisieKey(d) { return d.pid + '|' + d.semester + '|' + d.formation; }
 function _sbd(i) { return (_saisieBlocks[i] || {}).d; }
 
@@ -6830,7 +6872,7 @@ function renderSaisieGrid() {
         return;
     }
     if (!d.groups.length) {
-        el.innerHTML = '<div class="empty">' + (state.role === 'teacher'
+        el.innerHTML = '<div class="empty">' + (teacherSession()
             ? 'Aucune matière à votre charge ce semestre sur cette sous-cohorte.'
             : 'Aucune sous-matière pour ce semestre (voir l\'onglet Matières de l\'année).') + '</div>';
         return;
@@ -8682,7 +8724,7 @@ function renderContentEdit() {
     if (!list.length) { el.innerHTML = '<div class="empty">Aucune matière pour cette sélection.</div>'; return; }
     list.sort((a, b) => (_SEM_ORDER.indexOf(a.semester_code) - _SEM_ORDER.indexOf(b.semester_code))
                         || (a.code || '').localeCompare(b.code || ''));
-    const isAdmin = state.role === 'admin' && canEditTab('prog:contenu');
+    const isAdmin = adminPower('prog:contenu');
     const bySem = {};
     list.forEach(c => { (bySem[c.semester_code] = bySem[c.semester_code] || []).push(c); });
     let html = '';
@@ -10363,9 +10405,9 @@ function populateTeacherRepFilter() {
     sel.innerHTML = '<option value="">Tous</option>' +
         teachers.map(t => `<option value="${t.id}">${esc(t.name||'')}</option>`).join('');
     sel.value = current;
-    // Enseignant connecté : sa fiche est présélectionnée (valeur = id de l'enseignant).
-    // Vacataire : verrouillé ; titulaire : présélectionné mais modifiable.
-    if (state.role === 'teacher' && state.teacherName) {
+    // Enseignant connecté (responsable hors vue d'administration compris) : sa fiche
+    // est présélectionnée (valeur = id). Vacataire : verrouillé ; titulaire : modifiable.
+    if (teacherSession() && !adminView('svc:repartition-enseignant') && state.teacherName) {
         const me = teachers.find(t => (t.name||'').toLowerCase() === state.teacherName.toLowerCase());
         if (state.teacherTitulaire) {
             if (!sel.value && me) sel.value = String(me.id);   // défaut, modifiable
@@ -10431,7 +10473,7 @@ function renderTeacherRepartition() {
     let gExtHetd = 0;                                  // heures hors GIM du connecté (son bloc)
 
     // Bloc de l'enseignant connecté ? (heures hors GIM + heures comp. : lui seul)
-    const meRec = state.role === 'teacher' && state.teacherName
+    const meRec = teacherSession() && state.teacherName
         ? (state.teachers||[]).find(t => (t.name||'').toLowerCase() === state.teacherName.toLowerCase())
         : null;
     const isSelfBlock = (tid) => !!meRec && String(meRec.id) === String(tid);
@@ -10528,7 +10570,7 @@ function renderTeacherRepartition() {
         if (isSelf) {
             extList = state.myExternal || [];
             extNote = 'visible par vous seul (onglet Mon Compte)';
-        } else if (state.role === 'admin') {
+        } else if (adminView('svc:repartition-enseignant')) {
             extList = (state.publicExternal || []).filter(e => String(e.teacher_id) === String(tid));
             extNote = 'déclarées publiques par l\'enseignant';
         }
@@ -10557,7 +10599,7 @@ function renderTeacherRepartition() {
         const corps = ((tRec||{}).corps_code||'').toUpperCase();
         const statutory = ((tRec||{}).status||'Titulaire') === 'Titulaire' ? _STATUTORY_HETD[corps] : undefined;
         let hcHtml = '';
-        if (statutory && (state.role === 'admin' || isSelf)) {
+        if (statutory && (adminView('svc:repartition-enseignant') || isSelf)) {
             const hc = tHetd - statutory;
             gStatutory += statutory; gHComp += hc; nStatutory++;
             hcHtml = ` &nbsp;|&nbsp; Service ${statutory} HETD (${esc(corps)})
@@ -10596,7 +10638,7 @@ function renderTeacherRepartition() {
             <div><span style="color:#6b7280;font-size:.85rem">Sessions :</span> <strong>${sessions.length}</strong></div>
             <div><span style="color:#6b7280;font-size:.85rem">Total heures brutes :</span> <strong>${gTotalBrut.toFixed(1)}h</strong></div>
             <div><span style="color:#6b7280;font-size:.85rem">Total heures pondérées :</span> <strong>${gTotalPond.toFixed(1)}h</strong></div>
-            <div><span style="color:#6b7280;font-size:.85rem">Total HETD :</span> <strong style="color:#4f46e5">${gTotalHetd.toFixed(2)}</strong>${gExtHetd ? ` <span style="color:#92400e;font-size:.78rem">(dont ${gExtHetd.toFixed(2)} hors GIM${state.role === 'admin' ? ', déclarées publiques' : ', visibles par vous seul'})</span>` : ''}</div>
+            <div><span style="color:#6b7280;font-size:.85rem">Total HETD :</span> <strong style="color:#4f46e5">${gTotalHetd.toFixed(2)}</strong>${gExtHetd ? ` <span style="color:#92400e;font-size:.78rem">(dont ${gExtHetd.toFixed(2)} hors GIM${adminView('svc:repartition-enseignant') ? ', déclarées publiques' : ', visibles par vous seul'})</span>` : ''}</div>
             ${nStatutory ? `<div title="Titulaires avec corps renseigné (MCF 192 / PRAG·PRCE·PLP 384) : HETD effectuées − service statutaire">
                 <span style="color:#6b7280;font-size:.85rem">Heures comp. (${nStatutory} titulaire${nStatutory > 1 ? 's' : ''}, service dû ${gStatutory} HETD) :</span>
                 <strong style="color:${gHComp >= 0 ? '#059669' : '#dc2626'}">${gHComp >= 0 ? '+' : ''}${gHComp.toFixed(2)}</strong></div>` : ''}
@@ -13276,9 +13318,9 @@ function populateRepartitionFilters(rows) {
         rows.filter(r => !curR || r.room === curR).flatMap(rowTeachers));
     populateOptionFilter('filter-room-repartition',    'Toutes',
         rows.filter(r => !curT || rowTeacherGroups(r, curT)).map(r => r.room));
-    // Enseignant connecté : sa fiche est présélectionnée.
-    // Vacataire : verrouillé sur son nom ; titulaire : présélectionné mais modifiable.
-    if (state.role === 'teacher' && state.teacherName) {
+    // Enseignant connecté (responsable hors vue d'administration compris) : sa fiche
+    // est présélectionnée. Vacataire : verrouillé sur son nom ; titulaire : modifiable.
+    if (teacherSession() && !adminView('rep:annuelle') && state.teacherName) {
         const sel = document.getElementById('filter-teacher-repartition');
         if (![...sel.options].some(o => o.value === state.teacherName)) {
             sel.insertAdjacentHTML('beforeend',
