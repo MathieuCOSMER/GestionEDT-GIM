@@ -388,6 +388,7 @@
         .right-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px;
                      font-size: .7rem; font-weight: 600; background: #ede9fe; color: #5b21b6; }
         .right-tag.admin { background: #dcfce7; color: #166534; }
+        .right-tag.inactive { opacity: .55; outline: 1px dashed currentColor; outline-offset: -1px; }
         /* Réservé au superadmin (compte Admin) : masqué pour les enseignants administrateurs */
         body:not(.role-superadmin) .superadmin-only { display: none !important; }
         /* Onglet masqué par le superadmin pour le profil connecté (Paramètres › Visibilité) */
@@ -1827,10 +1828,11 @@
                 <div style="font-size:.78rem;color:#6b7280;margin-top:4px">
                     Donne à cet enseignant les droits d'administration (hors droits réservés au
                     superadmin : droits admin, mots de passe, restauration, journal, années, HETD,
-                    suppressions de promotions et de programmes). Exige un mot de
-                    passe défini, et ne s'applique qu'aux connexions faites AVEC ce mot de passe :
-                    entrer son seul nom de famille ouvre toujours une session enseignante.
-                    Supprimer ou révoquer le mot de passe retire les droits.
+                    suppressions de promotions et de programmes). Peut être accordé avant que
+                    l'enseignant ait un mot de passe, mais ne s'applique qu'aux connexions faites
+                    AVEC le mot de passe qu'il a lui-même défini : entrer son seul nom de famille
+                    ouvre toujours une session enseignante. Réinitialiser ou révoquer le mot de
+                    passe suspend les droits sans les retirer.
                 </div>
                 <div style="margin-top:12px;font-weight:600;font-size:.85rem;color:#374151">
                     Responsabilités <span id="teacher-resp-state" style="font-weight:400;color:#6b7280"></span>
@@ -1848,7 +1850,8 @@
                     ces domaines — FTP : EDT, matières, services enseignant, groupes, effectifs, jury
                     et devenir (FTP et ALT) ; ALT : tuteurs des alternants, jury et devenir ;
                     Stages : tuteurs des stages FTP. Cumulables. Détail réglable dans Paramètres ›
-                    Accès aux onglets. Mêmes conditions que les droits d'administration (mot de passe).
+                    Accès aux onglets. Mêmes conditions que les droits d'administration (actives
+                    seulement avec le mot de passe).
                 </div>
             </div>
             <div class="form-actions">
@@ -3042,8 +3045,11 @@ async function delMonCompteExt(id) {
 // Droits étendus d'un enseignant (admin, responsabilités), montrés au superadmin
 function teacherRightTags(t) {
     if (!state.superadmin) return '';
-    return (t.is_admin ? '<span class="right-tag admin">admin</span>' : '')
-        + (t.responsabilites || []).map(r => `<span class="right-tag">resp. ${esc(RESP_LABELS[r] || r)}</span>`).join('');
+    // Sans mot de passe, les droits sont en attente : étiquette estompée
+    const off = t.has_password ? '' : ' inactive';
+    const tip = t.has_password ? '' : ' title="Inactif tant que l\'enseignant n\'a pas de mot de passe"';
+    return (t.is_admin ? `<span class="right-tag admin${off}"${tip}>admin</span>` : '')
+        + (t.responsabilites || []).map(r => `<span class="right-tag${off}"${tip}>resp. ${esc(RESP_LABELS[r] || r)}</span>`).join('');
 }
 
 function renderTeachers() {
@@ -3102,22 +3108,24 @@ function refreshTeacherPwdBlock(t) {
     document.getElementById('teacher-pwd-reset').style.display = t.has_password ? '' : 'none';
     document.getElementById('teacher-pwd-revoke').style.display =
         (t.password_allowed || t.has_password) ? '' : 'none';
-    // Les droits d'administration n'ont de sens qu'avec un mot de passe.
+    // Droits d'administration et responsabilités : accordables à tout moment, actifs
+    // seulement quand l'enseignant se connecte avec le mot de passe qu'il a défini.
     const adm = document.getElementById('teacher-admin');
     adm.checked = !!t.is_admin;
-    adm.disabled = !t.has_password;
     document.getElementById('teacher-admin-state').textContent =
-        t.has_password ? (t.is_admin ? '— accordés' : '')
-                       : '— indisponible tant qu\'aucun mot de passe n\'est défini';
-    // Responsabilités : mêmes conditions que les droits d'administration
+        !t.is_admin ? '' : t.has_password ? '— accordés' : '— accordés, ' + teacherRightsPending(t);
     const resp = t.responsabilites || [];
     document.querySelectorAll('#teacher-resp-boxes .teacher-resp').forEach(cb => {
         cb.checked = resp.includes(cb.value);
-        cb.disabled = !t.has_password;
     });
     document.getElementById('teacher-resp-state').textContent =
-        t.has_password ? (resp.length ? '— ' + respLabel(resp) : '')
-                       : '— indisponibles tant qu\'aucun mot de passe n\'est défini';
+        !resp.length ? '' : '— ' + respLabel(resp) + (t.has_password ? '' : ', ' + teacherRightsPending(t));
+}
+
+// Pourquoi des droits accordés ne sont pas encore actifs (enseignant sans mot de passe)
+function teacherRightsPending(t) {
+    return t.password_allowed ? 'inactifs tant que l\'enseignant n\'a pas créé son mot de passe'
+                              : 'inactifs : autorisez la création du mot de passe';
 }
 
 async function teacherRespToggle(cb) {

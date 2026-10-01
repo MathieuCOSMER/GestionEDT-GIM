@@ -2096,22 +2096,19 @@ def _apply_migrations(db):
         db.execute("ALTER TABLE teachers ADD COLUMN password_allowed INTEGER DEFAULT 0")
         # Compat : un mot de passe déjà défini vaut autorisation
         db.execute("UPDATE teachers SET password_allowed = 1 WHERE password_hash IS NOT NULL")
-    # Droits d'administration confiés à un enseignant. Ils n'ont de sens qu'avec un
-    # mot de passe : sans lui la connexion se fait au seul nom de famille, ce qui
-    # ouvrirait l'administration à quiconque le connaît. Poser le drapeau exige donc
-    # un mot de passe défini, et le supprimer retire les droits (cf. password-access).
+    # Droits d'administration confiés à un enseignant. Ils peuvent être accordés avant
+    # que l'enseignant ait un mot de passe, mais ne s'ouvrent qu'à une connexion AVEC
+    # le mot de passe qu'il a lui-même défini (login, _teacher_rights) : au seul nom
+    # de famille, la session reste enseignante. Sans mot de passe, ils restent en
+    # attente ; réinitialiser ou révoquer le mot de passe les suspend sans les retirer.
     if 'is_admin' not in [r[1] for r in db.execute("PRAGMA table_info(teachers)").fetchall()]:
         db.execute("ALTER TABLE teachers ADD COLUMN is_admin INTEGER DEFAULT 0")
-    # Garde-fou rejoué au démarrage : jamais d'administrateur sans mot de passe.
-    db.execute("UPDATE teachers SET is_admin = 0 WHERE is_admin = 1 AND password_hash IS NULL")
     # Responsabilités de formation confiées à un enseignant (« ftp,alt,stage ») : à la
     # connexion AVEC mot de passe, elles ouvrent une session responsable limitée à
-    # leur domaine (profils resp_* de l'accès aux onglets). Même garde-fou que les
-    # droits d'administration : sans mot de passe, pas de responsabilité.
+    # leur domaine (profils resp_* de l'accès aux onglets). Même règle que les droits
+    # d'administration : accordables sans mot de passe, actives seulement avec lui.
     if 'responsabilites' not in [r[1] for r in db.execute("PRAGMA table_info(teachers)").fetchall()]:
         db.execute("ALTER TABLE teachers ADD COLUMN responsabilites TEXT")
-    db.execute("UPDATE teachers SET responsabilites = NULL "
-               "WHERE responsabilites IS NOT NULL AND password_hash IS NULL")
     # Préférence de contact déclarée par l'enseignant : texte libre (« de préférence
     # par mail », « tél. le matin »…). Il la saisit dans son onglet Mon Compte ;
     # elle s'affiche dans la liste des enseignants, à côté du mail et du téléphone.
@@ -10883,7 +10880,8 @@ def set_teacher_password_access(teacher_id):
       • reset  → supprime le mot de passe actuel (le bouton d'initialisation
                  réapparaît au login, l'autorisation est conservée) ;
       • revoke → supprime le mot de passe ET retire l'autorisation.
-    Le mot de passe lui-même n'est jamais choisi ni connu de l'admin."""
+    Le mot de passe lui-même n'est jamais choisi ni connu de l'admin. Les droits
+    d'administration et responsabilités sont conservés, suspendus faute de mot de passe."""
     err = _require_superadmin()
     if err:
         return err
@@ -10897,16 +10895,15 @@ def set_teacher_password_access(teacher_id):
                    (teacher_id,))
         event = 'TEACHER_PWD_ALLOWED'
     elif action == 'reset':
-        # Plus de mot de passe, donc plus de droits d'administration ni de
-        # responsabilités : les laisser les rendrait accessibles au seul nom de famille.
+        # Droits d'administration et responsabilités conservés : sans mot de passe ils
+        # sont inopérants (login, _teacher_rights) et reprennent dès que l'enseignant
+        # en a recréé un.
         db.execute('''UPDATE teachers SET password_hash = NULL, password_allowed = 1,
-                      is_admin = 0, responsabilites = NULL, updated_at = CURRENT_TIMESTAMP
-                      WHERE id = ?''', (teacher_id,))
+                      updated_at = CURRENT_TIMESTAMP WHERE id = ?''', (teacher_id,))
         event = 'TEACHER_PWD_RESET'
     elif action == 'revoke':
         db.execute('''UPDATE teachers SET password_hash = NULL, password_allowed = 0,
-                      is_admin = 0, responsabilites = NULL, updated_at = CURRENT_TIMESTAMP
-                      WHERE id = ?''', (teacher_id,))
+                      updated_at = CURRENT_TIMESTAMP WHERE id = ?''', (teacher_id,))
         event = 'TEACHER_PWD_REVOKED'
     else:
         return error_response('Action invalide (allow, reset ou revoke)')
@@ -10924,11 +10921,11 @@ def set_teacher_admin(teacher_id):
     """Donne ou retire les droits d'administration à un enseignant (admin seul).
     Body {admin: true|false}.
 
-    Les accorder exige un mot de passe déjà défini : sans lui, la connexion se fait
-    au seul nom de famille et l'administration serait ouverte à qui le connaît. Les
-    droits ne s'appliquent d'ailleurs qu'à une session ouverte AVEC ce mot de passe.
-    La table teachers étant propre à chaque année universitaire, la promotion vaut
-    pour l'année active (comme le mot de passe lui-même)."""
+    Ils peuvent être accordés avant que l'enseignant ait défini son mot de passe,
+    mais ne s'appliquent qu'à une session ouverte AVEC ce mot de passe : au seul nom
+    de famille, la connexion reste une session enseignante. Sans mot de passe, ils
+    sont donc en attente. La table teachers étant propre à chaque année
+    universitaire, la promotion vaut pour l'année active (comme le mot de passe)."""
     err = _require_superadmin()
     if err:
         return err
@@ -10941,10 +10938,6 @@ def set_teacher_admin(teacher_id):
     if 'admin' not in data:
         return error_response('Champ « admin » manquant', 400)
     veut_admin = bool(data.get('admin'))
-    if veut_admin and not row['password_hash']:
-        return error_response(
-            "Cet enseignant n'a pas encore de mot de passe : autorisez-en la création "
-            "et attendez qu'il le définisse avant de lui donner les droits.", 400)
     db.execute('UPDATE teachers SET is_admin = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
                (1 if veut_admin else 0, teacher_id))
     db.commit()
@@ -10957,10 +10950,11 @@ def set_teacher_responsabilites(teacher_id):
     """Confie ou retire des responsabilités de formation à un enseignant (superadmin).
     Body {responsabilites: ['ftp', 'alt', 'stage']} — la liste complète voulue.
 
-    Comme les droits d'administration, elles exigent un mot de passe défini et ne
-    s'appliquent qu'aux sessions ouvertes AVEC ce mot de passe : l'enseignant y
-    choisit alors une « session responsable », limitée aux onglets de ces domaines
-    (profils resp_* de Paramètres › Accès aux onglets). Propres à l'année active."""
+    Comme les droits d'administration, elles peuvent être confiées avant que
+    l'enseignant ait défini son mot de passe, mais ne s'appliquent qu'aux sessions
+    ouvertes AVEC ce mot de passe : l'enseignant y choisit alors une « session
+    responsable », limitée aux onglets de ces domaines (profils resp_* de
+    Paramètres › Accès aux onglets). Propres à l'année active."""
     err = _require_superadmin()
     if err:
         return err
@@ -10973,10 +10967,6 @@ def set_teacher_responsabilites(teacher_id):
     if not isinstance(voulu, list) or any(r not in _RESP_KEYS for r in voulu):
         return error_response('Responsabilités invalides (ftp, alt, stage)', 400)
     voulu = _resp_parse(','.join(voulu))
-    if voulu and not row['password_hash']:
-        return error_response(
-            "Cet enseignant n'a pas encore de mot de passe : autorisez-en la création "
-            "et attendez qu'il le définisse avant de lui confier une responsabilité.", 400)
     avant = _resp_parse(row['responsabilites'])
     db.execute('UPDATE teachers SET responsabilites = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
                (','.join(voulu) or None, teacher_id))
