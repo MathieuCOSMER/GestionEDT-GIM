@@ -3131,8 +3131,7 @@ def _tn(key, label, view, edit=None, never=(), children=None):
 #   • stages : onglet Stages (fiches des stagiaires FTP).
 # Onglets Stages et Alternance : fiches de suivi (entreprise, tuteurs, contacts,
 # mission) et statistiques, pour le responsable du domaine et l'admin ; l'enseignant
-# avec mot de passe les consulte et modifie celles des étudiants qu'il suit. C'est
-# là, et là seulement, qu'elles se modifient : Promotions › Tuteurs les montre.
+# avec mot de passe les consulte et modifie celles des étudiants qu'il suit.
 # Ce qui éclaire ces tâches (programme, bulletins, statistiques…) s'affiche en
 # consultation. Le partage des tuteurs entre alternants et stagiaires est vérifié
 # par _tuteurs_formations().
@@ -3152,7 +3151,6 @@ _TAB_TREE = [
     ]),
     _tn('nav:promotions', 'Promotions', [_TA, _TP] + _TRESP, children=[
         _tn('promo:effectif', 'Effectifs', [_TA, _TP] + _TRESP, [_TA, _RF]),
-        _tn('promo:tuteurs', 'Tuteurs', [_TA] + _TRESP),
         _tn('promo:groupes', 'Groupes', [_TA, _TP] + _TRESP, [_TA, _RF]),
         _tn('promo:calendrier', 'Calendrier', [_TA, _RF], [_TA, _RF]),
         _tn('promo:saisie', 'Saisie Notes', [_TA], [_TA], never=[_TP, _TT] + _TRESP),
@@ -3365,8 +3363,7 @@ def _tuteurs_formations():
     (tuteurs, entreprise…). None = toutes (superadmin). Onglet Stages : stagiaires
     FTP ; onglet Alternance : alternants — pour qui y a un droit d'administration
     (admin, responsable du domaine). Le droit « modifier » par défaut de
-    l'enseignant ne couvre que les fiches qu'il suit (set_year_tuteurs).
-    Promotions › Tuteurs est en consultation."""
+    l'enseignant ne couvre que les fiches qu'il suit (set_year_tuteurs)."""
     tabs = _session_tabs()
     if tabs is None:
         return None
@@ -5829,22 +5826,6 @@ def _tuteurs_students(pdb, pid, year):
         students.append(row)
     return {'students': students, 'subcohorts': payload['subcohorts']}
 
-@app.route('/api/promotions/<int:pid>/tuteurs/<int:year>', methods=['GET'])
-def get_year_tuteurs(pid, year):
-    """Tuteurs (universitaire + entreprise) de l'effectif d'une année (cf.
-    _tuteurs_students pour le report des alternants). Consultation : les fiches se
-    modifient dans les onglets Stages et Alternance."""
-    err = (_require_promo_read() if _tab_visible('promo:tuteurs') else _require_admin())
-    if err:
-        return err
-    if year not in (1, 2, 3):
-        return error_response('Année invalide', 400)
-    pdb = get_promotions_db()
-    data = _tuteurs_students(pdb, pid, year)
-    if data is None:
-        return error_response('Promotion introuvable', 404)
-    return jsonify({'year': year, 'students': data['students'], 'subcohorts': data['subcohorts']})
-
 @app.route('/api/promotions/<int:pid>/tuteurs/<int:year>/<int:sid>', methods=['PUT'])
 def set_year_tuteurs(pid, year, sid):
     """Enregistre la fiche de suivi d'un étudiant pour une année d'étude : tuteurs,
@@ -5907,8 +5888,8 @@ def set_year_tuteurs(pid, year, sid):
     return jsonify({'message': 'Tuteurs enregistrés'})
 
 # ======================= STAGES / ALTERNANCE (onglets de suivi) =======================
-# Les fiches de Promotions › Tuteurs, vues par année universitaire et toutes cohortes
-# confondues : stagiaires FTP (2e et 3e année) pour l'onglet Stages, alternants (les
+# Les fiches de suivi (table student_tutors), vues par année universitaire et toutes
+# cohortes confondues : stagiaires FTP (2e et 3e année) pour l'onglet Stages, alternants (les
 # trois années) pour l'onglet Alternance. Statistiques : suivis par enseignant,
 # entreprises (toutes années), départements.
 
