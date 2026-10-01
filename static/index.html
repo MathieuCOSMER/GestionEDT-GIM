@@ -412,14 +412,8 @@
         body.role-teacher:not(.tab-edit) .rep-tool-restricted,
         body.tab-teacher .admin-only,
         body.tab-teacher .rep-tool-restricted { display: none !important; }
-        /* Ordre des onglets pour l'enseignant : Service, Programme, Mon Compte.
-           Le sous-onglet Matières du Service reste réservé à l'admin. */
+        /* Le sous-onglet Matières du Service reste réservé à l'admin. */
         body.role-teacher #svc-tab-matieres { display: none !important; }
-        body.role-teacher #nav-service { order: 1; }
-        body.role-teacher #nav-programme { order: 3; }
-        body.role-teacher #nav-statistiques { order: 3; }
-        body.role-teacher #nav-mon-compte { order: 4; }
-        body.role-teacher #nav-right { order: 99; }
         /* Barre de sous-onglets Service enseignant (sous la nav) */
         #service-bar { display: flex; align-items: center; gap: 4px; padding: 6px 16px;
                        background: #f3f4f6; border-bottom: 1px solid #e5e7eb; }
@@ -493,19 +487,21 @@
 
 <nav>
     <strong>EDT Manager</strong>
-    <button onclick="showServicePage()" class="active" id="nav-service">Service</button>
-    <button onclick="showPage('salles')" id="nav-salles">Salles</button>
-    <button onclick="showPage('enseignants')" id="nav-enseignants">Enseignant</button>
-    <button onclick="showPage('journal')" id="nav-journal" class="admin-only superadmin-only">Journal</button>
-    <button onclick="showPage('programme')" id="nav-programme">Programme</button>
-    <button onclick="showPage('mon-compte')" id="nav-mon-compte" style="display:none">Mon Compte</button>
+    <!-- Ordre unique des onglets, quel que soit le rôle : chacun s'affiche ou non
+         selon les droits (applyRole, Paramètres › Accès aux onglets) -->
     <button onclick="showPage('saisie')" id="nav-saisie" style="display:none">Saisie Notes</button>
+    <button onclick="showServicePage()" class="active" id="nav-service">Service</button>
     <button onclick="showPage('promotions')" id="nav-promotions">Promotions</button>
     <button onclick="showPage('etudiants')" id="nav-etudiants">Étudiants</button>
     <button onclick="showPage('stages')" id="nav-stages">Stages</button>
     <button onclick="showPage('alternance')" id="nav-alternance">Alternance</button>
+    <button onclick="showPage('programme')" id="nav-programme">Programme</button>
     <button onclick="showPage('statistiques')" id="nav-statistiques">Statistiques</button>
+    <button onclick="showPage('enseignants')" id="nav-enseignants">Enseignant</button>
+    <button onclick="showPage('salles')" id="nav-salles">Salles</button>
+    <button onclick="showPage('journal')" id="nav-journal" class="admin-only superadmin-only">Journal</button>
     <button onclick="showPage('parametres')" id="nav-parametres" class="admin-only">Paramètres</button>
+    <button onclick="showPage('mon-compte')" id="nav-mon-compte" style="display:none">Mon Compte</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
         <span id="role-badge" class="role-badge" style="display:none"></span>
         <button id="mode-switch-btn" class="btn btn-secondary btn-sm" onclick="switchSessionMode(this.dataset.mode)"

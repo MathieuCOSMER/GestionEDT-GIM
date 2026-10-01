@@ -3135,7 +3135,9 @@ def _tn(key, label, view, edit=None, never=(), children=None):
 # Ce qui éclaire ces tâches (programme, bulletins, statistiques…) s'affiche en
 # consultation. Le partage des tuteurs entre alternants et stagiaires est vérifié
 # par _tuteurs_formations().
+# Ordre des nœuds de premier niveau = ordre de la barre d'onglets.
 _TAB_TREE = [
+    _tn('nav:saisie', 'Saisie Notes', [_TP], [_TP], never=[_TA, _TT] + _TRESP),
     _tn('nav:service', 'Service', _TALL + [_RF], children=[
         _tn('svc:repartition-enseignant', 'Bilan Global', _TALL + [_RF], _TALL + [_RF]),
         _tn('svc:repartition', 'Répartition Calendaire', _TALL + [_RF], children=[
@@ -3147,17 +3149,6 @@ _TAB_TREE = [
         _tn('svc:contraintes-matiere', 'Contraintes Matière', _TALL + [_RF], _TALL + [_RF]),
         _tn('svc:comparaison', 'Comparaison', [_TA, _RF]),
     ]),
-    _tn('nav:salles', 'Salles', [_TA], [_TA]),
-    _tn('nav:enseignants', 'Enseignant', [_TA, _RF], [_TA]),
-    _tn('nav:journal', 'Journal (audit, sauvegardes)', [], []),
-    _tn('nav:programme', 'Programme', _TALL + _TRESP, children=[
-        _tn('prog:coeff', 'Coefficients', _TALL + _TRESP, [_TA]),
-        _tn('prog:matieres', 'Matières', _TALL + _TRESP, [_TA]),
-        _tn('prog:contenu', 'Contenu', _TALL + _TRESP, _TALL),
-        _tn('prog:actions', 'Actions', [_TA], [_TA], never=[_TP, _TT] + _TRESP),
-    ]),
-    _tn('nav:mon-compte', 'Mon Compte', [_TP, _TT], [_TP, _TT]),
-    _tn('nav:saisie', 'Saisie Notes', [_TP], [_TP], never=[_TA, _TT] + _TRESP),
     _tn('nav:promotions', 'Promotions', [_TA, _TP] + _TRESP, children=[
         _tn('promo:effectif', 'Effectifs', [_TA, _TP] + _TRESP, [_TA, _RF]),
         _tn('promo:tuteurs', 'Tuteurs', [_TA] + _TRESP),
@@ -3172,6 +3163,12 @@ _TAB_TREE = [
     _tn('nav:etudiants', 'Étudiants', [_TA, _TP] + _TRESP, [_TA, _RF]),
     _tn('nav:stages', 'Stages', [_TA, _RS], [_TA, _RS]),
     _tn('nav:alternance', 'Alternance', [_TA, _RA], [_TA, _RA]),
+    _tn('nav:programme', 'Programme', _TALL + _TRESP, children=[
+        _tn('prog:coeff', 'Coefficients', _TALL + _TRESP, [_TA]),
+        _tn('prog:matieres', 'Matières', _TALL + _TRESP, [_TA]),
+        _tn('prog:contenu', 'Contenu', _TALL + _TRESP, _TALL),
+        _tn('prog:actions', 'Actions', [_TA], [_TA], never=[_TP, _TT] + _TRESP),
+    ]),
     _tn('nav:statistiques', 'Statistiques', _TALL + _TRESP, children=[
         _tn('st:apercu', "Vue d'ensemble", _TALL + _TRESP),
         _tn('st:etudiants', 'Étudiants', _TALL + _TRESP),
@@ -3181,7 +3178,11 @@ _TAB_TREE = [
         _tn('st:enseignement', 'Enseignement', _TALL + _TRESP),
         _tn('st:annees', 'Années', _TALL + _TRESP),
     ]),
+    _tn('nav:enseignants', 'Enseignant', [_TA, _RF], [_TA]),
+    _tn('nav:salles', 'Salles', [_TA], [_TA]),
+    _tn('nav:journal', 'Journal (audit, sauvegardes)', [], []),
     _tn('nav:parametres', 'Paramètres', [_TA], never=[_TP, _TT] + _TRESP),
+    _tn('nav:mon-compte', 'Mon Compte', [_TP, _TT], [_TP, _TT]),
 ]
 _TAB_NODES = {}
 def _index_tab_tree(nodes):
