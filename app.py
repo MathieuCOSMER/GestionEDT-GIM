@@ -1568,7 +1568,10 @@ def _apply_promotions_migrations(db):
     # Où se trouve l'entreprise d'accueil (alternance) ou le lieu du stage : la
     # ville et son département. Ils servent à voir d'où viennent les terrains de
     # l'alternance et des stages, et à retrouver un tuteur sur une carte.
-    for _col in ('ville', 'departement'):
+    # Coordonnées du tuteur entreprise (fonction, mail, téléphone) et mission confiée
+    # (sujet du stage, poste de l'alternant) : saisies dans les onglets Stages et
+    # Alternance, elles alimentent la liste des entreprises.
+    for _col in ('ville', 'departement', 'tuteur_fonction', 'tuteur_email', 'tuteur_tel', 'mission'):
         try:
             db.execute('ALTER TABLE student_tutors ADD COLUMN %s TEXT' % _col)
         except sqlite3.OperationalError:
@@ -3124,13 +3127,16 @@ def _tn(key, label, view, edit=None, never=(), children=None):
 # Défauts des responsabilités (ajoutés à la session normale de l'enseignant) :
 #   • FTP  : EDT (répartition, calendrier), matières, services et contraintes,
 #            groupes, effectifs, étudiants, jury et devenir (FTP et ALT) ;
-#   • ALT  : tuteurs des alternants, jury et devenir (FTP et ALT) ;
-#   • stages : tuteurs des stages (étudiants FTP).
+#   • ALT  : onglet Alternance (fiches des alternants), jury et devenir (FTP et ALT) ;
+#   • stages : onglet Stages (fiches des stagiaires FTP).
+# Onglets Stages et Alternance : fiches de suivi (entreprise, tuteurs, contacts,
+# mission) et statistiques, pour le responsable du domaine et l'admin. C'est là,
+# et là seulement, qu'elles se modifient : Promotions › Tuteurs les montre.
 # Ce qui éclaire ces tâches (programme, bulletins, statistiques…) s'affiche en
 # consultation. Le partage des tuteurs entre alternants et stagiaires est vérifié
 # par _tuteurs_formations().
 _TAB_TREE = [
-    _tn('nav:service', 'Service enseignant', _TALL + [_RF], children=[
+    _tn('nav:service', 'Service', _TALL + [_RF], children=[
         _tn('svc:repartition-enseignant', 'Bilan Global', _TALL + [_RF], _TALL + [_RF]),
         _tn('svc:repartition', 'Répartition Calendaire', _TALL + [_RF], children=[
             _tn('rep:annuelle', 'Répartition annuelle', _TALL + [_RF], [_TA, _RF]),
@@ -3142,7 +3148,7 @@ _TAB_TREE = [
         _tn('svc:comparaison', 'Comparaison', [_TA, _RF]),
     ]),
     _tn('nav:salles', 'Salles', [_TA], [_TA]),
-    _tn('nav:enseignants', 'Gestion enseignant', [_TA, _RF], [_TA]),
+    _tn('nav:enseignants', 'Enseignant', [_TA, _RF], [_TA]),
     _tn('nav:journal', 'Journal (audit, sauvegardes)', [], []),
     _tn('nav:programme', 'Programme', _TALL + _TRESP, children=[
         _tn('prog:coeff', 'Coefficients', _TALL + _TRESP, [_TA]),
@@ -3154,7 +3160,7 @@ _TAB_TREE = [
     _tn('nav:saisie', 'Saisie Notes', [_TP], [_TP], never=[_TA, _TT] + _TRESP),
     _tn('nav:promotions', 'Promotions', [_TA, _TP] + _TRESP, children=[
         _tn('promo:effectif', 'Effectifs', [_TA, _TP] + _TRESP, [_TA, _RF]),
-        _tn('promo:tuteurs', 'Tuteurs', [_TA] + _TRESP, [_TA, _RA, _RS]),
+        _tn('promo:tuteurs', 'Tuteurs', [_TA] + _TRESP),
         _tn('promo:groupes', 'Groupes', [_TA, _TP] + _TRESP, [_TA, _RF]),
         _tn('promo:calendrier', 'Calendrier', [_TA, _RF], [_TA, _RF]),
         _tn('promo:saisie', 'Saisie Notes', [_TA], [_TA], never=[_TP, _TT] + _TRESP),
@@ -3164,6 +3170,8 @@ _TAB_TREE = [
         _tn('promo:actions', 'Actions', [_TA], [_TA], never=[_TP, _TT] + _TRESP),
     ]),
     _tn('nav:etudiants', 'Étudiants', [_TA, _TP] + _TRESP, [_TA, _RF]),
+    _tn('nav:stages', 'Stages', [_TA, _RS], [_TA, _RS]),
+    _tn('nav:alternance', 'Alternance', [_TA, _RA], [_TA, _RA]),
     _tn('nav:statistiques', 'Statistiques', _TALL + _TRESP, children=[
         _tn('st:apercu', "Vue d'ensemble", _TALL + _TRESP),
         _tn('st:etudiants', 'Étudiants', _TALL + _TRESP),
@@ -3221,7 +3229,7 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     (r'^/api/programmes/\d+/data(/reset)?$', ['prog:coeff', 'prog:matieres'], ''),
     (r'^/api/programmes(/.*)?$', ['prog:actions'], ''),
     (r'^/api/promotions/\d+/saisie/S[1-6]/(notes|weights|import)$', ['nav:saisie', 'promo:saisie'], ''),
-    (r'^/api/promotions/\d+/tuteurs/', ['promo:tuteurs'], ''),
+    (r'^/api/promotions/\d+/tuteurs/', ['nav:stages', 'nav:alternance'], ''),
     (r'^/api/promotions/\d+/groupes/', ['promo:groupes'], ''),
     (r'^/api/promotions/\d+/jury/', ['promo:jury'], ''),
     (r'^/api/promotions/\d+/(red-ue|red/|devenir/|cesure/)', ['promo:devenir'], ''),
@@ -3345,25 +3353,17 @@ def _admin_view(key):
     t = _session_tabs()
     return t is None or key in t['admin_view']
 
-# Tuteurs : sous-cohortes dont chaque responsabilité gère les tuteurs, si son profil
-# a le droit de modifier l'onglet — ALT : les alternants ; stages : les stagiaires
-# FTP ; FTP (droit accordé par le superadmin) : ses étudiants FTP.
-_RESP_TUTEURS = {'ftp': {'FTP'}, 'alt': {'ALT'}, 'stage': {'FTP'}}
+# Onglets de suivi : clé d'onglet et sous-cohorte dont ils modifient les fiches
+_SUIVI_KINDS = {'stages': ('nav:stages', 'FTP'), 'alternance': ('nav:alternance', 'ALT')}
 
 def _tuteurs_formations():
-    """Sous-cohortes dont la session peut modifier les tuteurs. None = toutes (admin,
-    superadmin, enseignant à qui le superadmin a ouvert l'onglet) ; la session
-    normale d'un responsable est limitée à celles de ses responsabilités."""
-    resp = session.get('resp') if session.get('role') == 'admin' else None
-    if not resp:
+    """Sous-cohortes dont la session peut modifier les fiches de suivi (tuteurs,
+    entreprise…). None = toutes (superadmin). Onglet Stages : stagiaires FTP ;
+    onglet Alternance : alternants — Promotions › Tuteurs est en consultation."""
+    tabs = _session_tabs()
+    if tabs is None:
         return None
-    conf = _tab_access_conf()
-    if 'promo:tuteurs' in _tab_effective(_TP, conf[_TP])['edit']:
-        return None     # onglet ouvert à tout enseignant par le superadmin
-    out = set()
-    for r in resp:
-        if 'promo:tuteurs' in _tab_effective(f'resp_{r}', conf[f'resp_{r}'])['edit']:
-            out |= _RESP_TUTEURS.get(r, set())
+    out = set(face for key, face in _SUIVI_KINDS.values() if key in tabs['edit'])
     return None if out >= set(_SUBCOHORTS) else out
 
 @app.route('/api/tab-access', methods=['GET'])
@@ -5776,25 +5776,24 @@ def export_year_effectif(pid, year):
                      download_name=f'Effectif_{safe}_annee{year}.xlsx',
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
-@app.route('/api/promotions/<int:pid>/tuteurs/<int:year>', methods=['GET'])
-def get_year_tuteurs(pid, year):
-    """Tuteurs (universitaire + entreprise) de l'effectif d'une année.
-    ALT : une saisie faite une année reste valable les années suivantes tant
-    qu'elle n'est pas remplacée (inherited_from = année d'origine). FTP : la
-    saisie vaut uniquement pour l'année du stage (pas de report)."""
-    err = (_require_promo_read() if _tab_visible('promo:tuteurs') else _require_admin())
-    if err:
-        return err
-    if year not in (1, 2, 3):
-        return error_response('Année invalide', 400)
-    pdb = get_promotions_db()
+# Champs d'une fiche de suivi (table student_tutors) et longueur maximale saisie
+_TUTOR_FIELDS = {'tuteur_univ': 120, 'tuteur_entreprise': 120, 'entreprise': 160,
+                 'ville': 60, 'departement': 30, 'tuteur_fonction': 120,
+                 'tuteur_email': 160, 'tuteur_tel': 40, 'mission': 1000}
+# Coordonnées du tuteur entreprise : seules, elles ne font pas une fiche
+_TUTOR_CONTACT = ('tuteur_fonction', 'tuteur_email', 'tuteur_tel')
+
+def _tuteurs_students(pdb, pid, year):
+    """Étudiants de l'effectif d'une année d'étude avec leur fiche de suivi. ALT :
+    une saisie faite une année reste valable les années suivantes tant qu'elle
+    n'est pas remplacée (inherited_from = année d'origine). FTP : la saisie vaut
+    uniquement pour l'année du stage (pas de report). None si promotion inconnue."""
     payload = _year_effectif_payload(pdb, pid, year)
     if not payload:
-        return error_response('Promotion introuvable', 404)
+        return None
     by_student = {}
-    for r in pdb.execute('''SELECT student_id, year, tuteur_univ, tuteur_entreprise, entreprise,
-                                   ville, departement
-                            FROM student_tutors WHERE promotion_id = ? AND year <= ?''',
+    for r in pdb.execute(f'''SELECT student_id, year, {', '.join(_TUTOR_FIELDS)}
+                             FROM student_tutors WHERE promotion_id = ? AND year <= ?''',
                          (pid, year)):
         by_student.setdefault(r['student_id'], {})[r['year']] = r
     students = []
@@ -5815,30 +5814,38 @@ def get_year_tuteurs(pid, year):
         elif (s.get('formation') or 'FTP') == 'ALT' and t:
             prev = max(t.keys())
             entry, inherited = t[prev], prev
-        students.append({
-            'id': s['id'], 'numero': s['numero'], 'nom': s['nom'], 'prenom': s['prenom'],
-            'formation': s.get('formation') or 'FTP', 'statut': s['statut'],
-            'tuteur_univ': (entry['tuteur_univ'] if entry else '') or '',
-            'tuteur_entreprise': (entry['tuteur_entreprise'] if entry else '') or '',
-            'entreprise': (entry['entreprise'] if entry else '') or '',
-            'ville': (entry['ville'] if entry else '') or '',
-            'departement': (entry['departement'] if entry else '') or '',
-            'inherited_from': inherited,
-        })
-    # Sous-cohortes dont la session peut modifier les tuteurs (sections de l'écran)
-    tabs = _session_tabs()
-    can = tabs is None or 'promo:tuteurs' in tabs['edit']
-    scope = _tuteurs_formations()
-    editable = {f: can and (scope is None or f in scope) for f in _SUBCOHORTS}
-    return jsonify({'year': year, 'students': students,
-                    'subcohorts': payload['subcohorts'], 'editable': editable})
+        row = {'id': s['id'], 'numero': s['numero'], 'nom': s['nom'], 'prenom': s['prenom'],
+               'formation': s.get('formation') or 'FTP', 'statut': s['statut'],
+               'inherited_from': inherited}
+        row.update({f: (entry[f] if entry else '') or '' for f in _TUTOR_FIELDS})
+        students.append(row)
+    return {'students': students, 'subcohorts': payload['subcohorts']}
+
+@app.route('/api/promotions/<int:pid>/tuteurs/<int:year>', methods=['GET'])
+def get_year_tuteurs(pid, year):
+    """Tuteurs (universitaire + entreprise) de l'effectif d'une année (cf.
+    _tuteurs_students pour le report des alternants). Consultation : les fiches se
+    modifient dans les onglets Stages et Alternance."""
+    err = (_require_promo_read() if _tab_visible('promo:tuteurs') else _require_admin())
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    pdb = get_promotions_db()
+    data = _tuteurs_students(pdb, pid, year)
+    if data is None:
+        return error_response('Promotion introuvable', 404)
+    return jsonify({'year': year, 'students': data['students'], 'subcohorts': data['subcohorts']})
 
 @app.route('/api/promotions/<int:pid>/tuteurs/<int:year>/<int:sid>', methods=['PUT'])
 def set_year_tuteurs(pid, year, sid):
-    """Enregistre les tuteurs d'un étudiant pour une année d'étude, et le lieu de
-    son entreprise ou de son stage (ville, département). Tous les champs vides →
-    suppression de la ligne de l'année (un ALT retombe alors sur la valeur héritée
-    de l'année précédente, s'il y en a une)."""
+    """Enregistre la fiche de suivi d'un étudiant pour une année d'étude : tuteurs,
+    entreprise et lieu (ville, département), coordonnées du tuteur entreprise,
+    mission — depuis les onglets Stages et Alternance. Seuls les champs envoyés
+    changent (le tuteur universitaire se choisit seul, dans la liste).
+    Un alternant sans fiche cette année part de la fiche héritée. Une fiche vidée
+    (coordonnées seules exceptées) est supprimée : un ALT retombe alors sur la
+    fiche héritée de l'année précédente, s'il y en a une."""
     err = _require_admin()
     if err:
         return err
@@ -5848,38 +5855,183 @@ def set_year_tuteurs(pid, year, sid):
     if not pdb.execute('SELECT 1 FROM promotion_students WHERE id = ? AND promotion_id = ?',
                        (sid, pid)).fetchone():
         return error_response('Étudiant introuvable', 404)
-    # Session responsable : alternants pour le responsable ALT, stagiaires FTP pour
-    # le responsable des stages (sous-cohorte de l'étudiant CETTE année)
+    # Alternants pour l'onglet Alternance et le responsable ALT, stagiaires FTP pour
+    # l'onglet Stages et le responsable des stages (sous-cohorte de CETTE année)
+    face = _year_formation_map(pdb, pid, year).get(sid, 'FTP')
     scope = _tuteurs_formations()
-    if scope is not None:
-        face = _year_formation_map(pdb, pid, year).get(sid, 'FTP')
-        if face not in scope:
-            return error_response(f'Les tuteurs des étudiants {face} ne relèvent pas '
-                                  f'de vos responsabilités', 403)
+    if scope is not None and face not in scope:
+        return error_response(f'Les tuteurs des étudiants {face} ne relèvent pas '
+                              f'de vos responsabilités', 403)
     data = request.get_json() or {}
-    tu = (data.get('tuteur_univ') or '').strip()
-    te = (data.get('tuteur_entreprise') or '').strip()
-    en = (data.get('entreprise') or '').strip()
-    vi = (data.get('ville') or '').strip()[:60]
-    dp = (data.get('departement') or '').strip()[:30]
-    if not (tu or te or en or vi or dp):
+    sent = {f: str(data.get(f) or '').strip()[:n] for f, n in _TUTOR_FIELDS.items() if f in data}
+    cols = ', '.join(_TUTOR_FIELDS)
+    row = pdb.execute(f'SELECT {cols} FROM student_tutors WHERE student_id = ? AND year = ?',
+                      (sid, year)).fetchone()
+    if row is None and face == 'ALT':
+        # Rien de saisi : la fiche héritée continue de s'appliquer
+        if not any(sent.values()):
+            return jsonify({'message': 'Fiche héritée conservée'})
+        row = pdb.execute(f'''SELECT {cols} FROM student_tutors WHERE student_id = ? AND year < ?
+                              ORDER BY year DESC LIMIT 1''', (sid, year)).fetchone()
+    vals = {f: (row[f] if row else '') or '' for f in _TUTOR_FIELDS}
+    vals.update(sent)
+    if not any(v for f, v in vals.items() if f not in _TUTOR_CONTACT):
         pdb.execute('DELETE FROM student_tutors WHERE promotion_id = ? AND student_id = ? AND year = ?',
                     (pid, sid, year))
     else:
-        pdb.execute('''INSERT INTO student_tutors
-                           (promotion_id, student_id, year, tuteur_univ, tuteur_entreprise,
-                            entreprise, ville, departement)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                       ON CONFLICT (student_id, year) DO UPDATE SET
-                           tuteur_univ = excluded.tuteur_univ,
-                           tuteur_entreprise = excluded.tuteur_entreprise,
-                           entreprise = excluded.entreprise,
-                           ville = excluded.ville,
-                           departement = excluded.departement,
-                           updated_at = CURRENT_TIMESTAMP''',
-                    (pid, sid, year, tu, te, en, vi, dp))
+        pdb.execute(f'''INSERT INTO student_tutors (promotion_id, student_id, year, {cols})
+                        VALUES (?, ?, ?, {', '.join('?' * len(_TUTOR_FIELDS))})
+                        ON CONFLICT (student_id, year) DO UPDATE SET
+                            {', '.join(f'{f} = excluded.{f}' for f in _TUTOR_FIELDS)},
+                            updated_at = CURRENT_TIMESTAMP''',
+                    (pid, sid, year, *[vals[f] for f in _TUTOR_FIELDS]))
     pdb.commit()
     return jsonify({'message': 'Tuteurs enregistrés'})
+
+# ======================= STAGES / ALTERNANCE (onglets de suivi) =======================
+# Les fiches de Promotions › Tuteurs, vues par année universitaire et toutes cohortes
+# confondues : stagiaires FTP (2e et 3e année) pour l'onglet Stages, alternants (les
+# trois années) pour l'onglet Alternance. Statistiques : suivis par enseignant,
+# entreprises (toutes années), départements.
+
+def _suivi_key(text):
+    """Clé de regroupement d'un nom (entreprise, enseignant) : casse et espaces."""
+    return ' '.join(str(text or '').split()).casefold()
+
+def _suivi_concerne(kind, face, year):
+    """La fiche d'un étudiant (sous-cohorte `face`, année d'étude `year`) relève-t-elle
+    de l'onglet `kind` ? Pas de stage FTP en 1re année."""
+    return face == 'ALT' if kind == 'alternance' else (face == 'FTP' and year >= 2)
+
+def _suivi_cohorts(pdb, start):
+    """(pid, nom, année d'étude) des cohortes présentes l'année universitaire qui
+    commence en `start` (même règle que la saisie des notes)."""
+    out = []
+    for yg in (1, 2, 3):
+        row = pdb.execute('SELECT id, name FROM promotions WHERE start_year = ? ORDER BY id LIMIT 1',
+                          (start - (yg - 1),)).fetchone()
+        if row:
+            out.append((row['id'], row['name'], yg))
+    return out
+
+def _suivi_stats(pdb, kind, current, other, start):
+    """Statistiques d'un onglet de suivi. `current` : fiches de l'année affichée
+    (alternants : fiche héritée comprise) ; `other` : celles de l'autre onglet, pour
+    le total des suivis de chaque enseignant."""
+    def per_teacher(rows):
+        out = {}
+        for r in rows:
+            if r['tuteur_univ']:
+                out.setdefault(_suivi_key(r['tuteur_univ']), []).append(r)
+        return out
+    mine, autres = per_teacher(current), per_teacher(other)
+    suivis = []
+    for k, rows in mine.items():
+        par_annee = {}
+        for r in rows:
+            par_annee[r['year']] = par_annee.get(r['year'], 0) + 1
+        suivis.append({'enseignant': rows[0]['tuteur_univ'], 'n': len(rows),
+                       'par_annee': par_annee, 'autre': len(autres.get(k, []))})
+    suivis.sort(key=lambda x: (-x['n'], _suivi_key(x['enseignant'])))
+
+    # Entreprises : toutes les fiches enregistrées, toutes années, plus les fiches
+    # héritées de l'année affichée (alternants qui restent dans leur entreprise).
+    starts = {r['id']: r['start_year'] for r in pdb.execute('SELECT id, start_year FROM promotions')}
+    current_label = f'{start}-{start + 1}'
+    faces, history = {}, []
+    cols = ', '.join(_TUTOR_FIELDS)
+    for r in pdb.execute(f'''SELECT promotion_id, student_id, year, {cols} FROM student_tutors
+                             WHERE COALESCE(entreprise, '') <> '' '''):
+        pid, y = r['promotion_id'], r['year']
+        if pid not in starts:
+            continue
+        if (pid, y) not in faces:
+            faces[(pid, y)] = _year_formation_map(pdb, pid, y)
+        if _suivi_concerne(kind, faces[(pid, y)].get(r['student_id'], 'FTP'), y):
+            history.append(dict(r, annee=f'{starts[pid] + y - 1}-{starts[pid] + y}'))
+    history += [dict(r, student_id=r['id'], annee=current_label) for r in current if r['entreprise']]
+    ents = {}
+    for r in history:
+        e = ents.setdefault(_suivi_key(r['entreprise']), {
+            'entreprise': r['entreprise'], 'lieux': set(), 'annees': set(), 'etudiants': set(),
+            'cette_annee': set(), 'tuteurs': {}, 'derniere': ''})
+        if r['annee'] >= e['derniere']:
+            e['entreprise'], e['derniere'] = r['entreprise'], r['annee']
+        if r['ville'] or r['departement']:
+            e['lieux'].add((r['ville'] or '', r['departement'] or ''))
+        e['annees'].add(r['annee'])
+        e['etudiants'].add(r['student_id'])
+        if r['annee'] == current_label:
+            e['cette_annee'].add(r['student_id'])
+        if r['tuteur_entreprise']:
+            tk = _suivi_key(r['tuteur_entreprise'])
+            t = e['tuteurs'].get(tk)
+            if not t or r['annee'] >= t['annee']:
+                e['tuteurs'][tk] = {'nom': r['tuteur_entreprise'], 'fonction': r['tuteur_fonction'] or '',
+                                    'email': r['tuteur_email'] or '', 'tel': r['tuteur_tel'] or '',
+                                    'annee': r['annee']}
+    entreprises = [{'entreprise': e['entreprise'],
+                    'lieux': [{'ville': v, 'departement': d} for v, d in sorted(e['lieux'])],
+                    'annees': sorted(e['annees']), 'etudiants': len(e['etudiants']),
+                    'cette_annee': len(e['cette_annee']),
+                    'tuteurs': sorted(e['tuteurs'].values(), key=lambda t: _suivi_key(t['nom']))}
+                   for e in ents.values()]
+    entreprises.sort(key=lambda e: (-e['cette_annee'], -e['etudiants'], _suivi_key(e['entreprise'])))
+
+    deps = {}
+    for r in current:
+        if r['entreprise'] or r['ville'] or r['departement']:
+            d = r['departement'] or 'Non renseigné'
+            deps[d] = deps.get(d, 0) + 1
+    return {
+        'total': len(current),
+        'avec_entreprise': sum(1 for r in current if r['entreprise']),
+        'avec_tuteur_entreprise': sum(1 for r in current if r['tuteur_entreprise']),
+        'avec_tuteur_univ': sum(1 for r in current if r['tuteur_univ']),
+        'suivis': suivis,
+        'non_attribues': sum(1 for r in current if not r['tuteur_univ']),
+        'entreprises': entreprises,
+        'departements': sorted(deps.items(), key=lambda kv: (-kv[1], kv[0])),
+    }
+
+@app.route('/api/suivi/<kind>', methods=['GET'])
+def get_suivi(kind):
+    """Onglet Stages ou Alternance : fiches de suivi des étudiants concernés pour une
+    année universitaire (?year=AAAA-AAAA, défaut : l'année de la session), par
+    cohorte, et statistiques. Lisible par les profils qui voient l'onglet."""
+    if kind not in _SUIVI_KINDS:
+        return error_response('Onglet inconnu', 404)
+    key = _SUIVI_KINDS[kind][0]
+    tabs = _session_tabs()
+    if tabs is not None and key not in tabs['visible']:
+        return error_response('Accès réservé', 403)
+    year_label = (request.args.get('year') or '').strip()
+    if not _is_year(year_label):
+        year_label = get_current_year() or ''
+    try:
+        start = int(year_label[:4])
+    except ValueError:
+        return error_response('Année universitaire inconnue', 400)
+    pdb = get_promotions_db()
+    other_kind = 'stages' if kind == 'alternance' else 'alternance'
+    cohorts, current, other = [], [], []
+    for pid, name, yg in _suivi_cohorts(pdb, start):
+        data = _tuteurs_students(pdb, pid, yg)
+        if not data:
+            continue
+        mine = []
+        for s in data['students']:
+            s.update(pid=pid, year=yg, promotion=name)
+            if _suivi_concerne(kind, s['formation'], yg):
+                mine.append(s)
+            elif _suivi_concerne(other_kind, s['formation'], yg):
+                other.append(s)
+        current += mine
+        if mine:
+            cohorts.append({'pid': pid, 'promotion': name, 'year': yg, 'students': mine})
+    return jsonify({'kind': kind, 'year_label': year_label, 'cohorts': cohorts,
+                    'editable': tabs is None or key in tabs['edit'],
+                    'stats': _suivi_stats(pdb, kind, current, other, start)})
 
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>/students', methods=['POST'])
 def add_year_student(pid, year):

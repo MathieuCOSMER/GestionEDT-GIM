@@ -384,7 +384,7 @@
         .role-badge.teacher { background: #dbeafe; color: #1e40af; }
         .role-badge.superadmin { background: #fef3c7; color: #92400e; }
         .role-badge.resp { background: #ede9fe; color: #5b21b6; }
-        /* Droits étendus d'un enseignant (liste Gestion enseignant, vue superadmin) */
+        /* Droits étendus d'un enseignant (liste de l'onglet Enseignant, vue superadmin) */
         .right-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px;
                      font-size: .7rem; font-weight: 600; background: #ede9fe; color: #5b21b6; }
         .right-tag.admin { background: #dcfce7; color: #166534; }
@@ -493,15 +493,17 @@
 
 <nav>
     <strong>EDT Manager</strong>
-    <button onclick="showServicePage()" class="active" id="nav-service">Service enseignant</button>
+    <button onclick="showServicePage()" class="active" id="nav-service">Service</button>
     <button onclick="showPage('salles')" id="nav-salles">Salles</button>
-    <button onclick="showPage('enseignants')" id="nav-enseignants">Gestion enseignant</button>
+    <button onclick="showPage('enseignants')" id="nav-enseignants">Enseignant</button>
     <button onclick="showPage('journal')" id="nav-journal" class="admin-only superadmin-only">Journal</button>
     <button onclick="showPage('programme')" id="nav-programme">Programme</button>
     <button onclick="showPage('mon-compte')" id="nav-mon-compte" style="display:none">Mon Compte</button>
     <button onclick="showPage('saisie')" id="nav-saisie" style="display:none">Saisie Notes</button>
     <button onclick="showPage('promotions')" id="nav-promotions">Promotions</button>
     <button onclick="showPage('etudiants')" id="nav-etudiants">Étudiants</button>
+    <button onclick="showPage('stages')" id="nav-stages">Stages</button>
+    <button onclick="showPage('alternance')" id="nav-alternance">Alternance</button>
     <button onclick="showPage('statistiques')" id="nav-statistiques">Statistiques</button>
     <button onclick="showPage('parametres')" id="nav-parametres" class="admin-only">Paramètres</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
@@ -550,7 +552,7 @@
         </div>
     </div>
     <div class="link-grid">
-        <div class="link-card" onclick="showPage('enseignants')"><h3>Gestion enseignant</h3><p>Gérer les enseignants</p></div>
+        <div class="link-card" onclick="showPage('enseignants')"><h3>Enseignant</h3><p>Gérer les enseignants</p></div>
         <div class="link-card" onclick="showPage('matieres')"><h3>Matières</h3><p>Consulter les matières</p></div>
         <div class="link-card" onclick="showPage('salles')"><h3>Salles</h3><p>Gérer les salles</p></div>
         <div class="link-card" onclick="showPage('repartition-enseignant')"><h3>Bilan Global</h3><p>Vue par enseignant</p></div>
@@ -561,7 +563,7 @@
 <!-- ===== ENSEIGNANTS ===== -->
 <div class="page" id="page-enseignants">
     <div class="toolbar">
-        <h1>Gestion enseignant</h1>
+        <h1>Enseignant</h1>
         <button class="btn btn-primary admin-only" id="teacher-add-btn" onclick="openTeacherModal()">+ Ajouter</button>
     </div>
     <div id="teachers-table"><div class="spinner">Chargement…</div></div>
@@ -742,9 +744,9 @@
                 <label>Année de la cohorte :</label>
                 <select id="tut-year-select" onchange="onTutYearChange()"></select>
                 <span style="color:#6b7280;font-size:.85rem">
-                    Tuteur universitaire (enseignants titulaires) et tuteur entreprise par étudiant.
-                    ALT : la saisie vaut aussi pour les années suivantes sauf changement ;
-                    FTP : saisie par stage (2ᵉ et 3ᵉ année).
+                    Consultation : les fiches se modifient dans les onglets Stages et Alternance.
+                    ALT : la fiche vaut aussi pour les années suivantes sauf changement ;
+                    FTP : une fiche par stage (2ᵉ et 3ᵉ année).
                 </span>
             </div>
         </div>
@@ -1036,8 +1038,8 @@
         <div class="superadmin-only">
         <h3 style="color:#374151;margin:8px 0">Année universitaire active</h3>
         <p style="color:#6b7280;font-size:.9rem;margin-top:0">
-            Année de travail de tous les onglets (Matières, Salles, Gestion enseignant, Journal…).
-            L'onglet <strong>Service enseignant</strong> a son propre sélecteur d'affichage et
+            Année de travail de tous les onglets (Matières, Salles, Enseignant, Journal…).
+            L'onglet <strong>Service</strong> a son propre sélecteur d'affichage et
             n'est pas concerné par ce réglage.
         </p>
         <div style="display:flex;gap:10px;align-items:center;margin:12px 0 24px">
@@ -1073,7 +1075,7 @@
             <strong>Modifier</strong> autorise à y enregistrer des changements — contrôlé par le
             serveur. Le superadmin a toujours tous les droits. Les profils <strong>Resp.</strong>
             s'ajoutent, dans sa session normale, au profil « Enseignant avec mdp » de l'enseignant
-            à qui ces responsabilités sont confiées (fiche de l'enseignant, Gestion enseignant) ;
+            à qui ces responsabilités sont confiées (fiche de l'enseignant, onglet Enseignant) ;
             un responsable de plusieurs domaines cumule leurs accès, et les tuteurs restent
             partagés : alternants pour le responsable ALT, stagiaires
             FTP pour le responsable des stages. Fond jaune : fermé par défaut au profil. « — » :
@@ -1306,6 +1308,42 @@
         </div>
     </div>
     <div id="etu-content"><div class="spinner">Chargement…</div></div>
+</div>
+
+<!-- ===== STAGES / ALTERNANCE : fiches de suivi et statistiques ===== -->
+<!-- Même écran pour les deux onglets (loadSuivi) : responsable du domaine et admin -->
+<div class="page" id="page-stages">
+    <div class="toolbar">
+        <h1>Stages</h1>
+        <div class="filters">
+            <label for="suivi-stages-year">Année universitaire :</label>
+            <select id="suivi-stages-year" onchange="onSuiviYear('stages')" style="font-weight:600"></select>
+            <span style="color:#6b7280;font-size:.85rem">Stagiaires FTP de 2ᵉ et 3ᵉ année</span>
+        </div>
+    </div>
+    <div class="subtabs">
+        <button type="button" id="suivi-stages-tab-fiches" class="subtab active" onclick="showSuiviTab('stages', 'fiches')">Tuteurs</button>
+        <button type="button" id="suivi-stages-tab-stats" class="subtab" onclick="showSuiviTab('stages', 'stats')">Statistiques</button>
+    </div>
+    <div id="suivi-stages-content"><div class="spinner">Chargement…</div></div>
+</div>
+
+<!-- ===== STAGES / ALTERNANCE : fiches de suivi et statistiques ===== -->
+<!-- Même écran pour les deux onglets (loadSuivi) : responsable du domaine et admin -->
+<div class="page" id="page-alternance">
+    <div class="toolbar">
+        <h1>Alternance</h1>
+        <div class="filters">
+            <label for="suivi-alternance-year">Année universitaire :</label>
+            <select id="suivi-alternance-year" onchange="onSuiviYear('alternance')" style="font-weight:600"></select>
+            <span style="color:#6b7280;font-size:.85rem">Alternants des trois années</span>
+        </div>
+    </div>
+    <div class="subtabs">
+        <button type="button" id="suivi-alternance-tab-fiches" class="subtab active" onclick="showSuiviTab('alternance', 'fiches')">Tuteurs</button>
+        <button type="button" id="suivi-alternance-tab-stats" class="subtab" onclick="showSuiviTab('alternance', 'stats')">Statistiques</button>
+    </div>
+    <div id="suivi-alternance-content"><div class="spinner">Chargement…</div></div>
 </div>
 
 <!-- ===== STATISTIQUES ===== -->
@@ -1784,6 +1822,42 @@
 </div>
 
 <!-- ===== MODAL ENSEIGNANT ===== -->
+<!-- Fiche de suivi d'un stagiaire ou d'un alternant (onglets Stages / Alternance) -->
+<div class="modal-backdrop" id="modal-suivi">
+    <div class="modal" style="max-width:640px">
+        <h2 id="suivi-modal-title" style="margin-bottom:4px">Fiche de suivi</h2>
+        <p id="suivi-modal-sub" style="color:#6b7280;margin:0 0 14px;font-size:.85rem"></p>
+        <form onsubmit="submitSuivi(event)">
+            <div class="form-group"><label>Entreprise / organisme</label>
+                <input id="suivi-entreprise" list="suivi-entreprises" oninput="suiviEntrepriseInput()" autocomplete="off"></div>
+            <datalist id="suivi-entreprises"></datalist>
+            <div style="display:flex;gap:10px">
+                <div class="form-group" style="flex:2"><label>Ville</label><input id="suivi-ville"></div>
+                <div class="form-group" style="flex:1"><label>Département</label>
+                    <input id="suivi-departement" placeholder="83" title="Numéro (83) ou nom (Var)"></div>
+            </div>
+            <div style="display:flex;gap:10px">
+                <div class="form-group" style="flex:1"><label>Tuteur entreprise</label>
+                    <input id="suivi-tuteur_entreprise" list="suivi-tuteurs" oninput="suiviTuteurInput()"
+                           placeholder="Prénom Nom" autocomplete="off"></div>
+                <div class="form-group" style="flex:1"><label>Fonction</label><input id="suivi-tuteur_fonction"></div>
+            </div>
+            <datalist id="suivi-tuteurs"></datalist>
+            <div style="display:flex;gap:10px">
+                <div class="form-group" style="flex:1"><label>E-mail</label><input id="suivi-tuteur_email" type="email"></div>
+                <div class="form-group" style="flex:1"><label>Téléphone</label><input id="suivi-tuteur_tel"></div>
+            </div>
+            <div class="form-group"><label id="suivi-mission-label">Mission</label>
+                <textarea id="suivi-mission" rows="3" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font:inherit;resize:vertical"></textarea></div>
+            <div class="form-group"><label>Tuteur universitaire</label><select id="suivi-tuteur_univ"></select></div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-suivi')">Annuler</button>
+                <button type="submit" class="btn btn-primary">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <div class="modal-backdrop" id="modal-teacher">
     <div class="modal">
         <h2 id="modal-teacher-title">Ajouter un enseignant</h2>
@@ -2392,7 +2466,7 @@ function _visiblePage(name) {
         return name;
     }
     const order = ['service', 'programme', 'statistiques', 'mon-compte', 'saisie', 'promotions',
-                   'etudiants', 'salles', 'enseignants', 'parametres'];
+                   'etudiants', 'stages', 'alternance', 'salles', 'enseignants', 'parametres'];
     for (const p of order) {
         const b = document.getElementById('nav-' + p);
         if (!b || b.style.display === 'none' || tabHidden('nav:' + p)) continue;
@@ -2822,6 +2896,7 @@ async function loadPage(name, forceReload) {
             else await loadPromotions();
         }
         else if (name === 'etudiants') { await loadEtudiants(); }
+        else if (name === 'stages' || name === 'alternance') { await loadSuivi(name); }
         else if (name === 'statistiques') {
             if (tabHidden('st:' + _statsTab))
                 _statsTab = _firstVisibleTab('st:', ['apercu', 'etudiants', 'recrutement', 'parcours',
@@ -4832,23 +4907,15 @@ async function loadTuteurs() {
         `<option value="${y}" ${y === _tutYear ? 'selected' : ''}>${_effYearLabel(y)}</option>`).join('');
     if (!_tutData) el.innerHTML = '<div class="spinner">Chargement…</div>';
     try {
-        // Liste des enseignants de l'année active pour le tuteur universitaire :
-        // seuls les TITULAIRES peuvent être tuteur universitaire (statut vide =
-        // titulaire, comme ailleurs dans l'appli). Un tuteur déjà enregistré qui
-        // n'est plus dans la liste reste conservé par univOptions().
-        const [teachers, data] = await Promise.all([
-            api('/teachers'), api(`/promotions/${_promoId}/tuteurs/${_tutYear}`)
-        ]);
-        _tutData = data;
-        _tutData.teachers = teachers
-            .filter(t => (t.status || 'Titulaire') === 'Titulaire')
-            .map(t => t.name).sort((a, b) => a.localeCompare(b));
+        _tutData = await api(`/promotions/${_promoId}/tuteurs/${_tutYear}`);
         renderTuteurs();
     } catch (e) {
         el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
     }
 }
 
+// Consultation : les fiches se modifient dans les onglets Stages (stagiaires FTP)
+// et Alternance (alternants), où un lien mène quand l'onglet est ouvert à la session
 function renderTuteurs() {
     const d = _tutData;
     const el = document.getElementById('tuteurs-content');
@@ -4856,45 +4923,37 @@ function renderTuteurs() {
         el.innerHTML = '<div class="empty">Aucun étudiant dans l\'effectif de cette année.</div>';
         return;
     }
-    const univOptions = cur => '<option value="">—</option>'
-        + d.teachers.map(n => `<option value="${esc(n)}"${n === cur ? ' selected' : ''}>${esc(n)}</option>`).join('')
-        // Tuteur enregistré mais absent de la liste (ancien enseignant) : conservé
-        + (cur && !d.teachers.includes(cur) ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : '');
-    const inputStyle = 'width:95%;padding:4px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:.82rem';
-    // Section modifiable ou non selon la session, calculé par le serveur : le
-    // responsable ALT gère les alternants, le responsable des stages les stagiaires FTP
-    const canEdit = f => d.editable ? !!d.editable[f] : editUI('promo:tuteurs');
-    const section = (title, subtitle, list, editable) => {
+    const dash = '<span style="color:#9ca3af">—</span>';
+    const sub = v => v ? `<div style="font-size:.78rem;color:#6b7280">${esc(v)}</div>` : '';
+    const goTo = page => tabHidden('nav:' + page) || document.getElementById('nav-' + page).style.display === 'none'
+        ? '' : ` — <a href="#" onclick="showPage('${page}');return false">modifier dans l'onglet ${
+              page === 'stages' ? 'Stages' : 'Alternance'}</a>`;
+    const section = (title, subtitle, list) => {
         if (!list.length) return '';
-        const dis = editable ? '' : ' disabled';
-        const rows = list.map((s, i) => `<tr data-tut-sid="${s.id}">
-            <td style="color:#9ca3af">${i + 1}</td>
-            <td><strong>${esc(s.nom || '')}</strong></td>
-            <td>${esc(s.prenom || '')}</td>
-            <td><select class="tut-univ" onchange="saveTuteurRow(${s.id})"${dis}
-                style="padding:4px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:.82rem;max-width:180px">${univOptions(s.tuteur_univ)}</select></td>
-            <td><input class="tut-ent" value="${esc(s.tuteur_entreprise)}" onchange="saveTuteurRow(${s.id})"${dis}
-                placeholder="Nom du tuteur" style="${inputStyle}"></td>
-            <td><input class="tut-soc" value="${esc(s.entreprise)}" onchange="saveTuteurRow(${s.id})"${dis}
-                placeholder="Entreprise / organisme" style="${inputStyle}"></td>
-            <td><input class="tut-ville" value="${esc(s.ville || '')}" onchange="saveTuteurRow(${s.id})"${dis}
-                placeholder="Ville" style="${inputStyle}"></td>
-            <td><input class="tut-dep" value="${esc(s.departement || '')}" onchange="saveTuteurRow(${s.id})"${dis}
-                placeholder="83" title="Département : numéro ou nom" style="${inputStyle};text-align:center"></td>
-            <td class="tut-badge" style="font-size:.72rem;color:#6b7280;white-space:nowrap">${
-                s.inherited_from ? `hérité de l'année ${s.inherited_from}` : ''}</td>
-        </tr>`).join('');
+        const rows = list.map((s, i) => {
+            const contact = [s.tuteur_email ? `<a href="mailto:${esc(s.tuteur_email)}">${esc(s.tuteur_email)}</a>` : '',
+                             s.tuteur_tel ? esc(s.tuteur_tel) : ''].filter(Boolean).join(' · ');
+            const lieu = [s.ville, s.departement ? `(${s.departement})` : ''].filter(Boolean).join(' ');
+            return `<tr>
+                <td style="color:#9ca3af">${i + 1}</td>
+                <td><strong>${esc(s.nom || '')}</strong></td>
+                <td>${esc(s.prenom || '')}</td>
+                <td>${s.tuteur_univ ? esc(s.tuteur_univ) : dash}</td>
+                <td>${s.tuteur_entreprise ? esc(s.tuteur_entreprise) : dash}${sub(s.tuteur_fonction)}${
+                    contact ? `<div style="font-size:.78rem">${contact}</div>` : ''}</td>
+                <td>${s.entreprise ? esc(s.entreprise) : dash}</td>
+                <td>${lieu ? esc(lieu) : dash}</td>
+                <td style="font-size:.72rem;color:#6b7280;white-space:nowrap">${
+                    s.inherited_from ? `hérité de l'année ${s.inherited_from}` : ''}</td>
+            </tr>`;
+        }).join('');
         return `<h3 style="margin:14px 0 4px;color:#374151">${title}
-                <span style="font-weight:400;font-size:.8rem;color:#6b7280">${subtitle}${
-                    editable ? '' : ' — consultation'}</span></h3>
+                <span style="font-weight:400;font-size:.8rem;color:#6b7280">${subtitle}</span></h3>
             <div style="overflow:auto;max-height:38vh;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px">
             <table class="pn-table" style="table-layout:auto;width:100%">
                 <thead><tr><th style="width:36px">#</th><th>Nom</th><th>Prénom</th>
-                    <th style="width:190px">Tuteur universitaire</th>
-                    <th style="width:190px">Tuteur entreprise</th>
-                    <th style="width:190px">Entreprise</th>
-                    <th style="width:130px" title="Ville de l'entreprise ou du lieu de stage">Ville</th>
-                    <th style="width:70px" title="Département : numéro (83) ou nom (Var)">Dép.</th>
+                    <th>Tuteur universitaire</th><th>Tuteur entreprise</th><th>Entreprise</th>
+                    <th title="Ville et département de l'entreprise ou du lieu de stage">Lieu</th>
                     <th style="width:130px"></th></tr></thead>
                 <tbody>${rows}</tbody>
             </table></div>`;
@@ -4902,43 +4961,345 @@ function renderTuteurs() {
     const alt = d.students.filter(s => s.formation === 'ALT');
     const ftp = d.students.filter(s => s.formation !== 'ALT');
     let html = section('ALT — Alternants',
-        'saisie conservée les années suivantes sauf changement', alt, canEdit('ALT'));
+        'fiche conservée les années suivantes sauf changement' + goTo('alternance'), alt);
     if (_tutYear >= 2) {
-        html += section(`FTP — Stage ${_tutYear}ᵉ année`,
-            'saisie propre à ce stage (pas de report)', ftp, canEdit('FTP'));
+        html += section(`FTP — Stage ${_tutYear}ᵉ année`, 'fiche propre à ce stage' + goTo('stages'), ftp);
     } else if (ftp.length) {
         html += `<h3 style="margin:14px 0 4px;color:#374151">FTP</h3>
-            <div class="empty" style="margin:6px 0">Pas de stage en 1ʳᵉ année — les tuteurs FTP se saisissent
-            sur l'année 2 et l'année 3.</div>`;
+            <div class="empty" style="margin:6px 0">Pas de stage en 1ʳᵉ année — les fiches de stage
+            concernent l'année 2 et l'année 3.</div>`;
     }
     el.innerHTML = html || '<div class="empty">Aucun étudiant.</div>';
 }
 
-async function saveTuteurRow(sid) {
-    const row = document.querySelector(`tr[data-tut-sid="${sid}"]`);
-    if (!row) return;
-    const body = {
-        tuteur_univ: row.querySelector('.tut-univ').value,
-        tuteur_entreprise: row.querySelector('.tut-ent').value.trim(),
-        entreprise: row.querySelector('.tut-soc').value.trim(),
-        ville: row.querySelector('.tut-ville').value.trim(),
-        departement: row.querySelector('.tut-dep').value.trim(),
-    };
+// ===== STAGES / ALTERNANCE =====
+// Un même écran pour les deux onglets : stagiaires FTP de 2e et 3e année (Stages,
+// responsable des stages) et alternants des trois années (Alternance, responsable
+// ALT) ; l'admin voit les deux. Les fiches sont celles de Promotions › Tuteurs
+// (même table), complétées des coordonnées du tuteur entreprise et de la mission.
+const SUIVI_KINDS = {
+    stages: { who: 'stagiaire', mission: 'Sujet du stage', autre: 'alternance', years: [2, 3] },
+    alternance: { who: 'alternant', mission: 'Poste et missions', autre: 'stages', years: [1, 2, 3] },
+};
+const SUIVI_FIELDS = ['entreprise', 'ville', 'departement', 'tuteur_entreprise', 'tuteur_fonction',
+                      'tuteur_email', 'tuteur_tel', 'mission', 'tuteur_univ'];
+const _suivi = {};
+let _suiviEdit = null;   // fiche ouverte dans le modal : {kind, pid, year, sid}
+
+function _suiviState(kind) {
+    return _suivi[kind] || (_suivi[kind] = { data: null, tab: 'fiches', q: '', missing: false,
+                                              eq: '', year: '', teachers: [] });
+}
+// Comparaison de noms sans casse ni accents (recherche, entreprises connues)
+function _suiviNorm(v) {
+    return String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/\s+/g, ' ').trim().toLowerCase();
+}
+function _suiviYearLabel(y) { return y === 1 ? '1ʳᵉ année' : y + 'ᵉ année'; }
+function _suiviLieu(ville, dep) {
+    return [ville, dep ? `(${dep})` : ''].filter(Boolean).join(' ');
+}
+function _suiviPlural(n, word) { return n + ' ' + word + (n > 1 ? 's' : ''); }
+
+async function loadSuivi(kind) {
+    const st = _suiviState(kind);
+    const el = document.getElementById(`suivi-${kind}-content`);
+    if (!st.data) el.innerHTML = '<div class="spinner">Chargement…</div>';
     try {
-        await api(`/promotions/${_promoId}/tuteurs/${_tutYear}/${sid}`,
-            { method: 'PUT', body: JSON.stringify(body) });
-        const badge = row.querySelector('.tut-badge');
-        if (!Object.values(body).some(v => v)) {
-            // Tout effacé : un ALT peut retomber sur la valeur héritée → recharger
-            loadTuteurs();
-        } else if (badge) {
-            badge.textContent = ''; // la saisie de cette année remplace l'héritage
-        }
-        toast('Tuteurs enregistrés');
+        const yq = st.year ? '?year=' + encodeURIComponent(st.year) : '';
+        const [years, data] = await Promise.all([api('/years'), api(`/suivi/${kind}${yq}`)]);
+        st.data = data;
+        st.year = data.year_label;
+        // Tuteur universitaire : les enseignants TITULAIRES de l'année affichée,
+        // comme dans Promotions › Tuteurs (un tuteur déjà enregistré reste proposé)
+        const teachers = await api('/teachers?year=' + encodeURIComponent(st.year));
+        st.teachers = teachers.filter(t => (t.status || 'Titulaire') === 'Titulaire')
+            .map(t => t.name).sort((a, b) => a.localeCompare(b));
+        const sel = document.getElementById(`suivi-${kind}-year`);
+        const list = years.years.includes(st.year) ? years.years : [...years.years, st.year];
+        sel.innerHTML = list.map(y => `<option value="${esc(y)}"${y === st.year ? ' selected' : ''}>${esc(y)}</option>`).join('');
+        renderSuivi(kind);
+    } catch (e) {
+        el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
+    }
+}
+
+function onSuiviYear(kind) {
+    const st = _suiviState(kind);
+    st.year = document.getElementById(`suivi-${kind}-year`).value;
+    st.data = null;
+    loadSuivi(kind);
+}
+
+function showSuiviTab(kind, tab) {
+    _suiviState(kind).tab = tab;
+    renderSuivi(kind);
+}
+
+function onSuiviFilter(kind) {
+    const st = _suiviState(kind);
+    st.q = (document.getElementById(`suivi-${kind}-q`) || {}).value || '';
+    st.missing = !!(document.getElementById(`suivi-${kind}-missing`) || {}).checked;
+    renderSuiviBody(kind);
+}
+
+function renderSuivi(kind) {
+    const st = _suiviState(kind), d = st.data;
+    ['fiches', 'stats'].forEach(t =>
+        document.getElementById(`suivi-${kind}-tab-${t}`).classList.toggle('active', t === st.tab));
+    const el = document.getElementById(`suivi-${kind}-content`);
+    if (!d) return;
+    if (st.tab === 'stats') { renderSuiviStats(kind); return; }
+    const s = d.stats, who = SUIVI_KINDS[kind].who;
+    el.innerHTML = `<div class="toolbar" style="margin-bottom:8px">
+            <div class="filters">
+                <input type="search" id="suivi-${kind}-q" value="${esc(st.q)}" oninput="onSuiviFilter('${kind}')"
+                       placeholder="Étudiant, entreprise, tuteur…"
+                       style="min-width:240px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+                <label style="display:inline-flex;align-items:center;gap:6px;font-size:.85rem;color:#374151;cursor:pointer"
+                       title="Fiches sans entreprise, sans tuteur entreprise ou sans tuteur universitaire">
+                    <input type="checkbox" id="suivi-${kind}-missing" ${st.missing ? 'checked' : ''}
+                           onchange="onSuiviFilter('${kind}')" style="width:auto"> À compléter seulement</label>
+            </div>
+            <span style="color:#6b7280;font-size:.85rem">${_suiviPlural(s.total, who)} ·
+                ${s.avec_entreprise} avec entreprise · ${s.non_attribues} sans tuteur universitaire${
+                d.editable ? '' : ' — consultation'}</span>
+        </div>
+        <div id="suivi-${kind}-body"></div>`;
+    renderSuiviBody(kind);
+}
+
+function renderSuiviBody(kind) {
+    const st = _suiviState(kind), d = st.data;
+    const body = document.getElementById(`suivi-${kind}-body`);
+    if (!body || !d) return;
+    if (!d.cohorts.length) {
+        body.innerHTML = `<div class="empty">Aucun ${SUIVI_KINDS[kind].who} pour l'année ${esc(d.year_label)}.</div>`;
+        return;
+    }
+    const q = _suiviNorm(st.q);
+    const match = s => !q || [s.nom, s.prenom, s.entreprise, s.ville, s.tuteur_entreprise, s.tuteur_univ]
+        .some(v => _suiviNorm(v).includes(q));
+    const incomplete = s => !s.entreprise || !s.tuteur_entreprise || !s.tuteur_univ;
+    const edit = d.editable;
+    const univOptions = cur => '<option value="">—</option>'
+        + st.teachers.map(n => `<option value="${esc(n)}"${n === cur ? ' selected' : ''}>${esc(n)}</option>`).join('')
+        + (cur && !st.teachers.includes(cur) ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : '');
+    const missing = '<span style="color:#b45309;font-size:.8rem">à renseigner</span>';
+    let html = '';
+    d.cohorts.forEach(c => {
+        const list = c.students.filter(s => match(s) && (!st.missing || incomplete(s)));
+        if (!list.length) return;
+        const rows = list.map((s, i) => {
+            const contact = [s.tuteur_email ? `<a href="mailto:${esc(s.tuteur_email)}">${esc(s.tuteur_email)}</a>` : '',
+                             s.tuteur_tel ? esc(s.tuteur_tel) : ''].filter(Boolean).join(' · ');
+            const univ = edit
+                ? `<select onchange="saveSuiviUniv('${kind}', ${c.pid}, ${c.year}, ${s.id}, this)"
+                       style="padding:4px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:.82rem;max-width:180px">${univOptions(s.tuteur_univ)}</select>`
+                : (s.tuteur_univ ? esc(s.tuteur_univ) : missing);
+            return `<tr>
+                <td style="color:#9ca3af">${i + 1}</td>
+                <td><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${s.inherited_from
+                    ? `<div style="font-size:.72rem;color:#6b7280">fiche reprise de la ${_suiviYearLabel(s.inherited_from)}</div>` : ''}</td>
+                <td>${s.entreprise ? `<strong>${esc(s.entreprise)}</strong>` : missing}${
+                    s.ville || s.departement ? `<div style="font-size:.78rem;color:#6b7280">${esc(_suiviLieu(s.ville, s.departement))}</div>` : ''}</td>
+                <td>${s.tuteur_entreprise ? esc(s.tuteur_entreprise) : missing}${
+                    s.tuteur_fonction ? `<div style="font-size:.78rem;color:#6b7280">${esc(s.tuteur_fonction)}</div>` : ''}${
+                    contact ? `<div style="font-size:.78rem">${contact}</div>` : ''}</td>
+                <td style="font-size:.8rem;color:#374151;max-width:260px" title="${esc(s.mission || '')}">${
+                    esc((s.mission || '').length > 90 ? s.mission.slice(0, 90) + '…' : (s.mission || ''))}</td>
+                <td>${univ}</td>
+                <td style="white-space:nowrap"><button class="btn btn-secondary btn-sm"
+                    onclick="openSuiviModal('${kind}', ${c.pid}, ${c.year}, ${s.id})">${edit ? 'Modifier' : 'Voir'}</button></td>
+            </tr>`;
+        }).join('');
+        html += `<h3 style="margin:16px 0 6px;color:#374151">${_suiviYearLabel(c.year)} — promotion ${esc(c.promotion)}
+                <span style="font-weight:400;font-size:.8rem;color:#6b7280">${_suiviPlural(list.length, SUIVI_KINDS[kind].who)}</span></h3>
+            <div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px">
+            <table class="pn-table" style="table-layout:auto;width:100%">
+                <thead><tr><th style="width:36px">#</th><th>Étudiant</th><th>Entreprise</th>
+                    <th>Tuteur entreprise</th><th>${esc(SUIVI_KINDS[kind].mission)}</th>
+                    <th style="width:190px">Tuteur universitaire</th><th style="width:80px"></th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table></div>`;
+    });
+    body.innerHTML = html || '<div class="empty">Aucune fiche pour ce filtre.</div>';
+}
+
+// Tuteur universitaire choisi dans la liste : seul ce champ est envoyé
+async function saveSuiviUniv(kind, pid, year, sid, sel) {
+    try {
+        await api(`/promotions/${pid}/tuteurs/${year}/${sid}`,
+            { method: 'PUT', body: JSON.stringify({ tuteur_univ: sel.value }) });
+        toast('Tuteur universitaire enregistré');
     } catch (e) {
         toast('Erreur : ' + e.message, 'error');
-        loadTuteurs();
     }
+    loadSuivi(kind);   // compteurs et statistiques à jour
+}
+
+function openSuiviModal(kind, pid, year, sid) {
+    const st = _suiviState(kind);
+    const c = st.data.cohorts.find(x => x.pid === pid && x.year === year);
+    const s = c && c.students.find(x => x.id === sid);
+    if (!s) return;
+    _suiviEdit = { kind, pid, year, sid };
+    document.getElementById('suivi-modal-title').textContent = `${s.nom || ''} ${s.prenom || ''}`.trim();
+    document.getElementById('suivi-modal-sub').textContent =
+        `${_suiviYearLabel(year)} — promotion ${c.promotion}` + (s.inherited_from
+            ? ` · fiche reprise de la ${_suiviYearLabel(s.inherited_from)} : l'enregistrer la remplace à partir de cette année`
+            : '');
+    document.getElementById('suivi-mission-label').textContent = SUIVI_KINDS[kind].mission;
+    const univ = document.getElementById('suivi-tuteur_univ');
+    univ.innerHTML = '<option value="">—</option>' + st.teachers.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')
+        + (s.tuteur_univ && !st.teachers.includes(s.tuteur_univ)
+            ? `<option value="${esc(s.tuteur_univ)}">${esc(s.tuteur_univ)}</option>` : '');
+    SUIVI_FIELDS.forEach(f => { document.getElementById('suivi-' + f).value = s[f] || ''; });
+    // Entreprises déjà connues (toutes années) : saisie homogène, lieu et tuteurs repris
+    document.getElementById('suivi-entreprises').innerHTML = st.data.stats.entreprises
+        .map(e => `<option value="${esc(e.entreprise)}">`).join('');
+    suiviRefreshTuteurs();
+    const ro = !st.data.editable;
+    document.querySelectorAll('#modal-suivi input, #modal-suivi select, #modal-suivi textarea')
+        .forEach(i => { i.disabled = ro; });
+    document.querySelector('#modal-suivi button[type="submit"]').style.display = ro ? 'none' : '';
+    openModal('modal-suivi');
+}
+
+// Entreprise connue (même nom, sans casse ni accents) de l'onglet ouvert
+function _suiviEntreprise() {
+    const st = _suiviEdit && _suiviState(_suiviEdit.kind);
+    const name = _suiviNorm(document.getElementById('suivi-entreprise').value);
+    return (st && name) ? st.data.stats.entreprises.find(e => _suiviNorm(e.entreprise) === name) : null;
+}
+function suiviRefreshTuteurs() {
+    const e = _suiviEntreprise();
+    document.getElementById('suivi-tuteurs').innerHTML = e
+        ? e.tuteurs.map(t => `<option value="${esc(t.nom)}">`).join('') : '';
+}
+// Entreprise déjà connue : reprend son lieu si la fiche n'en a pas encore
+function suiviEntrepriseInput() {
+    suiviRefreshTuteurs();
+    const e = _suiviEntreprise();
+    const ville = document.getElementById('suivi-ville'), dep = document.getElementById('suivi-departement');
+    if (e && e.lieux.length === 1 && !ville.value && !dep.value) {
+        ville.value = e.lieux[0].ville;
+        dep.value = e.lieux[0].departement;
+    }
+}
+// Tuteur déjà connu dans cette entreprise : reprend ses coordonnées si elles sont vides
+function suiviTuteurInput() {
+    const e = _suiviEntreprise();
+    const name = _suiviNorm(document.getElementById('suivi-tuteur_entreprise').value);
+    const t = e && e.tuteurs.find(x => _suiviNorm(x.nom) === name);
+    if (!t) return;
+    [['tuteur_fonction', t.fonction], ['tuteur_email', t.email], ['tuteur_tel', t.tel]].forEach(([f, v]) => {
+        const el = document.getElementById('suivi-' + f);
+        if (!el.value && v) el.value = v;
+    });
+}
+
+async function submitSuivi(ev) {
+    ev.preventDefault();
+    if (!_suiviEdit) return;
+    const { kind, pid, year, sid } = _suiviEdit;
+    const body = {};
+    SUIVI_FIELDS.forEach(f => { body[f] = document.getElementById('suivi-' + f).value.trim(); });
+    try {
+        await api(`/promotions/${pid}/tuteurs/${year}/${sid}`, { method: 'PUT', body: JSON.stringify(body) });
+        closeModal('modal-suivi');
+        toast('Fiche enregistrée');
+        loadSuivi(kind);
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+// ----- Statistiques : couverture, suivis par enseignant, départements, entreprises -----
+function renderSuiviStats(kind) {
+    const st = _suiviState(kind), d = st.data, s = d.stats, k = SUIVI_KINDS[kind];
+    const el = document.getElementById(`suivi-${kind}-content`);
+    const pct = n => s.total ? ` <span style="color:#6b7280">(${Math.round(100 * n / s.total)} %)</span>` : '';
+    const autreLabel = kind === 'stages' ? 'Alternants' : 'Stagiaires';
+    const couverture = `<div class="card">
+        <h3 style="margin:0 0 8px;color:#374151">Fiches ${esc(d.year_label)}</h3>
+        <table class="pn-table" style="table-layout:auto;width:100%"><tbody>
+            <tr><td>${k.who.charAt(0).toUpperCase() + k.who.slice(1)}s suivis</td><td style="text-align:right"><strong>${s.total}</strong></td></tr>
+            <tr><td>Avec entreprise</td><td style="text-align:right">${s.avec_entreprise}${pct(s.avec_entreprise)}</td></tr>
+            <tr><td>Avec tuteur entreprise</td><td style="text-align:right">${s.avec_tuteur_entreprise}${pct(s.avec_tuteur_entreprise)}</td></tr>
+            <tr><td>Avec tuteur universitaire</td><td style="text-align:right">${s.avec_tuteur_univ}${pct(s.avec_tuteur_univ)}</td></tr>
+        </tbody></table></div>`;
+    const deps = `<div class="card">
+        <h3 style="margin:0 0 8px;color:#374151">Lieux par département</h3>
+        ${s.departements.length ? `<table class="pn-table" style="table-layout:auto;width:100%">
+            <thead><tr><th>Département</th><th style="text-align:right">${esc(k.who)}s</th></tr></thead><tbody>
+            ${s.departements.map(([dep, n]) => `<tr><td>${esc(dep)}</td><td style="text-align:right">${n}</td></tr>`).join('')}
+            </tbody></table>` : '<div class="empty">Aucun lieu renseigné.</div>'}</div>`;
+    const suivis = `<div class="card">
+        <h3 style="margin:0 0 4px;color:#374151">Suivis par enseignant</h3>
+        <p style="color:#6b7280;font-size:.8rem;margin:0 0 8px">Tuteur universitaire, année ${esc(d.year_label)}.
+            La dernière colonne y ajoute les ${autreLabel.toLowerCase()} qu'il suit.</p>
+        ${s.suivis.length ? `<table class="pn-table" style="table-layout:auto;width:100%">
+            <thead><tr><th>Enseignant</th>${k.years.map(y => `<th style="text-align:right">${_suiviYearLabel(y)}</th>`).join('')}
+                <th style="text-align:right">Total</th><th style="text-align:right" title="Stagiaires et alternants suivis par l'enseignant">Stages + alternance</th></tr></thead><tbody>
+            ${s.suivis.map(t => `<tr><td>${esc(t.enseignant)}</td>${k.years.map(y =>
+                `<td style="text-align:right">${t.par_annee[y] || ''}</td>`).join('')}
+                <td style="text-align:right"><strong>${t.n}</strong></td>
+                <td style="text-align:right;color:#6b7280">${t.n + t.autre}</td></tr>`).join('')}
+            <tr><td style="color:#b45309">Sans tuteur universitaire</td>${k.years.map(() => '<td></td>').join('')}
+                <td style="text-align:right;color:#b45309"><strong>${s.non_attribues}</strong></td><td></td></tr>
+            </tbody></table>` : '<div class="empty">Aucun tuteur universitaire attribué.</div>'}</div>`;
+    el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:16px">
+            ${couverture}${deps}</div>
+        ${suivis}
+        <div class="card" style="margin-top:16px">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+                <h3 style="margin:0;color:#374151">Entreprises <span style="font-weight:400;font-size:.8rem;color:#6b7280">toutes années</span></h3>
+                <input type="search" id="suivi-${kind}-eq" value="${esc(st.eq)}" oninput="onSuiviEntFilter('${kind}')"
+                       placeholder="Entreprise, ville, tuteur…"
+                       style="min-width:220px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+            </div>
+            <div id="suivi-${kind}-ents"></div>
+        </div>`;
+    renderSuiviEntreprises(kind);
+}
+
+function onSuiviEntFilter(kind) {
+    _suiviState(kind).eq = document.getElementById(`suivi-${kind}-eq`).value;
+    renderSuiviEntreprises(kind);
+}
+
+function renderSuiviEntreprises(kind) {
+    const st = _suiviState(kind), d = st.data;
+    const box = document.getElementById(`suivi-${kind}-ents`);
+    if (!box) return;
+    const q = _suiviNorm(st.eq);
+    const list = d.stats.entreprises.filter(e => !q || [e.entreprise,
+        ...e.lieux.map(l => l.ville + ' ' + l.departement), ...e.tuteurs.map(t => t.nom)]
+        .some(v => _suiviNorm(v).includes(q)));
+    if (!list.length) {
+        box.innerHTML = '<div class="empty">' + (d.stats.entreprises.length ? 'Aucune entreprise pour ce filtre.'
+            : 'Aucune entreprise renseignée.') + '</div>';
+        return;
+    }
+    box.innerHTML = `<div style="overflow:auto;max-height:60vh;border:1px solid #e5e7eb;border-radius:8px">
+        <table class="pn-table" style="table-layout:auto;width:100%">
+        <thead><tr><th>Entreprise</th><th>Lieu</th>
+            <th style="text-align:right" title="${esc(SUIVI_KINDS[kind].who)}s accueillis l'année ${esc(d.year_label)}">${esc(d.year_label)}</th>
+            <th style="text-align:right" title="Étudiants accueillis, toutes années">Total</th>
+            <th>Années</th><th>Tuteurs entreprise</th></tr></thead><tbody>
+        ${list.map(e => `<tr>
+            <td><strong>${esc(e.entreprise)}</strong></td>
+            <td style="font-size:.82rem">${e.lieux.map(l => esc(_suiviLieu(l.ville, l.departement))).join('<br>')}</td>
+            <td style="text-align:right">${e.cette_annee || ''}</td>
+            <td style="text-align:right">${e.etudiants}</td>
+            <td style="font-size:.78rem;color:#6b7280">${e.annees.map(esc).join(', ')}</td>
+            <td style="font-size:.82rem">${e.tuteurs.map(t => `<div>${esc(t.nom)}${
+                t.fonction ? ` <span style="color:#6b7280">— ${esc(t.fonction)}</span>` : ''}${
+                t.email ? ` · <a href="mailto:${esc(t.email)}">${esc(t.email)}</a>` : ''}${
+                t.tel ? ` · ${esc(t.tel)}` : ''}</div>`).join('')}</td>
+        </tr>`).join('')}
+        </tbody></table></div>`;
 }
 
 async function reportEffectifYear() {
@@ -12254,7 +12615,7 @@ function updateCalYearWarning() {
     el.style.display = show ? '' : 'none';
     if (show) el.innerHTML = `⚠️ Ce calendrier modifie l'année <strong>${esc(calYear)}</strong>, `
         + `différente de l'année active <strong>${esc(activeYear)}</strong>. `
-        + `Les autres onglets (Matières, Notes…) travaillent sur l'année active ; en Service enseignant, `
+        + `Les autres onglets (Matières, Notes…) travaillent sur l'année active ; en Service, `
         + `choisissez l'année ${esc(calYear)} pour voir ces modifications.`;
 }
 
