@@ -5849,6 +5849,8 @@ def set_year_tuteurs(pid, year, sid):
     # Alternants pour l'onglet Alternance et le responsable ALT, stagiaires FTP pour
     # l'onglet Stages et le responsable des stages (sous-cohorte de CETTE année)
     face = _year_formation_map(pdb, pid, year).get(sid, 'FTP')
+    if face == 'FTP' and sid in _suivi_stage_mobilite(pdb, 'stages', pid, year):
+        return error_response(f'Étudiant en mobilité internationale au S{2 * year} : pas de stage', 400)
     scope = _tuteurs_formations()
     tuteur_seul = scope is not None and face not in scope
     if tuteur_seul:
@@ -5912,6 +5914,15 @@ def _suivi_concerne(kind, face, year):
     de l'onglet `kind` ? Pas de stage FTP en 1re année."""
     return face == 'ALT' if kind == 'alternance' else (face == 'FTP' and year >= 2)
 
+def _suivi_stage_mobilite(pdb, kind, pid, year):
+    """{student_id: établissement} des stagiaires qui passent le semestre du stage
+    (le semestre pair : S4 en 2e année, S6 en 3e) en mobilité internationale : ils
+    ne font pas de stage, donc ni fiche ni tuteur. Vide hors onglet Stages."""
+    if kind != 'stages':
+        return {}
+    sem = f'S{2 * year}'
+    return {sid: v[sem] for sid, v in _mobility_map(pdb, pid, sem).items()}
+
 def _suivi_cohorts(pdb, start):
     """(pid, nom, année d'étude) des cohortes présentes l'année universitaire qui
     commence en `start` (même règle que la saisie des notes)."""
@@ -5943,7 +5954,7 @@ def _suivi_stats(pdb, kind, current, start):
     # héritées de l'année affichée (alternants qui restent dans leur entreprise).
     starts = {r['id']: r['start_year'] for r in pdb.execute('SELECT id, start_year FROM promotions')}
     current_label = f'{start}-{start + 1}'
-    faces, history = {}, []
+    faces, mobs, history = {}, {}, []
     cols = ', '.join(_TUTOR_FIELDS)
     for r in pdb.execute(f'''SELECT promotion_id, student_id, year, {cols} FROM student_tutors
                              WHERE COALESCE(entreprise, '') <> '' '''):
@@ -5952,7 +5963,9 @@ def _suivi_stats(pdb, kind, current, start):
             continue
         if (pid, y) not in faces:
             faces[(pid, y)] = _year_formation_map(pdb, pid, y)
-        if _suivi_concerne(kind, faces[(pid, y)].get(r['student_id'], 'FTP'), y):
+            mobs[(pid, y)] = _suivi_stage_mobilite(pdb, kind, pid, y)
+        if (_suivi_concerne(kind, faces[(pid, y)].get(r['student_id'], 'FTP'), y)
+                and r['student_id'] not in mobs[(pid, y)]):
             history.append(dict(r, annee=f'{starts[pid] + y - 1}-{starts[pid] + y}'))
     history += [dict(r, student_id=r['id'], annee=current_label) for r in current if r['entreprise']]
     ents = {}
@@ -6005,7 +6018,9 @@ def get_suivi(kind):
     année universitaire (?year=AAAA-AAAA, défaut : l'année de la session), par
     cohorte, et statistiques. Lisible par les profils qui voient l'onglet.
     editable : toutes les fiches modifiables (et le tuteur universitaire attribuable) ;
-    sinon can_edit marque, fiche par fiche, celles que l'enseignant suit."""
+    sinon can_edit marque, fiche par fiche, celles que l'enseignant suit.
+    Stages : `mobilite` liste, par cohorte, ceux qui sont en mobilité internationale
+    au semestre du stage (pas de stage, donc pas de fiche)."""
     if kind not in _SUIVI_KINDS:
         return error_response('Onglet inconnu', 404)
     key = _SUIVI_KINDS[kind][0]
@@ -6027,15 +6042,24 @@ def get_suivi(kind):
         data = _tuteurs_students(pdb, pid, yg)
         if not data:
             continue
-        mine = []
+        mob = _suivi_stage_mobilite(pdb, kind, pid, yg)
+        mine, mobilite = [], []
         for s in data['students']:
             s.update(pid=pid, year=yg, promotion=name,
                      can_edit=power or (bool(me) and _suivi_key(s['tuteur_univ']) == me))
-            if _suivi_concerne(kind, s['formation'], yg):
+            if not _suivi_concerne(kind, s['formation'], yg):
+                continue
+            if s['id'] in mob:
+                # Pas de stage : mentionné à part, hors fiches et statistiques
+                mobilite.append({'id': s['id'], 'person_id': s['person_id'], 'nom': s['nom'],
+                                 'prenom': s['prenom'], 'semestre': f'S{2 * yg}',
+                                 'etablissement': mob[s['id']]})
+            else:
                 mine.append(s)
         current += mine
-        if mine:
-            cohorts.append({'pid': pid, 'promotion': name, 'year': yg, 'students': mine})
+        if mine or mobilite:
+            cohorts.append({'pid': pid, 'promotion': name, 'year': yg, 'students': mine,
+                            'mobilite': mobilite})
     return jsonify({'kind': kind, 'year_label': year_label, 'cohorts': cohorts,
                     'editable': power, 'stats': _suivi_stats(pdb, kind, current, start)})
 

@@ -4894,6 +4894,13 @@ function _suiviLieu(ville, dep) {
     return [ville, dep ? `(${dep})` : ''].filter(Boolean).join(' ');
 }
 function _suiviPlural(n, word) { return n + ' ' + word + (n > 1 ? 's' : ''); }
+// Options du tuteur universitaire (valeur = nom, vacataires suffixés « (vac.) »)
+function _suiviUnivOptions(st, cur) {
+    const vac = st.vacataires || new Set();
+    return '<option value="">—</option>'
+        + st.teachers.map(n => `<option value="${esc(n)}"${n === cur ? ' selected' : ''}>${esc(n)}${vac.has(n) ? ' (vac.)' : ''}</option>`).join('')
+        + (cur && !st.teachers.includes(cur) ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : '');
+}
 
 async function loadSuivi(kind) {
     const st = _suiviState(kind);
@@ -4904,11 +4911,11 @@ async function loadSuivi(kind) {
         const [years, data] = await Promise.all([api('/years'), api(`/suivi/${kind}${yq}`)]);
         st.data = data;
         st.year = data.year_label;
-        // Tuteur universitaire : les enseignants TITULAIRES de l'année affichée
-        // (un tuteur déjà enregistré reste proposé)
+        // Tuteur universitaire : tous les enseignants de l'année affichée,
+        // vacataires signalés (un tuteur déjà enregistré reste proposé)
         const teachers = await api('/teachers?year=' + encodeURIComponent(st.year));
-        st.teachers = teachers.filter(t => (t.status || 'Titulaire') === 'Titulaire')
-            .map(t => t.name).sort((a, b) => a.localeCompare(b));
+        st.teachers = teachers.map(t => t.name).sort((a, b) => a.localeCompare(b));
+        st.vacataires = new Set(teachers.filter(t => (t.status || 'Titulaire') !== 'Titulaire').map(t => t.name));
         const sel = document.getElementById(`suivi-${kind}-year`);
         const list = years.years.includes(st.year) ? years.years : [...years.years, st.year];
         sel.innerHTML = list.map(y => `<option value="${esc(y)}"${y === st.year ? ' selected' : ''}>${esc(y)}</option>`).join('');
@@ -4982,21 +4989,22 @@ function renderSuiviBody(kind) {
         .some(v => _suiviNorm(v).includes(q));
     const incomplete = s => !s.entreprise || !s.tuteur_entreprise || !s.tuteur_univ;
     const edit = d.editable;
-    const univOptions = cur => '<option value="">—</option>'
-        + st.teachers.map(n => `<option value="${esc(n)}"${n === cur ? ' selected' : ''}>${esc(n)}</option>`).join('')
-        + (cur && !st.teachers.includes(cur) ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : '');
     const missing = '<span style="color:#b45309;font-size:.8rem">à renseigner</span>';
+    // Stagiaires en mobilité internationale au semestre du stage : pas de stage,
+    // simplement signalés sous la cohorte (masqués dès qu'un filtre est actif)
+    const filtered = !!(q || st.missing || st.mine);
     let html = '';
     d.cohorts.forEach(c => {
         const list = c.students.filter(s => match(s) && (!st.missing || incomplete(s))
                                             && (!st.mine || _suiviMine(s)));
-        if (!list.length) return;
+        const mob = filtered ? [] : (c.mobilite || []);
+        if (!list.length && !mob.length) return;
         const rows = list.map((s, i) => {
             const contact = [s.tuteur_email ? `<a href="mailto:${esc(s.tuteur_email)}">${esc(s.tuteur_email)}</a>` : '',
                              s.tuteur_tel ? esc(s.tuteur_tel) : ''].filter(Boolean).join(' · ');
             const univ = edit
                 ? `<select onchange="saveSuiviUniv('${kind}', ${c.pid}, ${c.year}, ${s.id}, this)"
-                       style="padding:4px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:.82rem;max-width:180px">${univOptions(s.tuteur_univ)}</select>`
+                       style="padding:4px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:.82rem;max-width:180px">${_suiviUnivOptions(st, s.tuteur_univ)}</select>`
                 : (s.tuteur_univ ? esc(s.tuteur_univ) : missing);
             const fiche = `openStudentCard(${s.person_id || 0})`;
             return `<tr${_suiviMine(s) ? ' style="background:#f5f3ff" title="Étudiant que vous suivez"' : ''}>
@@ -5019,15 +5027,20 @@ function renderSuiviBody(kind) {
                         s.can_edit ? 'Modifier' : 'Suivi'}</button></td>
             </tr>`;
         }).join('');
+        const mobNote = mob.length ? `<div style="font-size:.82rem;color:#6b7280;margin:0 0 12px">
+                Pas de stage — mobilité internationale : ${mob.map(m => `<span onclick="openStudentCard(${m.person_id || 0})"
+                    title="Fiche de renseignements de l'étudiant" style="cursor:pointer;color:#1d4ed8;text-decoration:underline dotted"><strong>${
+                    esc(m.nom || '')}</strong> ${esc(m.prenom || '')}</span> (${esc(m.semestre)}${
+                    m.etablissement ? ', ' + esc(m.etablissement) : ''})`).join(' · ')}</div>` : '';
         html += `<h3 style="margin:16px 0 6px;color:#374151">${_suiviYearLabel(c.year)} — promotion ${esc(c.promotion)}
                 <span style="font-weight:400;font-size:.8rem;color:#6b7280">${_suiviPlural(list.length, SUIVI_KINDS[kind].who)}</span></h3>
-            <div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px">
+            ${list.length ? `<div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px">
             <table class="pn-table" style="table-layout:auto;width:100%">
                 <thead><tr><th style="width:36px">#</th><th>Étudiant</th><th>Entreprise</th>
                     <th>Tuteur entreprise</th><th>${esc(SUIVI_KINDS[kind].mission)}</th>
                     <th style="width:190px">Tuteur universitaire</th><th style="width:80px"></th></tr></thead>
                 <tbody>${rows}</tbody>
-            </table></div>`;
+            </table></div>` : ''}${mobNote}`;
     });
     body.innerHTML = html || '<div class="empty">Aucune fiche pour ce filtre.</div>';
 }
@@ -5057,9 +5070,7 @@ function openSuiviModal(kind, pid, year, sid) {
             : '');
     document.getElementById('suivi-mission-label').textContent = SUIVI_KINDS[kind].mission;
     const univ = document.getElementById('suivi-tuteur_univ');
-    univ.innerHTML = '<option value="">—</option>' + st.teachers.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')
-        + (s.tuteur_univ && !st.teachers.includes(s.tuteur_univ)
-            ? `<option value="${esc(s.tuteur_univ)}">${esc(s.tuteur_univ)}</option>` : '');
+    univ.innerHTML = _suiviUnivOptions(st, s.tuteur_univ);
     SUIVI_FIELDS.forEach(f => { document.getElementById('suivi-' + f).value = s[f] || ''; });
     // Entreprises déjà connues (toutes années) : saisie homogène, lieu et tuteurs repris
     document.getElementById('suivi-entreprises').innerHTML = st.data.stats.entreprises
