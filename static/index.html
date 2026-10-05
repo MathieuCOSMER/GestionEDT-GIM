@@ -5708,7 +5708,7 @@ function _devCesureSection(d) {
         <strong>ALT</strong> — c'est ce qui se choisit ici. Ses années déjà validées le suivent ;
         ses notes ne sont pas recopiées.</div>`;
     if (!d.cesure || !d.cesure.length) {
-        return head + `<div class="empty" style="margin:6px 0">Aucune césure en cours — elle se décide dans la colonne « Devenir » ci-dessus.</div></div>`;
+        return head + `<div class="empty" style="margin:6px 0">Aucune césure décidée à l'issue de l'année ${d.year} — elle se décide dans la colonne « Devenir » ci-dessus.</div></div>`;
     }
     const dopt = (val, label, cur) => `<option value="${val}"${cur === val ? ' selected' : ''}>${label}</option>`;
     const rows = d.cesure.map((st, i) => `<tr>

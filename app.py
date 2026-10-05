@@ -8118,8 +8118,12 @@ def _devenir_payload(pdb, pid, year):
             # Liste ORDONNÉE (jsonify trie les clés d'un dict : l'ordre de la liste
             # déroulante se perdrait à passer _AUTRE_FORMATIONS tel quel).
             'autres_formations': [{'value': k, 'label': v} for k, v in _AUTRE_FORMATIONS.items()],
-            # Césures déjà posées : il reste à dire en quoi (FTP/ALT) elles reprennent
-            'cesure': (_cesure_payload(pdb, pid) or {}).get('students', []),
+            # Césures déjà posées : il reste à dire en quoi (FTP/ALT) elles reprennent.
+            # Seulement celles décidées à ce jury — une césure sur l'année N se pose à
+            # l'issue de l'année N-1 (la 1re année, saisie dans l'effectif, va avec
+            # l'année 1) ; sans année de césure, elle reste visible partout.
+            'cesure': [c for c in (_cesure_payload(pdb, pid) or {}).get('students', [])
+                       if not c['year'] or max(1, c['year'] - 1) == year],
             # Redoublants accueillis ici qui refont CETTE année, avec l'arbitrage
             # de leurs notes (les UE d'une autre année n'ont rien à décider ici)
             'incoming': _red_incoming(pdb, pid, year)}
