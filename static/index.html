@@ -429,6 +429,9 @@
         /* En-tête sur 2 lignes (groupes + colonnes) : la 2e ligne se colle sous la 1re */
         .nz-table thead tr:first-child:not(:only-child) th { height: 28px; }
         .nz-table thead tr:nth-child(2) th { top: 28px; }
+        /* Moyennes de l'année et du semestre : sans la marge des tableaux ordinaires
+           (td 10px 14px), sinon elles débordent la largeur d'une note (« 12.34 ») */
+        .nz-table td.nz-avg, .nz-table td.nz-yavg, .nz-table td.nz-gim { padding: 1px 2px; }
         .nz-table .nz-sticky { position: sticky; left: 0; z-index: 2; background: #fff; box-shadow: 1px 0 0 #e5e7eb; }
         .nz-table thead th.nz-sticky { z-index: 4; }
         .nz-table input::-webkit-outer-spin-button,
@@ -8064,13 +8067,10 @@ function renderNotesGrid() {
     // Ligne 1 : noms des groupes de colonnes ; ligne 2 : en-têtes de colonnes
     const gth = (txt, bg, color, colspan, border) =>
         `<th colspan="${colspan}" style="background:${bg};color:${color};text-align:center;font-size:.8rem;font-weight:700;padding:4px 6px;white-space:nowrap;border-left:4px solid ${border};border-bottom:2px solid ${border}">${esc(txt)}</th>`;
-    // Largeur cible identique pour chaque groupe (hors SAÉ/Ressources), répartie sur ses colonnes
-    const GW = 250;
-    const wext = cw => `;width:${cw}px;min-width:${cw}px;max-width:${cw}px`;
-    const cwBilan = Math.floor(GW / Math.max(1, 2 + (d.year_competences || []).length));
-    const cwPrevY = g => Math.floor(GW / Math.max(1, 1 + g.competences.length));
-    const cwPrevS = g => Math.floor(GW / Math.max(1, g.competences.length));
-    const cwUe = Math.floor(GW / Math.max(1, comps.length));
+    // Groupes Année / Semestre : chaque moyenne a juste la largeur d'une note à
+    // quatre chiffres (« 12.34 ») ; le statut prend celle de son badge. Une case
+    // plus chargée (↺, ⚠) élargit sa colonne au besoin.
+    const wnum = ';width:42px;min-width:42px;max-width:42px';
     const groupRow = `<tr><th class="nz-sticky" rowspan="2" onclick="sortNotesBy('nom')" title="Trier par nom"
             style="min-width:155px;max-width:155px;vertical-align:bottom;font-size:.8rem;cursor:pointer">Étudiant ${_sortMark(_notesSort, 'nom')}</th>` +
         (cg.prevYears ? prevYears.map(g => gth(`Année ${g.year || ''}`, '#eef2ff', '#3730a3', 1 + g.competences.length, '#6366f1')).join('') : '') +
@@ -8081,22 +8081,22 @@ function renderNotesGrid() {
         `</tr>`;
     const head = `<tr>` +
         (cg.prevYears ? prevYears.map(g =>
-            vth('Statut', '#eef2ff', ';border-left:4px solid #6366f1' + wext(cwPrevY(g)), 'Décision du jury — ' + g.label, '#3730a3') +
+            vth('Statut', '#eef2ff', ';border-left:4px solid #6366f1', 'Décision du jury — ' + g.label, '#3730a3') +
             g.competences.map((name, ci) =>
-                vth(`UE${_ueNum(d, name, ci)}N${g.year || ''}`, '#eef2ff', wext(cwPrevY(g)), g.label + ' — ' + name, '#3730a3',
+                vth(`UE${_ueNum(d, name, ci)}N${g.year || ''}`, '#eef2ff', wnum, g.label + ' — ' + name, '#3730a3',
                     `prevY:${g.year || ''}:${ci}`)).join('')).join('') : '') +
-        (cg.bilan ? vth('Statut', '#dcfce7', ';border-left:4px solid #22c55e' + wext(cwBilan), 'Statut de l\'année en cours', '#166534') +
-            vth('Moyenne', '#dcfce7', wext(cwBilan),
+        (cg.bilan ? vth('Statut', '#dcfce7', ';border-left:4px solid #22c55e', 'Statut de l\'année en cours', '#166534') +
+            vth('Moyenne', '#dcfce7', wnum,
                 `Moyenne annuelle générale (moyenne des UE de l'année ${_year}) — colonne GIM${_year} du Jury`,
                 '#166534', 'gim') +
             (d.year_competences || []).map((name, ci) =>
-                vth(`UE${_ueNum(d, name, ci)}N${_year}`, '#dcfce7', wext(cwBilan), `Moyenne annuelle ${name} (${(d.year_semesters || []).join('–')})`, '#166534',
+                vth(`UE${_ueNum(d, name, ci)}N${_year}`, '#dcfce7', wnum, `Moyenne annuelle ${name} (${(d.year_semesters || []).join('–')})`, '#166534',
                     `year:${ci}`)).join('') : '') +
         (cg.prevSem ? prevSems.map(g => g.competences.map((name, ci) =>
-            vth(`UE${g.sem || ''}${_ueNum(d, name, ci)}`, '#eef2ff', (ci === 0 ? ';border-left:4px solid #818cf8' : '') + wext(cwPrevS(g)), g.label + ' — ' + name, '#3730a3',
+            vth(`UE${g.sem || ''}${_ueNum(d, name, ci)}`, '#eef2ff', (ci === 0 ? ';border-left:4px solid #818cf8' : '') + wnum, g.label + ' — ' + name, '#3730a3',
                 `prevS:${g.sem || ''}:${ci}`)).join('')).join('') : '') +
         (cg.ue ? comps.map((c, ci) =>
-            vth(`UE${_semNum}${_ueNum(d, c.name, ci)}`, '#ede9fe', (ci === 0 ? ';border-left:4px solid #8b5cf6' : '') + wext(cwUe), `${c.name} — moyenne du semestre ${d.semester}`, '#4c1d95',
+            vth(`UE${_semNum}${_ueNum(d, c.name, ci)}`, '#ede9fe', (ci === 0 ? ';border-left:4px solid #8b5cf6' : '') + wnum, `${c.name} — moyenne du semestre ${d.semester}`, '#4c1d95',
                 `ue:${ci}`)).join('') : '') +
         (cg.notes ? mats.map((m, mi) => {
             // Origine officielle de la note : 🧮 calculée depuis la saisie enseignante
