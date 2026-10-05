@@ -7700,11 +7700,14 @@ def _red_payload(pdb, pid):
             # Redoublants venus d'une cohorte précédente et refaisant une année ici
             'incoming': _red_incoming(pdb, pid)}
 
-def _red_incoming(pdb, pid):
+def _red_incoming(pdb, pid, only_year=None):
     """Redoublants ACCUEILLIS dans cette promotion (fiche créée depuis la cohorte
     précédente). Pour chaque UE de chaque semestre de l'année refaite : la note du
-    passage précédent, celle de l'année refaite, et celle retenue (la meilleure)."""
+    passage précédent, celle de l'année refaite, et celle retenue (la meilleure).
+    `only_year` : seulement ceux qui refont cette année d'étude."""
     links = _origin_links(pdb, pid, reason='RED')
+    if only_year is not None:
+        links = {k: v for k, v in links.items() if v[2] == only_year}
     if not links:
         return []
     info = {r['id']: r for r in pdb.execute(
@@ -8117,8 +8120,9 @@ def _devenir_payload(pdb, pid, year):
             'autres_formations': [{'value': k, 'label': v} for k, v in _AUTRE_FORMATIONS.items()],
             # Césures déjà posées : il reste à dire en quoi (FTP/ALT) elles reprennent
             'cesure': (_cesure_payload(pdb, pid) or {}).get('students', []),
-            # Redoublants accueillis ici, avec l'arbitrage de leurs notes
-            'incoming': _red_incoming(pdb, pid)}
+            # Redoublants accueillis ici qui refont CETTE année, avec l'arbitrage
+            # de leurs notes (les UE d'une autre année n'ont rien à décider ici)
+            'incoming': _red_incoming(pdb, pid, year)}
 
 def _revert_devenir(db, pid, sid, year):
     """Défait l'effet du devenir posé sur (étudiant, année) : le statut, l'année de

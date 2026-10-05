@@ -5766,7 +5766,7 @@ function _devIncomingSection(d) {
         Tant qu'un semestre refait n'a <strong>aucune note</strong>, rien n'est repris : l'étudiant n'a pas encore composé,
         et aucune décision de jury n'est prise.</div>`;
     if (!d.incoming || !d.incoming.length) {
-        return head + `<div class="empty" style="margin:6px 0">Aucun redoublant venu d'une cohorte précédente.</div></div>`;
+        return head + `<div class="empty" style="margin:6px 0">Aucun redoublant venu d'une cohorte précédente pour l'année ${d.year}.</div></div>`;
     }
     const cards = d.incoming.map(st => {
         const cols = st.semesters.map(x => `<th colspan="3" style="text-align:center;background:#ede9fe;color:#4c1d95;border-left:3px solid #8b5cf6">${esc(x.semester)}${x.started
