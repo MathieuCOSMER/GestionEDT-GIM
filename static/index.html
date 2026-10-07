@@ -437,6 +437,92 @@
         .nz-table input::-webkit-outer-spin-button,
         .nz-table input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
         .nz-table input[type=number] { -moz-appearance: textfield; }
+
+        /* ===== Onglet Aide ===== */
+        #aide-rubriques { flex-wrap: wrap; row-gap: 0; }
+        #aide-rubriques .subtab { white-space: nowrap; padding: 8px 12px; }
+        .aide-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 20px; align-items: start; }
+        /* La colonne de texte peut rétrécir : un tableau large défile au lieu d'élargir la page */
+        .aide-layout > * { min-width: 0; }
+        .aide-toc { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow-y: auto; background: #fff;
+                    border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 8px; font-size: .84rem; }
+        .aide-toc-t { font-size: .72rem; text-transform: uppercase; letter-spacing: .03em; color: #9ca3af; font-weight: 700; padding: 2px 8px 6px; }
+        .aide-toc a { display: block; padding: 5px 8px; border-radius: 6px; color: #374151; text-decoration: none; line-height: 1.3; }
+        .aide-toc a:hover { background: #eef2ff; color: #4f46e5; }
+        .aide-toc a.active { background: #4f46e5; color: #fff; }
+        .aide-intro { color: #4b5563; font-size: .9rem; margin: 0 0 14px; line-height: 1.5; }
+        .aide-sec { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 18px 22px; margin-bottom: 16px;
+                    line-height: 1.55; font-size: .92rem; color: #1f2937; scroll-margin-top: 12px; }
+        .aide-sec h2 { font-size: 1.15rem; margin: 0 0 2px; color: #312e81; }
+        .aide-sec h3 { font-size: .95rem; margin: 18px 0 6px; color: #374151; }
+        .aide-sec p { margin: 8px 0; }
+        .aide-sec ul, .aide-sec ol { margin: 8px 0 8px 22px; }
+        .aide-sec li { margin: 3px 0; }
+        .aide-sec table { box-shadow: none; border: 1px solid #e5e7eb; margin: 10px 0; font-size: .85rem; }
+        .aide-sec th, .aide-sec td { padding: 6px 10px; vertical-align: top; }
+        .aide-sec tr:hover td { background: none; }
+        .aide-chemin { font-size: .78rem; color: #6b7280; margin-bottom: 6px; }
+        .aide-ui { display: inline-block; padding: 0 6px; border-radius: 5px; background: #eef2ff; color: #3730a3;
+                   font-weight: 600; font-size: .86em; border: 1px solid #c7d2fe; line-height: 1.5; }
+        .aide-ong { font-weight: 600; color: #4f46e5; }
+        .aide-lien { color: #4f46e5; font-weight: 600; text-decoration: underline dotted; cursor: pointer; }
+        .aide-ex, .aide-tip, .aide-warn { border-radius: 8px; padding: 10px 14px; margin: 12px 0; font-size: .88rem; }
+        .aide-ex { background: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #16a34a; }
+        .aide-ex-t { font-weight: 700; color: #166534; font-size: .76rem; text-transform: uppercase; letter-spacing: .03em; margin-bottom: 4px; }
+        .aide-tip { background: #eff6ff; border: 1px solid #bfdbfe; border-left: 4px solid #3b82f6; }
+        .aide-warn { background: #fffbeb; border: 1px solid #fde68a; border-left: 4px solid #f59e0b; }
+        .aide-steps { margin-left: 0 !important; padding-left: 0; list-style: none; counter-reset: aide-step; }
+        .aide-steps > li { counter-increment: aide-step; position: relative; padding: 4px 0 4px 34px; margin: 2px 0; }
+        .aide-steps > li::before { content: counter(aide-step); position: absolute; left: 0; top: 4px; width: 22px; height: 22px;
+                                   border-radius: 50%; background: #4f46e5; color: #fff; font-size: .75rem; font-weight: 700;
+                                   display: flex; align-items: center; justify-content: center; }
+        .aide-acces { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; margin: 4px 0 10px; font-size: .74rem; }
+        .aide-acces-l { color: #6b7280; font-weight: 700; margin: 0 2px 0 6px; }
+        .aide-acces-l:first-child { margin-left: 0; }
+        .aide-prof { padding: 1px 8px; border-radius: 999px; background: #f3f4f6; color: #374151; font-weight: 600; }
+        .aide-prof.modif { background: #dcfce7; color: #166534; }
+        .aide-prof.moi { box-shadow: 0 0 0 2px #4f46e5; }
+        .aide-ouvrir { margin-top: 14px; }
+        .aide-masques { color: #6b7280; font-size: .85rem; text-align: center; padding: 6px 0 16px; }
+        .aide-code { display: inline-block; padding: 1px 7px; border-radius: 6px; font-size: .74rem; font-weight: 700; white-space: nowrap; }
+        .aide-maquette { border: 1px dashed #c7d2fe; border-radius: 8px; padding: 10px 12px; background: #fafaff; margin: 10px 0; overflow-x: auto; }
+        .aide-maquette table { margin: 0; background: #fff; }
+        .aide-maquette th { text-transform: none; font-size: .8rem; }
+        .aide-sec kbd { display: inline-block; padding: 0 5px; border: 1px solid #d1d5db; border-bottom-width: 2px; border-radius: 4px;
+                        background: #f9fafb; font-family: inherit; font-size: .8em; font-weight: 600; }
+        .aide-sec details { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 12px; margin: 8px 0; background: #fcfcfd; }
+        .aide-sec details[open] { background: #fff; }
+        .aide-sec summary { cursor: pointer; font-weight: 600; color: #1f2937; }
+        .aide-sec dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 8px 0; }
+        .aide-sec dt { font-weight: 700; color: #312e81; }
+        .aide-sec dd { margin: 0; }
+        .aide-cartes { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; margin: 10px 0; }
+        .aide-carte { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; cursor: pointer; }
+        .aide-carte:hover { border-color: #a5b4fc; background: #eef2ff; }
+        .aide-carte b { display: block; color: #312e81; margin-bottom: 2px; }
+        .aide-carte span { font-size: .82rem; color: #4b5563; }
+        .aide-res { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; cursor: pointer; }
+        .aide-res:hover { border-color: #a5b4fc; background: #fafaff; }
+        .aide-res b { color: #312e81; }
+        .aide-res .aide-chemin { margin: 2px 0 0; }
+        .aide-res p { font-size: .84rem; color: #4b5563; margin: 4px 0 0; }
+        .aide-res mark, .aide-sec mark { background: #fef08a; color: inherit; padding: 0 1px; border-radius: 2px; }
+        .aide-flash { animation: aideFlash 1.8s ease-out; }
+        @keyframes aideFlash { from { box-shadow: 0 0 0 4px rgba(79,70,229,.5); } to { box-shadow: 0 0 0 4px rgba(79,70,229,0); } }
+        #aide-flottant { position: fixed; right: 18px; bottom: 18px; width: 40px; height: 40px; border-radius: 50%; border: none;
+                         background: #4f46e5; color: #fff; font-weight: 800; font-size: 1.15rem; cursor: pointer; z-index: 90;
+                         box-shadow: 0 4px 14px rgba(79,70,229,.35); opacity: .85; font-family: inherit; }
+        #aide-flottant:hover { opacity: 1; }
+        body:has(#page-aide.active) #aide-flottant { display: none !important; }
+        @media (max-width: 860px) {
+            .aide-layout { grid-template-columns: minmax(0, 1fr); }
+            .aide-toc { position: static; max-height: none; }
+            .aide-sec { padding: 14px 16px; }
+            .aide-sec table { display: block; overflow-x: auto; }
+            .aide-sec dl { grid-template-columns: 1fr; }
+            .aide-cartes { grid-template-columns: 1fr; }
+            #aide-q { min-width: 0 !important; width: 100%; }
+        }
     </style>
 </head>
 <body>
@@ -505,6 +591,7 @@
     <button onclick="showPage('journal')" id="nav-journal" class="admin-only superadmin-only">Journal</button>
     <button onclick="showPage('parametres')" id="nav-parametres" class="admin-only">Paramètres</button>
     <button onclick="showPage('mon-compte')" id="nav-mon-compte" style="display:none">Mon Compte</button>
+    <button onclick="showPage('aide')" id="nav-aide" title="Mode d'emploi du site : chaque écran expliqué, avec des exemples">Aide</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
         <span id="role-badge" class="role-badge" style="display:none"></span>
         <button id="mode-switch-btn" class="btn btn-secondary btn-sm" onclick="switchSessionMode(this.dataset.mode)"
@@ -1353,7 +1440,24 @@
     <div id="stats-content"><div class="empty">Chargement…</div></div>
 </div>
 
+<!-- ===== AIDE : mode d'emploi du site (rendu par aide.js) ===== -->
+<div class="page" id="page-aide">
+    <div class="toolbar">
+        <h1>Aide</h1>
+        <div class="filters">
+            <input type="search" id="aide-q" placeholder="Rechercher dans l'aide…" oninput="aideRechercher(this.value)"
+                   title="Recherche dans l'aide des écrans que votre session ouvre, sans tenir compte des accents"
+                   style="min-width:260px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+        </div>
+    </div>
+    <div class="subtabs" id="aide-rubriques"></div>
+    <div id="aide-content"><div class="spinner">Chargement…</div></div>
+</div>
+
 </main>
+
+<!-- Aide de l'écran affiché, depuis n'importe quel onglet -->
+<button type="button" id="aide-flottant" onclick="aideContexte()" title="Aide sur cet écran">?</button>
 
 <!-- ===== MODAL ORDONNANCEMENT ===== -->
 <div class="modal-backdrop" id="modal-ordering">
@@ -2376,7 +2480,7 @@ function applyRole(me) {
     }
     // Enseignant : onglets Service enseignant (Bilan Global / Calendaire /
     // Contraintes), Programme (consultation), Statistiques (agrégées) et Mon Compte.
-    const teacherTabs = ['nav-service', 'nav-programme', 'nav-statistiques', 'nav-mon-compte'];
+    const teacherTabs = ['nav-service', 'nav-programme', 'nav-statistiques', 'nav-mon-compte', 'nav-aide'];
     // Connexion avec mot de passe : Promotions en lecture seule (Effectifs/Notes/Jury)
     if (role === 'teacher' && state.promoAccess) teacherTabs.push('nav-saisie', 'nav-promotions', 'nav-etudiants',
                                                                   'nav-stages', 'nav-alternance');
@@ -2391,6 +2495,9 @@ function applyRole(me) {
         b.style.display = show ? '' : 'none';
     });
     applyTabVisibility();
+    // Bouton « ? » (aide de l'écran affiché) : suit l'onglet Aide, que le superadmin peut fermer
+    const aideBtn = document.getElementById('aide-flottant');
+    if (aideBtn) aideBtn.style.display = tabHidden('nav:aide') ? 'none' : '';
     // Responsable : Promotions s'ouvre sur son premier sous-onglet modifiable
     if (state.resp.length) { _promoTab = _firstPromoTab(); _syncPromoSubtabs(); }
 }
@@ -2479,7 +2586,7 @@ function _visiblePage(name) {
         return name;
     }
     const order = ['service', 'programme', 'statistiques', 'mon-compte', 'saisie', 'promotions',
-                   'etudiants', 'stages', 'alternance', 'salles', 'enseignants', 'parametres'];
+                   'etudiants', 'stages', 'alternance', 'salles', 'enseignants', 'parametres', 'aide'];
     for (const p of order) {
         const b = document.getElementById('nav-' + p);
         if (!b || b.style.display === 'none' || tabHidden('nav:' + p)) continue;
@@ -2952,6 +3059,7 @@ async function loadPage(name, forceReload) {
             renderTeacherRepartition();
         }
         else if (name === 'mon-compte') { await loadMonCompte(); }
+        else if (name === 'aide') { await aideCharger(); }
         else if (name === 'repartition') {
             await loadRepartition();
             if (tabHidden('rep:' + _repTab)) _showRepTab(_repTab === 'jour' ? 'annuelle' : 'jour');
@@ -15568,5 +15676,7 @@ function buildAllWeekSelect(selId, selectedVal) {
 // ===== INIT =====
 checkAuth();
 </script>
+<!-- Onglet Aide : contenu et rendu à part, le mode d'emploi se tient à jour sans toucher au reste -->
+<script src="aide.js"></script>
 </body>
 </html>

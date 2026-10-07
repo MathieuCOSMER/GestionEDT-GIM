@@ -3196,6 +3196,8 @@ _TAB_TREE = [
     _tn('nav:journal', 'Journal (audit, sauvegardes)', [], []),
     _tn('nav:parametres', 'Paramètres', [_TA], never=[_TP, _TT] + _TRESP),
     _tn('nav:mon-compte', 'Mon Compte', [_TP, _TT], [_TP, _TT]),
+    # Mode d'emploi du site : ouvert à tous, rien à y modifier
+    _tn('nav:aide', 'Aide', _TALL + _TRESP),
 ]
 _TAB_NODES = {}
 def _index_tab_tree(nodes):
@@ -3394,6 +3396,24 @@ def get_tab_access():
             mark(n['children'])
     mark(tree)
     return jsonify({'tree': tree, 'profiles': list(_TAB_PROFILES), 'conf': _tab_access_conf()})
+
+@app.route('/api/aide/acces', methods=['GET'])
+def aide_acces():
+    """Onglet Aide : qui voit et qui modifie chaque onglet, profil par profil, tels
+    que les accès s'appliquent aujourd'hui (défauts de _TAB_TREE et réglages du
+    superadmin compris). Ouvert à toute personne connectée : savoir ce qu'ouvre
+    chaque profil n'a rien de confidentiel, et c'est ce que l'aide doit dire juste."""
+    conf = _tab_access_conf()
+    effs = {p: _tab_effective(p, conf[p]) for p in _TAB_PROFILES}
+
+    def arbre(nodes):
+        return [{'key': n['key'], 'label': n['label'], 'consultation': n['edit'] is None,
+                 'children': arbre(n['children'])} for n in nodes]
+    return jsonify({
+        'profiles': list(_TAB_PROFILES), 'tree': arbre(_TAB_TREE),
+        'acces': {k: {'voir': [p for p in _TAB_PROFILES if k in effs[p]['visible']],
+                      'modifier': [p for p in _TAB_PROFILES if k in effs[p]['edit']]}
+                  for k in _TAB_NODES}})
 
 @app.route('/api/tab-access', methods=['PUT'])
 def put_tab_access():
