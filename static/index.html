@@ -1192,7 +1192,7 @@
 <div class="page" id="page-journal">
     <div class="toolbar">
         <h1>Journal</h1>
-        <div class="filters">
+        <div class="filters" id="journal-filtres" style="display:none">
             <label>Type :</label>
             <select id="journal-type" onchange="renderJournal()">
                 <option value="">Tous</option>
@@ -1212,9 +1212,16 @@
             <button class="btn btn-secondary btn-sm" style="margin-left:12px" onclick="loadJournal()">Rafraîchir</button>
         </div>
     </div>
-    <div id="journal-backups" style="margin-bottom:18px"></div>
-    <h3 style="margin:0 0 8px;color:#374151">Activité</h3>
-    <div id="journal-content"><div class="spinner">Chargement…</div></div>
+    <div class="subtabs">
+        <button type="button" id="journal-tab-sauvegardes" class="subtab active" onclick="showJournalTab('sauvegardes')">Sauvegardes</button>
+        <button type="button" id="journal-tab-activite" class="subtab" onclick="showJournalTab('activite')">Activité</button>
+    </div>
+    <div id="journal-pane-sauvegardes">
+        <div id="journal-backups"><div class="spinner">Chargement…</div></div>
+    </div>
+    <div id="journal-pane-activite" style="display:none">
+        <div id="journal-content"><div class="spinner">Chargement…</div></div>
+    </div>
 </div>
 
 <!-- ===== REPARTITION PAR ENSEIGNANT ===== -->
@@ -3587,13 +3594,27 @@ async function checkPnPdf() {
 }
 
 // ===== JOURNAL D'AUDIT (admin) =====
+// Deux sous-onglets : les sauvegardes des bases, et l'activité du site (connexions,
+// modifications). Les filtres de la barre ne concernent que l'activité.
 let _journalLines = [];
+let _journalTab = 'sauvegardes';
+
+function showJournalTab(tab) {
+    _journalTab = tab;
+    ['sauvegardes', 'activite'].forEach(t => {
+        document.getElementById('journal-tab-' + t).classList.toggle('active', t === tab);
+        document.getElementById('journal-pane-' + t).style.display = t === tab ? '' : 'none';
+    });
+    document.getElementById('journal-filtres').style.display = tab === 'activite' ? '' : 'none';
+    if (tab === 'sauvegardes') loadBackups();
+    else loadJournal();
+}
 
 async function loadJournal() {
+    if (_journalTab === 'sauvegardes') return loadBackups();
     const el = document.getElementById('journal-content');
     const n = (document.getElementById('journal-lines') || {}).value || 200;
     el.innerHTML = '<div class="spinner">Chargement…</div>';
-    loadBackups();
     try {
         const data = await api('/audit-log?lines=' + n);
         _journalLines = (data && data.lines) || [];
@@ -3617,9 +3638,10 @@ async function loadBackups() {
 
 function renderBackups(backups) {
     const el = document.getElementById('journal-backups');
-    let html = `<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
-            <h3 style="margin:0;color:#374151">Sauvegardes</h3>
-            <button class="btn btn-secondary btn-sm admin-only" onclick="createBackupNow()">Créer une sauvegarde maintenant</button>
+    let html = `<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap">
+            <span style="color:#6b7280;font-size:.85rem">Copie quotidienne de la base de chaque année modifiée — seules les
+                <strong>5 dernières</strong> sauvegardes de chaque année sont gardées.</span>
+            <button class="btn btn-secondary btn-sm admin-only" style="margin-left:auto" onclick="createBackupNow()">Créer une sauvegarde maintenant</button>
         </div>`;
     if (!backups.length) {
         html += '<div class="empty">Aucune sauvegarde pour le moment.</div>';

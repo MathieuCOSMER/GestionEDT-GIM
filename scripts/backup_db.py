@@ -3,7 +3,7 @@
 
 Crée une sauvegarde UNIQUEMENT si la base a été modifiée depuis la dernière
 sauvegarde (sinon ne fait rien). Les backups vont dans
-databases/<année>/backups/ et les plus anciens sont purgés (30 conservés).
+databases/<année>/backups/ et les plus anciens sont purgés (5 conservés par année).
 
 Planification sur PythonAnywhere (onglet « Tasks », tâche quotidienne 04:00) :
     python3 /home/<user>/<projet>/scripts/backup_db.py

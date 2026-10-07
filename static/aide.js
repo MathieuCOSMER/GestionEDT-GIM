@@ -1551,19 +1551,24 @@ function _aideAdmin() {
         (« avant-import ») est mise de côté sur le serveur juste avant. La sauvegarde porte un inventaire de son contenu : après restauration, le site
         recompte ce qu'il a en base et signale tout écart.</p>`)}
         <h3>Les sauvegardes automatiques</h3>
-        <p>Chaque jour, la base de chaque année modifiée est copiée automatiquement (les 30 plus récentes sont gardées).${_aSuper(` ${_aOng('Journal')} les liste, avec
+        <p>Chaque jour, la base de chaque année modifiée est copiée automatiquement (les 5 plus récentes de chaque année sont gardées).${_aSuper(` ${_aOng('Journal')} les liste, avec
         ${_aUi('Créer une sauvegarde maintenant')}, ${_aUi('Restaurer')} et ${_aUi('Supprimer')}.`)}</p>
         ${_aWarn(`ces copies quotidiennes ne contiennent que la base <b>d'une année</b> (enseignants, matières, salles, emploi du temps) : les promotions,
             les notes et les photos ne sont que dans la sauvegarde complète. Téléchargez-la régulièrement, et toujours avant une opération lourde
             (restauration, changement d'année, import massif).`)}` },
 
-    { id: 'journal', rub: R, titre: "Journal d'activité", chemin: 'Journal', onglet: 'nav:journal', cible: 'journal',
-      mots: 'journal audit activité connexions échecs modifications traçabilité',
+    { id: 'journal', rub: R, titre: 'Journal : sauvegardes et activité', chemin: 'Journal', onglet: 'nav:journal', cible: 'journal',
+      mots: 'journal audit activité connexions échecs modifications traçabilité sauvegardes',
       html: `
-        <p>Réservé au superadmin. En haut, les ${_aLien('sauvegardes', 'sauvegardes')} ; en dessous, l'<b>activité</b> du site : connexions, échecs et blocages,
-        modifications (qui, quand, depuis quelle adresse, sur quel écran).</p>
-        <p>Filtres : ${_aUi('Type')} (Connexions, Échecs / blocages, Modifications), recherche (adresse IP, utilisateur, chemin…), nombre de lignes (200 à 2000),
-        ${_aUi('Rafraîchir')}.</p>` },
+        <p>Réservé au superadmin, en deux sous-onglets :</p>
+        <ul>
+            <li>${_aUi('Sauvegardes')} : les copies automatiques de la base de chaque année — les <b>5 dernières</b> de chaque année sont gardées,
+                les plus anciennes sont effacées —, avec ${_aUi('Créer une sauvegarde maintenant')}, ${_aUi('Restaurer')} et ${_aUi('Supprimer')}
+                (${_aLien('sauvegardes', 'détail')}).</li>
+            <li>${_aUi('Activité')} : connexions, échecs et blocages, modifications (qui, quand, depuis quelle adresse, sur quel écran). Filtres :
+                ${_aUi('Type')} (Connexions, Échecs / blocages, Modifications), recherche (adresse IP, utilisateur, chemin…), nombre de lignes
+                (200 à 2000), ${_aUi('Rafraîchir')}.</li>
+        </ul>` },
 
     { id: 'mon-compte', rub: R, titre: 'Mon Compte', chemin: 'Mon Compte', onglet: 'nav:mon-compte', cible: 'mon-compte',
       mots: 'mon compte coordonnées email téléphone employeur préférence de contact heures hors gim hetd privé public',
@@ -1790,7 +1795,7 @@ function _aideFaq() {
         `<p>Votre session consulte l'écran sans droit de modification (ou la colonne, la fiche, est celle d'un collègue). Les pastilles en tête de chaque section
         de l'aide disent qui peut modifier l'écran qu'elle décrit.</p>`),
     q('sauvegarde', 'Mes données sont-elles sauvegardées ?', 'sauvegarde perte données sécurité backup',
-        `<p>La base de chaque année est copiée automatiquement chaque jour (30 copies gardées). La sauvegarde <b>complète</b> — la seule qui contienne aussi les promotions,
+        `<p>La base de chaque année est copiée automatiquement chaque jour (5 copies gardées par année). La sauvegarde <b>complète</b> — la seule qui contienne aussi les promotions,
         les notes et les photos — se télécharge depuis ${_aOng('Paramètres')} : à faire régulièrement. ${_aLien('sauvegardes', 'Détail')}</p>`, 'nav:parametres'),
     ];
 }

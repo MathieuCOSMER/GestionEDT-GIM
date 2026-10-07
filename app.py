@@ -265,7 +265,7 @@ def _migrate_db_layout():
 
 # ===== SAUVEGARDES (BACKUPS) DES BASES =====
 # Backups rangés dans databases/<année>/backups/edt_<année>_<horodatage>.db
-_BACKUP_KEEP = 30   # nombre de sauvegardes conservées par année
+_BACKUP_KEEP = 5    # nombre de sauvegardes conservées par année
 
 def _backup_dir_for_year(year):
     return os.path.join(_DB_DIR, year, 'backups')
@@ -3472,6 +3472,9 @@ def list_backups():
         bdir = _backup_dir_for_year(year)
         if not os.path.isdir(bdir):
             continue
+        # Les sauvegardes faites avant que la limite ne baisse disparaissent ici,
+        # sans attendre la prochaine sauvegarde de l'année
+        _prune_backups(year)
         for f in os.listdir(bdir):
             if not f.endswith('.db'):
                 continue
