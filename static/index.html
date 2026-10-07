@@ -730,6 +730,8 @@
                     title="Importer un classement ParcourSup pour remplir le rang, la note et le dossier des étudiants déjà inscrits">⤒ Importer ParcourSup</button>
                 <button class="btn btn-secondary btn-sm" id="eff-export-btn" onclick="exportEffectifExcel()" disabled
                     title="Télécharger l'effectif de cette année au format Excel (un onglet par sous-cohorte)">⤓ Exporter en Excel</button>
+                <button class="btn btn-secondary btn-sm" id="eff-trombi-btn" onclick="exportEffectifTrombi()" disabled
+                    title="Télécharger le trombinoscope de cette année (PDF) : les étudiants qui la suivent, temps plein puis alternance — sans les césures ni les abandons">⤓ Trombi (PDF)</button>
                 <button class="btn btn-secondary btn-sm" id="eff-report-btn" onclick="reportEffectifYear()" disabled
                     title="Réinitialiser l'effectif de cette année sur le report automatique du jury (efface les ajustements manuels)">↺ Reporter depuis le jury</button>
             </div>
@@ -1481,6 +1483,31 @@
                 title="Ouvrir sa fiche dans l'onglet Étudiants : mêmes informations, avec ses résultats">
                 Fiche complète et résultats →</button>
             <button type="button" class="btn btn-secondary" onclick="closeModal('modal-student-card')">Fermer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL IMPORT TROMBINOSCOPE ===== -->
+<div class="modal-backdrop" id="modal-trombi">
+    <div class="modal" style="max-width:980px">
+        <h2>Importer un trombinoscope</h2>
+        <p style="color:#6b7280;font-size:.85rem;margin-top:0">
+            Un ou plusieurs <strong>PDF de trombinoscope</strong> (export de la scolarité : la photo,
+            le nom, le prénom et le n° Apogée de chaque étudiant). Chaque photo est rattachée à sa
+            fiche par le <strong>n° Apogée</strong>, sinon par le <strong>nom</strong> ; vous
+            vérifiez les rapprochements avant que rien ne soit enregistré. Une photo déjà présente
+            est remplacée.
+        </p>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input type="file" id="trombi-files" accept=".pdf,application/pdf" multiple>
+            <button type="button" class="btn btn-primary btn-sm" id="trombi-analyse"
+                onclick="analyserTrombi()">Analyser</button>
+        </div>
+        <div id="trombi-review" style="margin-top:14px"></div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-trombi')">Fermer</button>
+            <button type="button" class="btn btn-primary" id="trombi-submit" style="display:none"
+                onclick="importerTrombi()">Associer les photos</button>
         </div>
     </div>
 </div>
@@ -4756,7 +4783,7 @@ async function loadPromotions() {
 }
 
 function _togglePromoButtons(on) {
-    ['promo-delete-btn', 'eff-report-btn', 'eff-export-btn', 'eff-ps-btn'].forEach(id => {
+    ['promo-delete-btn', 'eff-report-btn', 'eff-export-btn', 'eff-trombi-btn', 'eff-ps-btn'].forEach(id => {
         const b = document.getElementById(id); if (b) b.disabled = !on;
     });
 }
@@ -4765,6 +4792,12 @@ function _togglePromoButtons(on) {
 function exportEffectifExcel() {
     if (!_promoId) { toast('Sélectionnez une promotion.', 'error'); return; }
     window.location.href = `/api/promotions/${_promoId}/effectif/${_effYear}/export`;
+}
+
+// Trombinoscope PDF de l'année affichée (promotion + année d'étude)
+function exportEffectifTrombi() {
+    if (!_promoId) { toast('Sélectionnez une promotion.', 'error'); return; }
+    window.location.href = `/api/promotions/${_promoId}/effectif/${_effYear}/trombi.pdf`;
 }
 
 async function onPromoChange() {
@@ -6081,6 +6114,9 @@ let _importFormation = 'FTP';
 let _etuData = null;              // liste du registre (payload /api/students)
 let _etuSort = { col: 'nom', dir: 1 };
 let _etuSelected = null;          // étudiant ouvert en fiche, null = la liste
+// Vue de la liste : tableau ou trombinoscope (gardée d'une visite à l'autre)
+let _etuVue = (() => { try { return localStorage.getItem('etuVue') === 'trombi' ? 'trombi' : 'liste'; }
+                       catch (e) { return 'liste'; } })();
 
 async function loadEtudiants() {
     const el = document.getElementById('etu-content');
@@ -6246,15 +6282,29 @@ function renderEtudiants() {
         <td style="text-align:center;color:#9ca3af">${e.nb_notes || 0}</td>
     </tr>`).join('');
     const total = (_etuData.students || []).length;
+    const trombi = _etuVue === 'trombi';
+    const vue = (cle, libelle, titre) => `<button type="button" class="btn btn-sm ${
+        _etuVue === cle ? 'btn-primary' : 'btn-secondary'}" onclick="changerVueEtu('${cle}')"
+        title="${esc(titre)}">${libelle}</button>`;
     document.getElementById('etu-content').innerHTML = `
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+            <span style="display:inline-flex;gap:4px">${vue('liste', 'Liste', 'Un étudiant par ligne, triable')}${
+                vue('trombi', 'Trombinoscope', 'Les photos, par ordre alphabétique')}</span>
             <span style="font-size:.9rem"><strong>${liste.length}</strong> étudiant(s)${
                 liste.length < total ? ` <span style="color:#9ca3af">sur ${total}</span>` : ''}</span>
-            <span style="font-size:.8rem;color:#6b7280">— cliquez une ligne pour ouvrir sa fiche
-                (dossier, parcours, résultats)</span>
-            <button class="btn btn-secondary btn-sm" style="margin-left:auto" onclick="exportEtudiants()">Exporter (CSV)</button>
+            <span style="font-size:.8rem;color:#6b7280">${trombi ? '— cliquez une photo pour ouvrir sa fiche'
+                : '— cliquez une ligne pour ouvrir sa fiche (dossier, parcours, résultats)'}</span>
+            <span style="margin-left:auto"></span>
+            ${editUI('nav:etudiants') ? `<button class="btn btn-secondary btn-sm" onclick="ouvrirTrombi()"
+                title="Associer à chaque fiche sa photo, lue dans un trombinoscope PDF">Importer un trombi (PDF)</button>` : ''}
+            ${trombi ? `<button class="btn btn-secondary btn-sm" onclick="telechargerTrombi()"${liste.length ? '' : ' disabled'}
+                title="Le trombinoscope de ce qui est affiché, filtres compris — choisissez une cohorte et une année pour celui d'une promo">
+                Télécharger le trombi (PDF)</button>` : ''}
+            <button class="btn btn-secondary btn-sm" onclick="exportEtudiants()">Exporter (CSV)</button>
         </div>
-        ${liste.length ? `<div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px">
+        ${!liste.length ? '<div class="empty">Aucun étudiant ne correspond à ces critères.</div>'
+          : trombi ? trombiGrille(liste, f)
+          : `<div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px">
             <table class="pn-table" style="table-layout:auto;width:100%">
                 <thead><tr><th style="width:38px">#</th>
                     ${th('nom', 'Nom')}${th('prenom', 'Prénom')}${th('numero', 'Apogée', 'Trier par n° Apogée')}
@@ -6267,8 +6317,88 @@ function renderEtudiants() {
                     ${th('statut', 'Statut')}${th('decision', 'Jury', 'Dernière décision de jury')}
                     ${th('gim', 'Moyenne', 'Dernière moyenne générale annuelle connue')}
                     ${th('nb_notes', 'Notes', 'Nombre de notes saisies')}</tr></thead>
-                <tbody>${rows}</tbody></table></div>`
-        : '<div class="empty">Aucun étudiant ne correspond à ces critères.</div>'}`;
+                <tbody>${rows}</tbody></table></div>`}`;
+}
+
+function changerVueEtu(v) {
+    _etuVue = v;
+    try { localStorage.setItem('etuVue', v); } catch (e) { }
+    renderEtudiants();
+}
+
+// Sous-cohorte sous laquelle l'étudiant apparaît : celle de l'année montrée quand
+// on filtre une cohorte ou une année (la dernière qu'il y a suivie), sinon celle
+// d'aujourd'hui — un passage de FTP en ALT ne le range pas au mauvais endroit.
+function _etuFormationVue(e, f) {
+    if (f.promo || f.annee) {
+        const annees = (e.inscriptions || []).filter(i => !f.promo || i.promotion === f.promo)
+            .reduce((t, i) => t.concat(i.annees || []), [])
+            .filter(a => !f.annee || String(a.year) === f.annee);
+        if (annees.length) return annees[annees.length - 1].formation === 'ALT' ? 'ALT' : 'FTP';
+    }
+    return e.formation === 'ALT' ? 'ALT' : 'FTP';
+}
+
+// Le trombinoscope à l'écran : les mêmes filtres que la liste, par ordre
+// alphabétique, temps plein puis alternance — comme le PDF qu'on en télécharge.
+function trombiGrille(liste, f) {
+    const tri = [...liste].sort((a, b) => _sansAccent(a.nom).localeCompare(_sansAccent(b.nom))
+        || _sansAccent(a.prenom).localeCompare(_sansAccent(b.prenom)));
+    const groupes = { FTP: [], ALT: [] };
+    tri.forEach(e => groupes[_etuFormationVue(e, f)].push(e));
+    const initiales = e => ((e.nom || '?')[0] + ((e.prenom || '')[0] || '')).toUpperCase();
+    const carte = e => `<div onclick="openEtudiant(${e.id})" style="cursor:pointer;text-align:center"
+            title="Ouvrir la fiche de ${esc((e.nom || '') + ' ' + (e.prenom || ''))}">
+        ${e.photo ? `<img src="${_photoUrl(e)}" alt="" loading="lazy" style="width:100%;aspect-ratio:4/5;
+                object-fit:cover;border-radius:8px;border:1px solid #e5e7eb;display:block;background:#f3f4f6">`
+            : `<div style="width:100%;aspect-ratio:4/5;border-radius:8px;border:1px dashed #d1d5db;display:flex;
+                align-items:center;justify-content:center;color:#9ca3af;font-size:1.4rem;font-weight:600;
+                background:#f9fafb" title="Pas de photo">${esc(initiales(e))}</div>`}
+        <div style="font-weight:700;font-size:.8rem;margin-top:5px;line-height:1.2;overflow-wrap:anywhere">${esc(e.nom || '')}</div>
+        <div style="font-size:.8rem;line-height:1.2">${esc(e.prenom || '')}</div>
+        <div style="font-size:.7rem;color:#9ca3af">${f.promo ? esc(e.numero || '')
+            : esc(e.promotion || '') + (e.annee ? ' · A' + e.annee : '')}${
+            e.statut && e.statut !== 'Actif' ? ` <span style="padding:0 5px;border-radius:5px;font-weight:700;
+                background:${_statutColor(e.statut)};color:#374151">${esc(e.statut)}</span>` : ''}</div>
+    </div>`;
+    const sansPhoto = liste.filter(e => !e.photo).length;
+    const bloc = (k, libelle) => groupes[k].length ? `
+        <div class="section-title" style="margin-top:6px">${libelle}
+            <span style="font-weight:400;color:#9ca3af;font-size:.82rem">— ${groupes[k].length} étudiant(s)</span></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:16px 12px;margin-bottom:18px">
+            ${groupes[k].map(carte).join('')}</div>` : '';
+    return (sansPhoto ? `<div style="font-size:.8rem;color:#6b7280;margin-bottom:6px">${sansPhoto} sans photo
+            — importez un trombinoscope, ou ajoutez-la depuis sa fiche.</div>` : '')
+        + bloc('FTP', 'Temps plein') + bloc('ALT', 'Alternance');
+}
+
+// Le PDF de ce qui est affiché : le serveur le met en page, l'écran lui dit qui
+// y figure et sous quelle sous-cohorte.
+async function telechargerTrombi() {
+    const f = _etuFiltres();
+    const liste = _etuListe();
+    if (!liste.length) { toast('Aucun étudiant à mettre dans le trombinoscope', 'error'); return; }
+    const ids = { FTP: [], ALT: [] };
+    liste.forEach(e => ids[_etuFormationVue(e, f)].push(e.id));
+    const promo = ((_etuData || {}).promotions || []).find(p => p.name === f.promo);
+    const debut = promo && f.annee ? promo.start_year + Number(f.annee) - 1 : null;
+    const info = [f.promo ? 'Promotion ' + f.promo : 'Toutes cohortes',
+                  debut ? `année universitaire ${debut}-${debut + 1}` : '',
+                  f.statut ? 'statut ' + f.statut : ''].filter(Boolean).join(' · ');
+    const fichier = ['Trombi', f.promo, f.annee ? 'BUT' + f.annee : '', f.formation].filter(Boolean).join('_') + '.pdf';
+    try {
+        const r = await fetch('/api/students/trombi.pdf?' + new URLSearchParams({
+            ftp: ids.FTP.join(','), alt: ids.ALT.join(','), annee: f.annee, info, fichier }));
+        if (!r.ok) {
+            const body = await r.json().catch(() => ({}));
+            throw new Error(body.error || ('erreur ' + r.status));
+        }
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(await r.blob());
+        a.download = fichier;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
 // Export de ce qui est affiché (filtres et tri compris) : le tableau part tel quel
@@ -6292,6 +6422,251 @@ function exportEtudiants() {
     a.download = 'etudiants.csv';
     a.click();
     URL.revokeObjectURL(a.href);
+}
+
+// ===== Trombinoscope : une photo par fiche =====
+// L'import se fait en deux temps : le serveur lit les PDF et propose, pour chaque
+// photo, la fiche qu'il a reconnue ; on vérifie ici, on corrige au besoin, et
+// seulement alors les photos sont enregistrées.
+let _trombi = null;       // résultat de l'analyse : {vignettes, fichiers, people}
+
+const _TROMBI_HOW = {
+    numero: ['n° Apogée', '#dcfce7', 'Même n° Apogée sur le trombinoscope et sur la fiche'],
+    nom: ['nom', '#dcfce7', 'Même nom et même prénom'],
+    inverse: ['nom inversé', '#fef3c7', 'Nom et prénom intervertis sur le trombinoscope — à vérifier'],
+    approche: ['nom approché', '#fef3c7', 'Nom proche mais pas identique (faute de frappe, nom composé abrégé) — à vérifier'],
+    manuel: ['choisie', '#e0e7ff', 'Fiche choisie à la main'],
+};
+
+function ouvrirTrombi() {
+    _trombi = null;
+    document.getElementById('trombi-files').value = '';
+    document.getElementById('trombi-review').innerHTML = '';
+    document.getElementById('trombi-submit').style.display = 'none';
+    openModal('modal-trombi');
+}
+
+async function analyserTrombi() {
+    const files = [...document.getElementById('trombi-files').files];
+    if (!files.length) { toast('Choisissez un ou plusieurs PDF', 'error'); return; }
+    const btn = document.getElementById('trombi-analyse');
+    btn.disabled = true; btn.textContent = 'Lecture…';
+    try {
+        const fd = new FormData();
+        files.forEach(f => fd.append('files', f));
+        const r = await fetch('/api/students/trombi/analyse', { method: 'POST', body: fd });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(body.error || ('erreur ' + r.status));
+        _trombi = body;
+        _trombi.completer = true;
+        _trombi.vignettes.forEach((v, i) => {
+            v.i = i;
+            v.choix = v.person_id;
+            v.retenue = !!v.person_id && !v.trop_lourde;
+        });
+        renderTrombi();
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+    finally { btn.disabled = false; btn.textContent = 'Analyser'; }
+}
+
+// À vérifier : sans fiche, ou reconnue sur un nom qui n'est pas exactement le sien.
+function _trombiDouteux(v) {
+    return !v.choix || (v.choix === v.person_id && (v.how === 'inverse' || v.how === 'approche'));
+}
+
+function renderTrombi() {
+    const t = _trombi;
+    const box = document.getElementById('trombi-review');
+    if (!t) { box.innerHTML = ''; return; }
+    const parId = Object.fromEntries(t.people.map(p => [p.id, p]));
+    const nb = f => t.vignettes.filter(f).length;
+    const groupe = f => [f.annee ? 'BUT ' + f.annee : '', f.formation || ''].filter(Boolean).join(' ');
+    const fichiers = t.fichiers.map(f => `${esc(f.fichier)} <span style="color:#9ca3af">(${
+        esc(groupe(f) || 'groupe non reconnu')}, ${f.photos} photo${f.photos > 1 ? 's' : ''})</span>`).join(' · ');
+    const pill = (txt, bg, titre) => `<span title="${esc(titre || '')}" style="display:inline-block;padding:1px 7px;
+        border-radius:6px;font-size:.7rem;font-weight:700;background:${bg};white-space:nowrap">${esc(txt)}</span>`;
+    const tri = [...t.people].sort((a, b) => _sansAccent((a.nom || '') + ' ' + (a.prenom || ''))
+        .localeCompare(_sansAccent((b.nom || '') + ' ' + (b.prenom || ''))));
+    const options = '<option value="">— ne pas associer —</option>' + tri.map(p => `<option value="${p.id}">${
+        esc((p.nom || '') + ' ' + (p.prenom || ''))}${p.promotion ? ' — ' + esc(p.promotion)
+        + (p.annee ? ' A' + p.annee : '') + (p.formation ? ' ' + esc(p.formation) : '') : ''}</option>`).join('');
+    // Ce qui est à vérifier remonte en tête ; le reste garde l'ordre des PDF.
+    const ordre = [...t.vignettes].sort((a, b) => (_trombiDouteux(b) - _trombiDouteux(a)) || (a.i - b.i));
+    const ligne = v => {
+        const p = parId[v.choix];
+        const how = v.choix ? (v.choix === v.person_id ? v.how : 'manuel') : null;
+        const [lib, bg, titre] = how ? _TROMBI_HOW[how]
+            : ['sans fiche', '#fee2e2', 'Aucune fiche reconnue : choisissez-la dans la liste, ou laissez la photo de côté'];
+        const notes = [];
+        if (v.trop_lourde) notes.push('image illisible ou trop lourde (max 2 Mo)');
+        if (p && p.photo) notes.push('remplace sa photo');
+        if (p && v.numero && !p.numero) notes.push('n° Apogée à compléter');
+        if (p && v.numero && p.numero && p.numero !== v.numero)
+            notes.push(`<span style="color:#b91c1c">n° différent sur la fiche : ${esc(p.numero)}</span>`);
+        return `<tr style="${_trombiDouteux(v) ? 'background:#fffbeb' : ''}">
+            <td style="text-align:center"><input type="checkbox"${v.retenue ? ' checked' : ''}${
+                !v.choix || v.trop_lourde ? ' disabled' : ''} onchange="cocherTrombi(${v.i}, this.checked)"
+                title="Associer cette photo à la fiche choisie"></td>
+            <td><img src="${v.photo}" alt="" style="width:40px;height:50px;object-fit:cover;border-radius:4px;display:block"></td>
+            <td><strong>${esc(v.nom)}</strong> ${esc(v.prenom)}
+                <div style="color:#9ca3af;font-size:.75rem">${esc(v.numero || 'sans n°')} · ${esc(v.fichier)} p. ${v.page}</div></td>
+            <td><select data-trombi="${v.i}" onchange="choisirTrombi(${v.i}, this.value)"
+                style="max-width:320px;font-size:.82rem">${options}</select></td>
+            <td style="text-align:center">${pill(lib, bg, titre)}</td>
+            <td style="font-size:.75rem;color:#6b7280">${notes.join(' · ')}</td>
+        </tr>`;
+    };
+    const ancien = box.querySelector('.trombi-scroll');
+    const defil = ancien ? ancien.scrollTop : 0;
+    box.innerHTML = `
+        <div style="font-size:.85rem;margin-bottom:4px"><strong>${t.vignettes.length}</strong> photo(s) lue(s) —
+            <strong>${nb(v => v.how === 'numero' || v.how === 'nom')}</strong> reconnue(s) d'office,
+            <strong>${nb(v => v.how === 'inverse' || v.how === 'approche')}</strong> à vérifier,
+            <strong>${nb(v => !v.person_id)}</strong> sans fiche.</div>
+        <div style="font-size:.78rem;color:#6b7280;margin-bottom:8px">${fichiers}</div>
+        <label style="display:flex;gap:6px;align-items:center;font-size:.85rem;margin-bottom:8px">
+            <input type="checkbox"${t.completer ? ' checked' : ''} onchange="_trombi.completer = this.checked">
+            Compléter le n° Apogée des fiches qui n'en ont pas (lu sur le trombinoscope ; un numéro
+            déjà saisi n'est jamais remplacé)</label>
+        <div class="trombi-scroll" style="overflow:auto;max-height:55vh;border:1px solid #e5e7eb;border-radius:8px">
+            <table class="pn-table" style="table-layout:auto;width:100%">
+                <thead><tr><th style="width:30px"></th><th style="width:50px">Photo</th>
+                    <th style="text-align:left">Sur le trombinoscope</th><th style="text-align:left">Fiche</th>
+                    <th>Rapprochement</th><th style="text-align:left">Remarque</th></tr></thead>
+                <tbody>${ordre.map(ligne).join('')}</tbody></table></div>`;
+    box.querySelectorAll('select[data-trombi]').forEach(sel => {
+        sel.value = String(t.vignettes[+sel.dataset.trombi].choix || '');
+    });
+    box.querySelector('.trombi-scroll').scrollTop = defil;
+    majTrombiBouton();
+}
+
+function majTrombiBouton() {
+    const btn = document.getElementById('trombi-submit');
+    const n = _trombi ? _trombi.vignettes.filter(v => v.retenue && v.choix).length : 0;
+    btn.style.display = _trombi ? '' : 'none';
+    btn.disabled = !n;
+    btn.textContent = `Associer ${n} photo${n > 1 ? 's' : ''}`;
+}
+
+// Une fiche ne reçoit qu'une photo : la choisir pour une autre vignette est refusé
+// tant que la première la garde.
+function _trombiOccupee(v, id) {
+    return _trombi.vignettes.find(w => w !== v && w.retenue && w.choix === id);
+}
+
+function choisirTrombi(i, val) {
+    const v = _trombi.vignettes[i];
+    const id = val ? +val : null;
+    const autre = id && _trombiOccupee(v, id);
+    if (autre) {
+        toast(`Cette fiche reçoit déjà la photo de ${autre.nom} ${autre.prenom} : décochez-la d'abord`, 'error');
+    } else {
+        v.choix = id;
+        v.retenue = !!id && !v.trop_lourde;
+    }
+    renderTrombi();
+}
+
+function cocherTrombi(i, coche) {
+    const v = _trombi.vignettes[i];
+    const autre = coche && _trombiOccupee(v, v.choix);
+    if (autre) {
+        toast(`Cette fiche reçoit déjà la photo de ${autre.nom} ${autre.prenom}`, 'error');
+        renderTrombi();
+        return;
+    }
+    v.retenue = coche;
+    majTrombiBouton();
+}
+
+async function importerTrombi() {
+    if (!_trombi) return;
+    const items = _trombi.vignettes.filter(v => v.retenue && v.choix).map(v => ({
+        person_id: v.choix, photo: v.photo, numero: v.numero, source: v.fichier }));
+    if (!items.length) return;
+    const btn = document.getElementById('trombi-submit');
+    btn.disabled = true;
+    let photos = 0, numeros = 0, refus = [];
+    try {
+        // Par paquets : une classe entière de photos ferait une seule requête de
+        // plusieurs mégaoctets.
+        for (let k = 0; k < items.length; k += 20) {
+            btn.textContent = `Enregistrement… ${k}/${items.length}`;
+            const r = await api('/students/trombi/import', { method: 'POST',
+                body: JSON.stringify({ items: items.slice(k, k + 20), completer_numero: _trombi.completer }) });
+            photos += r.photos || 0;
+            numeros += r.numeros || 0;
+            refus = refus.concat(r.refus || []);
+        }
+        closeModal('modal-trombi');
+        _trombi = null;
+        toast(`${photos} photo(s) associée(s)` + (numeros ? `, ${numeros} n° Apogée complété(s)` : '')
+              + (refus.length ? ` — refusée(s) : ${refus.join(', ')}` : ''), refus.length ? 'error' : undefined);
+        loadEtudiants();
+    } catch (e) {
+        // Les paquets déjà partis sont enregistrés : le dire plutôt que laisser croire à un échec complet.
+        toast('Erreur : ' + e.message + (photos ? ` (${photos} photo(s) déjà enregistrée(s))` : ''), 'error');
+    } finally {
+        if (_trombi) majTrombiBouton();
+    }
+}
+
+// Photo déposée à la main sur la fiche (étudiant absent du trombinoscope, photo à
+// remplacer) ou retirée.
+// L'image choisie part en JPEG, ramenée à 480 × 600 au plus : c'est le format
+// que le trombinoscope PDF embarque, et une photo d'appareil pèserait des mégaoctets.
+function _versJpeg(file) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+            const k = Math.min(1, 480 / img.naturalWidth, 600 / img.naturalHeight);
+            const c = document.createElement('canvas');
+            c.width = Math.max(1, Math.round(img.naturalWidth * k));
+            c.height = Math.max(1, Math.round(img.naturalHeight * k));
+            const ctx = c.getContext('2d');
+            ctx.fillStyle = '#fff';             // fond d'une image transparente
+            ctx.fillRect(0, 0, c.width, c.height);
+            ctx.drawImage(img, 0, 0, c.width, c.height);
+            URL.revokeObjectURL(url);
+            c.toBlob(b => b ? resolve(b) : reject(new Error('conversion impossible')), 'image/jpeg', 0.9);
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('image illisible')); };
+        img.src = url;
+    });
+}
+
+async function deposerPhoto(file) {
+    if (!file || !_studentCard) return;
+    try {
+        const fd = new FormData();
+        fd.append('file', await _versJpeg(file), 'photo.jpg');
+        const r = await fetch(`/api/students/${_studentCard.student.id}/photo`, { method: 'PUT', body: fd });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(body.error || ('erreur ' + r.status));
+        _majPhotoFiche(body);
+        toast('Photo enregistrée');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function retirerPhoto() {
+    if (!_studentCard) return;
+    try {
+        _majPhotoFiche(await api(`/students/${_studentCard.student.id}/photo`, { method: 'DELETE' }));
+        toast('Photo retirée');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+function _majPhotoFiche(res) {
+    _studentCard = res;
+    const e = ((_etuData || {}).students || []).find(x => x.id === res.student.id);
+    if (e) e.photo = res.student.photo;
+    if (_studentCardHost === 'tab') renderEtudiants(); else renderStudentCard();
+}
+
+function _photoUrl(s) {
+    return s && s.photo ? `/api/students/${s.id}/photo?v=${encodeURIComponent(s.photo)}` : '';
 }
 
 async function openEtudiant(personId) {
@@ -6345,6 +6720,7 @@ function renderEtudiantFiche() {
     document.getElementById('etu-content').innerHTML = `
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px">
             <button class="btn btn-secondary btn-sm" onclick="fermerEtudiant()">← Liste des étudiants</button>
+            ${s.photo ? `<img src="${_photoUrl(s)}" alt="" style="width:36px;height:45px;object-fit:cover;border-radius:4px">` : ''}
             <h2 style="margin:0">${esc(s.nom || '')} <span style="font-weight:400">${esc(s.prenom || '')}</span></h2>
             ${s.numero ? `<span style="color:#6b7280;font-size:.85rem">n° ${esc(s.numero)}</span>` : ''}
             ${nb.promotion ? `<span style="color:#6b7280;font-size:.85rem">${esc(nb.promotion)}${
@@ -6600,8 +6976,23 @@ function studentSections(d, opts = {}) {
             <label style="font-size:.78rem" title="${esc(aide || '')}">${label}</label>
             <select${dis} onchange="changeRegistreField('${field}', this.value)">${opts2}</select></div>`;
     };
+    // Sa photo, reprise d'un trombinoscope (onglet Étudiants) ou déposée ici.
+    const photo = `<div style="flex:0 0 auto;width:110px;text-align:center">
+        ${s.photo ? `<img src="${_photoUrl(s)}" alt="Photo de ${esc((s.nom || '') + ' ' + (s.prenom || ''))}"
+                style="width:110px;height:138px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb;display:block">`
+            : `<div style="width:110px;height:138px;border-radius:8px;border:1px dashed #d1d5db;display:flex;
+                align-items:center;justify-content:center;color:#9ca3af;font-size:.75rem">Pas de photo</div>`}
+        ${dis ? '' : `<div style="display:flex;gap:4px;justify-content:center;margin-top:6px">
+            <label class="btn btn-secondary btn-sm" style="cursor:pointer;margin:0"
+                title="Une image (JPEG, PNG, WebP…) : elle est enregistrée en JPEG">${s.photo ? 'Changer' : 'Ajouter'}
+                <input type="file" accept="image/*" style="display:none"
+                    onchange="deposerPhoto(this.files[0])"></label>
+            ${s.photo ? `<button type="button" class="btn btn-secondary btn-sm" onclick="retirerPhoto()"
+                title="Retirer la photo">✕</button>` : ''}</div>`}
+    </div>`;
     const identite = `<div class="section-title">Informations du candidat</div>
-        <div style="display:grid;grid-template-columns:repeat(${opts.large ? 4 : 3}, 1fr);gap:10px">
+        <div style="display:flex;gap:16px;align-items:flex-start">${photo}
+        <div style="flex:1;min-width:0;display:grid;grid-template-columns:repeat(${opts.large ? 4 : 3}, 1fr);gap:10px">
             ${champ('Nom', 'nom')}${champ('Prénom', 'prenom')}
             ${champ('N° Apogée', 'numero', "Numéro Apogée de l'étudiant")}
             ${champ('Naissance', 'naissance', 'Date de naissance (jj/mm/aaaa)')}
@@ -6615,7 +7006,7 @@ function studentSections(d, opts = {}) {
             ${liste('Série de bac', 'bac', "Reprise du classement ParcourSup ; à compléter à la main pour qui n'y figure pas")}
             ${nombre('Ans depuis le bac', 'bac_ecart', "Années entre l'obtention du bac et l'entrée en BUT — 0 : entré juste après")}
             ${liste('Études antérieures', 'cursus', "Études suivies entre le bac et le BUT — à renseigner dès que « Ans depuis le bac » est supérieur à 0")}
-        </div>`;
+        </div></div>`;
 
     const etiq = (txt, bg, titre) => `<span title="${esc(titre || '')}" style="display:inline-block;
         padding:1px 7px;border-radius:6px;font-size:.68rem;font-weight:700;background:${bg};margin-left:6px">${esc(txt)}</span>`;

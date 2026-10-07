@@ -1269,6 +1269,7 @@ def _person_prune(db, sid):
                               (sid,)).fetchone():
         db.execute('DELETE FROM students WHERE id=?', (sid,))
         db.execute('DELETE FROM student_candidature WHERE person_id=?', (sid,))
+        db.execute('DELETE FROM student_photos WHERE person_id=?', (sid,))
 
 def _fiche_person(db, fid):
     """L'étudiant (registre) dont la fiche `fid` est une inscription, ou None."""
@@ -1344,6 +1345,17 @@ def _apply_promotions_migrations(db):
             data        TEXT NOT NULL,
             fichier     TEXT,
             imported_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )''')
+    # Photo d'identité de l'étudiant (registre), reprise d'un trombinoscope PDF ou
+    # déposée sur sa fiche. À part de `students` : ses lectures (SELECT *) n'ont pas
+    # à traîner les images.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS student_photos (
+            person_id   INTEGER PRIMARY KEY,   -- students.id
+            mime        TEXT NOT NULL,
+            data        BLOB NOT NULL,
+            source      TEXT,                  -- trombinoscope ou fichier d'origine
+            updated_at  TEXT DEFAULT CURRENT_TIMESTAMP
         )''')
     # Répartition des étudiants dans les groupes (Promotions › Groupes) : pour une
     # inscription et un SEMESTRE — comme le nombre de groupes du service —, le groupe de
@@ -3238,7 +3250,7 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     (r'^/api/promotions/\d+/notes/', ['promo:notes'], ''),
     (r'^/api/notes/import/sheets$', ['promo:notes'], ''),
     (r'^/api/promotions/\d+/(effectif/|students)', ['promo:effectif'], ''),
-    (r'^/api/students/\d+$', ['nav:etudiants'], ''),
+    (r'^/api/students/(\d+(/photo)?|trombi/(analyse|import))$', ['nav:etudiants'], ''),
     (r'^/api/promotions/\d+/(coefficients|programme)', ['promo:actions'], ''),
     (r'^/api/promotions(/\d+)?$', ['promo:actions'], ''),
     (r'^/api/backups$', ['nav:journal'], ''),
@@ -5029,6 +5041,7 @@ def delete_promotion(pid):
     db.execute('DELETE FROM students WHERE id NOT IN '
                '(SELECT person_id FROM promotion_students WHERE person_id IS NOT NULL)')
     db.execute('DELETE FROM student_candidature WHERE person_id NOT IN (SELECT id FROM students)')
+    db.execute('DELETE FROM student_photos WHERE person_id NOT IN (SELECT id FROM students)')
     db.commit()
     # Les années universitaires ne sont PAS supprimées (partagées entre cohortes).
     return jsonify({'deleted': True})
@@ -5267,6 +5280,9 @@ def _student_payload(pdb, person_id):
         return None
     d = dict(row)
     d['ps_court'] = {f: _ps_court(f, d.get(f)) for f in _PS_FIELDS}
+    # Date de la photo, None sans photo : elle versionne l'adresse de l'image.
+    ph = pdb.execute('SELECT updated_at FROM student_photos WHERE person_id=?', (person_id,)).fetchone()
+    d['photo'] = ph['updated_at'] if ph else None
     cand = pdb.execute('SELECT data, fichier, imported_at FROM student_candidature WHERE person_id=?',
                        (person_id,)).fetchone()
     return {'student': d, 'parcours': _student_parcours(pdb, person_id),
@@ -5313,7 +5329,10 @@ def _students_list(pdb):
 
     Le calcul de jury d'une cohorte sert à tous ses inscrits : il est fait une fois
     par cohorte (quatre au total), jamais une fois par étudiant."""
-    etudiants = {r['id']: dict(r, inscriptions=[]) for r in pdb.execute('SELECT * FROM students')}
+    etudiants = {r['id']: dict(r, inscriptions=[], photo=None) for r in pdb.execute('SELECT * FROM students')}
+    for r in pdb.execute('SELECT person_id, updated_at FROM student_photos'):
+        if r['person_id'] in etudiants:
+            etudiants[r['person_id']]['photo'] = r['updated_at']
     notes = {r['person_id']: r['n'] for r in pdb.execute(
         '''SELECT s.person_id, COUNT(*) AS n FROM student_marks m
            JOIN promotion_students s ON s.id = m.student_id GROUP BY s.person_id''')}
@@ -5470,6 +5489,616 @@ def import_promotion_students(pid):
     payload['import_report'] = {'imported': res['imported'], 'updated': res['updated'],
                                 'skipped': res['skipped'], 'total_fichier': len(students)}
     return jsonify(payload)
+
+# ---- Photos des étudiants : trombinoscope PDF et dépôt sur la fiche ----
+
+_PHOTO_MAX = 2 * 1024 * 1024           # une photo d'identité, pas une affiche
+_TROMBI_MAX = 40 * 1024 * 1024         # tous les PDF d'un même import
+
+def _photo_mime(data):
+    """Type d'une image d'après ses premiers octets, s'il est de ceux qu'un
+    navigateur affiche tels quels ; None sinon (le nom du fichier ne prouve rien)."""
+    if data[:3] == b'\xff\xd8\xff':
+        return 'image/jpeg'
+    if data[:8] == b'\x89PNG\r\n\x1a\n':
+        return 'image/png'
+    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        return 'image/webp'
+    return None
+
+def _photo_set(db, person_id, data, mime, source):
+    db.execute('''INSERT INTO student_photos(person_id, mime, data, source, updated_at)
+                  VALUES(?,?,?,?,?)
+                  ON CONFLICT(person_id) DO UPDATE SET mime=excluded.mime, data=excluded.data,
+                      source=excluded.source, updated_at=excluded.updated_at''',
+               # À la microseconde : la date versionne l'adresse de l'image, une photo
+               # remplacée dans la même seconde doit en changer.
+               (person_id, mime, sqlite3.Binary(data), (source or '')[:200],
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')))
+
+def _trombi_parse(stream):
+    """Les vignettes d'un trombinoscope PDF (export de la scolarité : la photo, et
+    au-dessus le NOM, le prénom et le n° Apogée) :
+    [{nom, prenom, numero, page, jpeg}], avec le titre de chaque page à part.
+
+    Rien n'y est balisé : on lit où chaque photo est posée sur la page et on lui
+    rattache les lignes écrites juste au-dessus, dans sa colonne — la plus proche
+    est le numéro, puis le prénom, puis le nom. Le titre de page (« BUT 1 … - ALT »),
+    plus gros et plus haut, n'en fait pas partie. Seules les photos JPEG sont
+    reprises : c'est ce que produit l'export, et le navigateur les affiche telles
+    quelles, sans rien décoder ici."""
+    from pypdf import PdfReader
+    from pypdf.generic import ContentStream
+
+    def mul(m, n):
+        a, b, c, d, e, f = m
+        A, B, C, D, E, F = n
+        return [a * A + b * C, a * B + b * D, c * A + d * C, c * B + d * D,
+                e * A + f * C + E, e * B + f * D + F]
+
+    reader = PdfReader(stream)
+    vignettes, titres = [], []
+    for pno, page in enumerate(reader.pages, 1):
+        res = page.get('/Resources')
+        res = res.get_object() if res is not None else {}
+        xobjs = res.get('/XObject')
+        xobjs = xobjs.get_object() if xobjs is not None else {}
+        contents = page.get_contents()
+        if contents is None:
+            continue
+        photos, pile, ctm = [], [], [1, 0, 0, 1, 0, 0]
+        for operands, op in ContentStream(contents, reader).operations:
+            if op == b'q':
+                pile.append(ctm)
+            elif op == b'Q':
+                ctm = pile.pop() if pile else [1, 0, 0, 1, 0, 0]
+            elif op == b'cm':
+                ctm = mul([float(x) for x in operands], ctm)
+            elif op == b'Do' and operands:
+                xo = xobjs.get(operands[0])
+                xo = xo.get_object() if xo is not None else None
+                if xo is None or xo.get('/Subtype') != '/Image':
+                    continue
+                filtre = xo.get('/Filter')
+                if not isinstance(filtre, str):          # tableau de filtres
+                    filtre = filtre[0] if filtre is not None and len(filtre) == 1 else None
+                if filtre != '/DCTDecode':
+                    continue
+                a, b, c, d, e, f = ctm
+                xs, ys = (e, e + a, e + c, e + a + c), (f, f + b, f + d, f + b + d)
+                photos.append({'x0': min(xs), 'x1': max(xs), 'y1': max(ys),
+                               'jpeg': xo.get_data(), 'lignes': []})
+        textes = []
+
+        def lire(txt, cm, tm, _font, fs):
+            t = (txt or '').strip()
+            if t:
+                m = mul(tm, cm)
+                textes.append((t, m[4], m[5], (fs or 0) * (abs(m[3]) or 1)))
+        page.extract_text(visitor_text=lire)
+        for t, x, y, fs in textes:
+            # La photo juste en dessous, dans la même colonne : un nom long déborde
+            # à gauche de la photo, d'où la marge.
+            dessous = [(y - p['y1'], p) for p in photos
+                       if p['x0'] - 50 <= x <= p['x1'] + 20 and y >= p['y1']]
+            if dessous:
+                gap, p = min(dessous, key=lambda z: z[0])
+                p['lignes'].append((gap, t, fs))
+            else:
+                titres.append(t)
+        for p in photos:
+            lignes, prec = [], None
+            # De la photo vers le haut : la première ligne la touche presque, chaque
+            # suivante est à moins de deux interlignes de la précédente, dans le même
+            # corps. Le titre de page, plus gros, arrête la lecture.
+            reste = sorted(p['lignes'], key=lambda z: z[0])
+            for gap, t, fs in reste:
+                fs = fs or 10
+                if (gap > 3 * fs if prec is None else
+                        gap - prec[0] > 2 * fs or abs(fs - prec[1]) > 1 or len(lignes) == 4):
+                    break
+                lignes.append(t)
+                prec = (gap, fs)
+            # Ce qui n'est pas la vignette est le titre de la page, ou en tient lieu.
+            titres += [t for _g, t, _fs in reste[len(lignes):]]
+            numero = next((t for t in lignes if re.fullmatch(r'\d{5,12}', t)), '')
+            mots = [t for t in lignes if t != numero]
+            # Lignes du bas vers le haut : prénom, puis le nom (sur une ou deux lignes).
+            prenom = mots[0] if len(mots) > 1 else ''
+            nom = ' '.join(reversed(mots[1:])) if len(mots) > 1 else (mots[0] if mots else '')
+            if nom or numero:
+                vignettes.append({'nom': nom, 'prenom': prenom, 'numero': numero,
+                                  'page': pno, 'jpeg': p['jpeg']})
+    return vignettes, titres
+
+def _trombi_groupe(titres):
+    """Année d'étude et sous-cohorte annoncées par les titres de page
+    (« BUT 2 Genie Industriel et Maintenance - Temps plein ») : (2, 'FTP'),
+    None pour ce qui n'y est pas dit."""
+    txt = ' '.join(titres)
+    m = re.search(r'\bBUT\s*([123])\b', txt)
+    k = _profile_key(txt)
+    formation = ('ALT' if re.search(r'\bALT\b|alternance|apprenti', txt, re.I)
+                 else 'FTP' if ('tempsplein' in k or re.search(r'\bFTP\b|\bFI\b', txt)) else None)
+    return (int(m.group(1)) if m else None), formation
+
+def _nom_mots(*parts):
+    """Les mots d'un nom, sans accents ni casse : « MESCHI--CARIS » → meschi, caris."""
+    s = unicodedata.normalize('NFD', ' '.join(p or '' for p in parts))
+    return [w for w in re.split(r'[^a-z0-9]+', s.encode('ascii', 'ignore').decode().lower()) if w]
+
+def _trombi_rapprocher(people, vignettes):
+    """Associe chaque vignette à une fiche du registre : `person_id` et `how`.
+
+    Dans l'ordre : le n° Apogée ; le nom et le prénom (inversés aussi — le
+    trombinoscope range parfois un prénom composé en nom) ; à défaut un nom
+    approché (faute de frappe, nom composé tronqué ou abrégé), cherché d'abord
+    parmi les étudiants de l'année et de la sous-cohorte du trombinoscope. Une
+    fiche ne reçoit qu'une vignette ; ce qui reste douteux n'est pas associé —
+    l'écran de vérification le montre et laisse choisir."""
+    import difflib
+    pris = set()
+    par_num = {}
+    for p in people:
+        if p['numero']:
+            par_num.setdefault(str(p['numero']).strip(), []).append(p)
+    cle = lambda *xs: ''.join(_nom_mots(*xs))
+    par_nom = {}
+    for p in people:
+        par_nom.setdefault(cle(p['nom'], p['prenom']), []).append(p)
+
+    def choisir(cands, v):
+        cands = [c for c in cands if c['id'] not in pris]
+        if len(cands) > 1:            # homonymes : ceux du groupe du trombinoscope
+            cands = [c for c in cands if v['groupe_ok'](c)] or cands
+        return cands[0] if len(cands) == 1 else None
+
+    for v in vignettes:
+        v['person_id'] = v['how'] = None
+        v.setdefault('groupe_ok', lambda c: True)
+    passes = [
+        ('numero', lambda v: par_num.get(v['numero'], []) if v['numero'] else []),
+        ('nom', lambda v: par_nom.get(cle(v['nom'], v['prenom']), [])),
+        ('inverse', lambda v: par_nom.get(cle(v['prenom'], v['nom']), [])),
+    ]
+    for how, cands in passes:
+        for v in vignettes:
+            if v['person_id'] is None:
+                c = choisir(cands(v), v)
+                if c:
+                    v['person_id'], v['how'] = c['id'], how
+                    pris.add(c['id'])
+
+    def score(v, p):
+        a, b = _nom_mots(v['nom'], v['prenom']), _nom_mots(p['nom'], p['prenom'])
+        communs = len(set(a) & set(b))
+        # Nom composé tronqué ou abrégé : tous les mots du plus court se retrouvent.
+        inclus = communs / min(len(set(a)), len(set(b))) if communs >= 2 else 0
+        sa, sb = ''.join(a), ''.join(b)
+        sb2 = ''.join(_nom_mots(p['prenom'], p['nom']))
+        return max(inclus, difflib.SequenceMatcher(None, sa, sb).ratio(),
+                   difflib.SequenceMatcher(None, sa, sb2).ratio())
+
+    for v in vignettes:
+        if v['person_id'] is not None:
+            continue
+        libres = [p for p in people if p['id'] not in pris]
+        for pool in ([p for p in libres if v['groupe_ok'](p)], libres):
+            notes = sorted(((score(v, p), p) for p in pool), key=lambda z: -z[0])
+            if notes and notes[0][0] >= 0.85 and (len(notes) == 1 or notes[1][0] < notes[0][0] - 0.05):
+                v['person_id'], v['how'] = notes[0][1]['id'], 'approche'
+                pris.add(notes[0][1]['id'])
+                break
+    return vignettes
+
+@app.route('/api/students/trombi/analyse', methods=['POST'])
+def analyse_trombi():
+    """Première étape de l'import d'un trombinoscope : lire les PDF et proposer,
+    pour chaque photo, la fiche à laquelle l'associer. Rien n'est enregistré ici ;
+    l'écran de vérification renvoie ensuite les associations retenues."""
+    err = _require_admin()
+    if err:
+        return err
+    files = [f for f in request.files.getlist('files') if f and f.filename]
+    if not files:
+        return error_response('Aucun fichier reçu', 400)
+    if request.content_length and request.content_length > _TROMBI_MAX:
+        return error_response('Fichiers trop volumineux (max 40 Mo en tout)', 400)
+    try:
+        import pypdf  # noqa: F401
+    except ImportError:
+        return error_response('Lecture des PDF indisponible sur ce serveur : '
+                              'installez le module pypdf (pip install pypdf)', 500)
+    import base64
+    pdb = get_promotions_db()
+    people = _students_list(pdb)
+    vignettes, fichiers = [], []
+    for fi, f in enumerate(files):
+        if os.path.splitext(f.filename)[1].lower() != '.pdf':
+            return error_response(f'{f.filename} : un trombinoscope PDF est attendu', 400)
+        try:
+            vs, titres = _trombi_parse(io.BytesIO(f.read()))
+        except Exception as e:
+            return error_response(f'{f.filename} : lecture impossible ({e})', 400)
+        annee, formation = _trombi_groupe(titres)
+        fichiers.append({'fichier': f.filename, 'annee': annee, 'formation': formation,
+                         'photos': len(vs)})
+
+        def groupe_ok(p, annee=annee, formation=formation):
+            return ((annee is None or (p.get('en_cours') and p.get('annee') == annee))
+                    and (formation is None or p.get('formation') == formation))
+        for v in vs:
+            v.update(fichier=f.filename, f=fi, groupe_ok=groupe_ok)
+        vignettes += vs
+    if not vignettes:
+        return error_response('Aucune photo trouvée dans ces fichiers', 400)
+    _trombi_rapprocher(people, vignettes)
+    out = []
+    for v in vignettes:
+        mime = _photo_mime(v['jpeg'])
+        out.append({'nom': v['nom'], 'prenom': v['prenom'], 'numero': v['numero'],
+                    'fichier': v['fichier'], 'f': v['f'], 'page': v['page'],
+                    'person_id': v['person_id'], 'how': v['how'],
+                    'trop_lourde': len(v['jpeg']) > _PHOTO_MAX or mime != 'image/jpeg',
+                    'photo': 'data:image/jpeg;base64,%s' % base64.b64encode(v['jpeg']).decode()})
+    return jsonify({
+        'vignettes': out, 'fichiers': fichiers,
+        'people': [{'id': p['id'], 'nom': p['nom'], 'prenom': p['prenom'], 'numero': p['numero'],
+                    'promotion': p['promotion'], 'annee': p['annee'], 'formation': p['formation'],
+                    'statut': p['statut'], 'photo': bool(p['photo'])} for p in people]})
+
+@app.route('/api/students/trombi/import', methods=['POST'])
+def import_trombi():
+    """Seconde étape : enregistrer les photos retenues à l'écran de vérification.
+    {items: [{person_id, photo: data URL, numero, source}], completer_numero}.
+
+    Le n° Apogée lu sur le trombinoscope complète la fiche qui n'en a pas (les
+    nouveaux entrants, souvent) ; il ne remplace jamais un numéro déjà saisi, ni ne
+    se pose s'il appartient déjà à un autre étudiant."""
+    err = _require_admin()
+    if err:
+        return err
+    import base64
+    data = request.get_json(silent=True) or {}
+    items = data.get('items') or []
+    completer = bool(data.get('completer_numero'))
+    db = get_promotions_db()
+    n_photos, n_numeros, refus = 0, 0, []
+    for it in items:
+        try:
+            pid = int(it.get('person_id'))
+        except (TypeError, ValueError):
+            continue
+        row = db.execute('SELECT id, nom, prenom, numero FROM students WHERE id=?', (pid,)).fetchone()
+        if not row:
+            continue
+        qui = ('%s %s' % (row['nom'] or '', row['prenom'] or '')).strip()
+        m = re.match(r'^data:image/[a-z]+;base64,(.+)$', str(it.get('photo') or ''), re.S)
+        try:
+            img = base64.b64decode(m.group(1), validate=True) if m else b''
+        except ValueError:
+            img = b''
+        mime = _photo_mime(img)
+        if mime != 'image/jpeg' or len(img) > _PHOTO_MAX:
+            refus.append(qui)
+            continue
+        _photo_set(db, pid, img, mime, it.get('source') or 'trombinoscope')
+        n_photos += 1
+        num = str(it.get('numero') or '').strip()
+        if (completer and not (row['numero'] or '').strip() and re.fullmatch(r'\d{5,12}', num)
+                and not db.execute('SELECT 1 FROM students WHERE numero=? AND id<>?',
+                                   (num, pid)).fetchone()):
+            db.execute('UPDATE students SET numero=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                       (num, pid))
+            n_numeros += 1
+    db.commit()
+    _audit('TROMBI_IMPORT', ip=_client_ip(), user=session.get('user'),
+           photos=n_photos, numeros=n_numeros, refus=len(refus))
+    return jsonify({'photos': n_photos, 'numeros': n_numeros, 'refus': refus})
+
+@app.route('/api/students/<int:person_id>/photo', methods=['GET'])
+def get_student_photo(person_id):
+    err = _require_promo_read()
+    if err:
+        return err
+    r = get_promotions_db().execute('SELECT mime, data FROM student_photos WHERE person_id=?',
+                                    (person_id,)).fetchone()
+    if not r:
+        return error_response('Pas de photo', 404)
+    resp = send_file(io.BytesIO(r['data']), mimetype=r['mime'])
+    # L'adresse porte la date de la photo (?v=…) : la remplacer change l'adresse,
+    # le navigateur peut donc garder celle-ci sans la redemander.
+    resp.headers['Cache-Control'] = 'private, max-age=604800'
+    return resp
+
+@app.route('/api/students/<int:person_id>/photo', methods=['PUT'])
+def put_student_photo(person_id):
+    """Photo déposée à la main sur la fiche : un étudiant absent du trombinoscope,
+    ou une photo à remplacer."""
+    err = _require_admin()
+    if err:
+        return err
+    db = get_promotions_db()
+    if not db.execute('SELECT 1 FROM students WHERE id=?', (person_id,)).fetchone():
+        return error_response('Étudiant introuvable', 404)
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return error_response('Aucun fichier reçu', 400)
+    img = f.read(_PHOTO_MAX + 1)
+    mime = _photo_mime(img)
+    # JPEG seulement : c'est ce que le trombinoscope PDF sait embarquer. Le
+    # navigateur convertit l'image choisie avant de l'envoyer.
+    if mime != 'image/jpeg':
+        return error_response('Image JPEG attendue', 400)
+    if len(img) > _PHOTO_MAX:
+        return error_response('Photo trop volumineuse (max 2 Mo)', 400)
+    _photo_set(db, person_id, img, mime, secure_filename(f.filename) or 'photo')
+    db.commit()
+    _audit('STUDENT_PHOTO', ip=_client_ip(), user=session.get('user'), student=person_id)
+    return jsonify(_student_payload(db, person_id))
+
+@app.route('/api/students/<int:person_id>/photo', methods=['DELETE'])
+def delete_student_photo(person_id):
+    err = _require_admin()
+    if err:
+        return err
+    db = get_promotions_db()
+    db.execute('DELETE FROM student_photos WHERE person_id=?', (person_id,))
+    db.commit()
+    _audit('STUDENT_PHOTO_DELETE', ip=_client_ip(), user=session.get('user'), student=person_id)
+    payload = _student_payload(db, person_id)
+    if not payload:
+        return error_response('Étudiant introuvable', 404)
+    return jsonify(payload)
+
+# ---- Trombinoscope à télécharger (PDF) ----
+# Écrit à la main, sans bibliothèque : une page A4 paysage de 18 vignettes, les
+# photos JPEG embarquées telles quelles (le PDF sait les afficher sans décodage)
+# et la police Helvetica standard de tout lecteur PDF. Seules les chasses des
+# caractères sont nécessaires, pour centrer un nom sous sa photo.
+
+_TROMBI_FORMATION = 'Génie Industriel et Maintenance'
+
+# Chasse des caractères 32 à 126 (métriques Adobe, millièmes de corps).
+_HELV_W = [278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278,
+           556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556,
+           1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778,
+           667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556,
+           333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556,
+           556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584]
+_HELVB_W = [278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278, 278,
+            556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 333, 333, 584, 584, 584, 611,
+            975, 722, 722, 722, 722, 667, 611, 778, 722, 278, 556, 722, 611, 833, 722, 778,
+            667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 333, 278, 333, 584, 556,
+            333, 556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556, 278, 889, 611, 611,
+            611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389, 280, 389, 584]
+
+def _pdf_largeur(txt, corps, gras=False):
+    """Largeur d'un texte en points ; une lettre accentuée a la chasse de sa lettre de base."""
+    table = _HELVB_W if gras else _HELV_W
+    total = 0
+    for ch in unicodedata.normalize('NFD', txt or ''):
+        if unicodedata.combining(ch):
+            continue
+        o = ord(ch)
+        total += table[o - 32] if 32 <= o <= 126 else 556
+    return total * corps / 1000
+
+def _pdf_chaine(txt):
+    b = (txt or '').encode('cp1252', 'replace')
+    return b'(' + b.replace(b'\\', b'\\\\').replace(b'(', b'\\(').replace(b')', b'\\)') + b')'
+
+def _pdf_texte(txt, x, y, corps, gras=False, gris=0.0):
+    return (b'BT /%s %.1f Tf %.2f g %.2f %.2f Td %s Tj ET' % (
+        b'F2' if gras else b'F1', corps, gris, x, y, _pdf_chaine(txt)))
+
+def _pdf_centre(txt, cx, y, corps, largeur_max, gras=False, gris=0.0):
+    """Texte centré sur `cx`, rapetissé s'il déborde de sa vignette (nom composé)."""
+    w = _pdf_largeur(txt, corps, gras)
+    if w > largeur_max:
+        corps, w = corps * largeur_max / w, largeur_max
+    return _pdf_texte(txt, cx - w / 2, y, corps, gras, gris)
+
+def _jpeg_info(data):
+    """(largeur, hauteur, composantes, bits) lus dans l'en-tête SOF d'un JPEG ; None sinon."""
+    if data[:2] != b'\xff\xd8':
+        return None
+    i = 2
+    while i + 9 < len(data):
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        m = data[i + 1]
+        if m == 0xFF:
+            i += 1
+            continue
+        if m in (0x01, 0xD8) or 0xD0 <= m <= 0xD7:
+            i += 2
+            continue
+        if m in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+            return (int.from_bytes(data[i + 7:i + 9], 'big'), int.from_bytes(data[i + 5:i + 7], 'big'),
+                    data[i + 9], data[i + 4])
+        i += 2 + int.from_bytes(data[i + 2:i + 4], 'big')
+    return None
+
+def _trombi_pdf(sections, titre_doc):
+    """Le trombinoscope : [{titre, info, personnes: [{nom, prenom, numero, jpeg}]}],
+    chaque section sur ses propres pages, 18 vignettes par page (6 × 3)."""
+    W, H, marge = 842, 595, 36
+    cols, lignes = 6, 3
+    cw = (W - 2 * marge) / cols
+    ch = 152
+    pw, ph = 88, 110
+    haut = 505
+    pages = []
+    for s in sections:
+        gens = s['personnes']
+        for k in range(0, max(len(gens), 1), cols * lignes):
+            pages.append((s, gens[k:k + cols * lignes]))
+    objs = [None, None,
+            b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+            b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>']
+
+    def ajouter(b):
+        objs.append(b)
+        return len(objs)
+
+    def flux(dico, data):
+        return dico + b' /Length %d >>\nstream\n' % len(data) + data + b'\nendstream'
+
+    edite = datetime.now().strftime('%d/%m/%Y')
+    kids = []
+    for n, (s, gens) in enumerate(pages, 1):
+        ops = [_pdf_texte(s['titre'], marge, 548, 15, gras=True),
+               _pdf_texte(s.get('info') or '', marge, 531, 10, gris=0.42),
+               b'0.82 G 0.6 w %.2f 520 m %.2f 520 l S' % (marge, W - marge),
+               _pdf_texte('Édité le %s · page %d / %d' % (edite, n, len(pages)), marge, 20, 8, gris=0.55)]
+        if not gens:
+            ops.append(_pdf_texte('Aucun étudiant.', marge, haut - 20, 11, gris=0.42))
+        images = []
+        for k, p in enumerate(gens):
+            r, c = divmod(k, cols)
+            top = haut - r * ch
+            x = marge + c * cw + (cw - pw) / 2
+            y = top - ph
+            cx = marge + c * cw + cw / 2
+            info = _jpeg_info(p['jpeg']) if p.get('jpeg') else None
+            if info and info[0] and info[1]:
+                w, h, nc, bits = info
+                espace = {1: b'/DeviceGray', 4: b'/DeviceCMYK'}.get(nc, b'/DeviceRGB')
+                dico = b'<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace %s ' \
+                       b'/BitsPerComponent %d /Filter /DCTDecode' % (w, h, espace, bits or 8)
+                if nc == 4:            # CMYK d'Adobe : valeurs inversées
+                    dico += b' /Decode [1 0 1 0 1 0 1 0]'
+                images.append(ajouter(flux(dico, p['jpeg'])))
+                # Photo recadrée pour remplir le cadre, sans être déformée.
+                e = max(pw / w, ph / h)
+                dw, dh = w * e, h * e
+                ops.append(b'q %.2f %.2f %.2f %.2f re W n %.3f 0 0 %.3f %.2f %.2f cm /Im%d Do Q' % (
+                    x, y, pw, ph, dw, dh, x + (pw - dw) / 2, y + (ph - dh) / 2, len(images)))
+            else:
+                ops.append(b'0.94 g %.2f %.2f %.2f %.2f re f' % (x, y, pw, ph))
+                ops.append(_pdf_centre('Pas de photo', cx, y + ph / 2 - 3, 8, pw - 6, gris=0.6))
+            ops.append(b'0.8 G 0.5 w %.2f %.2f %.2f %.2f re S' % (x, y, pw, ph))
+            ops.append(_pdf_centre(p.get('nom') or '', cx, top - 125, 9.5, cw - 8, gras=True))
+            ops.append(_pdf_centre(p.get('prenom') or '', cx, top - 137, 9.5, cw - 8))
+            if p.get('numero'):
+                ops.append(_pdf_centre(p['numero'], cx, top - 148, 8, cw - 8, gris=0.5))
+        contenu = ajouter(flux(b'<<', b'\n'.join(ops)))
+        xo = b' '.join(b'/Im%d %d 0 R' % (i + 1, o) for i, o in enumerate(images))
+        kids.append(ajouter(
+            b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] /Resources << /Font << /F1 3 0 R '
+            b'/F2 4 0 R >> /XObject << %s >> >> /Contents %d 0 R >>' % (W, H, xo, contenu)))
+    objs[0] = b'<< /Type /Catalog /Pages 2 0 R >>'
+    objs[1] = b'<< /Type /Pages /Kids [%s] /Count %d >>' % (
+        b' '.join(b'%d 0 R' % k for k in kids), len(kids))
+    titre16 = ('﻿' + (titre_doc or 'Trombinoscope')).encode('utf-16-be')
+    infos = ajouter(b'<< /Title <%s> /Producer (GestionEDT) >>' % titre16.hex().encode())
+    out = bytearray(b'%PDF-1.4\n%\xe2\xe3\xcf\xd3\n')
+    positions = []
+    for n, corps in enumerate(objs, 1):
+        positions.append(len(out))
+        out += b'%d 0 obj\n' % n + corps + b'\nendobj\n'
+    xref = len(out)
+    out += b'xref\n0 %d\n0000000000 65535 f \n' % (len(objs) + 1)
+    for pos in positions:
+        out += b'%010d 00000 n \n' % pos
+    out += b'trailer\n<< /Size %d /Root 1 0 R /Info %d 0 R >>\nstartxref\n%d\n' % (
+        len(objs) + 1, infos, xref)
+    out += b'%%EOF\n'
+    return bytes(out)
+
+def _trombi_personnes(pdb, ids):
+    """Nom, prénom, n° Apogée et photo de chaque étudiant du registre, par ordre alphabétique."""
+    ids = list(dict.fromkeys(ids))[:800]
+    if not ids:
+        return []
+    rows = pdb.execute('''SELECT s.id, s.nom, s.prenom, s.numero, p.data FROM students s
+                          LEFT JOIN student_photos p ON p.person_id = s.id
+                          WHERE s.id IN (%s)''' % ','.join('?' * len(ids)), ids).fetchall()
+    gens = [{'nom': r['nom'] or '', 'prenom': r['prenom'] or '', 'numero': r['numero'] or '',
+             'jpeg': bytes(r['data']) if r['data'] else None} for r in rows]
+    gens.sort(key=lambda p: (_profile_key(p['nom']), _profile_key(p['prenom'])))
+    return gens
+
+def _trombi_reponse(sections, fichier, titre_doc):
+    nom = secure_filename(fichier or '') or 'trombinoscope.pdf'
+    if not nom.lower().endswith('.pdf'):
+        nom += '.pdf'
+    return send_file(io.BytesIO(_trombi_pdf(sections, titre_doc)), mimetype='application/pdf',
+                     as_attachment=True, download_name=nom)
+
+def _trombi_titre(annee):
+    return 'BUT%s %s' % (' %d' % annee if annee else '', _TROMBI_FORMATION)
+
+_TROMBI_SECTIONS = (('FTP', 'Temps plein'), ('ALT', 'Alternance'))
+
+@app.route('/api/students/trombi.pdf', methods=['GET'])
+def trombi_pdf_liste():
+    """Le trombinoscope de ce que l'onglet Étudiants affiche (filtres compris) : les
+    étudiants viennent en deux listes, `ftp` et `alt`, une section chacune ; l'écran
+    les a déjà répartis selon l'année qu'il montre."""
+    err = _require_promo_read()
+    if err:
+        return err
+
+    def ids(cle):
+        return [int(x) for x in (request.args.get(cle) or '').split(',') if x.strip().isdigit()]
+    try:
+        annee = int(request.args.get('annee') or 0) or None
+    except ValueError:
+        annee = None
+    titre = _trombi_titre(annee if annee in (1, 2, 3) else None)
+    info = (request.args.get('info') or '').strip()[:200]
+    pdb = get_promotions_db()
+    sections = []
+    for cle, libelle in _TROMBI_SECTIONS:
+        gens = _trombi_personnes(pdb, ids(cle.lower()))
+        if gens:
+            sections.append({'titre': '%s — %s' % (titre, libelle), 'personnes': gens,
+                             'info': ' · '.join(x for x in (info, '%d étudiant%s' % (
+                                 len(gens), 's' if len(gens) > 1 else '')) if x)})
+    if not sections:
+        return error_response('Aucun étudiant à mettre dans le trombinoscope', 400)
+    return _trombi_reponse(sections, request.args.get('fichier'), titre)
+
+@app.route('/api/promotions/<int:pid>/effectif/<int:year>/trombi.pdf', methods=['GET'])
+def trombi_pdf_effectif(pid, year):
+    """Le trombinoscope d'une promotion pour une année d'étude : ceux qui suivent
+    l'année — sans les absents (césure, abandon déjà prononcé) —, temps plein
+    puis alternance."""
+    err = _require_promo_read()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    pdb = get_promotions_db()
+    payload = _year_effectif_payload(pdb, pid, year)
+    if not payload:
+        return error_response('Promotion introuvable', 404)
+    promo = payload['promotion']
+    nom = promo.get('name') or 'promo %d' % pid
+    debut = (promo.get('start_year') or 0) + year - 1
+
+    def present(s):
+        if s.get('hors_annee') or s.get('cesure') or not s.get('person_id'):
+            return False
+        # Un abandon compte à partir de son année ; l'année inconnue, il est écarté.
+        return not (s.get('statut') == 'Abandon' and (s.get('abandon_annee') or year) <= year)
+    presents = [s for s in payload['students'] if present(s)]
+    titre = _trombi_titre(year)
+    sections = []
+    for cle, libelle in _TROMBI_SECTIONS:
+        gens = _trombi_personnes(pdb, [s['person_id'] for s in presents if _face(s.get('formation')) == cle])
+        if gens:
+            sections.append({'titre': '%s — %s' % (titre, libelle), 'personnes': gens,
+                             'info': 'Promotion %s · année universitaire %d-%d · %d étudiant%s' % (
+                                 nom, debut, debut + 1, len(gens), 's' if len(gens) > 1 else '')})
+    if not sections:
+        sections = [{'titre': titre, 'personnes': [],
+                     'info': 'Promotion %s · année universitaire %d-%d' % (nom, debut, debut + 1)}]
+    return _trombi_reponse(sections, 'Trombi_%s_BUT%d.pdf' % (nom, year),
+                           '%s — promotion %s' % (titre, nom))
 
 # ---- Effectif par année d'étude (1..3) : report auto du jury + ajustements manuels ----
 
