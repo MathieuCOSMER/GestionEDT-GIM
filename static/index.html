@@ -2287,13 +2287,16 @@ async function api(endpoint, opts = {}) {
     // Exceptions : choix d'année de session, et saisie de notes par sous-matière
     // (l'autorisation fine — colonne éditable, référent — est vérifiée côté serveur)
     // (lorsque le superadmin a ouvert des droits de modification, le serveur tranche seul)
+    // Exception aussi : le journal de suivi d'un étudiant (commentaires, signalements),
+    // que l'enseignant écrit par défaut — le serveur vérifie auteur et droits.
     if (state.role === 'teacher' && method !== 'GET' && method !== 'HEAD'
             && !(state.tabs && state.tabs.editExtra.size)
             && endpoint !== '/years/session' && endpoint !== '/session-mode'
             && !endpoint.startsWith('/my-account')
             && !endpoint.startsWith('/qr-attendance')
             && !/\/saisie\/S[1-6]\//.test(endpoint)
-            && !/^\/promotions\/\d+\/tuteurs\//.test(endpoint)) {
+            && !/^\/promotions\/\d+\/tuteurs\//.test(endpoint)
+            && !/^\/students\/\d+\/suivi(\/\d+)?$/.test(endpoint)) {
         toast('Lecture seule', 'error');
         throw new Error('Lecture seule');
     }
@@ -2581,6 +2584,8 @@ function _currentTabKey() {
     if (_servicePages.includes(name)) return 'svc:' + name;
     if (name === 'promotions') return _promoSaisieOnly ? 'nav:saisie' : 'promo:' + _promoTab;
     if (name === 'programme') return 'prog:' + _progTab;
+    if (name === 'etudiants') return _etuSelected ? (_etuFicheTab === 'suivi' ? 'etu:suivi' : 'etu:liste')
+                                                 : (_etuVue === 'convoquer' ? 'etu:convoquer' : 'etu:liste');
     return name ? 'nav:' + name : null;
 }
 // Enseignant à qui le superadmin a ouvert la modification de l'onglet courant :
@@ -6365,9 +6370,30 @@ let _importFormation = 'FTP';
 let _etuData = null;              // liste du registre (payload /api/students)
 let _etuSort = { col: 'nom', dir: 1 };
 let _etuSelected = null;          // étudiant ouvert en fiche, null = la liste
-// Vue de la liste : tableau ou trombinoscope (gardée d'une visite à l'autre)
-let _etuVue = (() => { try { return localStorage.getItem('etuVue') === 'trombi' ? 'trombi' : 'liste'; }
+// Vue de l'onglet : tableau, trombinoscope ou étudiants à convoquer (gardée d'une
+// visite à l'autre)
+let _etuVue = (() => { try { const v = localStorage.getItem('etuVue');
+                             return ['trombi', 'convoquer'].includes(v) ? v : 'liste'; }
                        catch (e) { return 'liste'; } })();
+
+// Vues ouvertes à la session : la liste et le trombinoscope (etu:liste), la liste
+// des étudiants à convoquer (etu:convoquer)
+function _etuVuesPermises() {
+    return (tabHidden('etu:liste') ? [] : ['liste', 'trombi'])
+        .concat(tabHidden('etu:convoquer') ? [] : ['convoquer']);
+}
+
+function _etuVuesBoutons() {
+    const permises = _etuVuesPermises();
+    const nb = _convData ? (_convData.etudiants || []).filter(e => e.a_convoquer).length : null;
+    const vue = (cle, libelle, titre) => permises.includes(cle) ? `<button type="button" class="btn btn-sm ${
+        _etuVue === cle ? 'btn-primary' : 'btn-secondary'}" onclick="changerVueEtu('${cle}')"
+        title="${esc(titre)}">${libelle}</button>` : '';
+    return `<span style="display:inline-flex;gap:4px">${vue('liste', 'Liste', 'Un étudiant par ligne, triable')}${
+        vue('trombi', 'Trombinoscope', 'Les photos, par ordre alphabétique')}${
+        vue('convoquer', 'À convoquer' + (nb ? ` (${nb})` : ''),
+            "Les étudiants que les critères de suivi désignent (notes, baisse, assiduité, signalements), et leur convocation")}</span>`;
+}
 
 async function loadEtudiants() {
     const el = document.getElementById('etu-content');
@@ -6472,9 +6498,16 @@ function triEtudiants(col) {
 
 function renderEtudiants() {
     if (!_etuData) return;
+    const permises = _etuVuesPermises();
+    if (permises.length && !permises.includes(_etuVue)) _etuVue = permises[0];
     const filtres = document.getElementById('etu-filtres');
-    if (filtres) filtres.style.display = _etuSelected ? 'none' : '';
+    if (filtres) filtres.style.display = _etuSelected || _etuVue === 'convoquer' ? 'none' : '';
     if (_etuSelected) return renderEtudiantFiche();
+    if (_etuVue === 'convoquer') return !_convData || _convPerime ? loadConvoquer() : renderConvoquer();
+    if (!permises.length) {
+        document.getElementById('etu-content').innerHTML = '<div class="empty">Aucune vue de cet onglet ne vous est ouverte.</div>';
+        return;
+    }
     const f = _etuFiltres();
     const liste = _etuListe();
     const { col, dir } = _etuSort;
@@ -6537,19 +6570,15 @@ function renderEtudiants() {
     </tr>`).join('');
     const total = (_etuData.students || []).length;
     const trombi = _etuVue === 'trombi';
-    const vue = (cle, libelle, titre) => `<button type="button" class="btn btn-sm ${
-        _etuVue === cle ? 'btn-primary' : 'btn-secondary'}" onclick="changerVueEtu('${cle}')"
-        title="${esc(titre)}">${libelle}</button>`;
     document.getElementById('etu-content').innerHTML = `
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
-            <span style="display:inline-flex;gap:4px">${vue('liste', 'Liste', 'Un étudiant par ligne, triable')}${
-                vue('trombi', 'Trombinoscope', 'Les photos, par ordre alphabétique')}</span>
+            ${_etuVuesBoutons()}
             <span style="font-size:.9rem"><strong>${liste.length}</strong> étudiant(s)${
                 liste.length < total ? ` <span style="color:#9ca3af">sur ${total}</span>` : ''}</span>
             <span style="font-size:.8rem;color:#6b7280">${trombi ? '— cliquez une photo pour ouvrir sa fiche'
                 : '— cliquez une ligne pour ouvrir sa fiche (dossier, parcours, résultats)'}</span>
             <span style="margin-left:auto"></span>
-            ${editUI('nav:etudiants') ? `<button class="btn btn-secondary btn-sm" onclick="ouvrirTrombi()"
+            ${editUI('etu:liste') ? `<button class="btn btn-secondary btn-sm" onclick="ouvrirTrombi()"
                 title="Associer à chaque fiche sa photo, lue dans un trombinoscope PDF">Importer un trombi (PDF)</button>` : ''}
             ${trombi ? `<button class="btn btn-secondary btn-sm" onclick="telechargerTrombi()"${liste.length ? '' : ' disabled'}
                 title="Le trombinoscope de ce qui est affiché, filtres compris — choisissez une cohorte et une année pour celui d'une promo">
@@ -6923,13 +6952,18 @@ function _photoUrl(s) {
     return s && s.photo ? `/api/students/${s.id}/photo?v=${encodeURIComponent(s.photo)}` : '';
 }
 
-async function openEtudiant(personId) {
+// `tab` : sous-onglet à ouvrir (infos par défaut) ; `form` : entrée du journal à
+// commencer d'emblée (la liste À convoquer ouvre ainsi un compte rendu d'entretien).
+async function openEtudiant(personId, tab, form) {
     try {
         _studentCard = await api(`/students/${personId}`);
         _studentCardHost = 'tab';
         _etuSelected = personId;
-        _etuFicheTab = 'infos';
+        _etuFicheTab = tab || 'infos';
         _etuSemestre = '';        // un autre étudiant : on repart de sa scolarité entière
+        _etuSuivi = null;
+        _suiviSem = null;         // l'étoile s'ouvre sur son dernier semestre
+        _suiviForm = form ? { kind: form, id: null } : null;
         renderEtudiants();
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
@@ -6937,12 +6971,15 @@ async function openEtudiant(personId) {
 function fermerEtudiant() {
     _etuSelected = null;
     _studentCard = null;
+    _etuSuivi = null;
+    _suiviForm = null;
     renderEtudiants();
 }
 
-// La fiche se lit en deux temps : qui il est (état civil, profil, dossier de
-// candidature, cohortes traversées), et ce qu'il a obtenu (le relevé de toute sa
-// scolarité). Deux sous-onglets plutôt qu'une page à dérouler.
+// La fiche se lit en trois temps : qui il est (état civil, profil, dossier de
+// candidature, cohortes traversées), ce qu'il a obtenu (le relevé de toute sa
+// scolarité), et son suivi (évolution face à la promotion, journal). Des
+// sous-onglets plutôt qu'une page à dérouler.
 let _etuFicheTab = 'infos';
 
 function showEtuFicheTab(tab) {
@@ -6955,6 +6992,7 @@ function showEtuFicheTab(tab) {
 // sans rien dire. On la rattrape donc pour l'afficher.
 function corpsFiche(d) {
     try {
+        if (_etuFicheTab === 'suivi') return studentSuivi();
         return _etuFicheTab === 'notes' ? studentNotes(d) : studentSections(d, { large: true });
     } catch (e) {
         console.error('fiche étudiant :', e);
@@ -6966,6 +7004,10 @@ function corpsFiche(d) {
 function renderEtudiantFiche() {
     const d = _studentCard;
     if (!d) return;
+    _spBrouillon();
+    // Sous-onglet fermé à la session : on se rabat sur celui qui lui est ouvert
+    if (_etuFicheTab === 'suivi' && tabHidden('etu:suivi')) _etuFicheTab = 'infos';
+    if (_etuFicheTab !== 'suivi' && tabHidden('etu:liste') && !tabHidden('etu:suivi')) _etuFicheTab = 'suivi';
     const s = d.student;
     const nb = (_etuData.students || []).find(x => x.id === s.id) || {};
     const onglet = (cle, libelle, titre) => `<button type="button" class="subtab${
@@ -6973,7 +7015,8 @@ function renderEtudiantFiche() {
         onclick="showEtuFicheTab('${cle}')">${esc(libelle)}</button>`;
     document.getElementById('etu-content').innerHTML = `
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-            <button class="btn btn-secondary btn-sm" onclick="fermerEtudiant()">← Liste des étudiants</button>
+            <button class="btn btn-secondary btn-sm" onclick="fermerEtudiant()">${
+                _etuVue === 'convoquer' ? '← Étudiants à convoquer' : '← Liste des étudiants'}</button>
             ${s.photo ? `<img src="${_photoUrl(s)}" alt="" style="width:36px;height:45px;object-fit:cover;border-radius:4px">` : ''}
             <h2 style="margin:0">${esc(s.nom || '')} <span style="font-weight:400">${esc(s.prenom || '')}</span></h2>
             ${s.numero ? `<span style="color:#6b7280;font-size:.85rem">n° ${esc(s.numero)}</span>` : ''}
@@ -6981,10 +7024,730 @@ function renderEtudiantFiche() {
                 nb.annee ? ' · année ' + nb.annee : ''}</span>` : ''}
         </div>
         <div class="subtabs" style="margin-bottom:12px">
-            ${onglet('infos', 'Informations', "État civil, profil, dossier de candidature et cohortes traversées")}
-            ${onglet('notes', 'Notes et résultats', "Le relevé de toute sa scolarité, matière par matière")}
+            ${tabHidden('etu:liste') ? '' : onglet('infos', 'Informations', "État civil, profil, dossier de candidature et cohortes traversées")
+                + onglet('notes', 'Notes et résultats', "Le relevé de toute sa scolarité, matière par matière")}
+            ${tabHidden('etu:suivi') ? '' : onglet('suivi', 'Suivi', "Évolution des moyennes face à la promotion, motifs de convocation, commentaires, signalements et entretiens")}
         </div>
         ${corpsFiche(d)}`;
+}
+
+// ===== SUIVI PÉDAGOGIQUE =====
+// Le sous-onglet « Suivi » de la fiche (évolution, motifs, journal) et la vue
+// « À convoquer » de l'onglet Étudiants. Le serveur calcule tout — moyennes,
+// référence de la promotion, motifs — ; l'écran lit, et écrit le journal.
+let _etuSuivi = null;          // payload /students/<id>/suivi de la fiche ouverte
+let _etuSuiviCharge = null;    // fiche dont le suivi est en cours de chargement
+let _suiviGroupe = 'gim';      // séries affichées : gim (moyenne et UE), nat, dom
+let _suiviSem = null;          // rang du semestre affiché dans l'étoile (null = le dernier)
+let _suiviForm = null;         // entrée en cours d'écriture : {kind, id, valeurs}
+let _convData = null;          // payload /suivi/convoquer
+let _convPerime = false;       // une écriture dans une fiche a pu changer la liste
+let _convFiltres = { promo: '', face: '', tous: false, q: '' };
+let _convReglages = false;     // panneau des critères ouvert
+
+const _SP_TYPES = {
+    notes: ['Notes faibles', '#fee2e2', '#b91c1c'],
+    baisse: ['Baisse', '#ffedd5', '#c2410c'],
+    assiduite: ['Assiduité', '#f3e8ff', '#7e22ce'],
+    annee: ['Année en danger', '#fecaca', '#991b1b'],
+    parcours: ['Parcours', '#dbeafe', '#1d4ed8'],
+    signal: ['Signalement', '#fef3c7', '#b45309'],
+};
+const _SP_KIND_LIB = { COMMENT: ['Commentaire', '#e0e7ff', '#3730a3'],
+                       SIGNAL: ['Signalement', '#fef3c7', '#b45309'],
+                       ENTRETIEN: ['Entretien', '#dcfce7', '#166534'] };
+const _SP_ETAT_LIB = { CONVOQUE: ['Convoqué', '#fef3c7', '#92400e'], RECU: ['Reçu', '#dcfce7', '#166534'],
+                       ECARTE: ['Écarté', '#f3f4f6', '#4b5563'] };
+
+// Date du jour en heure locale (toISOString donnerait la veille après minuit)
+function _isoAujourdhui() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function _dateFr(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || '');
+    return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
+}
+const _spFr = v => v === null || v === undefined ? '—' : Number(v).toFixed(2).replace('.', ',');
+const _spAn = u => String(u || '').replace(/^20(\d\d)-20(\d\d)$/, '$1-$2');
+
+function _spPastille(txt, bg, fg, titre) {
+    return `<span title="${esc(titre || '')}" style="display:inline-block;padding:1px 8px;border-radius:999px;
+        font-size:.72rem;font-weight:600;background:${bg};color:${fg};white-space:nowrap">${esc(txt)}</span>`;
+}
+function _spMotif(m) {
+    const [lib, bg, fg] = _SP_TYPES[m.type] || [m.type, '#f3f4f6', '#374151'];
+    return `<div style="display:flex;gap:6px;align-items:baseline;margin:2px 0">${_spPastille(lib, bg, fg)}
+        <span style="font-size:.8rem" title="${esc(m.detail || '')}">${esc(m.texte)}</span></div>`;
+}
+function _spEtat(e) {
+    if (!e) return '';
+    const [lib, bg, fg] = _SP_ETAT_LIB[e.etat] || [e.etat, '#f3f4f6', '#374151'];
+    return _spPastille(lib + (e.date ? ' le ' + _dateFr(e.date) : ''), bg, fg, e.par ? 'par ' + e.par : '');
+}
+
+// ----- Fiche › Suivi -----
+async function loadSuiviFiche(force) {
+    const pid = _etuSelected;
+    if (!pid || (_etuSuiviCharge === pid && !force)) return;
+    _etuSuiviCharge = pid;
+    try {
+        const d = await api(`/students/${pid}/suivi`);
+        if (_etuSelected === pid) _etuSuivi = Object.assign(d, { _pid: pid });
+    } catch (e) {
+        if (_etuSelected === pid) _etuSuivi = { _pid: pid, _erreur: e.message };
+    } finally {
+        if (_etuSuiviCharge === pid) _etuSuiviCharge = null;
+    }
+    if (_etuSelected === pid && _etuFicheTab === 'suivi') renderEtudiantFiche();
+}
+
+function studentSuivi() {
+    const d = _etuSuivi;
+    if (!d || d._pid !== _etuSelected) {
+        loadSuiviFiche();
+        return '<div class="spinner">Chargement du suivi…</div>';
+    }
+    if (d._erreur) return `<div class="empty">Suivi indisponible : ${esc(d._erreur)}</div>`;
+    return suiviBandeau(d) + suiviEvolution(d) + suiviJournal(d);
+}
+
+// Motifs de convocation du moment, et l'état de la convocation (direction)
+function suiviBandeau(d) {
+    const dr = d.droits || {};
+    let motifs;
+    if (d.motifs === null) motifs = `<div style="font-size:.84rem;color:#6b7280">Pas inscrit dans l'année active :
+        aucun motif n'est calculé.</div>`;
+    else if (!d.motifs.length) motifs = `<div style="font-size:.84rem;color:#166534">Rien à signaler
+        pour l'instant${d.en_cours && !d.en_cours.sem ? " (pas encore de note cette année)" : ''}.</div>`;
+    else motifs = d.motifs.map(_spMotif).join('');
+    const etat = !dr.voir_direction || d.motifs === null ? ''
+        : (d.etat ? _spEtat(d.etat) : d.motifs.length ? _spPastille('À convoquer', '#fee2e2', '#b91c1c') : '')
+          + (d.nouveau ? ' ' + _spPastille('nouveau motif', '#fef3c7', '#b45309',
+                "Apparu depuis l'entretien ou la mise à l'écart : il est de nouveau dans la liste à convoquer") : '');
+    const bouton = (lib, action, titre) => `<button class="btn btn-secondary btn-sm" onclick="${action}"
+        title="${esc(titre || '')}">${lib}</button>`;
+    const e = d.etat && d.etat.etat;
+    const actions = dr.direction && d.motifs !== null ? [
+        e !== 'CONVOQUE' ? bouton('Convoquer', "suiviConvocation('CONVOQUE')", "Convocation envoyée aujourd'hui : il reste dans la liste jusqu'à son entretien") : '',
+        e !== 'ECARTE' && e !== 'RECU' ? bouton('Écarter', "suiviConvocation('ECARTE')", "Pas besoin de le recevoir pour ces motifs : il ne reviendra dans la liste qu'avec un nouveau motif") : '',
+        e ? bouton('Réinitialiser', 'suiviConvocation(null)', "Efface l'état de convocation") : '',
+    ].join('') : '';
+    return `<div style="border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;margin-bottom:14px;background:#fafafa">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+            <strong>${dr.voir_direction ? 'Motifs de convocation' : "Points d'attention"}</strong>
+            ${d.en_cours ? `<span style="font-size:.8rem;color:#6b7280">${esc(d.en_cours.promo)} · année ${d.en_cours.year}${
+                d.en_cours.sem ? ' · ' + esc(d.en_cours.sem) : ''}</span>` : ''}
+            ${etat}<span style="margin-left:auto;display:inline-flex;gap:6px;flex-wrap:wrap">${actions}</span>
+        </div>${motifs}</div>`;
+}
+
+function _spSeries(ev, groupe) {
+    return (ev.series || []).filter(s => groupe === 'gim' ? (s.groupe === 'gim' || s.groupe === 'ue') : s.groupe === groupe);
+}
+
+function suiviEvolution(d) {
+    const ev = d.evolution || {};
+    const pts = ev.points || [];
+    const titre = `<div class="section-title">Évolution <span style="font-weight:400;color:#9ca3af;font-size:.82rem">
+        — son profil au semestre choisi, face au semestre précédent et à sa promotion (moyenne ± un écart-type)</span></div>`;
+    if (!pts.length) return titre + '<div class="empty">Pas encore de notes.</div>';
+    const groupes = [['gim', 'Moyenne et UE'], ['nat', 'Natures'], ['dom', 'Domaines']]
+        .filter(([g]) => _spSeries(ev, g).length);
+    if (!groupes.some(([g]) => g === _suiviGroupe)) _suiviGroupe = groupes[0][0];
+    if (_suiviSem === null || _suiviSem >= pts.length) _suiviSem = pts.length - 1;
+    const series = _spSeries(ev, _suiviGroupe);
+    const onglet = (actif, lib, action, aide) => `<button type="button" class="subtab${actif ? ' active' : ''}"
+        style="font-size:.78rem;padding:3px 10px" onclick="${action}" title="${esc(aide || '')}">${lib}</button>`;
+    return titre + `<div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+            <div class="subtabs" style="margin:0">${groupes.map(([g, lib]) =>
+                onglet(g === _suiviGroupe, lib, `choisirSuiviGroupe('${g}')`)).join('')}</div>
+            <div class="subtabs" style="margin:0">${pts.map((p, i) => onglet(i === _suiviSem,
+                `${esc(p.sem)} <span style="color:#9ca3af">${esc(_spAn(p.annee_univ))}</span>`,
+                `choisirSuiviSem(${i})`, `Afficher le ${p.sem} ${p.annee_univ} (${p.promo})`)).join('')}</div>
+        </div>` + suiviEtoile(pts, series) + suiviTableau(pts, series, ev.annees || []) + suiviEtoilesMatieres(pts);
+}
+
+function choisirSuiviGroupe(g) { _suiviGroupe = g; renderEtudiantFiche(); }
+function choisirSuiviSem(i) { _suiviSem = i; renderEtudiantFiche(); }
+
+// Graphiques en étoile — forme « emphase » de la charte dataviz : le semestre
+// choisi en couleur d'accent (trait de 2 px, aplat à 10 %, points pleins), le
+// semestre précédent dans un bleu plus clair de la même rampe (points creux), la
+// promotion en gris neutre (sa moyenne en trait, ± un écart-type en aplat).
+// D'un semestre à l'autre, une flèche par branche : verte vers l'extérieur en
+// hausse, rouge vers le centre en baisse — le sens de la flèche dit la même chose
+// que sa couleur. Couleurs passées au script de validation : séparation normale
+// 17,6 et daltonisme 15,9 ; le bleu clair, sous 3:1, est doublé par la légende et
+// le tableau ; vert et rouge sont ceux des statuts (bon / critique).
+const _SP_ETOILE = { choisi: '#2a78d6', avant: '#86b6ef', promo: '#898781', grille: '#e1e0d9', seuil: '#c3c2b7',
+                     hausse: '#0ca30c', baisse: '#d03b3b' };
+const _spEtoiles = {};         // id d'une étoile affichée -> ce que son infobulle doit lire
+
+const _spDelta = d => Math.abs(d) < 0.005 ? '' : `<span style="font-size:.78em;font-weight:600;color:${
+    d > 0 ? '#15803d' : '#b91c1c'}">${d > 0 ? '▲' : '▼'}${_spFr(Math.abs(d))}</span>`;
+
+// Une étoile : axes [{nom, v, pv, ref: {moy, ecart, n}, valeur (SVG), bulle (HTML)}],
+// de 0 au centre à 20 au bord. `avant` : le semestre précédent (pv) ; `fleches` :
+// une flèche de pv à v sur chaque branche, à partir d'un point d'écart ; `petit` :
+// corps des étiquettes réduit, pour les étoiles à nombreuses branches.
+function spEtoile(cfg) {
+    const C = _SP_ETOILE, ok = v => v !== undefined && v !== null;
+    const { id, W, R, axes } = cfg, n = axes.length, cx = W / 2, cy = 0;
+    const fs = cfg.petit ? 11 : 13, dl = cfg.petit ? 13 : 16, marge = cfg.petit ? 10 : 16;
+    const ang = i => -Math.PI / 2 + 2 * Math.PI * i / n;
+    const xy = (i, v) => {
+        const r = R * Math.max(0, Math.min(20, v)) / 20;
+        return [cx + r * Math.cos(ang(i)), cy + r * Math.sin(ang(i))];
+    };
+    const f = c => c.toFixed(1);
+    const poly = vals => vals.map((v, i) => xy(i, v).map(f).join(',')).join(' ');
+    // Étiquettes (nom puis valeur) : au-dessus du sommet du haut, au-dessous de
+    // ceux du bas, à côté des autres ; le cadre s'ajuste à elles
+    const places = axes.map((_a, i) => {
+        const a = ang(i), lx = cx + (R + marge) * Math.cos(a), ly = cy + (R + marge) * Math.sin(a);
+        const ancre = Math.abs(Math.cos(a)) < 0.3 ? 'middle' : Math.cos(a) > 0 ? 'start' : 'end';
+        const [y1, y2] = Math.sin(a) < -0.5 ? [ly - dl - 2, ly - 3] : Math.sin(a) > 0.5 ? [ly + fs, ly + fs + dl] : [ly - 2, ly - 2 + dl];
+        return { lx, y1, y2, ancre };
+    });
+    const haut = Math.floor(Math.min(cy - R, ...places.map(p => p.y1 - fs)) - 4);
+    const bas = Math.ceil(Math.max(...axes.map((_a, i) => xy(i, 20)[1]), ...places.map(p => p.y2 + 6)) + 4);
+    // Grille : anneaux à 5, 10, 15, 20 — celui de 10 un cran plus marqué ; leurs
+    // valeurs sur l'arête entre les deux premiers axes, à l'écart des sommets
+    const grille = [5, 10, 15, 20].map(v => `<polygon points="${poly(axes.map(() => v))}" fill="none"
+            stroke="${v === 10 ? C.seuil : C.grille}" stroke-width="1"/>`).join('')
+        + axes.map((_a, i) => { const [x, y] = xy(i, 20);
+            return `<line x1="${cx}" y1="${cy}" x2="${f(x)}" y2="${f(y)}" stroke="${C.grille}" stroke-width="1"/>`; }).join('')
+        + [5, 10, 15, 20].map(v => {
+            const [ax, ay] = xy(0, v), [bx, by] = xy(1, v);
+            return `<text x="${f((ax + bx) / 2 + 3)}" y="${f((ay + by) / 2 - 3)}" class="st-ax">${v}</text>`;
+        }).join('');
+    // La promotion : ± un écart-type en aplat (anneau entre deux contours), sa moyenne en trait
+    let promo = '';
+    if (axes.every(a => a.ref)) {
+        const contour = vals => 'M' + vals.map((v, i) => xy(i, v).map(f).join(',')).join('L') + 'Z';
+        promo = `<path d="${contour(axes.map(a => a.ref.moy + a.ref.ecart))} ${contour(axes.map(a => a.ref.moy - a.ref.ecart))}"
+                fill="${C.promo}" fill-opacity=".16" fill-rule="evenodd"/>
+            <polygon points="${poly(axes.map(a => a.ref.moy))}" fill="none" stroke="${C.promo}" stroke-width="${cfg.petit ? 1.5 : 2}"
+                stroke-linejoin="round"/>`;
+    }
+    // Le semestre précédent : son contour (interrompu là où une valeur lui manque) et des points creux
+    let avant = '', pointsAvant = '';
+    if (cfg.avant && axes.some(a => ok(a.pv))) {
+        const pv = axes.map(a => a.pv);
+        avant = pv.every(ok) ? `<polygon points="${poly(pv)}" fill="none" stroke="${C.avant}" stroke-width="1.5" stroke-linejoin="round"/>`
+            : pv.map((v, i) => {
+                const w = pv[(i + 1) % n];
+                if (!ok(v) || !ok(w)) return '';
+                const [x1, y1] = xy(i, v), [x2, y2] = xy((i + 1) % n, w);
+                return `<line x1="${f(x1)}" y1="${f(y1)}" x2="${f(x2)}" y2="${f(y2)}" stroke="${C.avant}" stroke-width="1.5"/>`;
+            }).join('');
+        pointsAvant = pv.map((v, i) => { if (!ok(v)) return ''; const [x, y] = xy(i, v);
+            return `<circle cx="${f(x)}" cy="${f(y)}" r="4" fill="#fff" stroke="${C.avant}" stroke-width="2"/>`; }).join('');
+    }
+    const vals = axes.map(a => a.v);
+    const choisi = `<polygon points="${poly(vals)}" fill="${C.choisi}" fill-opacity=".10" stroke="${C.choisi}"
+        stroke-width="2" stroke-linejoin="round"/>`;
+    const rayon = cfg.petit ? 3.5 : 4.5;
+    const pointsChoisi = vals.map((v, i) => { const [x, y] = xy(i, v);
+        return `<circle cx="${f(x)}" cy="${f(y)}" r="${rayon}" fill="${C.choisi}" stroke="#fff" stroke-width="2"/>`; }).join('');
+    // Flèches : du point creux (précédent) au point plein (choisi), la pointe au bord de celui-ci
+    const fleches = !cfg.fleches ? '' : axes.map((a, i) => {
+        if (!ok(a.pv) || Math.abs(a.v - a.pv) < 1) return '';
+        const [x1, y1] = xy(i, a.pv), [x2, y2] = xy(i, a.v);
+        const L = Math.hypot(x2 - x1, y2 - y1), k = (L - rayon - 2) / L, sens = a.v > a.pv ? 'h' : 'b';
+        return `<line x1="${f(x1)}" y1="${f(y1)}" x2="${f(x1 + (x2 - x1) * k)}" y2="${f(y1 + (y2 - y1) * k)}"
+            stroke="${sens === 'h' ? C.hausse : C.baisse}" stroke-width="2.5" stroke-linecap="round" marker-end="url(#${id}-${sens})"/>`;
+    }).join('');
+    const pointe = (sens, c) => `<marker id="${id}-${sens}" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse"
+        markerWidth="9" markerHeight="9" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="${c}"/></marker>`;
+    const defs = cfg.fleches ? `<defs>${pointe('h', C.hausse)}${pointe('b', C.baisse)}</defs>` : '';
+    const etiquettes = axes.map((a, i) => {
+        const { lx, y1, y2, ancre } = places[i];
+        return `<text x="${f(lx)}" y="${f(y1)}" text-anchor="${ancre}" style="font-size:${fs}px;font-weight:600;fill:#111827">${esc(a.nom)}</text>
+            <text x="${f(lx)}" y="${f(y2)}" text-anchor="${ancre}" style="font-size:${fs}px;fill:#4b5563">${a.valeur}</text>`;
+    }).join('');
+    // Cibles de survol et de clavier : une large bande le long de chaque axe
+    const cibles = axes.map((a, i) => { const [x, y] = xy(i, 21);
+        return `<line x1="${cx}" y1="${cy}" x2="${f(x)}" y2="${f(y)}" stroke="transparent" stroke-width="${cfg.petit ? 18 : 30}"
+            pointer-events="stroke" tabindex="0" role="img" aria-label="${esc(a.nom)} : ${ok(a.v) ? _spFr(a.v) : '—'}"
+            style="cursor:default;outline:none" onmouseenter="spBulle('${id}', ${i})" onfocus="spBulle('${id}', ${i})"
+            onmouseleave="spBulle('${id}', -1)" onblur="spBulle('${id}', -1)"/>`;
+    }).join('');
+    _spEtoiles[id] = { axes, W, haut, xy };
+    return `<div style="position:relative;max-width:${W}px;margin:0 auto">
+        <svg id="${id}" viewBox="0 ${haut} ${W} ${bas - haut}" style="width:100%;height:auto;display:block">${defs}${grille}${promo}${
+            avant}${choisi}${fleches}${pointsAvant}${pointsChoisi}${etiquettes}${cibles}</svg>
+        <div id="${id}-bulle" style="position:absolute;display:none;pointer-events:none;background:#111827;color:#fff;
+            font-size:.78rem;line-height:1.35;padding:6px 9px;border-radius:6px;max-width:260px;z-index:5"></div></div>`;
+}
+
+function spBulle(id, i) {
+    const bulle = document.getElementById(id + '-bulle'), svg = document.getElementById(id), e = _spEtoiles[id];
+    if (!bulle) return;
+    if (!e || !svg || i < 0 || !e.axes[i]) { bulle.style.display = 'none'; return; }
+    const a = e.axes[i];
+    bulle.innerHTML = a.bulle;
+    const k = svg.clientWidth / e.W;
+    const [x, y] = e.xy(i, a.v === null || a.v === undefined ? 20 : a.v);
+    bulle.style.display = 'block';
+    bulle.style.left = Math.max(0, Math.min(svg.clientWidth - bulle.offsetWidth, x * k + 14)) + 'px';
+    bulle.style.top = Math.max(0, (y - e.haut) * k - bulle.offsetHeight - 8) + 'px';
+}
+
+// Ligne d'infobulle : la promotion, et l'écart à elle en nombre d'écarts-types
+function _spBullePromo(v, r) {
+    if (!r) return '';
+    const z = r.ecart ? (v - r.moy) / r.ecart : null;
+    return `<br>Promotion : ${_spFr(r.moy)} ± ${_spFr(r.ecart)} <span style="color:#d1d5db">(${r.n} étudiants)</span>${
+        z !== null ? `<br>Écart à la promotion : ${z >= 0 ? '+' : '−'}${_spFr(Math.abs(z))} écart-type` : ''}`;
+}
+
+// L'étoile principale : une branche par UE, nature ou domaine, au semestre choisi
+function suiviEtoile(pts, series) {
+    const C = _SP_ETOILE, ok = v => v !== undefined && v !== null;
+    const cur = pts[_suiviSem], prev = _suiviSem > 0 ? pts[_suiviSem - 1] : null;
+    // Le chiffre qui résume l'étoile des UE : la moyenne des UE du semestre
+    let resume = '';
+    if (_suiviGroupe === 'gim' && ok(cur.valeurs.gim)) {
+        const g = cur.valeurs.gim, r = (cur.ref || {}).gim;
+        resume = `<div style="font-size:.88rem;margin:2px 0 6px">Moyenne des UE au ${esc(cur.sem)} ${esc(_spAn(cur.annee_univ))} :
+            <strong>${_spFr(g)}</strong> ${prev && ok(prev.valeurs.gim) ? _spDelta(g - prev.valeurs.gim) : ''}${
+            r ? ` <span style="color:#6b7280">— promo ${_spFr(r.moy)} ± ${_spFr(r.ecart)}</span>` : ''}</div>`;
+    }
+    const axes = series.filter(s => s.cle !== 'gim' && ok(cur.valeurs[s.cle])).map(s => {
+        const v = cur.valeurs[s.cle], pv = prev ? prev.valeurs[s.cle] : null, ref = (cur.ref || {})[s.cle];
+        const d = ok(pv) ? v - pv : 0;
+        return { nom: s.nom, v, pv, ref,
+            valeur: _spFr(v) + (Math.abs(d) >= 0.005 ? ` <tspan style="font-size:11px;font-weight:600;fill:${
+                d > 0 ? '#15803d' : '#b91c1c'}">${d > 0 ? '▲' : '▼'}${_spFr(Math.abs(d))}</tspan>` : ''),
+            bulle: `<strong>${esc(s.nom)}</strong><br>${esc(cur.sem)} ${esc(_spAn(cur.annee_univ))} : <strong>${_spFr(v)}</strong>${
+                ok(pv) ? ` <span style="color:#d1d5db">(${esc(prev.sem)} : ${_spFr(pv)})</span>` : ''}${_spBullePromo(v, ref)}` };
+    });
+    if (axes.length < 3) return resume + `<div style="font-size:.84rem;color:#6b7280;margin:6px 0 12px">Il faut au moins trois
+        séries notées au ${esc(cur.sem)} pour un graphique en étoile : les valeurs sont dans le tableau.</div>`;
+    const avecPromo = axes.every(a => a.ref), avecAvant = !!prev && axes.some(a => ok(a.pv));
+    const cle = (dessin, lib) => `<span style="display:inline-flex;align-items:center;gap:6px;margin-right:18px;white-space:nowrap">
+        <svg width="30" height="14" aria-hidden="true">${dessin}</svg>${lib}</span>`;
+    const fleche = (c, gauche) => `<line x1="${gauche ? 26 : 4}" y1="7" x2="${gauche ? 9 : 21}" y2="7" stroke="${c}" stroke-width="2.5"/>
+        <path d="${gauche ? 'M3,7 L11,3 L11,11 z' : 'M27,7 L19,3 L19,11 z'}" fill="${c}"/>`;
+    return resume + `<div style="border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px;background:#fff;margin-bottom:10px">
+        <div style="font-size:.78rem;color:#374151;display:flex;flex-wrap:wrap;row-gap:4px">
+            ${cle(`<line x1="2" y1="7" x2="28" y2="7" stroke="${C.choisi}" stroke-width="2"/><circle cx="15" cy="7" r="4.5" fill="${C.choisi}" stroke="#fff" stroke-width="2"/>`,
+                `${esc(cur.sem)} ${esc(_spAn(cur.annee_univ))} (semestre choisi)`)}
+            ${avecAvant ? cle(`<line x1="2" y1="7" x2="28" y2="7" stroke="${C.avant}" stroke-width="1.5"/><circle cx="15" cy="7" r="4" fill="#fff" stroke="${C.avant}" stroke-width="2"/>`,
+                `${esc(prev.sem)} ${esc(_spAn(prev.annee_univ))} (semestre précédent)`) : ''}
+            ${avecAvant ? cle(fleche(C.hausse, false), 'en hausse') + cle(fleche(C.baisse, true), 'en baisse') : ''}
+            ${avecPromo ? cle(`<rect x="1" y="2" width="28" height="10" rx="2" fill="${C.promo}" fill-opacity=".22"/><line x1="2" y1="7" x2="28" y2="7" stroke="${C.promo}" stroke-width="2"/>`,
+                'Promotion : moyenne ± un écart-type') : ''}</div>
+        ${spEtoile({ id: 'sp-etoile', W: 880, R: 220, axes, avant: avecAvant, fleches: avecAvant })}
+        <div style="font-size:.72rem;color:#6b7280">De 0 au centre à 20 au bord ; l'anneau plus marqué est la moyenne de 10.${avecAvant
+            ? " Les flèches vont du semestre précédent au semestre choisi, à partir d'un point d'écart." : ''}
+            Survolez une branche pour le détail ; choisissez un autre semestre au-dessus ou dans le tableau.</div></div>`;
+}
+
+// Une étoile par semestre, une branche par matière notée : la note de
+// l'étudiant face à la promotion (moyenne ± un écart-type) dans chaque matière.
+function suiviEtoilesMatieres(pts) {
+    const C = _SP_ETOILE, ok = v => v !== undefined && v !== null;
+    const cartes = pts.map((p, i) => {
+        const mats = (p.matieres || []).filter(m => ok(m.note));
+        const tete = `<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:2px">
+            <strong>${esc(p.sem)} ${esc(_spAn(p.annee_univ))}</strong>
+            <span style="font-size:.76rem;color:#6b7280">${esc(p.promo)} · ${mats.length} matière(s) notée(s)${
+                ok(p.valeurs.gim) ? ' · moyenne des UE ' + _spFr(p.valeurs.gim) : ''}</span></div>`;
+        const axes = mats.map(m => {
+            const court = m.court && m.court.length <= 12 ? m.court : m.code;
+            const abi = m.mention === 'ABI';
+            return { nom: court, v: m.note, pv: null, ref: m.ref,
+                valeur: abi ? '<tspan style="fill:#b91c1c;font-weight:600">ABI</tspan>' : _spFr(m.note),
+                bulle: `<strong>${esc(m.code)}</strong> ${esc(m.label || '')}<br>${abi ? 'Absence injustifiée : comptée 0'
+                    : `Note : <strong>${_spFr(m.note)}</strong>`}${_spBullePromo(m.note, m.ref)}` };
+        });
+        const corps = axes.length >= 3 ? spEtoile({ id: 'sp-mat-' + i, W: 560, R: 150, axes, petit: true })
+            : '<div style="font-size:.82rem;color:#9ca3af;margin:8px 0">Moins de trois matières notées : voir le bulletin.</div>';
+        return `<div style="border:${i === _suiviSem ? '2px solid ' + C.choisi : '1px solid #e5e7eb'};border-radius:8px;
+            padding:8px 10px;background:#fff">${tete}${corps}</div>`;
+    }).join('');
+    return `<div class="section-title" style="margin-top:16px">Par matière <span style="font-weight:400;color:#9ca3af;font-size:.82rem">
+            — une étoile par semestre, une branche par matière notée : sa note (point bleu) face à la promotion
+            (moyenne ± un écart-type, en gris)</span></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:12px;margin-bottom:10px">${cartes}</div>`;
+}
+
+// Le tableau des mêmes séries, tous semestres : la valeur (fond des notes),
+// l'écart au semestre précédent, et la promotion (moyenne ± écart-type) ; en
+// survol, l'écart en nombre d'écarts-types. C'est aussi la vue chiffrée de
+// l'étoile : la colonne du semestre affiché est marquée, un clic sur un en-tête
+// en change.
+function suiviTableau(pts, series, annees) {
+    const tete = pts.map((p, i) => `<th onclick="choisirSuiviSem(${i})" title="Afficher ce semestre dans l'étoile"
+        style="text-align:center;white-space:nowrap;cursor:pointer;${i === _suiviSem
+            ? 'background:#eef4fc;box-shadow:inset 0 -2px 0 #2a78d6' : ''}">${esc(p.sem)}
+        <div style="font-weight:400;color:#9ca3af;font-size:.68rem">${esc(_spAn(p.annee_univ))} · ${esc(p.promo)}</div></th>`).join('');
+    const cellule = (s, p, i) => {
+        const v = p.valeurs[s.cle], r = (p.ref || {})[s.cle];
+        if (v === undefined || v === null) return '<td style="text-align:center;color:#d1d5db">—</td>';
+        let avant = null;
+        for (let j = i - 1; j >= 0; j--) {
+            const w = pts[j].valeurs[s.cle];
+            if (w !== undefined && w !== null) { avant = w; break; }
+        }
+        const delta = avant === null ? null : v - avant;
+        const fleche = delta === null || Math.abs(delta) < 0.005 ? '' : `<span style="font-size:.68rem;font-weight:600;color:${
+            delta > 0 ? '#15803d' : '#b91c1c'}">${delta > 0 ? '▲' : '▼'}${_spFr(Math.abs(delta))}</span>`;
+        const z = r && r.ecart ? (v - r.moy) / r.ecart : null;
+        const titre = r ? `Promo : ${_spFr(r.moy)} ± ${_spFr(r.ecart)} (${r.n} étudiants)${z === null ? ''
+            : ` — ${z >= 0 ? '+' : '−'}${_spFr(Math.abs(z))} écart-type`}` : '';
+        return `<td style="text-align:center;${_noteFond({ note: v })}" title="${esc(titre)}"><strong>${_spFr(v)}</strong> ${fleche}
+            ${r ? `<div style="font-size:.66rem;color:#4b5563">promo ${_spFr(r.moy)} ± ${_spFr(r.ecart)}</div>` : ''}</td>`;
+    };
+    const lignes = series.map(s => `<tr><td style="text-align:left;white-space:nowrap">${s.cle === 'gim'
+            ? `<strong>${esc(s.nom)}</strong>` : esc(s.nom)}</td>${pts.map((p, i) => cellule(s, p, i)).join('')}</tr>`).join('');
+    const assiduite = _suiviGroupe !== 'gim' ? '' : `<tr><td style="text-align:left;color:#6b7280">Absences injustifiées</td>${
+            pts.map(p => `<td style="text-align:center;font-size:.8rem;color:${(p.absences || 0) > 8 ? '#b91c1c' : '#6b7280'}">${
+                p.absences === null || p.absences === undefined ? '—' : String(p.absences).replace('.', ',') + ' h'}</td>`).join('')}</tr>
+        <tr><td style="text-align:left;color:#6b7280">ABI</td>${pts.map(p => `<td style="text-align:center;font-size:.8rem;color:${
+            p.abi ? '#b91c1c' : '#9ca3af'}">${p.abi || '—'}</td>`).join('')}</tr>`;
+    const jurys = annees.filter(a => a.decision).map(a => `<span style="margin-right:12px">Année ${a.year} <span style="color:#9ca3af">${
+        esc(_spAn(a.annee_univ))}</span> : ${_spPastille(a.decision, _JURY_COUL[a.decision] || '#f3f4f6', '#111827', _JURY_LIB[a.decision] || '')}</span>`).join('');
+    return `<div style="overflow-x:auto;margin-bottom:6px"><table class="pn-table" style="width:auto;min-width:420px;table-layout:auto">
+            <thead><tr><th style="text-align:left">Série</th>${tete}</tr></thead><tbody>${lignes}${assiduite}</tbody></table></div>
+        ${jurys ? `<div style="font-size:.8rem;margin:4px 0 6px">Jury : ${jurys}</div>` : ''}`;
+}
+
+// Journal : commentaires et signalements de l'équipe, entretiens (direction)
+function suiviJournal(d) {
+    const dr = d.droits || {};
+    const bouton = (kind, lib) => `<button class="btn btn-secondary btn-sm" onclick="ouvrirSuiviForm('${kind}')">${lib}</button>`;
+    const boutons = (dr.ecrire ? bouton('COMMENT', '+ Commentaire') + bouton('SIGNAL', '+ Signaler un problème') : '')
+        + (dr.direction ? bouton('ENTRETIEN', '+ Entretien') : '');
+    const entrees = (d.journal || []).map(e => suiviEntree(e, d)).join('')
+        || '<div style="color:#9ca3af;font-size:.85rem;margin:6px 0 0 2px">Rien d\'écrit pour l\'instant.</div>';
+    return `<div class="section-title" style="margin-top:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">Journal de suivi
+            <span style="font-weight:400;color:#9ca3af;font-size:.82rem">— ${dr.voir_direction
+                ? 'commentaires, signalements et entretiens' : "commentaires et signalements de l'équipe"}, du plus récent au plus ancien</span>
+            <span style="margin-left:auto;display:inline-flex;gap:6px;flex-wrap:wrap">${boutons}</span></div>
+        ${_suiviForm ? suiviFormulaire(d) : ''}${entrees}`;
+}
+
+function suiviEntree(e, d) {
+    const [lib, bg, fg] = _SP_KIND_LIB[e.kind] || [e.kind, '#f3f4f6', '#374151'];
+    const moi = (d.droits || {}).moi;
+    const tete = [_spPastille(lib, bg, fg), `<strong style="font-size:.85rem">${_dateFr(e.date_fait)}</strong>`,
+        e.motif ? `<span style="font-size:.8rem;font-weight:600">${esc(e.motif)}</span>` : '',
+        e.matiere ? `<span style="font-size:.8rem;color:#4b5563">${esc(e.matiere)}</span>` : '',
+        `<span style="font-size:.75rem;color:#9ca3af">par ${esc(e.auteur)}${e.auteur === moi ? ' (vous)' : ''}</span>`].filter(Boolean).join(' ');
+    const statut = e.kind !== 'SIGNAL' ? '' : e.statut === 'TRAITE'
+        ? _spPastille('Traité' + (e.traite_le ? ' le ' + _dateFr(e.traite_le) : ''), '#dcfce7', '#166534', e.traite_par ? 'par ' + e.traite_par : '')
+        : _spPastille('Non traité', '#fee2e2', '#b91c1c');
+    const actions = !e.modifiable ? '' : `<span style="margin-left:auto;display:inline-flex;gap:4px">
+        ${e.kind === 'SIGNAL' ? `<button class="btn btn-secondary btn-sm" onclick="suiviStatut(${e.id}, '${e.statut === 'TRAITE' ? 'OUVERT' : 'TRAITE'}')">${
+            e.statut === 'TRAITE' ? 'Rouvrir' : 'Marquer traité'}</button>` : ''}
+        <button class="btn btn-secondary btn-sm" onclick="ouvrirSuiviForm('${e.kind}', ${e.id})" title="Modifier">✎</button>
+        <button class="btn btn-secondary btn-sm" onclick="supprimerSuivi(${e.id})" title="Supprimer" style="color:#b91c1c">🗑</button></span>`;
+    const texte = t => t ? `<div style="white-space:pre-wrap;font-size:.86rem;margin-top:4px">${esc(t)}</div>` : '';
+    const corps = e.kind !== 'ENTRETIEN' ? texte(e.texte) : [
+        e.participants ? `<div style="font-size:.8rem;color:#4b5563;margin-top:2px">Participants : ${esc(e.participants)}</div>` : '',
+        texte(e.texte),
+        e.decisions ? `<div style="font-size:.84rem;margin-top:4px"><strong>Décisions :</strong>
+            <span style="white-space:pre-wrap">${esc(e.decisions)}</span></div>` : '',
+        e.prochain ? `<div style="font-size:.8rem;color:#166534;margin-top:4px">Prochain point : ${_dateFr(e.prochain)}</div>` : ''].join('');
+    return `<div style="border:1px solid #e5e7eb;border-left:4px solid ${fg};border-radius:8px;padding:8px 12px;margin-bottom:8px;background:#fff">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${tete} ${statut}${actions}</div>${corps}</div>`;
+}
+
+const _SP_CHAMPS = ['sp-date', 'sp-motif', 'sp-matiere', 'sp-participants', 'sp-prochain', 'sp-texte', 'sp-decisions'];
+
+// Ce qui est tapé dans le formulaire survit à un nouveau rendu de la fiche (clic
+// sur une courbe, chargement…) : on le relève avant de redessiner.
+function _spBrouillon() {
+    if (!_suiviForm || _suiviForm.frais || !document.getElementById('sp-texte')) return;
+    _suiviForm.valeurs = {};
+    _SP_CHAMPS.forEach(id => { const el = document.getElementById(id); if (el) _suiviForm.valeurs[id] = el.value; });
+}
+
+function ouvrirSuiviForm(kind, id) {
+    _suiviForm = { kind, id: id || null, frais: true };
+    renderEtudiantFiche();
+    _suiviForm.frais = false;
+    const t = document.getElementById('sp-texte');
+    if (t) { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); t.focus(); }
+}
+
+function fermerSuiviForm() { _suiviForm = null; renderEtudiantFiche(); }
+
+function suiviFormulaire(d) {
+    const f = _suiviForm;
+    const e = f.id ? (d.journal || []).find(x => x.id === f.id) || {} : {};
+    const val = (id, dflt) => f.valeurs && id in f.valeurs ? f.valeurs[id] : (dflt || '');
+    const st = 'width:100%;padding:5px 7px;border:1px solid #d1d5db;border-radius:6px;font:inherit;box-sizing:border-box';
+    const champ = (label, html) => `<div class="form-group" style="margin:0"><label style="font-size:.78rem">${label}</label>${html}</div>`;
+    const ent = f.kind === 'ENTRETIEN', sig = f.kind === 'SIGNAL';
+    return `<div style="border:1px solid #c7d2fe;background:#f8faff;border-radius:8px;padding:12px;margin-bottom:12px">
+        <div style="font-weight:700;margin-bottom:8px">${f.id ? 'Modifier' : 'Nouveau'} : ${esc((_SP_KIND_LIB[f.kind] || [''])[0].toLowerCase())}</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:10px">
+            ${champ(ent ? "Date de l'entretien" : sig ? 'Date des faits' : 'Date',
+                `<input type="date" id="sp-date" value="${esc(val('sp-date', e.date_fait || _isoAujourdhui()))}" style="${st}">`)}
+            ${sig ? champ('Motif', `<select id="sp-motif" style="${st}">${(d.signal_motifs || []).map(m =>
+                `<option${m === val('sp-motif', e.motif) ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select>`) : ''}
+            ${champ('Matière <span style="color:#9ca3af">(facultatif)</span>', `<input id="sp-matiere" list="sp-matieres"
+                value="${esc(val('sp-matiere', e.matiere))}" style="${st}"><datalist id="sp-matieres">${
+                (d.matieres || []).map(m => `<option value="${esc(m)}">`).join('')}</datalist>`)}
+            ${ent ? champ('Participants', `<input id="sp-participants" value="${esc(val('sp-participants', e.participants))}"
+                placeholder="ex. responsable de formation, tuteur" style="${st}">`) : ''}
+            ${ent ? champ('Prochain point', `<input type="date" id="sp-prochain" value="${esc(val('sp-prochain', e.prochain))}" style="${st}">`) : ''}
+        </div>
+        ${champ(ent ? 'Compte rendu' : sig ? 'Description des faits' : 'Commentaire',
+            `<textarea id="sp-texte" rows="4" style="${st};resize:vertical">${esc(val('sp-texte', e.texte))}</textarea>`)}
+        ${ent ? `<div style="margin-top:8px">${champ('Décisions, engagements', `<textarea id="sp-decisions" rows="2"
+            style="${st};resize:vertical">${esc(val('sp-decisions', e.decisions))}</textarea>`)}</div>` : ''}
+        <div style="font-size:.74rem;color:#6b7280;margin:8px 0">L'étudiant peut demander à lire ce journal : écrivez des faits
+            observables, sans jugement sur la personne, et aucune information de santé ou de vie privée.</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn btn-secondary btn-sm" onclick="fermerSuiviForm()">Annuler</button>
+            <button class="btn btn-primary btn-sm" onclick="enregistrerSuivi()">Enregistrer</button></div></div>`;
+}
+
+// Chaque écriture renvoie le suivi à jour de la fiche ; la liste À convoquer,
+// elle, sera recalculée à son prochain affichage. `fermer` : le formulaire
+// ouvert se referme (après l'enregistrement de son contenu).
+async function _spEcrire(url, options, message, fermer) {
+    const pid = _etuSelected;
+    try {
+        const d = await api(url, options);
+        if (_etuSelected !== pid) return true;      // une autre fiche a été ouverte entre-temps
+        _etuSuivi = Object.assign(d, { _pid: pid });
+        _convPerime = true;
+        if (fermer) _suiviForm = null;
+        renderEtudiantFiche();
+        if (message) toast(message);
+        return true;
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+        return false;
+    }
+}
+
+function enregistrerSuivi() {
+    const f = _suiviForm;
+    if (!f) return;
+    const val = id => { const el = document.getElementById(id); return el ? el.value : undefined; };
+    const corps = { kind: f.kind, date_fait: val('sp-date'), texte: val('sp-texte'), matiere: val('sp-matiere') };
+    if (f.kind === 'SIGNAL') corps.motif = val('sp-motif');
+    if (f.kind === 'ENTRETIEN') Object.assign(corps, {
+        participants: val('sp-participants'), decisions: val('sp-decisions'), prochain: val('sp-prochain') });
+    const pid = _etuSelected;
+    return _spEcrire(f.id ? `/students/${pid}/suivi/${f.id}` : `/students/${pid}/suivi`,
+        { method: f.id ? 'PUT' : 'POST', body: JSON.stringify(corps) },
+        f.kind === 'ENTRETIEN' && !f.id ? "Entretien enregistré — l'étudiant est noté reçu" : 'Enregistré', true);
+}
+
+function suiviStatut(id, statut) {
+    return _spEcrire(`/students/${_etuSelected}/suivi/${id}`, { method: 'PUT', body: JSON.stringify({ statut }) },
+        statut === 'TRAITE' ? 'Signalement marqué traité' : 'Signalement rouvert');
+}
+
+function supprimerSuivi(id) {
+    if (!confirm('Supprimer cette entrée du journal ?')) return;
+    return _spEcrire(`/students/${_etuSelected}/suivi/${id}`, { method: 'DELETE' }, 'Entrée supprimée');
+}
+
+async function suiviConvocation(etat) {
+    const pid = _etuSelected;
+    try {
+        await api(`/students/${pid}/convocation`, { method: 'PUT', body: JSON.stringify({ etat, date: _isoAujourdhui() }) });
+        _convPerime = true;
+        await loadSuiviFiche(true);
+        toast(etat === 'CONVOQUE' ? 'Noté convoqué' : etat === 'ECARTE' ? 'Écarté de la liste' : 'État effacé');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// ----- Étudiants › À convoquer -----
+async function loadConvoquer() {
+    const el = document.getElementById('etu-content');
+    if (!_convData) el.innerHTML = '<div class="spinner">Calcul de la liste…</div>';
+    try {
+        _convData = await api('/suivi/convoquer');
+        _convPerime = false;
+    } catch (e) {
+        el.innerHTML = `<div class="empty">Liste indisponible : ${esc(e.message)}</div>`;
+        return;
+    }
+    if (_etuVue === 'convoquer' && !_etuSelected) renderConvoquer();
+}
+
+function _convListe() {
+    const F = _convFiltres;
+    const mots = _sansAccent(F.q).trim().split(/\s+/).filter(Boolean);
+    return ((_convData || {}).etudiants || []).filter(e => (F.tous || e.a_convoquer)
+        && (!F.promo || e.promotion === F.promo) && (!F.face || e.formation === F.face)
+        && mots.every(m => _sansAccent([e.nom, e.prenom, e.numero].join(' ')).includes(m)));
+}
+
+// Mini-courbe de la moyenne des UE, semestre après semestre, et de celle de la promo
+function _spTrace(trace) {
+    if (!trace || !trace.length) return '<span style="color:#d1d5db">—</span>';
+    const W = 120, H = 34, n = trace.length;
+    const x = i => n === 1 ? W / 2 : 6 + (W - 12) * i / (n - 1);
+    const y = v => 3 + (H - 6) * (1 - Math.max(0, Math.min(20, v)) / 20);
+    const promo = trace.filter(t => t[3] !== null && t[3] !== undefined);
+    const titre = trace.map(t => `${t[0]} ${_spAn(t[1])} : ${_spFr(t[2])}${t[3] !== null && t[3] !== undefined ? ' (promo ' + _spFr(t[3]) + ')' : ''}`).join('\n');
+    return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block"><title>${esc(titre)}</title>
+        <line x1="0" y1="${y(10)}" x2="${W}" y2="${y(10)}" stroke="#fecaca" stroke-dasharray="3 2"/>
+        ${promo.length > 1 ? `<polyline points="${trace.map((t, i) => [i, t[3]]).filter(t => t[1] !== null && t[1] !== undefined)
+            .map(([i, v]) => `${x(i)},${y(v)}`).join(' ')}" fill="none" stroke="#9ca3af" stroke-dasharray="3 2"/>` : ''}
+        ${n > 1 ? `<polyline points="${trace.map((t, i) => `${x(i)},${y(t[2])}`).join(' ')}" fill="none" stroke="#2563eb" stroke-width="1.8"/>` : ''}
+        ${trace.map((t, i) => `<circle cx="${x(i)}" cy="${y(t[2])}" r="2.4" fill="${t[2] < 10 ? '#dc2626' : '#2563eb'}"/>`).join('')}</svg>`;
+}
+
+function renderConvoquer() {
+    const d = _convData;
+    if (!d) return loadConvoquer();
+    const tous = d.etudiants || [];
+    const F = _convFiltres;
+    const promos = [...new Set(tous.map(e => e.promotion))].sort().reverse();
+    const nb = tous.filter(e => e.a_convoquer).length;
+    const masques = tous.length - nb;
+    const opt = (v, lib, cur) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(lib)}</option>`;
+    const modif = editUI('etu:convoquer');
+    document.getElementById('etu-content').innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+            ${_etuVuesBoutons()}
+            <span style="font-size:.9rem"><strong>${nb}</strong> étudiant(s) à convoquer ou convoqués${masques
+                ? ` <span style="color:#9ca3af">· ${masques} reçu(s) ou écarté(s)</span>` : ''}</span>
+            <span style="margin-left:auto"></span>
+            <button class="btn btn-secondary btn-sm" onclick="_convReglages=!_convReglages;renderConvoquer()">Critères…</button>
+            <button class="btn btn-secondary btn-sm" onclick="exportConvoquer()">Exporter (CSV)</button>
+            <button class="btn btn-secondary btn-sm" onclick="loadConvoquer()" title="Recalculer la liste">↻</button>
+        </div>
+        ${_convReglages ? convReglagesHtml(d.seuils || {}, modif) : ''}
+        <div class="filters" style="margin-bottom:8px">
+            <input type="search" placeholder="Nom, prénom, n° Apogée…" value="${esc(F.q)}"
+                oninput="_convFiltres.q=this.value;renderConvoquerLignes()">
+            <select onchange="_convFiltres.promo=this.value;renderConvoquerLignes()">${opt('', 'Toutes les cohortes', F.promo)}${
+                promos.map(p => opt(p, p, F.promo)).join('')}</select>
+            <select onchange="_convFiltres.face=this.value;renderConvoquerLignes()">${opt('', 'FTP + ALT', F.face)}${
+                opt('FTP', 'FTP', F.face)}${opt('ALT', 'ALT', F.face)}</select>
+            <label style="display:inline-flex;align-items:center;gap:5px;font-size:.85rem;cursor:pointer">
+                <input type="checkbox" ${F.tous ? 'checked' : ''} onchange="_convFiltres.tous=this.checked;renderConvoquerLignes()">
+                Afficher aussi les reçus et écartés</label>
+        </div>
+        <div style="font-size:.78rem;color:#6b7280;margin-bottom:8px">Étudiants de l'année active (${esc(d.annee || '')}) désignés par
+            les critères, sur le dernier semestre noté. Un étudiant reçu ou écarté ne revient qu'avec un nouveau motif.
+            Cliquez un nom pour ouvrir son suivi.</div>
+        <div id="conv-lignes"></div>`;
+    renderConvoquerLignes();
+}
+
+function renderConvoquerLignes() {
+    const el = document.getElementById('conv-lignes');
+    if (!el) return;
+    const liste = _convListe();
+    const modif = editUI('etu:convoquer');
+    if (!liste.length) {
+        el.innerHTML = `<div class="empty">${(_convData.etudiants || []).length
+            ? 'Aucun étudiant ne correspond à ces filtres.' : 'Aucun étudiant à convoquer pour l\'instant.'}</div>`;
+        return;
+    }
+    const bouton = (lib, action, titre) => `<button class="btn btn-secondary btn-sm" onclick="${action}"
+        title="${esc(titre || '')}" style="white-space:nowrap">${lib}</button>`;
+    const ligne = e => {
+        const et = e.etat && e.etat.etat;
+        return `<tr>
+        <td style="white-space:nowrap"><a href="#" onclick="openEtudiant(${e.person_id}, 'suivi');return false"
+            style="font-weight:700">${esc(e.nom || '')}</a> ${esc(e.prenom || '')}
+            <div style="font-size:.72rem;color:#9ca3af">${esc(e.numero || '')}</div></td>
+        <td style="white-space:nowrap">${esc(e.promotion)} · A${e.annee}<div style="font-size:.72rem;color:#6b7280">${esc(e.formation || '')}</div></td>
+        <td style="text-align:center;${e.gim !== null && e.gim !== undefined ? _noteFond({ note: e.gim }) : ''}">${
+            e.gim !== null && e.gim !== undefined ? `<strong>${_spFr(e.gim)}</strong>
+                <div style="font-size:.7rem;color:#6b7280">${esc(e.sem || '')}</div>` : '<span style="color:#d1d5db">—</span>'}</td>
+        <td>${_spTrace(e.trace)}</td>
+        <td style="min-width:340px">${(e.motifs || []).map(_spMotif).join('')}</td>
+        <td style="white-space:nowrap">${et ? _spEtat(e.etat) : _spPastille('À convoquer', '#fee2e2', '#b91c1c')}${e.nouveau
+            ? `<div style="margin-top:3px">${_spPastille('nouveau motif', '#fef3c7', '#b45309', "Apparu depuis l'entretien ou la mise à l'écart")}</div>` : ''}
+            ${e.entretien ? `<div style="font-size:.72rem;color:#6b7280;margin-top:3px">Entretien le ${_dateFr(e.entretien)}${
+                e.prochain ? `<br>prochain point ${_dateFr(e.prochain)}` : ''}</div>` : ''}</td>
+        ${modif ? `<td><div style="display:flex;flex-direction:column;gap:3px">
+            ${et !== 'CONVOQUE' ? bouton('Convoquer', `convoquerDepuisListe(${e.person_id}, 'CONVOQUE')`, "Convocation envoyée aujourd'hui") : ''}
+            ${bouton('Entretien…', `openEtudiant(${e.person_id}, 'suivi', 'ENTRETIEN')`, "Ouvrir son suivi pour rédiger le compte rendu")}
+            ${et !== 'ECARTE' && et !== 'RECU' ? bouton('Écarter', `convoquerDepuisListe(${e.person_id}, 'ECARTE')`,
+                "Pas besoin de le recevoir : il ne reviendra qu'avec un nouveau motif") : ''}
+            ${et ? bouton('↺ Effacer', `convoquerDepuisListe(${e.person_id}, null)`, "Effacer l'état de convocation") : ''}</div></td>` : ''}
+    </tr>`;
+    };
+    el.innerHTML = `<div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px">
+        <table class="pn-table" style="table-layout:auto;width:100%"><thead><tr>
+            <th style="text-align:left">Étudiant</th><th style="text-align:left">Cohorte</th>
+            <th title="Moyenne des UE du dernier semestre noté">Moyenne</th>
+            <th title="Moyenne des UE semestre après semestre ; en pointillé gris, celle de la promotion">Évolution</th>
+            <th style="text-align:left">Motifs</th><th style="text-align:left">Convocation</th>${modif ? '<th></th>' : ''}
+        </tr></thead><tbody>${liste.map(ligne).join('')}</tbody></table></div>`;
+}
+
+async function convoquerDepuisListe(personId, etat) {
+    try {
+        await api(`/students/${personId}/convocation`, { method: 'PUT', body: JSON.stringify({ etat, date: _isoAujourdhui() }) });
+        toast(etat === 'CONVOQUE' ? 'Noté convoqué' : etat === 'ECARTE' ? 'Écarté de la liste' : 'État effacé');
+        await loadConvoquer();
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+function convReglagesHtml(s, modif) {
+    const dis = modif ? '' : ' disabled';
+    const num = (k, w) => `<input type="number" min="0" max="100" step="${['nb_notes_faibles', 'abi'].includes(k) ? 1 : 0.5}"
+        id="cr-${k}" value="${s[k] === null || s[k] === undefined ? '' : s[k]}"${dis}
+        style="width:${w || 60}px;padding:2px 4px;border:1px solid #d1d5db;border-radius:4px">`;
+    const box = k => `<input type="checkbox" id="cr-${k}"${s[k] ? ' checked' : ''}${dis}>`;
+    return `<div style="border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px;margin-bottom:10px;background:#fafafa;font-size:.84rem">
+        <div style="font-weight:700;margin-bottom:6px">Critères de convocation <span style="font-weight:400;color:#6b7280">— notes,
+            baisse et assiduité portent sur le dernier semestre noté de l'année ; case vide = critère désactivé</span></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:6px 18px">
+            <label>Une UE sous ${num('ue_faible')}</label>
+            <label>Moyenne des UE sous ${num('moy_faible')}</label>
+            <label>Au moins ${num('nb_notes_faibles', 50)} notes sous ${num('note_faible')}</label>
+            <label title="Comparée à celle de la promotion sur la même période : un semestre plus dur pour tous ne désigne personne">Baisse
+                de la moyenne ou d'une UE d'au moins ${num('baisse')} points de plus que la promo</label>
+            <label>Plus de ${num('absences_h')} h d'absence injustifiée</label>
+            <label>Au moins ${num('abi', 50)} ABI</label>
+            <label>${box('annee')} Année ajournée en l'état des notes</label>
+            <label>${box('parcours')} Parcours fragile : AJAC l'an dernier, année refaite</label>
+            <label>${box('signalements')} Signalement d'un enseignant non traité</label>
+        </div>
+        ${modif ? `<div style="text-align:right;margin-top:8px"><button class="btn btn-primary btn-sm"
+            onclick="enregistrerConvReglages()">Enregistrer les critères</button></div>` : ''}</div>`;
+}
+
+async function enregistrerConvReglages() {
+    const corps = {};
+    ['ue_faible', 'moy_faible', 'note_faible', 'nb_notes_faibles', 'baisse', 'absences_h', 'abi']
+        .forEach(k => { corps[k] = document.getElementById('cr-' + k).value; });
+    ['annee', 'parcours', 'signalements'].forEach(k => { corps[k] = document.getElementById('cr-' + k).checked; });
+    try {
+        await api('/suivi/reglages', { method: 'PUT', body: JSON.stringify(corps) });
+        toast('Critères enregistrés');
+        await loadConvoquer();
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+function exportConvoquer() {
+    const cell = v => {
+        const s = v === null || v === undefined ? '' : String(v);
+        return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const etatLib = e => e.etat ? (_SP_ETAT_LIB[e.etat.etat] || [e.etat.etat])[0] : 'À convoquer';
+    const lignes = [['Nom', 'Prénom', 'N° Apogée', 'Cohorte', 'Année', 'FTP/ALT', 'Semestre', 'Moyenne', 'Motifs',
+                     'Convocation', 'Date', 'Dernier entretien', 'Prochain point'].join(';')].concat(_convListe().map(e => [
+        e.nom, e.prenom, e.numero, e.promotion, e.annee, e.formation, e.sem,
+        e.gim === null || e.gim === undefined ? '' : String(e.gim).replace('.', ','),
+        (e.motifs || []).map(m => m.texte).join(' | '), etatLib(e), _dateFr((e.etat || {}).date),
+        _dateFr(e.entretien), _dateFr(e.prochain)].map(cell).join(';')));
+    const blob = new Blob(['﻿' + lignes.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'a_convoquer.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
 }
 
 // ===== FICHE ÉTUDIANT (registre) =====
@@ -7271,7 +8034,7 @@ function _ageDepuis(naissance) {
 
 function studentSections(d, opts = {}) {
     const s = d.student;
-    const dis = !editUI('nav:etudiants') ? ' disabled' : '';
+    const dis = !editUI('etu:liste') ? ' disabled' : '';
     const champ = (label, field, aide) => `<div class="form-group" style="margin:0">
         <label style="font-size:.78rem" title="${esc(aide || '')}">${label}</label>
         <input value="${esc(s[field] || '')}"${dis} onchange="changeRegistreField('${field}', this.value)"></div>`;

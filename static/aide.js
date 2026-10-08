@@ -427,7 +427,7 @@ function aideOuvrir(cible) {
     } else if (page === 'etudiants') {
         _etuSelected = null;
         _studentCard = null;
-        if (sous === 'trombi' || sous === 'liste') {
+        if (['trombi', 'liste', 'convoquer'].includes(sous)) {
             _etuVue = sous;
             try { localStorage.setItem('etuVue', sous); } catch (e) { /* sans mémoire */ }
         }
@@ -459,7 +459,8 @@ const _AIDE_CONTEXTE = {
 function aideContexte() {
     const key = _currentTabKey() || '';
     let id = _AIDE_CONTEXTE[key];
-    if (key === 'nav:etudiants') id = _etuSelected ? 'etu-fiche' : _etuVue === 'trombi' ? 'etu-photos' : 'etu-liste';
+    if (key.startsWith('etu:')) id = _etuSelected ? (_etuFicheTab === 'suivi' ? 'etu-suivi' : 'etu-fiche')
+        : _etuVue === 'trombi' ? 'etu-photos' : _etuVue === 'convoquer' ? 'etu-convoquer' : 'etu-liste';
     else if (key === 'nav:statistiques') id = 'stats-' + _statsTab;
     else if (key === 'nav:stages' || key === 'nav:alternance')
         id = _suiviState(key.slice(4)).tab === 'stats' ? 'suivi-stats' : 'suivi-fiches';
@@ -556,7 +557,7 @@ function _aideDemarrer() {
             ['nav:service', _aUi('Service'), `Les heures d'enseignement : bilan des services, répartition semaine par semaine, contraintes d'emploi du temps. ${_aLien('service-vue', 'En savoir plus')}`],
             [['nav:saisie', 'promo:saisie'], _aUi('Saisie Notes'), `Saisir les notes des sous-matières. ${_aLien('promo-saisie', 'En savoir plus')}`],
             ['nav:promotions', _aUi('Promotions'), `Les cohortes : effectifs, groupes, bulletins, jury… ${_aLien('promo-vue', 'En savoir plus')}`],
-            ['nav:etudiants', _aUi('Étudiants'), `Le registre des étudiants, leur fiche, leurs photos et le trombinoscope. ${_aLien('etu-liste', 'En savoir plus')}`],
+            ['nav:etudiants', _aUi('Étudiants'), `Le registre des étudiants, leur fiche, leurs photos et le trombinoscope, leur suivi. ${_aLien('etu-liste', 'En savoir plus')}`],
             [['nav:stages', 'nav:alternance'], _aSi('nav:stages', _aUi('Stages')) + ' ' + _aSi('nav:alternance', _aUi('Alternance')),
              `Les fiches de suivi : entreprise, tuteurs, mission. ${_aLien('suivi-fiches', 'En savoir plus')}`],
             ['nav:programme', _aUi('Programme'), `Le programme national : coefficients, matières, volumes, contenus. ${_aLien('prog-vue', 'En savoir plus')}`],
@@ -658,7 +659,7 @@ function _aideDemarrer() {
             [['prog:coeff', 'prog:matieres'], `le ${_aOng('Programme')}`],
             ['rep:annuelle', `la ${_aOng('Répartition annuelle')} (qui travaille sur un brouillon, avec retour arrière)`],
         ].map(([k, t]) => _aSiModif(k, t)).filter(Boolean);
-        const imports = ['promo:effectif', 'promo:notes', 'promo:groupes', 'nav:etudiants', 'rep:annuelle', 'nav:saisie', 'promo:saisie'];
+        const imports = ['promo:effectif', 'promo:notes', 'promo:groupes', 'etu:liste', 'rep:annuelle', 'nav:saisie', 'promo:saisie'];
         return `
         <p>Le site enregistre de deux façons.</p>
         <h3>Enregistrement immédiat</h3>
@@ -1220,9 +1221,9 @@ function _aidePromotions() {
 function _aideEtudiants() {
     const R = 'etudiants';
     return [
-    { id: 'etu-liste', rub: R, titre: 'Le registre des étudiants', chemin: 'Étudiants', onglet: 'nav:etudiants', cible: 'etudiants/liste',
+    { id: 'etu-liste', rub: R, titre: 'Le registre des étudiants', chemin: 'Étudiants', onglet: 'etu:liste', cible: 'etudiants/liste',
       mots: 'registre liste recherche filtre cohorte année statut sexe recrutement jury export csv apogée',
-      html: `
+      html: () => `
         <p>Tous les étudiants qu'au moins une cohorte a connus, <b>une ligne par personne</b> — même s'il a redoublé, changé de cohorte
         ou repris après une césure. On y cherche quelqu'un sans savoir dans quelle promotion il est.</p>
         <h3>Chercher et filtrer</h3>
@@ -1237,13 +1238,14 @@ function _aideEtudiants() {
         dernière cohorte, FTP/ALT, <b>année</b> (un point gris devant : sa cohorte est sortie ou il l'a quittée — c'est sa dernière année suivie), statut,
         dernière décision de jury, dernière moyenne annuelle, nombre de notes. Un clic sur un en-tête trie ; un clic sur une ligne ouvre la ${_aLien('etu-fiche', 'fiche')}.</p>
         <p>${_aUi('Exporter (CSV)')} télécharge exactement ce qui est affiché (filtres et tri compris), lisible par Excel.</p>
-        <p>Les boutons ${_aUi('Liste')} / ${_aUi('Trombinoscope')} changent de vue : voir ${_aLien('etu-photos', 'photos et trombinoscope')}.</p>` },
+        <p>Les boutons ${_aUi('Liste')} / ${_aUi('Trombinoscope')} changent de vue : voir ${_aLien('etu-photos', 'photos et trombinoscope')}.${
+            _aSi('etu:convoquer', ` ${_aUi('À convoquer')} dresse la liste des étudiants à recevoir : voir ${_aLien('etu-convoquer', 'les étudiants à convoquer')}.`)}</p>` },
 
     { id: 'etu-fiche', rub: R, titre: "La fiche d'un étudiant", chemin: 'Étudiants › fiche',
-      onglet: 'nav:etudiants', cible: 'etudiants/liste',
+      onglet: 'etu:liste', cible: 'etudiants/liste',
       mots: 'fiche étudiant dossier parcours cohortes résultats relevé bulletin état civil photo parcoursup candidature',
       html: () => `
-        <p>Un étudiant n'a qu'une fiche, quel que soit le nombre de cohortes qu'il a traversées${_aSiModif('nav:etudiants',
+        <p>Un étudiant n'a qu'une fiche, quel que soit le nombre de cohortes qu'il a traversées${_aSiModif('etu:liste',
         ' : ce qui y est saisi décrit <b>la personne</b> et vaut pour toutes ses inscriptions')}.</p>
         <h3>Sous-onglet « Informations »</h3>
         <ul>
@@ -1251,7 +1253,7 @@ function _aideEtudiants() {
             <li><b>profil</b> : sexe, recrutement, pays, série de bac, années depuis le bac, études antérieures (grisées quand le bac date de l'année d'entrée) ;</li>
             <li><b>parcours</b> : chaque cohorte traversée, l'année d'entrée, la sous-cohorte, le statut, l'origine (redoublant, reprise après césure), puis année
                 par année la décision de jury, la moyenne générale, la mobilité — et l'abandon, la césure ou le devenir s'il y en a ;</li>
-            <li><b>dossier ParcourSup</b> (rang, note, spécialités…), repris de l'import${_aSiModif('nav:etudiants', ' mais modifiable pour qui n\'y figure pas')} ;</li>
+            <li><b>dossier ParcourSup</b> (rang, note, spécialités…), repris de l'import${_aSiModif('etu:liste',' mais modifiable pour qui n\'y figure pas')} ;</li>
             <li>le <b>dossier de candidature</b> détaillé, quand l'export CSV complet a été importé (lecture seule).</li>
         </ul>
         <h3>Sous-onglet « Notes et résultats »</h3>
@@ -1260,10 +1262,70 @@ function _aideEtudiants() {
         <p>Quand l'étudiant a une <b>pénalité d'assiduité</b>, chaque UE du semestre détaille le calcul : moyenne des notes, pénalité retranchée
         (avec le nombre d'heures), puis moyenne de l'UE. Le tableau de l'année reprend, sous les UE, la pénalité de chaque semestre et la
         <b>bonification sport/art</b> ajoutée aux moyennes annuelles. Une moyenne d'UE nettement sous les notes s'explique souvent ainsi.</p>
+        ${_aSi('etu:suivi', `<h3>Sous-onglet « Suivi »</h3>
+        <p>L'évolution de ses moyennes face à sa promotion, ses motifs de convocation et le journal de suivi : voir ${_aLien('etu-suivi', "le suivi d'un étudiant")}.</p>`)}
         ${_aSi('promo:effectif', _aTip(`depuis les Effectifs, un clic sur un nom ouvre la fiche dans une fenêtre ; ${_aUi('Fiche complète et résultats →')} la rouvre dans l'onglet Étudiants, avec les notes.`))}` },
 
+    { id: 'etu-suivi', rub: R, titre: "Le suivi d'un étudiant", chemin: 'Étudiants › fiche › Suivi',
+      onglet: 'etu:suivi', cible: 'etudiants/liste',
+      mots: 'suivi évolution moyenne promotion classe écart-type courbe commentaire signalement problème entretien journal baisse',
+      html: () => `
+        <p>Le sous-onglet ${_aUi('Suivi')} de la fiche réunit ce qu'il faut pour parler avec l'étudiant de son parcours.</p>
+        <h3>Évolution</h3>
+        <ul>
+            <li>Un <b>graphique en étoile</b> : un axe par UE — ou, avec ${_aUi('Natures')} et ${_aUi('Domaines')}, par nature (technique, théorique,
+                tertiaire) et par domaine d'ingénierie des ressources —, de 0 au centre à 20 au bord ; l'anneau plus marqué est la moyenne de 10 ;</li>
+            <li>le <b>semestre choisi</b> (boutons S1, S2…) en bleu, points pleins ; le <b>semestre précédent</b> en bleu clair, points creux ;
+                une <b>flèche</b> sur chaque branche va de l'un à l'autre — verte vers l'extérieur en hausse, rouge vers le centre en baisse,
+                à partir d'un point d'écart ; la <b>promotion</b> en gris : sa moyenne en trait et, en aplat, <b>± un écart-type</b>. On voit d'un
+                coup ses points forts et faibles, ce qui a bougé, et s'il s'écarte de sa promotion ou si le semestre a été dur pour tous.
+                Le survol d'une branche donne le détail ;</li>
+            <li>le tableau donne tous les semestres : chaque valeur sur le fond des notes, l'écart au semestre précédent (▲ ▼) et la promotion
+                (moyenne ± écart-type) ; au survol, l'écart à la promotion en nombre d'écarts-types. Un clic sur un semestre l'affiche dans
+                l'étoile. Suivent les heures d'absence, les ABI et les décisions de jury ;</li>
+            <li><b>Par matière</b> : une étoile par semestre, une branche par matière notée — sa note face à la moyenne de la promotion
+                ± un écart-type dans cette matière (une ABI compte 0). Le cadre du semestre choisi est marqué.</li>
+        </ul>
+        <p>Les notes ne sont pas datées : l'évolution se lit d'un semestre à l'autre. La moyenne de la promotion écarte ceux qui ont abandonné.</p>
+        <h3>Journal de suivi</h3>
+        <ul>
+            ${_aSiModif('etu:suivi', `<li>${_aUi('+ Commentaire')} : une observation, rattachée si besoin à une matière ;</li>
+            <li>${_aUi('+ Signaler un problème')} : la date des faits, un motif (absences, retards, travail non rendu, comportement, difficultés…), la description.
+                Un signalement reste <b>non traité</b> tant que son auteur ou la direction ne l'a pas marqué traité, et il met l'étudiant dans la liste à convoquer ;</li>`)}
+            ${_aSi('etu:convoquer', `<li>${_aUi('+ Entretien')} : date, participants, compte rendu, décisions, prochain point ; l'étudiant passe alors <b>reçu</b>.
+                Les entretiens ne sont lus que par qui voit la liste ${_aLien('etu-convoquer', 'À convoquer')} ;</li>`)}
+            <li>commentaires et signalements sont lus par toute l'équipe ; chacun modifie ou supprime les siens${_aSi('etu:convoquer', ', la direction tous')}.</li>
+        </ul>
+        ${_aTip("l'étudiant peut demander à lire ce journal : écrivez des faits observables, sans jugement sur la personne, et rien sur sa santé ou sa vie privée.")}` },
+
+    { id: 'etu-convoquer', rub: R, titre: 'Les étudiants à convoquer', chemin: 'Étudiants › À convoquer',
+      onglet: 'etu:convoquer', cible: 'etudiants/convoquer',
+      mots: 'convoquer convocation entretien alerte notes faibles baisse absences abi ajourné ajac redoublant signalement critères seuils',
+      html: () => `
+        <p>La vue ${_aUi('À convoquer')} de l'onglet Étudiants liste les étudiants de l'<b>année active</b> que des critères désignent. Elle est
+        recalculée à chaque affichage ; ${_aUi('Critères…')} montre les seuils${_aSiModif('etu:convoquer', ' et permet de les régler (case vide = critère désactivé)')}.</p>
+        <h3>Les critères</h3>
+        <ul>
+            <li><b>Notes faibles</b>, au dernier semestre noté de l'année : une UE sous 8, la moyenne des UE sous 10, ou au moins 3 notes sous 8 ;</li>
+            <li><b>Baisse</b> : la moyenne ou une UE recule d'au moins 2 points <b>de plus que la promotion</b> depuis le semestre précédent — un semestre plus
+                dur pour tous ne désigne personne ;</li>
+            <li><b>Assiduité</b> : plus de 8 h d'absence injustifiée (la pénalité s'applique), ou une ABI ;</li>
+            <li><b>Année en danger</b> : l'année serait ajournée en l'état des notes ;</li>
+            <li><b>Parcours</b> : AJAC l'an dernier (UE à rattraper), ou année refaite ;</li>
+            <li><b>Signalement</b> d'un enseignant non traité.</li>
+        </ul>
+        ${_aSiModif('etu:convoquer', `<h3>Convoquer, recevoir, écarter</h3>
+        <ul>
+            <li>${_aUi('Convoquer')} note la convocation du jour : l'étudiant reste dans la liste jusqu'à son entretien ;</li>
+            <li>${_aUi('Entretien…')} ouvre son suivi sur un compte rendu ; enregistré, il le note <b>reçu</b> et l'étudiant sort de la liste ;</li>
+            <li>${_aUi('Écarter')} : pas besoin de le recevoir pour ces motifs ; ${_aUi('↺ Effacer')} efface l'état.</li>
+        </ul>`)}
+        <p>Reçu ou écarté, un étudiant ne revient qu'avec un <b>nouveau motif</b>, signalé comme tel. ${_aUi('Afficher aussi les reçus et écartés')} les montre ;
+        ${_aUi('Exporter (CSV)')} télécharge la liste affichée. La colonne Évolution trace sa moyenne des UE semestre après semestre, et en pointillé gris
+        celle de sa promotion.</p>` },
+
     { id: 'etu-photos', rub: R, titre: 'Photos et trombinoscope', chemin: 'Étudiants › Trombinoscope',
-      onglet: 'nav:etudiants', cible: 'etudiants/trombi',
+      onglet: 'etu:liste', cible: 'etudiants/trombi',
       mots: 'photo trombinoscope trombi pdf grille télécharger imprimer portrait',
       html: () => `
         <h3>La vue Trombinoscope</h3>
@@ -1280,11 +1342,11 @@ function _aideEtudiants() {
         effectif, puis nom, prénom et n° Apogée sous chaque photo.</p>
         ${_aEx('le trombi des BUT1 FTP', `${_aOng('Étudiants')} → ${_aUi('Trombinoscope')} → filtres <b>26-29</b>, <b>Année 1</b>, <b>FTP</b>, statut <b>Actif</b>
             → ${_aUi('Télécharger le trombi (PDF)')} : le fichier <code>Trombi_26-29_BUT1_FTP.pdf</code> est prêt à imprimer.`)}
-        ${_aSiModif('nav:etudiants', `<h3>La photo d'une fiche</h3>
+        ${_aSiModif('etu:liste',`<h3>La photo d'une fiche</h3>
         <p>Sur la fiche : ${_aUi('Ajouter')} ou ${_aUi('Changer')} (n'importe quelle image — elle est convertie en JPEG et réduite automatiquement), ${_aUi('✕')} pour la retirer.</p>`)}` },
 
     { id: 'etu-trombi-import', rub: R, titre: 'Importer un trombinoscope (photos)', chemin: 'Étudiants › Importer un trombi (PDF)',
-      onglet: 'nav:etudiants', pour: 'modifier', cible: 'etudiants/liste',
+      onglet: 'etu:liste', pour: 'modifier', cible: 'etudiants/liste',
       mots: 'importer trombi pdf photos scolarité rapprochement apogée nom approché inversé',
       html: `
         <p>Les trombinoscopes PDF de la scolarité (une photo, le nom, le prénom et le n° Apogée de chaque étudiant) donnent d'un coup une photo à chaque fiche.</p>
@@ -1620,7 +1682,7 @@ function _aideExemples() {
             `<b>Importer l'effectif</b> — section FTP puis section ALT, ${_aUi('Importer un effectif')} avec le PV ou l'export Apogée de rentrée. ${_aLien('promo-import', 'Détail')}`,
             `<b>Compléter avec ParcourSup</b> — ${_aUi('⤒ Importer ParcourSup')} : classement STI2D, puis hors STI2D, puis l'export CSV complet pour les dossiers ;
              les étudiants restés sans dossier se complètent sur leur fiche.`,
-            _aSiModif('nav:etudiants', `<b>Les photos</b> — ${_aOng('Étudiants')}, ${_aUi('Importer un trombi (PDF)')} avec les trombinoscopes de la scolarité. ${_aLien('etu-trombi-import', 'Détail')}`),
+            _aSiModif('etu:liste',`<b>Les photos</b> — ${_aOng('Étudiants')}, ${_aUi('Importer un trombi (PDF)')} avec les trombinoscopes de la scolarité. ${_aLien('etu-trombi-import', 'Détail')}`),
             _aSiModif('promo:groupes', `<b>Les groupes</b> — ${_aOng('Groupes')} : nombre de groupes du S1, ${_aUi('⚙ Répartition automatique')}, ${_aUi('✓ Vérifier les règles')},
              ${_aUi('⤓ Télécharger')} pour les enseignants. ${_aLien('promo-groupes', 'Détail')}`),
             _aSiModif('promo:calendrier', `<b>Le calendrier</b> — ${_aOng('Calendrier')} : dates des semestres, vacances, stages, semaines en entreprise. ${_aLien('promo-calendrier', 'Détail')}`),
@@ -1805,7 +1867,7 @@ function _aideFaq() {
         cohorte suivante, dans la sous-cohorte choisie (section « Césures »). Le statut ${_aStatut('Césure')} ne se pose pas depuis les Effectifs.</p>`, 'promo:devenir'),
     q('photo', 'Une photo manque ou ne correspond pas', 'photo absente fausse mauvaise trombinoscope changer',
         `<p>Sur la fiche de l'étudiant : ${_aUi('Changer')} (ou ${_aUi('Ajouter')}) avec la bonne image, ou ${_aUi('✕')} pour la retirer. Lors d'un import de trombinoscope, vérifiez les lignes
-        sur fond jaune avant d'associer : c'est là que se glissent les erreurs. ${_aLien('etu-trombi-import', 'Import des photos')}</p>`, 'nav:etudiants', 'modifier'),
+        sur fond jaune avant d'associer : c'est là que se glissent les erreurs. ${_aLien('etu-trombi-import', 'Import des photos')}</p>`, 'etu:liste', 'modifier'),
     q('hors-gim', 'Qui voit mes heures hors GIM ?', 'heures hors gim confidentialité privé public',
         `<p>Une ligne <b>privée</b> : vous seul. Une ligne <b>publique</b> : vous et l'administration — jamais les autres enseignants. ${_aLien('mon-compte', 'Mon Compte')}</p>`,
         'nav:mon-compte'),

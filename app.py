@@ -1270,6 +1270,8 @@ def _person_prune(db, sid):
         db.execute('DELETE FROM students WHERE id=?', (sid,))
         db.execute('DELETE FROM student_candidature WHERE person_id=?', (sid,))
         db.execute('DELETE FROM student_photos WHERE person_id=?', (sid,))
+        db.execute('DELETE FROM student_suivi WHERE person_id=?', (sid,))
+        db.execute('DELETE FROM student_convocation WHERE person_id=?', (sid,))
 
 def _fiche_person(db, fid):
     """L'étudiant (registre) dont la fiche `fid` est une inscription, ou None."""
@@ -1763,6 +1765,53 @@ def _apply_promotions_migrations(db):
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
             UNIQUE (promotion_id, semester, formation, matiere_code),
             FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE
+        )
+    ''')
+    # Suivi pédagogique (cf « SUIVI PÉDAGOGIQUE ») : le journal d'un étudiant —
+    # commentaires et signalements des enseignants, comptes rendus d'entretien —
+    # et l'état de sa convocation. Rattachés à la PERSONNE (registre) : ils la
+    # suivent d'une cohorte à l'autre.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS student_suivi (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            person_id    INTEGER NOT NULL,
+            kind         TEXT NOT NULL CHECK (kind IN ('COMMENT', 'SIGNAL', 'ENTRETIEN')),
+            date_fait    TEXT NOT NULL,      -- AAAA-MM-JJ : date des faits / de l'entretien
+            motif        TEXT,               -- signalement : absences, retards…
+            matiere      TEXT,               -- matière concernée (texte libre)
+            texte        TEXT NOT NULL DEFAULT '',
+            participants TEXT,               -- entretien
+            decisions    TEXT,               -- entretien : décisions, engagements
+            prochain     TEXT,               -- entretien : date du prochain point
+            statut       TEXT,               -- signalement : OUVERT / TRAITE
+            traite_par   TEXT,
+            traite_le    TEXT,
+            auteur       TEXT NOT NULL,      -- session['user'] de qui l'a écrit
+            created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at   TEXT,
+            FOREIGN KEY (person_id) REFERENCES students(id) ON DELETE CASCADE
+        )
+    ''')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_student_suivi_person ON student_suivi(person_id)')
+    # Convocation : CONVOQUE (en attente d'entretien), RECU ou ECARTE. `motifs` garde
+    # les motifs vus à ce moment (JSON) : l'étudiant ne revient dans la liste qu'à
+    # l'apparition d'un nouveau motif.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS student_convocation (
+            person_id  INTEGER PRIMARY KEY,
+            etat       TEXT NOT NULL CHECK (etat IN ('CONVOQUE', 'RECU', 'ECARTE')),
+            date       TEXT,
+            motifs     TEXT,
+            par        TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (person_id) REFERENCES students(id) ON DELETE CASCADE
+        )
+    ''')
+    # Seuils des critères de convocation (une ligne, JSON) ; absents = défauts.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS suivi_reglages (
+            id   INTEGER PRIMARY KEY CHECK (id = 1),
+            data TEXT NOT NULL
         )
     ''')
     # Provenance de la valeur réellement stockée ('import'/'manuel'/'saisie'),
@@ -3181,7 +3230,15 @@ _TAB_TREE = [
         _tn('promo:devenir', 'Devenir', [_TA, _RF, _RA], [_TA, _RF, _RA]),
         _tn('promo:actions', 'Actions', [_TA], [_TA], never=[_TP, _TT] + _TRESP),
     ]),
-    _tn('nav:etudiants', 'Étudiants', [_TA, _TP] + _TRESP, [_TA, _RF]),
+    # Suivi : voir = évolution et journal ; modifier = écrire commentaires et
+    # signalements. À convoquer : voir = la liste et les entretiens ; modifier =
+    # convoquer, écarter, rédiger les entretiens, régler les critères.
+    _tn('nav:etudiants', 'Étudiants', [_TA, _TP] + _TRESP, children=[
+        _tn('etu:liste', 'Liste, fiches et photos', [_TA, _TP] + _TRESP, [_TA, _RF]),
+        _tn('etu:suivi', 'Suivi : évolution, commentaires, signalements',
+            [_TA, _TP] + _TRESP, [_TA, _TP] + _TRESP),
+        _tn('etu:convoquer', 'À convoquer et entretiens', [_TA, _RF, _RA], [_TA, _RF, _RA]),
+    ]),
     # Enseignant avec mot de passe : tout voir, modifier les fiches qu'il suit
     # comme tuteur universitaire (contrôle dans set_year_tuteurs)
     _tn('nav:stages', 'Stages', [_TA, _RS, _TP], [_TA, _RS, _TP]),
@@ -3263,7 +3320,11 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     (r'^/api/promotions/\d+/notes/', ['promo:notes'], ''),
     (r'^/api/notes/import/sheets$', ['promo:notes'], ''),
     (r'^/api/promotions/\d+/(effectif/|students)', ['promo:effectif'], ''),
-    (r'^/api/students/(\d+(/photo)?|trombi/(analyse|import))$', ['nav:etudiants'], ''),
+    (r'^/api/students/(\d+(/photo)?|trombi/(analyse|import))$', ['etu:liste'], ''),
+    # Le handler distingue : commentaire / signalement (etu:suivi), entretien (etu:convoquer)
+    (r'^/api/students/\d+/suivi(/\d+)?$', ['etu:suivi', 'etu:convoquer'], ''),
+    (r'^/api/students/\d+/convocation$', ['etu:convoquer'], ''),
+    (r'^/api/suivi/reglages$', ['etu:convoquer'], ''),
     (r'^/api/promotions/\d+/(coefficients|programme)', ['promo:actions'], ''),
     (r'^/api/promotions(/\d+)?$', ['promo:actions'], ''),
     (r'^/api/backups$', ['nav:journal'], ''),
@@ -5911,6 +5972,647 @@ def delete_student_photo(person_id):
     if not payload:
         return error_response('Étudiant introuvable', 404)
     return jsonify(payload)
+
+# ===== SUIVI PÉDAGOGIQUE =====
+# Trois usages d'une même lecture des résultats :
+#   • l'ÉVOLUTION d'un étudiant, semestre après semestre — moyenne des UE, chaque
+#     UE, chaque nature et chaque domaine de ressources —, face à la moyenne et à
+#     l'écart-type de sa promotion au même semestre ;
+#   • son JOURNAL : commentaires et signalements des enseignants (lus par toute
+#     l'équipe), comptes rendus d'entretien (direction seulement) ;
+#   • la liste À CONVOQUER : les étudiants de l'année active que des critères
+#     réglables désignent (notes faibles, baisse, assiduité, année en danger,
+#     parcours fragile, signalement non traité).
+# Journal et convocation sont rattachés à la PERSONNE (registre) : ils la suivent
+# d'une cohorte à l'autre. Droits (arbre des onglets) : etu:suivi — voir
+# l'évolution et le journal, modifier = écrire commentaires et signalements ;
+# etu:convoquer — voir la liste et les entretiens, modifier = convoquer, écarter,
+# rédiger les entretiens, régler les critères, modérer le journal.
+# Les notes n'étant pas datées, l'évolution se lit d'un semestre à l'autre.
+
+_SP_KINDS = ('COMMENT', 'SIGNAL', 'ENTRETIEN')
+_SP_SIGNAL_MOTIFS = ('Absences', 'Retards', 'Travail non rendu', 'Comportement',
+                     'Difficultés', 'Autre')
+# Critères de convocation et leurs seuils par défaut (None = critère désactivé).
+# Ils portent sur le dernier semestre noté de l'année en cours.
+_SP_SEUILS = {
+    'ue_faible': 8.0,          # une UE du semestre sous ce seuil
+    'moy_faible': 10.0,        # moyenne des UE du semestre sous ce seuil
+    'note_faible': 8.0,        # au moins `nb_notes_faibles` notes sous ce seuil
+    'nb_notes_faibles': 3,
+    'baisse': 2.0,             # recul d'au moins tant de points sur le semestre précédent
+    'absences_h': 8.0,         # heures d'absence injustifiée au-delà (pénalité appliquée)
+    'abi': 1,                  # au moins tant d'ABI
+    'annee': True,             # année ajournée en l'état des notes
+    'parcours': True,          # AJAC l'an dernier, ou année refaite
+    'signalements': True,      # signalement non traité
+}
+_SP_BOOLS = ('annee', 'parcours', 'signalements')
+_SP_ENTIERS = ('nb_notes_faibles', 'abi')
+_SP_TEXTE_MAX = 4000
+
+def _tab_edit(key):
+    """Droit « modifier » de la session sur l'onglet `key` (superadmin : tout)."""
+    t = _session_tabs()
+    return t is None or key in t['edit']
+
+def _tab_voit(key):
+    """L'onglet `key` est-il visible de la session (superadmin : tout) ?"""
+    t = _session_tabs()
+    return t is None or key in t['visible']
+
+def _sp_lecture(key):
+    """Lecture du suivi : celle des promotions, et la vue de l'onglet `key`."""
+    err = _require_promo_read()
+    if err:
+        return err
+    if not _tab_voit(key):
+        return error_response('Accès réservé', 403)
+    return None
+
+def _sp_fr(v, dec=2):
+    """Nombre à la française : 8,50 ; dec=None ne garde que les décimales utiles."""
+    if dec is None:
+        return ('%g' % v).replace('.', ',')
+    return ('%.*f' % (dec, v)).replace('.', ',')
+
+def _sp_seuils(pdb):
+    out = dict(_SP_SEUILS)
+    row = pdb.execute('SELECT data FROM suivi_reglages WHERE id=1').fetchone()
+    if row:
+        try:
+            saved = json.loads(row['data'])
+        except ValueError:
+            saved = {}
+        out.update({k: v for k, v in saved.items() if k in _SP_SEUILS})
+    return out
+
+def _sp_resume(vals):
+    """Moyenne et écart-type d'une série (écart-type de population, comme les Stats)."""
+    n = len(vals)
+    m = sum(vals) / n
+    return {'moy': round(m, 2), 'ecart': round((sum((v - m) ** 2 for v in vals) / n) ** 0.5, 2),
+            'n': n}
+
+def _sp_promo(pdb, pid, cache):
+    """Ce que le suivi lit d'une cohorte, calculé une fois. Pour chaque fiche et
+    chaque semestre qu'elle a suivi : ses moyennes — moyenne des UE (`gim`), chaque
+    UE (`ue:n`, celles du jury), chaque nature (`nat:CODE`) et chaque domaine
+    (`dom:nom`) de ressources, pondérés par les coefficients comme dans les Stats —,
+    ses notes et ses heures d'absence. Pour chaque semestre : la moyenne et
+    l'écart-type de la cohorte sur chacune de ces séries."""
+    if pid in cache:
+        return cache[pid]
+    promo = pdb.execute('SELECT name, start_year FROM promotions WHERE id=?', (pid,)).fetchone()
+    comp = _jury_compute(pdb, pid)
+    rosters = _year_rosters(pdb, pid, comp)
+    coeffs = _promo_coeffs(pdb, pid) or {}
+    notes = {}
+    for n in _stats_promo_notes(pdb, pid, coeffs):
+        notes.setdefault((n['sid'], n['sem']), []).append(n)
+    absences = {}
+    for sem in _PROMO_SEMESTERS:
+        code = _code_by_kind((coeffs.get(sem) or {}).get('components', []), 'PEN')
+        if not code:
+            continue
+        for r in _marks_rows(pdb, pid, sem):
+            if r['matiere_code'] == code and r['note'] is not None:
+                absences[(r['student_id'], sem)] = r['note']
+    points = {}
+    for y in (1, 2, 3):
+        for sem in ('S%d' % (2 * y - 1), 'S%d' % (2 * y)):
+            moy_sem = comp['sem_avgs'].get(sem, {})
+            for sid in rosters.get(y, set()):
+                ues = {u: v for u, v in (moy_sem.get(str(sid)) or {}).items() if v is not None}
+                ns = notes.get((sid, sem), [])
+                if not ues and not ns:
+                    continue
+                vals = {'ue:%d' % u: v for u, v in ues.items()}
+                if ues:
+                    vals['gim'] = round(sum(ues.values()) / len(ues), 2)
+                for axe, champ in (('nat', 'nature'), ('dom', 'domaine')):
+                    acc = {}
+                    for n in ns:
+                        if n.get(champ) and n.get('poids'):
+                            a = acc.setdefault(n[champ], [0.0, 0.0])
+                            a[0] += n['poids'] * n['note']
+                            a[1] += n['poids']
+                    vals.update({'%s:%s' % (axe, k): round(s / w, 2)
+                                 for k, (s, w) in acc.items() if w})
+                points.setdefault(sid, {})[sem] = {
+                    'valeurs': vals, 'absences': absences.get((sid, sem)),
+                    'notes': [(n['code'], n['label'], n['note'], n['mention']) for n in ns]}
+    # Référence de la classe : sans ceux qui ont abandonné cette année-là ou avant
+    # (l'année inconnue, écartés) — leurs notes partielles tireraient la moyenne
+    # vers le bas et gonfleraient l'écart-type.
+    abandon = {r['id']: r['abandon_annee'] for r in pdb.execute(
+        "SELECT id, abandon_annee FROM promotion_students WHERE promotion_id=? AND statut='Abandon'",
+        (pid,))}
+    ref, ref_mat = {}, {}
+    for sid, ps in points.items():
+        for sem, p in ps.items():
+            if sid in abandon and (abandon[sid] or _sem_year(sem)) <= _sem_year(sem):
+                continue
+            for k, v in p['valeurs'].items():
+                ref.setdefault(sem, {}).setdefault(k, []).append(v)
+            # … et matière par matière (une ABI compte 0, comme dans les moyennes)
+            for code, _l, note, _m in p['notes']:
+                ref_mat.setdefault(sem, {}).setdefault(code, []).append(note)
+    # Ordre des matières dans le programme, et leur libellé court : les branches de
+    # l'étoile « par matière » suivent l'ordre du bulletin.
+    ordre = {sem: {c['code']: (i, (c.get('short_label') or '').strip(), c.get('kind') or '')
+                   for i, c in enumerate((coeffs.get(sem) or {}).get('components', []))}
+             for sem in _PROMO_SEMESTERS}
+    out = {'pid': pid, 'name': promo['name'], 'start': promo['start_year'], 'comp': comp,
+           'rosters': rosters, 'coeffs': coeffs, 'points': points, 'faces': {}, 'ordre': ordre,
+           'ref': {sem: {k: _sp_resume(vs) for k, vs in d.items()} for sem, d in ref.items()},
+           'ref_mat': {sem: {k: _sp_resume(vs) for k, vs in d.items()} for sem, d in ref_mat.items()}}
+    cache[pid] = out
+    return out
+
+def _sp_face(pdb, pr, y, fid):
+    """Sous-cohorte (FTP/ALT) de la fiche `fid` pour l'année `y` de sa cohorte."""
+    if y not in pr['faces']:
+        pr['faces'][y] = _year_formation_map(pdb, pr['pid'], y)
+    return _face(pr['faces'][y].get(fid))
+
+def _sp_parcours(pdb, person_id, cache):
+    """Fiches d'un étudiant (de la plus ancienne cohorte à la plus récente), ses
+    semestres suivis dans l'ordre chronologique — avec la référence de sa cohorte à
+    chacun —, et ses années avec leur décision de jury."""
+    fiches = [dict(r) for r in pdb.execute(
+        '''SELECT s.id, s.promotion_id, s.statut, s.entry_year, p.start_year
+           FROM promotion_students s JOIN promotions p ON p.id = s.promotion_id
+           WHERE s.person_id=? ORDER BY p.start_year, p.name''', (person_id,))]
+    pts, annees = [], []
+    for f in fiches:
+        pr = _sp_promo(pdb, f['promotion_id'], cache)
+        mine = pr['points'].get(f['id'], {})
+        for y in (1, 2, 3):
+            if f['id'] not in pr['rosters'].get(y, set()):
+                continue
+            debut = (pr['start'] or 0) + y - 1
+            univ = '%d-%d' % (debut, debut + 1) if pr['start'] else ''
+            annees.append({'year': y, 'annee_univ': univ, 'promo': pr['name'],
+                           'decision': pr['comp']['decisions'].get((y, str(f['id'])))})
+            for sem in ('S%d' % (2 * y - 1), 'S%d' % (2 * y)):
+                p = mine.get(sem)
+                if p:
+                    ordre, refm = pr['ordre'].get(sem, {}), pr['ref_mat'].get(sem, {})
+                    mats = [{'code': c, 'label': l, 'note': note, 'mention': men,
+                             'court': (ordre.get(c) or (0, '', ''))[1], 'kind': (ordre.get(c) or (0, '', ''))[2],
+                             'ref': refm.get(c)}
+                            for c, l, note, men in sorted(p['notes'], key=lambda n: (ordre.get(n[0]) or (999,))[0])]
+                    pts.append(dict(p, sem=sem, year=y, debut=debut, annee_univ=univ,
+                                    promo=pr['name'], pid=pr['pid'], fiche=f['id'],
+                                    ref=pr['ref'].get(sem, {}), matieres=mats))
+    pts.sort(key=lambda p: (p['debut'], int(p['sem'][1:])))
+    return fiches, pts, annees
+
+def _sp_court(k):
+    """Nom court d'une série, pour les motifs : moyenne, UE3, Théorique, Mécanique."""
+    if k == 'gim':
+        return 'moyenne'
+    g, _, x = k.partition(':')
+    if g == 'ue':
+        return 'UE' + x
+    return dict(_MATIERE_NATURES).get(x, x) if g == 'nat' else x
+
+def _sp_motifs(pdb, fiches, pts, cache, seuils, ouverts):
+    """Motifs de convocation d'un étudiant de l'année active ; None s'il n'en suit
+    aucune (sorti, en césure, cohorte terminée ou pas commencée). Chaque motif a un
+    type, un texte et ses `cles` — une par fait constaté —, qui permettent de
+    reconnaître un motif NOUVEAU après un entretien. Notes, baisse et assiduité
+    portent sur le dernier semestre noté de l'année en cours, la baisse en le
+    comparant au semestre suivi juste avant."""
+    f = fiches[-1] if fiches else None
+    if not f or f['statut'] != 'Actif':
+        return None
+    pr = _sp_promo(pdb, f['promotion_id'], cache)
+    y = _annee_en_cours(pr['start'])
+    if not y or f['id'] not in pr['rosters'].get(y, set()):
+        return None
+    sid, comp, motifs = str(f['id']), pr['comp'], []
+    cur = next((p for p in reversed(pts) if p['fiche'] == f['id'] and p['year'] == y), None)
+    if cur:
+        sem, v = cur['sem'], cur['valeurs']
+        i = pts.index(cur)
+        prev = pts[i - 1] if i > 0 else None
+        # Résultats faibles
+        items, cles, detail = [], [], ''
+        s = seuils.get('moy_faible')
+        if s is not None and v.get('gim') is not None and v['gim'] < s:
+            items.append('moyenne %s' % _sp_fr(v['gim']))
+            cles.append('MOY:' + sem)
+        s = seuils.get('ue_faible')
+        if s is not None:
+            ues = sorted((k for k in v if k.startswith('ue:')), key=lambda k: int(k[3:]))
+            basses = [k for k in ues if v[k] < s]
+            if basses and len(basses) == len(ues) > 1:
+                bas, haut = min(v[k] for k in basses), max(v[k] for k in basses)
+                items.append('toutes les UE sous %s (%s)' % (
+                    _sp_fr(s, None), _sp_fr(bas) if bas == haut else '%s à %s' % (_sp_fr(bas), _sp_fr(haut))))
+            elif basses:
+                items.append('UE sous %s : %s' % (_sp_fr(s, None), ', '.join(
+                    'UE%s %s' % (k[3:], _sp_fr(v[k])) for k in basses)))
+            cles += ['UE:%s:%s' % (sem, k[3:]) for k in basses]
+        s, nb = seuils.get('note_faible'), seuils.get('nb_notes_faibles')
+        if s is not None and nb:
+            faibles = sorted(((n, l) for _c, l, n, m in cur['notes'] if m != 'ABI' and n < s))
+            if len(faibles) >= nb:
+                items.append('%d notes < %s' % (len(faibles), _sp_fr(s, None)))
+                cles.append('NOTES:' + sem)
+                detail = ' · '.join('%s %s' % (l, _sp_fr(n)) for n, l in faibles)
+        if items:
+            motifs.append({'type': 'notes', 'texte': '%s : %s' % (sem, ' · '.join(items)),
+                           'cles': cles, 'detail': detail})
+        # Baisse sur le semestre précédent, AU-DELÀ de celle de la promotion : un
+        # semestre plus dur pour tous ne désigne personne (les notes faibles, elles,
+        # restent signalées par le critère précédent). Seules la moyenne et les UE
+        # comptent : une nature ou un domaine ne réunit parfois qu'une ou deux
+        # ressources, et désignerait presque tout le monde (ils restent lisibles
+        # dans l'évolution de la fiche).
+        s = seuils.get('baisse')
+        if prev and s is not None:
+            pv, rp, rc = prev['valeurs'], prev['ref'], cur['ref']
+            baisses = []
+            for k in v:
+                if k not in pv or not (k == 'gim' or k.startswith('ue:')):
+                    continue
+                promo = rp[k]['moy'] - rc[k]['moy'] if k in rp and k in rc else 0.0
+                if (pv[k] - v[k]) - promo >= s:
+                    baisses.append(((pv[k] - v[k]) - promo, k, pv[k] - v[k], promo))
+            baisses.sort(reverse=True)
+            if baisses:
+                fmt = lambda d: ('−' if d >= 0 else '+') + _sp_fr(abs(d))
+                motifs.append({
+                    'type': 'baisse',
+                    'texte': 'Baisse %s → %s : %s%s' % (
+                        prev['sem'], sem, ' · '.join('%s %s (promo %s)' % (_sp_court(k), fmt(d), fmt(p))
+                                                     for _e, k, d, p in baisses[:3]),
+                        ' …' if len(baisses) > 3 else ''),
+                    'cles': ['BAISSE:%s:%s' % (sem, k) for _e, k, _d, _p in baisses],
+                    'detail': ' · '.join('%s %s → %s' % (_sp_court(k), _sp_fr(pv[k]), _sp_fr(v[k]))
+                                         for _e, k, _d, _p in baisses)})
+        # Assiduité
+        items, cles = [], []
+        s = seuils.get('absences_h')
+        if s is not None and (cur['absences'] or 0) > s:
+            items.append("%s h d'absence injustifiée" % _sp_fr(cur['absences'], None))
+            cles.append('ABS:' + sem)
+        s = seuils.get('abi')
+        nabi = sum(1 for _c, _l, _n, m in cur['notes'] if m == 'ABI')
+        if s and nabi >= s:
+            items.append('%d ABI' % nabi)
+            cles.append('ABI:' + sem)
+        if items:
+            motifs.append({'type': 'assiduite', 'texte': '%s : %s' % (sem, ' · '.join(items)),
+                           'cles': cles})
+    # Année en danger : la décision du jury, calculée sur les notes déjà là, est AJ
+    if seuils.get('annee') and comp['decisions'].get((y, sid)) == 'AJ':
+        codes = comp['ue_codes'].get((y, sid)) or {}
+        ok = sum(1 for c in codes.values() if c in ('ADM', 'ADMJ', 'CMP'))
+        motifs.append({'type': 'annee', 'cles': ['ANNEE:%s:%d' % (pr['pid'], y)],
+                       'texte': "Année %d ajournée en l'état des notes : %d UE validée(s) sur %d"
+                                % (y, ok, len(codes))})
+    # Parcours fragile : des UE de l'an dernier à rattraper, ou une année refaite
+    if seuils.get('parcours'):
+        if y > 1 and comp['decisions'].get((y - 1, sid)) == 'AJAC':
+            dettes = sorted(u for u, c in (comp['ue_codes'].get((y - 1, sid)) or {}).items()
+                            if c == 'AJ')
+            motifs.append({'type': 'parcours', 'cles': ['AJAC:%s:%d' % (pr['pid'], y - 1)],
+                           'texte': 'AJAC en année %d : %s à rattraper' % (
+                               y - 1, ', '.join('UE%d' % u for u in dettes) or 'UE')})
+        orig = pdb.execute('SELECT reason FROM student_origin WHERE student_id=?',
+                           (f['id'],)).fetchone()
+        if orig and orig['reason'] == 'RED' and (f['entry_year'] or 1) == y:
+            motifs.append({'type': 'parcours', 'cles': ['RED:%s:%d' % (pr['pid'], y)],
+                           'texte': "Refait l'année %d" % y})
+    if seuils.get('signalements') and ouverts:
+        motifs.append({'type': 'signal', 'cles': ['SIG:%d' % i for i in ouverts],
+                       'texte': '%d signalement(s) non traité(s)' % len(ouverts)})
+    return {'motifs': motifs, 'fiche': f, 'promo': pr, 'year': y,
+            'sem': cur['sem'] if cur else None,
+            'gim': cur['valeurs'].get('gim') if cur else None}
+
+def _sp_ouverts(pdb, person_id):
+    return [r['id'] for r in pdb.execute(
+        "SELECT id FROM student_suivi WHERE person_id=? AND kind='SIGNAL' AND statut='OUVERT'",
+        (person_id,))]
+
+def _sp_etat(pdb, person_id):
+    r = pdb.execute('SELECT etat, date, par, motifs FROM student_convocation WHERE person_id=?',
+                    (person_id,)).fetchone()
+    return dict(r) if r else None
+
+def _sp_dans_liste(motifs, etat):
+    """(dans la liste, motif nouveau). Sans état : dès qu'il a un motif. Convoqué :
+    jusqu'à son entretien. Reçu ou écarté : seulement si un motif est apparu depuis."""
+    cles = {c for m in motifs for c in m['cles']}
+    if not etat:
+        return bool(cles), False
+    if etat['etat'] == 'CONVOQUE':
+        return True, False
+    try:
+        vus = set(json.loads(etat.get('motifs') or '[]'))
+    except ValueError:
+        vus = set()
+    nouveau = bool(cles - vus)
+    return nouveau, nouveau
+
+def _sp_marquer(pdb, person_id, etat, date):
+    """Pose l'état de convocation. Reçu ou écarté : avec les motifs du moment —
+    seul un motif apparu ensuite ramènera l'étudiant dans la liste."""
+    cles = []
+    if etat in ('RECU', 'ECARTE'):
+        cache = {}
+        fiches, pts, _a = _sp_parcours(pdb, person_id, cache)
+        m = _sp_motifs(pdb, fiches, pts, cache, _sp_seuils(pdb), _sp_ouverts(pdb, person_id))
+        cles = sorted({c for mo in (m['motifs'] if m else []) for c in mo['cles']})
+    pdb.execute('''INSERT INTO student_convocation (person_id, etat, date, motifs, par, updated_at)
+                   VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)
+                   ON CONFLICT(person_id) DO UPDATE SET etat=excluded.etat, date=excluded.date,
+                       motifs=excluded.motifs, par=excluded.par, updated_at=CURRENT_TIMESTAMP''',
+                (person_id, etat, date, json.dumps(cles), session.get('user') or '-'))
+
+def _sp_payload(pdb, person_id):
+    """Le sous-onglet Suivi d'une fiche : évolution, motifs, état de convocation,
+    journal (sans les entretiens pour qui ne voit pas la liste À convoquer)."""
+    cache = {}
+    fiches, pts, annees = _sp_parcours(pdb, person_id, cache)
+    voit_direction, direction = _tab_voit('etu:convoquer'), _tab_edit('etu:convoquer')
+    moi = session.get('user')
+    rows = pdb.execute('''SELECT * FROM student_suivi WHERE person_id=?
+                          ORDER BY date_fait DESC, id DESC''', (person_id,)).fetchall()
+    ouverts = [r['id'] for r in rows if r['kind'] == 'SIGNAL' and r['statut'] == 'OUVERT']
+    journal = []
+    for r in rows:
+        if r['kind'] == 'ENTRETIEN' and not voit_direction:
+            continue
+        d = dict(r)
+        # L'auteur garde la main sur ce qu'il a écrit ; la direction modère tout.
+        d['modifiable'] = direction or (r['auteur'] == moi and _tab_edit(
+            'etu:convoquer' if r['kind'] == 'ENTRETIEN' else 'etu:suivi'))
+        journal.append(d)
+    m = _sp_motifs(pdb, fiches, pts, cache, _sp_seuils(pdb), ouverts)
+    # Séries dans l'ordre de lecture : moyenne, UE, natures, domaines (ordre de la liste)
+    natures = [c for c, _n in _MATIERE_NATURES]
+    doms = _domaines_liste(get_programmes_db())
+    lib = {'gim': 'Moyenne des UE'}
+    lib.update({'nat:' + c: n for c, n in _MATIERE_NATURES})
+    for f in fiches:
+        for nom, num in _sp_promo(pdb, f['promotion_id'], cache)['comp']['nums'].items():
+            lib.setdefault('ue:%d' % num, 'UE%d · %s' % (num, nom))
+
+    def rang(k):
+        g, _, x = k.partition(':')
+        if k == 'gim':
+            return (0, 0, '')
+        if g == 'ue':
+            return (1, int(x), '')
+        if g == 'nat':
+            return (2, natures.index(x) if x in natures else 99, x)
+        return (3, doms.index(x) if x in doms else 99, x)
+    cles = sorted({k for p in pts for k in p['valeurs']}, key=rang)
+    series = [{'cle': k, 'nom': lib.get(k) or k.partition(':')[2],
+               'groupe': 'gim' if k == 'gim' else k.partition(':')[0]} for k in cles]
+    # Matières proposées dans un commentaire ou un signalement : celles du semestre
+    # en cours d'après le calendrier (impair de septembre à janvier, pair ensuite),
+    # sinon celles du dernier semestre suivi.
+    matieres, src = [], None
+    if m:
+        src = (m['promo'], 'S%d' % (2 * m['year'] - (0 if 2 <= datetime.now().month <= 8 else 1)))
+    elif pts:
+        src = (cache[pts[-1]['pid']], pts[-1]['sem'])
+    if src:
+        d = src[0]['coeffs'].get(src[1]) or {}
+        matieres = ['%s %s' % (c['code'], c.get('label') or '')
+                    for c in _visible_note_components(d.get('components', []), d.get('competences', []))
+                    if c.get('kind') not in _STATS_SKIP_KINDS]
+    etat = _sp_etat(pdb, person_id) if voit_direction else None
+    # Comme dans la liste : reçu ou écarté, il redevient à convoquer sur un motif nouveau
+    dans, nouveau = _sp_dans_liste(m['motifs'], etat) if m and voit_direction else (False, False)
+    if etat:
+        etat.pop('motifs', None)
+    return {
+        'a_convoquer': dans, 'nouveau': nouveau,
+        'evolution': {
+            'points': [{'sem': p['sem'], 'year': p['year'], 'annee_univ': p['annee_univ'],
+                        'promo': p['promo'], 'valeurs': p['valeurs'], 'ref': p['ref'],
+                        'absences': p['absences'], 'n_notes': len(p['notes']),
+                        'abi': sum(1 for n in p['notes'] if n[3] == 'ABI'),
+                        'matieres': p['matieres']} for p in pts],
+            'series': series, 'annees': annees},
+        'motifs': m['motifs'] if m else None,
+        'en_cours': {'promo': m['promo']['name'], 'year': m['year'], 'sem': m['sem']} if m else None,
+        'etat': etat, 'journal': journal, 'signal_motifs': list(_SP_SIGNAL_MOTIFS),
+        'matieres': matieres,
+        'droits': {'ecrire': _tab_edit('etu:suivi'), 'direction': direction,
+                   'voir_direction': voit_direction, 'moi': moi}}
+
+def _sp_personne(pdb, person_id):
+    return pdb.execute('SELECT 1 FROM students WHERE id=?', (person_id,)).fetchone()
+
+@app.route('/api/students/<int:person_id>/suivi', methods=['GET'])
+def get_student_suivi(person_id):
+    err = _sp_lecture('etu:suivi')
+    if err:
+        return err
+    pdb = get_promotions_db()
+    if not _sp_personne(pdb, person_id):
+        return error_response('Étudiant introuvable', 404)
+    return jsonify(_sp_payload(pdb, person_id))
+
+def _sp_date(v):
+    """AAAA-MM-JJ valide, sinon None."""
+    try:
+        return datetime.strptime(str(v or '').strip()[:10], '%Y-%m-%d').strftime('%Y-%m-%d')
+    except ValueError:
+        return None
+
+def _sp_champs(kind, data):
+    """Champs d'une entrée du journal, validés : (champs, message d'erreur)."""
+    txt = lambda k, n: str(data.get(k) or '').strip()[:n]
+    date = _sp_date(data.get('date_fait'))
+    if not date:
+        return None, 'Date invalide'
+    f = {'date_fait': date, 'texte': txt('texte', _SP_TEXTE_MAX), 'matiere': txt('matiere', 120) or None}
+    if kind == 'SIGNAL':
+        f['motif'] = data.get('motif') if data.get('motif') in _SP_SIGNAL_MOTIFS else 'Autre'
+    if kind == 'ENTRETIEN':
+        f['participants'] = txt('participants', 300) or None
+        f['decisions'] = txt('decisions', _SP_TEXTE_MAX) or None
+        f['prochain'] = _sp_date(data.get('prochain'))
+        if not f['texte'] and not f['decisions']:
+            return None, 'Écrivez le compte rendu ou les décisions'
+    elif not f['texte']:
+        return None, 'Le texte est vide'
+    return f, None
+
+@app.route('/api/students/<int:person_id>/suivi', methods=['POST'])
+def add_student_suivi(person_id):
+    """Nouvelle entrée du journal. Commentaire et signalement : droit « modifier »
+    du Suivi ; entretien : celui de la liste À convoquer — et l'étudiant passe
+    alors « reçu »."""
+    pdb = get_promotions_db()
+    if not _sp_personne(pdb, person_id):
+        return error_response('Étudiant introuvable', 404)
+    data = request.get_json(silent=True) or {}
+    kind = data.get('kind')
+    if kind not in _SP_KINDS:
+        return error_response('Type d\'entrée inconnu', 400)
+    if not _tab_edit('etu:convoquer' if kind == 'ENTRETIEN' else 'etu:suivi'):
+        return error_response('Modification non autorisée pour votre profil', 403)
+    f, err = _sp_champs(kind, data)
+    if err:
+        return error_response(err, 400)
+    f.update(person_id=person_id, kind=kind, auteur=session.get('user') or '-',
+             statut='OUVERT' if kind == 'SIGNAL' else None)
+    cols = list(f)
+    pdb.execute('INSERT INTO student_suivi (%s) VALUES (%s)' % (', '.join(cols), ','.join('?' * len(cols))),
+                [f[c] for c in cols])
+    if kind == 'ENTRETIEN':
+        _sp_marquer(pdb, person_id, 'RECU', f['date_fait'])
+    pdb.commit()
+    return jsonify(_sp_payload(pdb, person_id))
+
+@app.route('/api/students/<int:person_id>/suivi/<int:eid>', methods=['PUT', 'DELETE'])
+def edit_student_suivi(person_id, eid):
+    """Modifier ou supprimer une entrée : son auteur, ou la direction (droit
+    « modifier » de la liste À convoquer). {statut: TRAITE|OUVERT} seul clôt ou
+    rouvre un signalement."""
+    pdb = get_promotions_db()
+    r = pdb.execute('SELECT * FROM student_suivi WHERE id=? AND person_id=?',
+                    (eid, person_id)).fetchone()
+    if not r:
+        return error_response('Entrée introuvable', 404)
+    if not (_tab_edit('etu:convoquer') or (r['auteur'] == session.get('user') and _tab_edit(
+            'etu:convoquer' if r['kind'] == 'ENTRETIEN' else 'etu:suivi'))):
+        return error_response('Seuls son auteur et la direction peuvent la modifier', 403)
+    if request.method == 'DELETE':
+        pdb.execute('DELETE FROM student_suivi WHERE id=?', (eid,))
+    else:
+        data = request.get_json(silent=True) or {}
+        if set(data) == {'statut'}:
+            if r['kind'] != 'SIGNAL' or data['statut'] not in ('OUVERT', 'TRAITE'):
+                return error_response('Statut invalide', 400)
+            traite = data['statut'] == 'TRAITE'
+            pdb.execute('''UPDATE student_suivi SET statut=?, traite_par=?, traite_le=?,
+                           updated_at=CURRENT_TIMESTAMP WHERE id=?''',
+                        (data['statut'], session.get('user') if traite else None,
+                         datetime.now().strftime('%Y-%m-%d') if traite else None, eid))
+        else:
+            f, err = _sp_champs(r['kind'], data)
+            if err:
+                return error_response(err, 400)
+            pdb.execute('UPDATE student_suivi SET %s, updated_at=CURRENT_TIMESTAMP WHERE id=?'
+                        % ', '.join('%s=?' % c for c in f), list(f.values()) + [eid])
+    pdb.commit()
+    return jsonify(_sp_payload(pdb, person_id))
+
+@app.route('/api/students/<int:person_id>/convocation', methods=['PUT'])
+def set_student_convocation(person_id):
+    """État de convocation : {etat: CONVOQUE|RECU|ECARTE, date} ; etat null le
+    retire (l'étudiant redevient « à convoquer » s'il a des motifs)."""
+    if not _tab_edit('etu:convoquer'):
+        return error_response('Modification non autorisée pour votre profil', 403)
+    pdb = get_promotions_db()
+    if not _sp_personne(pdb, person_id):
+        return error_response('Étudiant introuvable', 404)
+    data = request.get_json(silent=True) or {}
+    etat = data.get('etat')
+    if etat is None:
+        pdb.execute('DELETE FROM student_convocation WHERE person_id=?', (person_id,))
+    elif etat in ('CONVOQUE', 'RECU', 'ECARTE'):
+        _sp_marquer(pdb, person_id, etat,
+                    _sp_date(data.get('date')) or datetime.now().strftime('%Y-%m-%d'))
+    else:
+        return error_response('État inconnu', 400)
+    pdb.commit()
+    etat = _sp_etat(pdb, person_id)
+    if etat:
+        etat.pop('motifs', None)
+    return jsonify({'etat': etat})
+
+@app.route('/api/suivi/convoquer', methods=['GET'])
+def get_suivi_convoquer():
+    """Liste À convoquer : les étudiants de l'année active (fiche active d'une
+    cohorte en cours) qui ont un motif ou un état de convocation, les premiers à
+    convoquer en tête."""
+    err = _sp_lecture('etu:convoquer')
+    if err:
+        return err
+    pdb = get_promotions_db()
+    seuils = _sp_seuils(pdb)
+    ouverts, entretiens = {}, {}
+    for r in pdb.execute("SELECT id, person_id FROM student_suivi WHERE kind='SIGNAL' AND statut='OUVERT'"):
+        ouverts.setdefault(r['person_id'], []).append(r['id'])
+    for r in pdb.execute('''SELECT person_id, date_fait, prochain FROM student_suivi
+                            WHERE kind='ENTRETIEN' ORDER BY date_fait, id'''):
+        entretiens[r['person_id']] = r          # le plus récent l'emporte
+    etats = {r['person_id']: dict(r) for r in pdb.execute(
+        'SELECT person_id, etat, date, par, motifs FROM student_convocation')}
+    personnes = {r['id']: r for r in pdb.execute('SELECT id, nom, prenom, numero FROM students')}
+    actifs = set()
+    for p in pdb.execute('SELECT id, start_year FROM promotions'):
+        if _annee_en_cours(p['start_year']):
+            actifs.update(r['person_id'] for r in pdb.execute(
+                "SELECT person_id FROM promotion_students WHERE promotion_id=? AND statut='Actif'",
+                (p['id'],)))
+    cache, rows = {}, []
+    for person in actifs:
+        if person not in personnes:
+            continue
+        fiches, pts, _a = _sp_parcours(pdb, person, cache)
+        m = _sp_motifs(pdb, fiches, pts, cache, seuils, ouverts.get(person, []))
+        etat = etats.get(person)
+        if not m or (not m['motifs'] and not etat):
+            continue
+        dans, nouveau = _sp_dans_liste(m['motifs'], etat)
+        e, ent = personnes[person], entretiens.get(person)
+        rows.append({
+            'person_id': person, 'nom': e['nom'], 'prenom': e['prenom'], 'numero': e['numero'],
+            'promotion': m['promo']['name'], 'annee': m['year'], 'sem': m['sem'], 'gim': m['gim'],
+            'formation': _sp_face(pdb, m['promo'], m['year'], m['fiche']['id']),
+            'motifs': m['motifs'], 'a_convoquer': dans, 'nouveau': nouveau,
+            'etat': {k: etat[k] for k in ('etat', 'date', 'par')} if etat else None,
+            'entretien': ent['date_fait'] if ent else None,
+            'prochain': ent['prochain'] if ent else None,
+            # Sa moyenne semestre après semestre, et celle de sa promotion (mini-courbe)
+            'trace': [[p['sem'], p['annee_univ'], p['valeurs']['gim'],
+                       (p['ref'].get('gim') or {}).get('moy')]
+                      for p in pts if p['valeurs'].get('gim') is not None]})
+    rows.sort(key=lambda r: (not r['a_convoquer'], -len({m['type'] for m in r['motifs']}),
+                             r['gim'] if r['gim'] is not None else 99, (r['nom'] or '').lower()))
+    return jsonify({'seuils': seuils, 'annee': get_current_year(), 'etudiants': rows})
+
+@app.route('/api/suivi/reglages', methods=['PUT'])
+def save_suivi_reglages():
+    """Seuils des critères de convocation : nombre (ou vide = critère désactivé),
+    ou oui/non pour l'année en danger, le parcours fragile et les signalements."""
+    if not _tab_edit('etu:convoquer'):
+        return error_response('Modification non autorisée pour votre profil', 403)
+    pdb = get_promotions_db()
+    seuils = _sp_seuils(pdb)
+    for k, v in (request.get_json(silent=True) or {}).items():
+        if k not in _SP_SEUILS:
+            continue
+        if k in _SP_BOOLS:
+            seuils[k] = bool(v)
+        elif v is None or str(v).strip() == '':
+            seuils[k] = None
+        else:
+            try:
+                x = float(str(v).replace(',', '.'))
+            except ValueError:
+                return error_response('Valeur invalide : %s' % v, 400)
+            if not 0 <= x <= 100:
+                return error_response('Valeur hors limites : %s' % v, 400)
+            seuils[k] = int(x) if k in _SP_ENTIERS else x
+    pdb.execute('''INSERT INTO suivi_reglages (id, data) VALUES (1, ?)
+                   ON CONFLICT(id) DO UPDATE SET data=excluded.data''', (json.dumps(seuils),))
+    pdb.commit()
+    return jsonify({'seuils': seuils})
 
 # ---- Trombinoscope à télécharger (PDF) ----
 # Écrit à la main, sans bibliothèque : une page A4 paysage de 18 vignettes, les
