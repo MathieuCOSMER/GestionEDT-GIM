@@ -6319,18 +6319,21 @@ function _etuListe() {
         if (f.sexe && e.sexe !== f.sexe) return false;
         if (f.recrut && e.recrutement !== f.recrut) return false;
         if (f.promo && !(e.promos || []).includes(f.promo)) return false;
-        // Cohorte, année, sous-cohorte, statut et jury se lisent sur le PARCOURS et
-        // non sur « où il en est aujourd'hui » : « 23-26, année 1 » doit rendre
-        // l'effectif de cette année-là, exactement comme l'onglet Effectifs — celui
-        // qui l'a suivie puis a poursuivi en fait partie. Sans filtre de parcours,
-        // ces critères portent sur sa situation actuelle.
+        // Une cohorte choisie, année, sous-cohorte, statut et jury se lisent sur le
+        // PARCOURS et non sur « où il en est aujourd'hui » : « 23-26, année 1 » doit
+        // rendre l'effectif de cette année-là, exactement comme l'onglet Effectifs —
+        // celui qui l'a suivie puis a poursuivi en fait partie. Sans cohorte, ces
+        // critères portent sur sa situation actuelle : « année 1 » seule, ce sont
+        // les 1re année d'aujourd'hui, pas tous ceux qui en sont passés par là
+        // (toutes cohortes confondues, c'était presque tout le registre).
+        const parcours = !!f.promo;
+        if (!parcours && f.annee && !(e.en_cours && String(e.annee) === f.annee)) return false;
         const ins = (e.inscriptions || []).filter(i => !f.promo || i.promotion === f.promo);
         let annees = ins.reduce((t, i) => t.concat(i.annees || []), []);
-        if (f.annee) {
+        if (parcours && f.annee) {
             annees = annees.filter(a => String(a.year) === f.annee);
             if (!annees.length) return false;
         }
-        const parcours = !!(f.promo || f.annee);
         if (f.formation && !(parcours ? annees.some(a => a.formation === f.formation)
                                       : e.formation === f.formation)) return false;
         if (f.statut && !(parcours ? ins.some(i => i.statut === f.statut)
@@ -6457,11 +6460,11 @@ function changerVueEtu(v) {
 }
 
 // Sous-cohorte sous laquelle l'étudiant apparaît : celle de l'année montrée quand
-// on filtre une cohorte ou une année (la dernière qu'il y a suivie), sinon celle
-// d'aujourd'hui — un passage de FTP en ALT ne le range pas au mauvais endroit.
+// on filtre une cohorte (la dernière qu'il y a suivie), sinon celle d'aujourd'hui
+// — un passage de FTP en ALT ne le range pas au mauvais endroit.
 function _etuFormationVue(e, f) {
-    if (f.promo || f.annee) {
-        const annees = (e.inscriptions || []).filter(i => !f.promo || i.promotion === f.promo)
+    if (f.promo) {
+        const annees = (e.inscriptions || []).filter(i => i.promotion === f.promo)
             .reduce((t, i) => t.concat(i.annees || []), [])
             .filter(a => !f.annee || String(a.year) === f.annee);
         if (annees.length) return annees[annees.length - 1].formation === 'ALT' ? 'ALT' : 'FTP';

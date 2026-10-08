@@ -1229,8 +1229,8 @@ function _aideEtudiants() {
         <ul>
             <li>La recherche porte sur le nom, le prénom et le n° Apogée, sans accents ni majuscules : « dup lea » trouve DUPONT Léa, « 2260 » les numéros qui contiennent 2260.</li>
             <li>Les filtres ${_aUi('Cohorte')}, ${_aUi('FTP + ALT')}, ${_aUi('Année')}, ${_aUi('Statut')}, ${_aUi('Sexe')}, ${_aUi('Recrutement')} et ${_aUi('Jury')} se combinent ; ${_aUi('Réinitialiser')} les efface.</li>
-            <li>Avec une cohorte et/ou une année choisies, les filtres lisent le <b>parcours</b> : « 26-29, année 1 » rend l'effectif de cette année-là, comme l'onglet Effectifs.
-                Sans elles, ils portent sur la situation <b>actuelle</b> de l'étudiant.</li>
+            <li>Avec une cohorte choisie, les filtres lisent le <b>parcours</b> : « 26-29, année 1 » rend l'effectif de cette année-là, comme l'onglet Effectifs.
+                Sans cohorte, ils portent sur la situation <b>actuelle</b> de l'étudiant : ${_aUi('Année 2')} seule donne les étudiants en 2e année cette année, toutes cohortes confondues.</li>
         </ul>
         <h3>Les colonnes</h3>
         <p>Nom (avec ${_aCode('2 cohortes', 'background:#ddd6fe')} quand il en a connu plusieurs), prénom, Apogée, sexe, bac, recrutement, rang ParcourSup,
