@@ -2016,7 +2016,7 @@ def _apply_programmes_migrations(db):
             FOREIGN KEY (programme_id) REFERENCES programmes(id) ON DELETE CASCADE
         )
     ''')
-    # Domaines d'ingénierie des ressources (onglet Stats › Nature & domaines) : une
+    # Domaines d'ingénierie des ressources (onglet Stats › Domaines) : une
     # liste commune à tous les programmes, pour que « Mécanique » désigne la même
     # chose d'une maquette à l'autre. Les matières la référencent par son NOM.
     db.execute('''
@@ -3255,7 +3255,7 @@ _TAB_TREE = [
         _tn('st:recrutement', 'Recrutement', _TALL + _TRESP),
         _tn('st:parcours', 'Parcours & jury', _TALL + _TRESP),
         _tn('st:resultats', 'Résultats', _TALL + _TRESP),
-        _tn('st:categories', 'Nature & domaines', _TALL + _TRESP),
+        _tn('st:categories', 'Domaines', _TALL + _TRESP),
         _tn('st:enseignement', 'Enseignement', _TALL + _TRESP),
         _tn('st:annees', 'Années', _TALL + _TRESP),
     ]),
@@ -5976,8 +5976,8 @@ def delete_student_photo(person_id):
 # ===== SUIVI PÉDAGOGIQUE =====
 # Trois usages d'une même lecture des résultats :
 #   • l'ÉVOLUTION d'un étudiant, semestre après semestre — moyenne des UE, chaque
-#     UE, chaque nature et chaque domaine de ressources —, face à la moyenne et à
-#     l'écart-type de sa promotion au même semestre ;
+#     UE et chaque domaine de ressources —, face à la moyenne et à l'écart-type de
+#     sa promotion au même semestre ;
 #   • son JOURNAL : commentaires et signalements des enseignants (lus par toute
 #     l'équipe), comptes rendus d'entretien (direction seulement) ;
 #   • la liste À CONVOQUER : les étudiants de l'année active que des critères
@@ -6055,8 +6055,8 @@ def _sp_resume(vals):
 def _sp_promo(pdb, pid, cache):
     """Ce que le suivi lit d'une cohorte, calculé une fois. Pour chaque fiche et
     chaque semestre qu'elle a suivi : ses moyennes — moyenne des UE (`gim`), chaque
-    UE (`ue:n`, celles du jury), chaque nature (`nat:CODE`) et chaque domaine
-    (`dom:nom`) de ressources, pondérés par les coefficients comme dans les Stats —,
+    UE (`ue:n`, celles du jury) et chaque domaine (`dom:nom`) de ressources,
+    pondérés par les coefficients comme dans les Stats —,
     ses notes et ses heures d'absence. Pour chaque semestre : la moyenne et
     l'écart-type de la cohorte sur chacune de ces séries."""
     if pid in cache:
@@ -6088,15 +6088,13 @@ def _sp_promo(pdb, pid, cache):
                 vals = {'ue:%d' % u: v for u, v in ues.items()}
                 if ues:
                     vals['gim'] = round(sum(ues.values()) / len(ues), 2)
-                for axe, champ in (('nat', 'nature'), ('dom', 'domaine')):
-                    acc = {}
-                    for n in ns:
-                        if n.get(champ) and n.get('poids'):
-                            a = acc.setdefault(n[champ], [0.0, 0.0])
-                            a[0] += n['poids'] * n['note']
-                            a[1] += n['poids']
-                    vals.update({'%s:%s' % (axe, k): round(s / w, 2)
-                                 for k, (s, w) in acc.items() if w})
+                acc = {}
+                for n in ns:
+                    if n.get('domaine') and n.get('poids'):
+                        a = acc.setdefault(n['domaine'], [0.0, 0.0])
+                        a[0] += n['poids'] * n['note']
+                        a[1] += n['poids']
+                vals.update({'dom:%s' % k: round(s / w, 2) for k, (s, w) in acc.items() if w})
                 points.setdefault(sid, {})[sem] = {
                     'valeurs': vals, 'absences': absences.get((sid, sem)),
                     'notes': [(n['code'], n['label'], n['note'], n['mention']) for n in ns]}
@@ -6168,13 +6166,13 @@ def _sp_parcours(pdb, person_id, cache):
     return fiches, pts, annees
 
 def _sp_court(k):
-    """Nom court d'une série, pour les motifs : moyenne, UE3, Théorique, Mécanique."""
+    """Nom court d'une série, pour les motifs : moyenne, UE3, Mécanique."""
     if k == 'gim':
         return 'moyenne'
     g, _, x = k.partition(':')
     if g == 'ue':
         return 'UE' + x
-    return dict(_MATIERE_NATURES).get(x, x) if g == 'nat' else x
+    return x
 
 def _sp_motifs(pdb, fiches, pts, cache, seuils, ouverts):
     """Motifs de convocation d'un étudiant de l'année active ; None s'il n'en suit
@@ -6250,8 +6248,8 @@ def _sp_motifs(pdb, fiches, pts, cache, seuils, ouverts):
                     'detail': ' · '.join('%s %s %s' % (c, l, note(n, m)) for n, c, l, m in faibles)})
         # Chute depuis le semestre précédent, mesurée sur SES PROPRES notes (choix du
         # département : on ne la rapporte pas à la promotion). Seules la moyenne et
-        # les UE comptent : une nature ou un domaine ne réunit parfois qu'une ou deux
-        # ressources (ils restent lisibles dans l'évolution de la fiche).
+        # les UE comptent : un domaine ne réunit parfois qu'une ou deux ressources
+        # (il reste lisible dans l'évolution de la fiche).
         s = seuils.get('baisse')
         if prev and s is not None:
             pv = prev['valeurs']
@@ -6351,11 +6349,9 @@ def _sp_payload(pdb, person_id):
             'etu:convoquer' if r['kind'] == 'ENTRETIEN' else 'etu:suivi'))
         journal.append(d)
     m = _sp_motifs(pdb, fiches, pts, cache, _sp_seuils(pdb), ouverts)
-    # Séries dans l'ordre de lecture : moyenne, UE, natures, domaines (ordre de la liste)
-    natures = [c for c, _n in _MATIERE_NATURES]
+    # Séries dans l'ordre de lecture : moyenne, UE, domaines (ordre de la liste)
     doms = _domaines_liste(get_programmes_db())
     lib = {'gim': 'Moyenne des UE'}
-    lib.update({'nat:' + c: n for c, n in _MATIERE_NATURES})
     for f in fiches:
         for nom, num in _sp_promo(pdb, f['promotion_id'], cache)['comp']['nums'].items():
             lib.setdefault('ue:%d' % num, 'UE%d · %s' % (num, nom))
@@ -6366,9 +6362,7 @@ def _sp_payload(pdb, person_id):
             return (0, 0, '')
         if g == 'ue':
             return (1, int(x), '')
-        if g == 'nat':
-            return (2, natures.index(x) if x in natures else 99, x)
-        return (3, doms.index(x) if x in doms else 99, x)
+        return (2, doms.index(x) if x in doms else 99, x)
     cles = sorted({k for p in pts for k in p['valeurs']}, key=rang)
     series = [{'cle': k, 'nom': lib.get(k) or k.partition(':')[2],
                'groupe': 'gim' if k == 'gim' else k.partition(':')[0]} for k in cles]
@@ -10341,13 +10335,12 @@ def import_programmes():
     _audit('PROGRAMMES_IMPORT', ip=_client_ip(), user=session.get('user'), **report)
     return jsonify({'ok': True, 'report': report})
 
-# ---- Nature et domaine d'une ressource : deux classements pour les statistiques ----
-# Ils ne servent qu'à l'onglet Stats › Nature & domaines : ni les moyennes d'UE, ni
-# les bulletins, ni le jury n'en tiennent compte. Seules les RESSOURCES sont
-# classées (les SAÉ mêlent tout et brouilleraient la lecture). Chaque ressource
-# porte, dans les données de son programme, `nature` (un code ci-dessous) et
-# `domaine` (le nom d'un domaine de la liste commune), l'un et l'autre facultatifs.
-_MATIERE_NATURES = (('TECH', 'Technique'), ('THEO', 'Théorique'), ('TERT', 'Tertiaire'))
+# ---- Domaine d'une ressource : un classement pour les statistiques ----
+# Il ne sert qu'à l'onglet Stats › Domaines et à l'évolution du suivi : ni les
+# moyennes d'UE, ni les bulletins, ni le jury n'en tiennent compte. Seules les
+# RESSOURCES sont classées (les SAÉ mêlent tout et brouilleraient la lecture).
+# Chaque ressource porte, dans les données de son programme, `domaine` (le nom
+# d'un domaine de la liste commune), facultatif.
 
 def _domaines_liste(grdb):
     return [r['nom'] for r in grdb.execute('SELECT nom FROM matiere_domaines ORDER BY ordre, id')]
@@ -10390,10 +10383,9 @@ def _domaines_reporter(grdb, renommes, retires):
 
 @app.route('/api/matiere-domaines', methods=['GET'])
 def get_matiere_domaines():
-    """Les deux classements proposés pour les ressources : les natures (fixes) et
-    les domaines d'ingénierie (liste modifiable). Lecture ouverte, comme les programmes."""
-    return jsonify({'natures': [{'code': c, 'nom': n} for c, n in _MATIERE_NATURES],
-                    'domaines': _domaines_liste(get_programmes_db())})
+    """Les domaines d'ingénierie proposés pour classer les ressources (liste
+    modifiable). Lecture ouverte, comme les programmes."""
+    return jsonify({'domaines': _domaines_liste(get_programmes_db())})
 
 @app.route('/api/matiere-domaines', methods=['PUT'])
 def save_matiere_domaines():
@@ -10462,9 +10454,28 @@ def save_programme_data_route(prog_id):
     if not isinstance(data, dict):
         return error_response('Format invalide', 400)
     _ensure_volumes(data)
+    _garder_pn(_programme_data(grdb, prog_id), data)
     _store_programme_data(grdb, prog_id, data)
     grdb.commit()
     return jsonify(_programme_data(grdb, prog_id))
+
+# Ce que chaque matière tient du référentiel national : objectifs et contenus,
+# heures préconisées de CM/TD et de TP. Rien de cela ne s'édite dans la grille.
+_PN_CHAMPS = ('pn', 'pn_cmtd', 'pn_tp')
+
+def _garder_pn(ancien, data):
+    """Une sauvegarde qui ne porte pas les champs du référentiel (`_PN_CHAMPS`) —
+    page ouverte avant leur import — garde ceux déjà enregistrés, matière par
+    matière (même semestre, même code)."""
+    for sem, d in (data or {}).items():
+        if not isinstance(d, dict):
+            continue
+        avant = {c.get('code'): c for c in ((ancien or {}).get(sem) or {}).get('components') or []}
+        for c in d.get('components') or []:
+            a = avant.get(c.get('code')) or {}
+            for champ in _PN_CHAMPS:
+                if champ not in c and a.get(champ) not in (None, ''):
+                    c[champ] = a[champ]
 
 @app.route('/api/programmes/<int:prog_id>/data/reset', methods=['POST'])
 def reset_programme_data_route(prog_id):
@@ -16952,9 +16963,9 @@ def _abandons_par_semaine(students, ordre):
 
 def _stats_promo_notes(pdb, pid, coeffs):
     """Toutes les notes matière d'une promotion : [{sem, year, sid, code, label, note,
-    mention, poids, nature, domaine}]. Les matières sans coefficient et les colonnes
+    mention, poids, domaine}]. Les matières sans coefficient et les colonnes
     BONUS/PEN sont écartées. `poids` = somme des coefficients de la matière dans les
-    UE du semestre ; `nature` et `domaine` = son classement (ressources seulement)."""
+    UE du semestre ; `domaine` = son classement (ressources seulement)."""
     out = []
     for sem in _PROMO_SEMESTERS:
         d = coeffs.get(sem) or {}
@@ -16976,7 +16987,6 @@ def _stats_promo_notes(pdb, pid, coeffs):
                         'code': r['matiere_code'], 'label': c.get('label') or r['matiere_code'],
                         'kind': c.get('kind') or '', 'note': r['note'],
                         'mention': r['mention'], 'poids': poids.get(r['matiere_code'], 0),
-                        'nature': (c.get('nature') or None) if res else None,
                         'domaine': ((c.get('domaine') or '').strip() or None) if res else None})
     return out
 
@@ -17253,29 +17263,20 @@ def _issue_annee1(s, a1):
 _STATS_CAT_MINI = 5      # moins de 5 étudiants : moyenne non significative, non affichée
 
 def _stats_categories(notes, prof, annee1, domaines):
-    """Résultats par NATURE (technique, théorique, tertiaire) et par DOMAINE
-    d'ingénierie des ressources, et par leur croisement (technique × mécanique…).
+    """Résultats par DOMAINE d'ingénierie des ressources (mécanique, électronique…).
 
     Seules les ressources classées comptent. Pour chaque étudiant, la moyenne d'une
     catégorie pondère ses notes par le poids de chaque ressource (somme de ses
     coefficients dans les UE) ; les statistiques d'un groupe portent ensuite sur ces
     moyennes d'étudiants — chacun compte une fois, quel que soit son nombre de notes."""
-    natures = dict(_MATIERE_NATURES)
     cites = sorted({n['domaine'] for n in notes if n.get('domaine')} - set(domaines))
     doms = list(domaines) + cites
-    cats = [('N', c) for c in natures] + [('D', d) for d in doms]
+    cats = [('D', d) for d in doms]
     cle = lambda k: k[0] + ':' + ':'.join(k[1:])
     res = [n for n in notes if n['kind'] == 'RES' and n.get('poids')]
 
     def cats_de(n):
-        out = []
-        if n.get('nature') in natures:
-            out.append(('N', n['nature']))
-        if n.get('domaine'):
-            out.append(('D', n['domaine']))
-        if len(out) == 2:
-            out.append(('X', n['nature'], n['domaine']))
-        return out
+        return [('D', n['domaine'])] if n.get('domaine') else []
 
     def moyennes(groupe):
         """{(groupe, sid, catégorie): moyenne pondérée de l'étudiant}"""
@@ -17319,7 +17320,6 @@ def _stats_categories(notes, prof, annee1, domaines):
         synthese.append({'cle': cle(k), 'stats': st,
                          'annees': {y: case(i_an.get((y, k))) for y in (1, 2, 3)}})
 
-    croisement = [[c, {d: case(i_tout.get(('tous', ('X', c, d)))) for d in doms}] for c in natures]
     promos = sorted({n['promo'] for n in res}, reverse=True)
     par_promo = [[p, {cle(k): case(i_promo.get((p, k))) for k in cats}] for p in promos]
     par_face = [[f, {cle(k): case(i_face.get((f, k))) for k in cats}] for f in _SUBCOHORTS]
@@ -17342,23 +17342,20 @@ def _stats_categories(notes, prof, annee1, domaines):
                     lambda g, sid: issue.get(sid))
     reussite = [[i, {cle(k): case(i_issue.get((i, k))) for k in cats}] for i in _ISSUES_1]
 
-    # Couverture du classement : ressources notées, et celles qui n'ont pas de nature.
+    # Couverture du classement : ressources notées, et celles qui n'ont pas de domaine.
     vues, sans = {}, {}
     for n in res:
         m = (n['pid'], n['sem'], n['code'])
         vues[m] = n
-        if not n.get('nature'):
+        if not n.get('domaine'):
             s = sans.setdefault((n['code'], n['label']), [0, set()])
             s[0] += 1
             s[1].add(n['promo'])
     couverture = {'ressources': len(vues),
-                  'avec_nature': sum(1 for n in vues.values() if n.get('nature')),
                   'avec_domaine': sum(1 for n in vues.values() if n.get('domaine')),
-                  'sans_nature': [[c, l, nb, sorted(p)] for (c, l), (nb, p) in sorted(sans.items())]}
-    return {'colonnes': [{'cle': cle(k), 'axe': 'nature' if k[0] == 'N' else 'domaine',
-                          'nom': natures.get(k[1], k[1])} for k in cats],
-            'natures': [[c, n] for c, n in natures.items()], 'domaines': doms,
-            'synthese': synthese, 'croisement': croisement, 'par_promo': par_promo,
+                  'sans_domaine': [[c, l, nb, sorted(p)] for (c, l), (nb, p) in sorted(sans.items())]}
+    return {'colonnes': [{'cle': cle(k), 'nom': k[1]} for k in cats], 'domaines': doms,
+            'synthese': synthese, 'par_promo': par_promo,
             'par_face': par_face, 'profil': profil, 'reussite': reussite,
             'couverture': couverture, 'mini': _STATS_CAT_MINI}
 
@@ -17766,7 +17763,7 @@ def _stats_academique(pdb):
         if n['year'] == 1 and n['pid'] in finies and _profile_key(n['label']).startswith('mathematiques'):
             mb.setdefault(n['sid'], []).append(n['note'])
     maths_but = {sid: round(sum(v) / len(v), 2) for sid, v in mb.items()}
-    # Résultats par nature et domaine des ressources (sous-onglet Nature & domaines)
+    # Résultats par domaine des ressources (sous-onglet Domaines)
     categories = _stats_categories(notes, prof, annee1, _domaines_liste(get_programmes_db()))
 
     # --- dossier ParcourSup : niveau du recrutement, et ce qu'il annonce des résultats

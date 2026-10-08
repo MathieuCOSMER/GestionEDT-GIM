@@ -1273,8 +1273,8 @@ function _aideEtudiants() {
         <p>Le sous-onglet ${_aUi('Suivi')} de la fiche réunit ce qu'il faut pour parler avec l'étudiant de son parcours.</p>
         <h3>Évolution</h3>
         <ul>
-            <li>Un <b>graphique en étoile</b> : un axe par UE — ou, avec ${_aUi('Natures')} et ${_aUi('Domaines')}, par nature (technique, théorique,
-                tertiaire) et par domaine d'ingénierie des ressources —, de 0 au centre à 20 au bord ; l'anneau plus marqué est la moyenne de 10 ;</li>
+            <li>Un <b>graphique en étoile</b> : un axe par UE — ou, avec ${_aUi('Domaines')}, par domaine d'ingénierie des ressources —,
+                de 0 au centre à 20 au bord ; l'anneau plus marqué est la moyenne de 10 ;</li>
             <li>le <b>semestre choisi</b> (boutons S1, S2…) en bleu, points pleins ; le <b>semestre précédent</b> en bleu clair, points creux ;
                 une <b>flèche</b> sur chaque branche va de l'un à l'autre — verte vers l'extérieur en hausse, rouge vers le centre en baisse,
                 à partir d'un point d'écart ; la <b>promotion</b> en gris : sa moyenne en trait et, en aplat, <b>± un écart-type</b>. On voit d'un
@@ -1458,13 +1458,32 @@ function _aideProgramme() {
 
     { id: 'prog-matieres', rub: R, titre: 'Matières et volumes', chemin: 'Programme › Matières',
       onglet: 'prog:matieres', cible: 'programme/matieres',
-      mots: 'matière code apogée libellé court type volumes cm td tp pt heures hetd total semestre',
+      mots: 'matière code apogée libellé court type volumes cm td tp pt heures hetd total semestre préconisation nationale référentiel préco coût prévisionnel mutualisé groupes budget',
       html: () => `
         <p>La définition de chaque matière du programme : <b>type</b>, <b>code</b> (R1.01, SAE1.02…), <b>libellé court</b> et <b>libellé</b>, <b>code Apogée</b>
         (sert aux imports de notes), et ses <b>volumes</b> : CM, TD et TP pour une ressource ; TD, TP et PT (projet tutoré) pour une SAÉ.
         Les colonnes Total h et HETD totalisent chaque matière et chaque semestre.</p>
-        <p>Les colonnes <b>Nature</b> (technique, théorique, tertiaire) et <b>Domaine</b> (grand domaine d'ingénierie) classent les <b>ressources</b> pour
-        ${_aLien('stats-categories', 'Statistiques › Nature & domaines')} ; elles ne changent aucune moyenne.
+        <p>Les colonnes <b>Préco CM/TD</b> et <b>Préco TP</b> rappellent la <b>préconisation nationale</b> du référentiel : heures de CM et TD,
+        heures de TP. Elles se lisent seulement ; l'info-bulle d'une cellule donne le volume national total, TP compris. Les SAÉ n'en ont pas toujours.</p>
+        <p>La partie <b>Alternants (ALT)</b> du tableau est leur maquette : CM, TD, TP et PT de chaque matière. Une case vide reprend
+        l'heure de la formation initiale (affichée en gris) ; on ne saisit donc que ce qui change. ${_aUi('Fait')} décoché retire une SAÉ ou une PAÉ
+        que les alternants ne réalisent pas. En bas de chaque semestre, la <b>diminution des alternants</b> (leurs heures face à celles de la
+        formation initiale, avec le chiffre hors projet tutoré) ; le bilan de chaque année et celui des 3 années, sous les tableaux, donnent aussi
+        le volume qui ferait −20 %.</p>
+        <p>Au-dessus de chaque semestre, le <b>coût prévisionnel</b>. Cochez ${_aUi('Mutualisé FTP + ALT')} si les deux publics suivent les cours
+        ensemble : un CM et les <b>groupes de la promotion</b> (TD, TP, PT), sur la plus grande des deux maquettes. Sinon, indiquez les
+        <b>groupes FTP</b> et les <b>groupes ALT</b> : chaque formation compte avec ses propres heures et son CM. Le coût, en HETD, multiplie les
+        heures par les groupes ; il est donné par formation (FTP, ALT, ou commun si mutualisé) et au total, pour chaque semestre, chaque année et
+        les 3 années (même celles que le filtre masque). C'est une estimation propre au programme, enregistrée avec lui : elle ne lit ni ne
+        modifie les groupes définis dans Promotions.</p>
+        ${_aEx('un coût prévisionnel (chiffres fictifs)', `Des ressources avec 100 h de CM, 150 h de TD et 120 h de TP, et une SAÉ de 30 h de PT, avec les
+            coefficients HETD par défaut (CM 1,5 ; TD 1 ; TP 2/3 ; PT 1). Mutualisé, avec 2 groupes de TD, 4 de TP et 4 de PT :
+            100 × 1,5 + 150 × 2 + 120 × 4 × 2/3 + 30 × 4 = <b>890 HETD</b> (commun). Non mutualisé, avec ces groupes pour les FTP (890 HETD) et,
+            pour les alternants, une maquette à 80 h de CM, 120 h de TD et 96 h de TP, sans la SAÉ, en 1 groupe de TD et 2 de TP :
+            80 × 1,5 + 120 × 1 + 96 × 2 × 2/3 = 368 HETD — soit FTP 890 · ALT 368 · total <b>1 258 HETD</b>, et des alternants à −26 %
+            (296 h au lieu de 400 h).`)}
+        <p>La colonne <b>Domaine</b> (grand domaine d'ingénierie) classe les <b>ressources</b> pour
+        ${_aLien('stats-categories', 'Statistiques › Domaines')} et pour l'évolution du suivi d'un étudiant ; elle ne change aucune moyenne.
         ${_aSiModif('prog:matieres', `La liste des domaines, commune à tous les programmes, se modifie avec ${_aUi('Gérer les domaines…')} : renommer un domaine le renomme dans toutes les matières.`)}</p>
         <p>Ces volumes sont ceux du <b>programme</b>${_aSi('svc:matieres', ` : ils servent de référence (colonne PN) dans ${_aLien('matieres', 'Service › Matières')}, où l'on répartit
         les heures réellement données entre FTP, ALT et sous-matières`)}.</p>
@@ -1542,18 +1561,18 @@ function _aideStats() {
             <li><b>Comparaisons</b> par semestre, par promotion, par sous-cohorte ;</li>
             <li><b>Croisements profil × résultats</b> : par série de bac, par voie de recrutement.</li>
         </ul>`),
-    sec('categories', 'Nature & domaines', 'nature domaine technique théorique tertiaire mécanique électronique ingénierie ressources classement compétences',
-        `<p>Les résultats des <b>ressources</b> regroupées selon deux classements faits dans Programme › Matières : leur <b>nature</b>
-        (technique, théorique, tertiaire) et leur <b>domaine d'ingénierie</b> (mécanique, électronique…). Les SAÉ n'y entrent pas.</p>
+    sec('categories', 'Domaines', 'domaine mécanique électronique maintenance mécatronique ingénierie ressources classement compétences',
+        `<p>Les résultats des <b>ressources</b> regroupées selon leur <b>domaine d'ingénierie</b> (mécanique, électronique…), choisi dans
+        Programme › Matières. Les SAÉ n'y entrent pas.</p>
         <ul>
-            <li>La moyenne d'un étudiant dans une catégorie pondère ses notes par le <b>poids</b> de chaque ressource (somme de ses coefficients dans les UE) ;
+            <li>La moyenne d'un étudiant dans un domaine pondère ses notes par le <b>poids</b> de chaque ressource (somme de ses coefficients dans les UE) ;
                 un groupe est résumé par la moyenne de ses étudiants, affichée à partir de 5 étudiants ;</li>
-            <li><b>Par nature et par domaine</b>, toutes années puis année par année ; <b>croisement</b> nature × domaine (technique × mécanique…) ;</li>
+            <li><b>Par domaine</b>, toutes années puis année par année ;</li>
             <li><b>Par promotion</b>, par sous-cohorte FTP / ALT, et selon le <b>profil d'entrée</b> (bac, sexe, recrutement, études antérieures) ;</li>
             <li><b>Réussite en 1re année</b> : les moyennes de 1re année selon l'issue (validée, AJAC, échec, abandon) ;</li>
-            <li>la liste des ressources notées <b>sans nature</b>, à classer.</li>
+            <li>la liste des ressources notées <b>sans domaine</b>, à classer.</li>
         </ul>
-        ${_aEx('lire une case', `« Théorique : 3,80 n=42 » sur la ligne Échec : les 42 étudiants en échec en 1re année y avaient en moyenne 3,80 dans les ressources théoriques.`)}`),
+        ${_aEx('lire une case', `« Mécanique : 8,40 n=42 » sur la ligne Échec : les 42 étudiants en échec en 1re année y avaient en moyenne 8,40 dans les ressources de mécanique.`)}`),
     sec('enseignement', 'Enseignement', 'heures maquette enseignants hetd médiane charge par semaine corps statut sessions salles',
         `<ul>
             <li><b>Volume horaire</b> : heures de maquette par type et par semestre, charge par semaine, part mutualisée ;</li>

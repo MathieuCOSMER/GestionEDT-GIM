@@ -1441,7 +1441,7 @@
         <button type="button" class="subtab" id="st-subtab-recrutement" onclick="showStatsTab('recrutement')">Recrutement</button>
         <button type="button" class="subtab" id="st-subtab-parcours" onclick="showStatsTab('parcours')">Parcours &amp; jury</button>
         <button type="button" class="subtab" id="st-subtab-resultats" onclick="showStatsTab('resultats')">Résultats</button>
-        <button type="button" class="subtab" id="st-subtab-categories" onclick="showStatsTab('categories')">Nature &amp; domaines</button>
+        <button type="button" class="subtab" id="st-subtab-categories" onclick="showStatsTab('categories')">Domaines</button>
         <button type="button" class="subtab" id="st-subtab-enseignement" onclick="showStatsTab('enseignement')">Enseignement</button>
         <button type="button" class="subtab" id="st-subtab-annees" onclick="showStatsTab('annees')">Années</button>
     </div>
@@ -3590,7 +3590,7 @@ function renderContent() {
                 while (i + span < rows.length && pnBaseKey(rows[i + span].code) === key) span++;
                 let pn = '';
                 for (let j = i; j < i + span; j++) { if (rows[j].content_pn) { pn = rows[j].content_pn; break; } }
-                html += `<td class="pn-cell${pn ? '' : ' pn-empty'}" rowspan="${span}">${pn ? esc(pn) : 'Aucun contenu renseigné.'}</td>`;
+                html += `<td class="pn-cell${pn ? '' : ' pn-empty'}" rowspan="${span}">${pn ? pnHtml(pn) : 'Aucun contenu renseigné.'}</td>`;
             }
             html += `</tr>`;
         }
@@ -3601,6 +3601,17 @@ function renderContent() {
 
 // Clé de regroupement PN : code sans le suffixe de sous-ressource (R1.01a -> R1.01)
 function pnBaseKey(code) { return (code || '').replace(/[a-z]$/, ''); }
+
+// Texte du Programme national tel que le référentiel l'écrit : **gras** et puces
+// (« * », « - », « – » en début de ligne). Échappé d'abord, mis en forme ensuite ;
+// les retours à la ligne restent ceux du texte (cellule en pre-wrap).
+function pnHtml(texte) {
+    const gras = s => s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    return String(texte || '').split('\n').map(l => {
+        const puce = /^\s*[*\-–•]\s+/.exec(l);
+        return puce ? '• ' + gras(esc(l.slice(puce[0].length))) : gras(esc(l));
+    }).join('\n');
+}
 
 // Affiche le bouton de téléchargement seulement si un PDF du PN est présent côté serveur
 async function checkPnPdf() {
@@ -4377,9 +4388,9 @@ function _progPlaceholder(msg) {
         '<div class="empty">' + msg + '</div>';
 }
 
-// Classement des ressources pour les statistiques : natures (fixes) et domaines
-// d'ingénierie (liste commune à tous les programmes, modifiable).
-let _matClasses = { natures: [], domaines: [] };
+// Classement des ressources pour les statistiques : les domaines d'ingénierie
+// (liste commune à tous les programmes, modifiable).
+let _matClasses = { domaines: [] };
 
 async function loadMatClasses() {
     try { _matClasses = await api('/matiere-domaines'); } catch (e) { /* garde l'existant */ }
@@ -4483,14 +4494,15 @@ function _progVisibleSems() {
 
 // Regroupe les blocs par année (S1+S2, S3+S4, S5+S6) et affiche les 2 semestres
 // d'une même année côte à côte. `renderOne(sem)` rend le bloc d'un semestre.
-function _progYearBlocks(sems, renderOne) {
+// `pied(année)` : ce qui suit les semestres d'une année (le bilan, dans Matières)
+function _progYearBlocks(sems, renderOne, pied) {
     const byYear = { 1: [], 2: [], 3: [] };
     sems.forEach(s => { byYear[Math.ceil(parseInt(s.slice(1)) / 2)].push(s); });
     return [1, 2, 3].map(yg => {
         const ss = byYear[yg];
         if (!ss.length) return '';
         return `<h3 style="margin:18px 0 8px;color:#374151">Année ${yg}</h3>
-            <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">${ss.map(renderOne).join('')}</div>`;
+            <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">${ss.map(renderOne).join('')}</div>${pied ? pied(yg) : ''}`;
     }).join('');
 }
 
@@ -4543,6 +4555,8 @@ function renderProgCoeffs() {
 }
 
 // ----- Onglet Matières : définition (type / codes / libellés) et heures CM/TD/TP/PT -----
+// Deux maquettes côte à côte : la formation initiale (FTP, `volumes`) et les alternants
+// (ALT, `volumes_alt` : une case vide reprend l'heure FTP, affichée en gris).
 function renderProgMatieres() {
     const el = document.getElementById('prog-content');
     if (!_progData) { el.innerHTML = '<div class="empty">Aucune donnée.</div>'; return; }
@@ -4551,83 +4565,313 @@ function renderProgMatieres() {
         .map(([k, lbl]) => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:12px">
             <span style="width:12px;height:12px;border-radius:3px;background:${_coeffKindColor(k)};display:inline-block"></span>${lbl}</span>`).join('');
     const inS = 'padding:2px 4px;border:1px solid #d1d5db;border-radius:4px';
+    const FTP = '#ecfeff', ALT = '#f0fdf4', ALT_CASE = '#f7fef9';
     const renderOne = sem => {
         const d = _progData[sem];
         const mlist = d.components || [];
+        const r2 = 'rowspan="2"';
+        const thH = (fond, titre, lib) => `<th style="padding:4px 2px;text-align:center;background:${fond}" title="${titre}">${lib}</th>`;
         const head = `<tr>
-            <th style="width:58px;padding:4px 2px">Ordre</th>
-            <th style="padding:4px 6px;text-align:left">Type</th>
-            <th style="padding:4px 6px;text-align:left">Code Apogée</th>
-            <th style="padding:4px 6px;text-align:left">Code</th>
-            <th style="padding:4px 6px;text-align:left">Libellé court</th>
-            <th style="padding:4px 6px;text-align:left">Libellé</th>
-            <th style="padding:4px 6px;text-align:left;background:#fdf4ff" title="Pour les statistiques seulement (onglet Stats › Nature &amp; domaines) : technique, théorique ou tertiaire. Ressources uniquement.">Nature</th>
-            <th style="padding:4px 6px;text-align:left;background:#fdf4ff" title="Pour les statistiques seulement : grand domaine de l'ingénierie. Ressources uniquement.">Domaine</th>
-            <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Cours magistral">CM</th>
-            <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Travaux dirigés">TD</th>
-            <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Travaux pratiques">TP</th>
-            <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Projet tutoré">PT</th>
+            <th ${r2} style="width:58px;padding:4px 2px">Ordre</th>
+            <th ${r2} style="padding:4px 6px;text-align:left">Type</th>
+            <th ${r2} style="padding:4px 6px;text-align:left">Code Apogée</th>
+            <th ${r2} style="padding:4px 6px;text-align:left">Code</th>
+            <th ${r2} style="padding:4px 6px;text-align:left">Libellé court</th>
+            <th ${r2} style="padding:4px 6px;text-align:left">Libellé</th>
+            <th ${r2} style="padding:4px 6px;text-align:left;background:#fdf4ff" title="Pour les statistiques seulement (Stats › Domaines) : grand domaine de l'ingénierie. Ressources uniquement.">Domaine</th>
+            <th ${r2} style="padding:4px 4px;text-align:center;background:#fefce8" title="Préconisation nationale (référentiel) : heures de CM et de TD">Préco CM/TD</th>
+            <th ${r2} style="padding:4px 4px;text-align:center;background:#fefce8" title="Préconisation nationale (référentiel) : heures de TP">Préco TP</th>
+            <th colspan="6" style="padding:4px 6px;text-align:center;background:${FTP}">Formation initiale (FTP)</th>
+            <th colspan="6" style="padding:4px 6px;text-align:center;background:${ALT}" title="Maquette des alternants : une case vide reprend l'heure de la formation initiale (affichée en gris)">Alternants (ALT)</th></tr>
+            <tr>${thH(FTP, 'Cours magistral', 'CM')}${thH(FTP, 'Travaux dirigés', 'TD')}${thH(FTP, 'Travaux pratiques', 'TP')}${thH(FTP, 'Projet tutoré', 'PT')}
             <th style="padding:4px 6px;text-align:center;background:#eef2ff" title="Total des heures (CM+TD+TP+PT)">Total&nbsp;h</th>
-            <th style="padding:4px 6px;text-align:center;background:#eef2ff" title="Heures équivalent TD">HETD</th></tr>`;
+            <th style="padding:4px 6px;text-align:center;background:#eef2ff" title="Heures équivalent TD">HETD</th>
+            ${thH(ALT, 'SAÉ et PAÉ : les alternants la réalisent-ils ? Décochée, elle n\'a pas d\'heures ALT et ne compte pas dans leur coût.', 'Fait')}
+            ${thH(ALT, 'Cours magistral des alternants', 'CM')}${thH(ALT, 'Travaux dirigés des alternants', 'TD')}${thH(ALT, 'Travaux pratiques des alternants', 'TP')}${thH(ALT, 'Projet tutoré des alternants', 'PT')}
+            <th style="padding:4px 6px;text-align:center;background:${ALT}" title="Total des heures des alternants">Total&nbsp;h</th></tr>`;
         const rows = mlist.map((co, mi) => {
             const special = _coeffSansCoefficient(co);
             const isFirst = mi === 0, isLast = mi === mlist.length - 1;
             const mvBtn = (sym, t, dis, dir) => `<button type="button" title="${t}" ${dis ? 'disabled' : ''} onclick="moveProgMatiere('${sem}',${mi},${dir})" style="border:none;background:none;font-size:.72rem;line-height:1;padding:0;cursor:${dis ? 'default' : 'pointer'};color:${dis ? '#d1d5db' : '#6b7280'}">${sym}</button>`;
-            const vol = co.volumes || {};
+            const vol = co.volumes || {}, valt = co.volumes_alt || {};
             const isRes = co.kind === 'RES', isSae = co.kind === 'SAE';
-            const volCell = (key, allowed) => {
-                if (special || !allowed) return `<td style="padding:1px;text-align:center;color:#d1d5db">—</td>`;
-                const vv = (vol[key] === undefined || vol[key] === null) ? '' : vol[key];
-                return `<td style="padding:1px;text-align:center"><input type="number" min="0" step="0.5" class="prg-vol" data-vk="${key}" data-mi="${mi}" value="${vv}" oninput="updateProgVol('${sem}','${key}')" style="width:50px;${inS};text-align:center"></td>`;
-            };
-            const volCells = volCell('cm', isRes) + volCell('td', isRes || isSae) + volCell('tp', isRes || isSae) + volCell('pt', isSae);
+            const permis = { cm: isRes, td: isRes || isSae, tp: isRes || isSae, pt: isSae };
+            const val = v => (v === undefined || v === null) ? '' : v;
+            const vide = fond => `<td style="padding:1px;text-align:center;color:#d1d5db${fond ? ';background:' + fond : ''}">—</td>`;
+            const volCell = key => (special || !permis[key]) ? vide()
+                : `<td style="padding:1px;text-align:center"><input type="number" min="0" step="0.5" class="prg-vol" data-vk="${key}" data-mi="${mi}" value="${val(vol[key])}" oninput="updateProgVol('${sem}','${key}')" style="width:44px;${inS};text-align:center"></td>`;
+            // Alternants : case vide = l'heure FTP (en gris) ; rien pour une SAÉ / PAÉ décochée en « Fait »
+            const altOff = isSae && co.alt === false;
+            const altCell = key => (special || !permis[key]) ? vide(ALT_CASE)
+                : `<td style="padding:1px;text-align:center;background:${ALT_CASE}"><input type="number" min="0" step="0.5" class="prg-valt" data-vk="${key}" value="${val(valt[key])}" placeholder="${_progH(vol[key])}" ${altOff ? 'disabled' : ''} oninput="progSyntheses()" style="width:44px;${inS};text-align:center"></td>`;
+            const faitCell = isSae
+                ? `<td style="padding:1px;text-align:center;background:${ALT_CASE}"><input type="checkbox" class="prg-alt" ${altOff ? '' : 'checked'}
+                    onchange="progAltFait(this)" title="Les alternants réalisent cette SAÉ / PAÉ"></td>`
+                : vide(ALT_CASE);
             const H = _HETD_COEFS;
             const rTot = special ? null : (Number(vol.cm) || 0) + (Number(vol.td) || 0) + (Number(vol.tp) || 0) + (Number(vol.pt) || 0);
             const rHetd = special ? null : (Number(vol.cm) || 0) * H.CM + (Number(vol.td) || 0) * H.TD + (Number(vol.tp) || 0) * H.TP + (Number(vol.pt) || 0) * H.PT;
-            const fmtC = v => v == null ? '—' : Math.round(v * 100) / 100;
+            const fmtC = v => v == null ? '—' : (_progH(v) || '0');
             const totCells = `
                 <td class="prg-rtot" data-sem="${sem}" data-mi="${mi}" style="text-align:center;padding:1px 6px;font-weight:600;background:#f5f7ff">${fmtC(rTot)}</td>
                 <td class="prg-rhetd" data-sem="${sem}" data-mi="${mi}" style="text-align:center;padding:1px 6px;color:#4f46e5;background:#f5f7ff">${fmtC(rHetd)}</td>`;
+            const altTot = special ? `<td style="text-align:center;padding:1px 6px;color:#d1d5db;background:${ALT}">—</td>`
+                : `<td class="prg-ralt" style="text-align:center;padding:1px 6px;font-weight:600;background:${ALT}"></td>`;
             const def = `
                 <td style="padding:1px 2px;text-align:center;white-space:nowrap">${mvBtn('▲', 'Monter', isFirst, -1)}${mvBtn('▼', 'Descendre', isLast, 1)} <button type="button" title="Supprimer la matière" onclick="removeProgMatiere('${sem}',${mi})" style="border:none;background:none;cursor:pointer;color:#b91c1c;font-size:.95rem;padding:0">🗑</button></td>
                 <td style="padding:1px"><select class="prg-kind" onchange="this.style.background=_coeffKindColor(this.value);progKindChanged()" style="background:${_coeffKindColor(co.kind)};${inS};font-size:.8rem">${_coeffKindOptions(co.kind)}</select></td>
-                <td style="padding:1px"><input class="prg-apogee" value="${esc(co.apogee_code || '')}" placeholder="—" style="width:92px;${inS}"></td>
-                <td style="padding:1px"><input class="prg-code" value="${esc(co.code || '')}" style="width:84px;${inS};font-weight:600"></td>
-                <td style="padding:1px"><input class="prg-short" value="${esc(co.short_label || '')}" placeholder="—" style="width:110px;${inS}"></td>
-                <td style="padding:1px"><input class="prg-label" value="${esc(co.label || '')}" placeholder="—" style="width:170px;${inS}"></td>
+                <td style="padding:1px"><input class="prg-apogee" value="${esc(co.apogee_code || '')}" placeholder="—" style="width:84px;${inS}"></td>
+                <td style="padding:1px"><input class="prg-code" value="${esc(co.code || '')}" style="width:76px;${inS};font-weight:600"></td>
+                <td style="padding:1px"><input class="prg-short" value="${esc(co.short_label || '')}" placeholder="—" style="width:90px;${inS}"></td>
+                <td style="padding:1px"><input class="prg-label" value="${esc(co.label || '')}" placeholder="—" style="width:150px;${inS}"></td>
                 ${_progClasseCells(co)}
-                ${volCells}${totCells}`;
+                ${_progPnCells(co)}
+                ${volCell('cm')}${volCell('td')}${volCell('tp')}${volCell('pt')}${totCells}
+                ${faitCell}${altCell('cm')}${altCell('td')}${altCell('tp')}${altCell('pt')}${altTot}`;
             return `<tr data-mi="${mi}">${def}</tr>`;
         }).join('');
         const volTot = k => mlist.reduce((a, co) => a + (Number((co.volumes || {})[k]) || 0), 0);
-        const volTotCell = k => `<td class="prg-vtotal" data-sem="${sem}" data-vk="${k}" style="text-align:center;padding:2px 1px">${Math.round(volTot(k) * 100) / 100}</td>`;
+        const volTotCell = k => `<td class="prg-vtotal" data-sem="${sem}" data-vk="${k}" style="text-align:center;padding:2px 1px">${_progH(volTot(k)) || '0'}</td>`;
+        const altTotCell = k => `<td class="prg-valt-tot" data-vk="${k}" style="text-align:center;padding:2px 1px;background:${ALT}"></td>`;
+        const pnTot = k => mlist.some(co => co[k] != null) ? mlist.reduce((a, co) => a + (Number(co[k]) || 0), 0) : null;
         const H = _HETD_COEFS;
         const gTot = volTot('cm') + volTot('td') + volTot('tp') + volTot('pt');
         const gHetd = volTot('cm') * H.CM + volTot('td') * H.TD + volTot('tp') * H.TP + volTot('pt') * H.PT;
         const totalRow = `<tr style="background:#f9fafb;font-weight:600">
-            <td colspan="8" style="background:#f9fafb;padding:4px 8px;text-align:right">Total semestre</td>
+            <td colspan="7" style="background:#f9fafb;padding:4px 8px;text-align:right">Total semestre</td>
+            <td style="text-align:center;padding:2px 4px;background:#fefce8;color:#854d0e">${_progH(pnTot('pn_cmtd')) || '—'}</td>
+            <td style="text-align:center;padding:2px 4px;background:#fefce8;color:#854d0e">${_progH(pnTot('pn_tp')) || '—'}</td>
             ${volTotCell('cm')}${volTotCell('td')}${volTotCell('tp')}${volTotCell('pt')}
-            <td class="prg-gtot" data-sem="${sem}" style="text-align:center;padding:2px 6px;background:#eef2ff">${Math.round(gTot * 100) / 100}</td>
-            <td class="prg-ghetd" data-sem="${sem}" style="text-align:center;padding:2px 6px;color:#4f46e5;background:#eef2ff">${Math.round(gHetd * 100) / 100}</td></tr>`;
-        return `<div style="flex:1 1 0;min-width:0">
+            <td class="prg-gtot" data-sem="${sem}" style="text-align:center;padding:2px 6px;background:#eef2ff">${_progH(gTot) || '0'}</td>
+            <td class="prg-ghetd" data-sem="${sem}" style="text-align:center;padding:2px 6px;color:#4f46e5;background:#eef2ff">${_progH(gHetd) || '0'}</td>
+            <td style="background:${ALT}"></td>${altTotCell('cm')}${altTotCell('td')}${altTotCell('tp')}${altTotCell('pt')}
+            <td class="prg-galt" style="text-align:center;padding:2px 6px;background:${ALT}"></td></tr>
+            <tr style="background:#f9fafb">
+            <td colspan="15" style="background:#f9fafb;padding:4px 8px;text-align:right;font-weight:600"
+                title="Heures des alternants par rapport à la formation initiale, sur le semestre">Diminution des alternants</td>
+            <td colspan="6" class="prg-dim" style="text-align:center;padding:3px 6px;background:${ALT}"></td></tr>`;
+        return `<div style="flex:1 1 100%;min-width:0">
             <div style="font-weight:600;color:#4f46e5;margin-bottom:4px">${sem}</div>
-            <div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;width:fit-content;max-width:100%">
-                <table class="nz-table" data-sem="${sem}" style="table-layout:auto"><thead>${head}</thead><tbody>${rows}${totalRow}</tbody></table>
-            </div></div>`;
+            <div style="width:fit-content;max-width:100%">
+                ${_progOrgaBarre(sem)}
+                <div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px">
+                    <table class="nz-table" data-sem="${sem}" style="table-layout:auto"><thead>${head}</thead><tbody>${rows}${totalRow}</tbody></table>
+                </div></div></div>`;
     };
-    const blocks = _progYearBlocks(sems, renderOne);
+    const bilan = 'padding:6px 10px;border-radius:6px;font-size:.85rem;line-height:1.6;width:fit-content;max-width:100%';
+    const blocks = _progYearBlocks(sems, renderOne, yg => `<div class="prog-synth-annee" data-yg="${yg}"
+        style="margin:8px 0 0;background:#f8fafc;border:1px solid #e5e7eb;${bilan}"></div>`);
     el.innerHTML = `
         <div style="margin-bottom:6px;font-size:.8rem;color:#374151">${legend}</div>
         <p style="font-size:.8rem;color:#6b7280;margin:0 0 4px">
             Définition des matières (Type / Code Apogée / Code / Libellés) et heures attribuées (CM / TD / TP / PT).
-            Utilisez « + Créer matière » pour en ajouter, les flèches pour réordonner.</p>
+            Utilisez « + Créer matière » pour en ajouter, les flèches pour réordonner. Les colonnes <strong>Préco CM/TD</strong>
+            et <strong>Préco TP</strong> donnent la préconisation nationale du référentiel (lecture seule ; le total national, TP compris, est dans l'info-bulle).</p>
+        <p style="font-size:.8rem;color:#6b7280;margin:0 0 4px">
+            <strong>Alternants</strong> : leur maquette à droite du tableau ; une case vide reprend l'heure de la formation initiale
+            (en gris), <strong>Fait</strong> décoché retire une SAÉ / PAÉ. La <strong>diminution</strong> par rapport à la formation
+            initiale se lit en bas de chaque semestre, de chaque année et des 3 années.</p>
+        <p style="font-size:.8rem;color:#6b7280;margin:0 0 4px">
+            <strong>Coût prévisionnel</strong> : par semestre, indiquez s'il est mutualisé (FTP et ALT ensemble : un CM, des groupes
+            communs) ; sinon, les groupes de TD, TP et PT des FTP et ceux des ALT, chaque formation avec ses heures et son CM.
+            Le coût, en HETD, multiplie les heures par les groupes ; il est donné par formation (FTP, ALT, commun) et au total,
+            par semestre, par année et pour les 3 années — une estimation propre au programme, sans lien avec les groupes de Promotions.</p>
         <p style="font-size:.8rem;color:#6b7280;margin:0 0 4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            <span><strong>Nature</strong> et <strong>Domaine</strong> classent les ressources pour les statistiques
-            (Stats › Nature &amp; domaines) ; ils ne changent aucune moyenne. Domaines :
+            <span>Le <strong>Domaine</strong> classe les ressources pour les statistiques
+            (Stats › Domaines) ; il ne change aucune moyenne. Domaines :
             ${(_matClasses.domaines || []).length ? esc(_matClasses.domaines.join(' · ')) : '<em>aucun</em>'}</span>
             ${editUI('prog:matieres') ? `<button type="button" class="btn btn-secondary btn-sm" onclick="openDomaines()"
                 title="Liste commune à tous les programmes">Gérer les domaines…</button>` : ''}</p>
-        ${blocks || '<div class="empty">Aucune année sélectionnée.</div>'}`;
+        ${blocks || '<div class="empty">Aucune année sélectionnée.</div>'}
+        <div id="prog-synth-total" style="margin:18px 0 0;background:#eef2ff;border:1px solid #c7d2fe;${bilan}"></div>`;
+    progSyntheses();
+}
+
+// Heures de la préconisation nationale (référentiel), en lecture seule
+const _progH = v => (v === null || v === undefined || v === '' || isNaN(v)) ? ''
+    : String(Math.round(Number(v) * 100) / 100).replace('.', ',');
+function _progPnCells(co) {
+    const a = Number(co.pn_cmtd), b = Number(co.pn_tp);
+    const titre = co.pn_cmtd == null && co.pn_tp == null ? 'Pas de préconisation nationale'
+        : `Préconisation nationale : ${_progH((a || 0) + (b || 0))} h dont ${_progH(b || 0)} h de TP`;
+    const cell = v => `<td style="padding:1px 4px;text-align:center;background:#fefce8;color:#854d0e"
+        title="${titre}">${_progH(v) || '<span style="color:#d1d5db">—</span>'}</td>`;
+    return cell(co.pn_cmtd) + cell(co.pn_tp);
+}
+
+// ----- Coût prévisionnel d'un semestre -----
+// Organisation propre au programme (mutualisation, nombre de groupes), rangée avec
+// ses données (`organisation` du semestre) : elle ne sert qu'à estimer un coût, sans
+// lien avec les groupes définis dans Promotions.
+function _progOrgaBarre(sem) {
+    const o = (_progData[sem] || {}).organisation || {};
+    const num = (k, lib) => `<label style="display:inline-flex;align-items:center;gap:4px">${lib}
+        <input type="number" min="0" step="1" value="${o[k] === undefined ? '' : o[k]}" placeholder="—"
+            style="width:52px;padding:1px 4px;border:1px solid #d1d5db;border-radius:4px"
+            oninput="majProgOrga('${sem}', '${k}', this.value)"></label>`;
+    const titre = (lib, aide, marge) => `<span style="color:#6b7280${marge ? ';margin-left:8px' : ''}" title="${aide}">${lib}</span>`;
+    // Les groupes de la promo (mutualisé) et ceux des FTP (sinon) partagent td/tp/pt
+    const groupes = o.mutualise
+        ? titre('Groupes :', 'Groupes de la promotion, FTP et ALT ensemble') + num('td', 'TD') + num('tp', 'TP') + num('pt', 'PT')
+        : titre('Groupes FTP :', 'Groupes de la formation initiale') + num('td', 'TD') + num('tp', 'TP') + num('pt', 'PT')
+          + titre('Groupes ALT :', 'Groupes des alternants ; vides s\'il n\'y en a pas ce semestre', true)
+          + num('alt_td', 'TD') + num('alt_tp', 'TP') + num('alt_pt', 'PT');
+    return `<div id="prog-orga-${sem}" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:.8rem;margin:0 0 6px;
+            padding:4px 8px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px">
+        <label style="display:inline-flex;align-items:center;gap:4px" title="Mutualisé : FTP et ALT ensemble, un CM et des groupes communs. Sinon chaque formation a ses groupes et son CM.">
+            <input type="checkbox" ${o.mutualise ? 'checked' : ''} onchange="majProgOrga('${sem}', 'mutualise', this.checked)">
+            Mutualisé FTP + ALT</label>
+        ${groupes}
+        <span style="margin-left:auto">Coût prévisionnel : <span class="prog-cout-sem" data-sem="${sem}">—</span></span></div>`;
+}
+
+function majProgOrga(sem, cle, valeur) {
+    const d = _progData[sem];
+    if (!d) return;
+    const o = d.organisation || (d.organisation = {});
+    if (cle === 'mutualise') {
+        o.mutualise = !!valeur;
+        // la barre change de forme : groupes de la promo, ou groupes FTP et ALT
+        const barre = document.getElementById('prog-orga-' + sem);
+        if (barre) barre.outerHTML = _progOrgaBarre(sem);
+    } else {
+        const n = parseInt(valeur, 10);
+        if (isNaN(n) || n < 0) delete o[cle]; else o[cle] = n;
+    }
+    progSyntheses();
+}
+
+// Case « Fait » d'une SAÉ / PAÉ : décochée, les alternants n'ont pas d'heures pour elle
+// (leurs heures saisies restent, grisées, pour le jour où on la recoche).
+function progAltFait(cb) {
+    cb.closest('tr').querySelectorAll('input.prg-valt').forEach(i => { i.disabled = !cb.checked; });
+    progSyntheses();
+}
+
+// Heures d'une matière dans les deux maquettes, pour les types d'heures de sa sorte
+// (ressource : CM, TD, TP ; SAÉ : TD, TP, PT). ALT : l'heure saisie, sinon celle des
+// FTP ; aucune pour une SAÉ / PAÉ que les alternants ne font pas.
+function _progHeures(c) {
+    const ftp = { cm: 0, td: 0, tp: 0, pt: 0 }, alt = { cm: 0, td: 0, tp: 0, pt: 0 };
+    if (_coeffSansCoefficient(c) || !['RES', 'SAE'].includes(c.kind)) return { ftp, alt };
+    const v = c.volumes || {}, va = c.volumes_alt || {};
+    const fait = !(c.kind === 'SAE' && c.alt === false);
+    const types = c.kind === 'RES' ? ['cm', 'td', 'tp'] : ['td', 'tp', 'pt'];
+    types.forEach(k => {
+        ftp[k] = Number(v[k]) || 0;
+        alt[k] = !fait ? 0 : (va[k] === undefined || va[k] === null || va[k] === '') ? ftp[k] : (Number(va[k]) || 0);
+    });
+    return { ftp, alt };
+}
+
+// Coût du semestre en HETD, par formation : heures × groupes × coefficients HETD,
+// matière par matière. Mutualisé : cours communs (un CM, les groupes de la promotion,
+// la plus grande des deux maquettes). Sinon chaque formation a son CM et ses groupes,
+// avec ses propres heures (les ALT dès qu'ils ont un groupe).
+// null tant qu'aucun groupe n'est renseigné.
+function progCout(sem) {
+    const d = _progData[sem] || {}, o = d.organisation || {};
+    if (!['td', 'tp', 'pt', 'alt_td', 'alt_tp', 'alt_pt'].some(k => o[k] !== undefined)) return null;
+    const H = _HETD_COEFS, g = k => Number(o[k]) || 0;
+    const hetd = (h, p) => h.cm * H.CM + h.td * g(p + 'td') * H.TD + h.tp * g(p + 'tp') * H.TP + h.pt * g(p + 'pt') * H.PT;
+    const avecAlt = g('alt_td') + g('alt_tp') + g('alt_pt') > 0;
+    const r = { ftp: 0, alt: 0, commun: 0 };
+    (d.components || []).forEach(c => {
+        const { ftp, alt } = _progHeures(c);
+        if (o.mutualise) {
+            const h = {};
+            Object.keys(ftp).forEach(k => { h[k] = Math.max(ftp[k], alt[k]); });
+            r.commun += hetd(h, '');
+        } else {
+            r.ftp += hetd(ftp, '');
+            if (avecAlt) r.alt += hetd(alt, 'alt_');
+        }
+    });
+    r.total = r.ftp + r.alt + r.commun;
+    return r;
+}
+
+// « FTP 1 000 · ALT 416 · total 1 416 HETD » ; une seule part : « commun 956 HETD »
+function _progCoutHtml(c) {
+    if (!c) return '—';
+    const f = v => `<strong>${Math.round(v).toLocaleString('fr-FR')}</strong>`;
+    const parts = [['FTP', c.ftp], ['ALT', c.alt], ['commun', c.commun]].filter(([, v]) => v);
+    if (parts.length < 2) return parts.length ? `${parts[0][0]} ${f(parts[0][1])} HETD` : `${f(0)} HETD`;
+    return parts.map(([l, v]) => `${l} ${f(v)}`).join(' · ') + ` · total ${f(c.total)} HETD`;
+}
+
+// « −20,0 % · 340 h au lieu de 425 h · hors PT −19,5 % » : heures des alternants face
+// à la formation initiale ; `cible` ajoute le volume qui donnerait −20 %.
+function _progDimHtml(ftp, alt, cible) {
+    const tot = h => h.cm + h.td + h.tp + h.pt, enc = h => h.cm + h.td + h.tp;
+    const F = tot(ftp), A = tot(alt);
+    if (!F) return '<span style="color:#9ca3af">—</span>';
+    const p = (a, b) => (a - b) / b * 100;
+    const f = v => (Math.abs(v) < 0.05 ? '' : v < 0 ? '−' : '+') + Math.abs(v).toFixed(1).replace('.', ',') + ' %';
+    const h = v => v.toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+    return `<strong>${f(p(A, F))}</strong> <span style="color:#6b7280">· ${h(A)} h au lieu de ${h(F)} h`
+        + (enc(ftp) && enc(ftp) !== F ? ` · hors PT ${f(p(enc(alt), enc(ftp)))}` : '')
+        + (cible ? ` · pour −20 % : ${h(Math.round(F * 0.8 * 2) / 2)} h` : '') + '</span>';
+}
+
+// Tout ce qui suit une heure, une case ou un groupe : heures des alternants (ligne,
+// total, diminution), coût de chaque semestre, bilans de chaque année et des 3 années.
+// Les saisies en cours passent d'abord dans _progData ; les années masquées comptent
+// dans le total des 3 années.
+function progSyntheses() {
+    if (!_progData) return;
+    if (document.querySelector('#prog-content table[data-sem] input.prg-vol, #prog-content table[data-sem] input.prg-valt')) _collectProg();
+    const zero = () => ({ cm: 0, td: 0, tp: 0, pt: 0 });
+    const tot = h => h.cm + h.td + h.tp + h.pt;
+    const ajoute = (a, b) => Object.keys(a).forEach(k => { a[k] += b[k]; });
+    const heuresSem = sem => {
+        const t = { ftp: zero(), alt: zero() };
+        ((_progData[sem] || {}).components || []).forEach(c => { const h = _progHeures(c); ajoute(t.ftp, h.ftp); ajoute(t.alt, h.alt); });
+        return t;
+    };
+    // Tableaux affichés : heures ALT de chaque ligne (case vide = heure FTP), totaux, diminution
+    document.querySelectorAll('#prog-content table[data-sem]').forEach(tbl => {
+        const sem = tbl.dataset.sem, comps = (_progData[sem] || {}).components || [];
+        tbl.querySelectorAll('tbody tr[data-mi]').forEach(tr => {
+            const c = comps[+tr.dataset.mi];
+            if (!c) return;
+            tr.querySelectorAll('input.prg-valt').forEach(i => {
+                i.placeholder = _progH((c.volumes || {})[i.dataset.vk]);
+            });
+            const cell = tr.querySelector('td.prg-ralt');
+            if (cell) cell.textContent = _progH(tot(_progHeures(c).alt)) || '0';
+        });
+        const t = heuresSem(sem);
+        tbl.querySelectorAll('td.prg-valt-tot').forEach(td => { td.textContent = _progH(t.alt[td.dataset.vk]) || '0'; });
+        const g = tbl.querySelector('td.prg-galt');
+        if (g) g.textContent = _progH(tot(t.alt)) || '0';
+        const dim = tbl.querySelector('td.prg-dim');
+        if (dim) dim.innerHTML = _progDimHtml(t.ftp, t.alt, false);
+    });
+    // Coûts et heures par semestre, cumulés par année et sur les 3 années
+    const annees = {}, tout = { cout: null, manque: [], ftp: zero(), alt: zero() };
+    ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].filter(s => _progData[s]).forEach(sem => {
+        const yg = Math.ceil(parseInt(sem.slice(1), 10) / 2);
+        const a = annees[yg] || (annees[yg] = { cout: null, manque: [], ftp: zero(), alt: zero() });
+        const c = progCout(sem), h = heuresSem(sem);
+        const el = document.querySelector(`#prog-content .prog-cout-sem[data-sem="${sem}"]`);
+        if (el) el.innerHTML = _progCoutHtml(c);
+        [a, tout].forEach(x => {
+            ajoute(x.ftp, h.ftp); ajoute(x.alt, h.alt);
+            if (!c) { x.manque.push(sem); return; }
+            x.cout = x.cout || { ftp: 0, alt: 0, commun: 0, total: 0 };
+            Object.keys(x.cout).forEach(k => { x.cout[k] += c[k]; });
+        });
+    });
+    const bilan = (titre, x) => `<strong>${titre}</strong> — coût prévisionnel : ${_progCoutHtml(x.cout)}${x.manque.length
+            ? ` <span style="color:#9ca3af">(groupes non renseignés : ${x.manque.join(', ')})</span>` : ''}
+        <br>Alternants : ${_progDimHtml(x.ftp, x.alt, true)}`;
+    document.querySelectorAll('#prog-content .prog-synth-annee').forEach(el => {
+        const a = annees[el.dataset.yg];
+        el.innerHTML = a ? bilan('Année ' + el.dataset.yg, a) : '';
+    });
+    const t = document.getElementById('prog-synth-total');
+    if (t) t.innerHTML = bilan('Total des 3 années', tout);
 }
 
 function updateProgTotal(sem, ci) {
@@ -4647,7 +4891,7 @@ function updateProgVol(sem, vk) {
         if (!isNaN(v)) total += v;
     });
     const td = document.querySelector(`#prog-content td.prg-vtotal[data-sem="${sem}"][data-vk="${vk}"]`);
-    if (td) td.textContent = Math.round(total * 100) / 100;
+    if (td) td.textContent = _progH(total) || '0';
     updateProgHetdTotals(sem);
 }
 
@@ -4670,29 +4914,27 @@ function updateProgHetdTotals(sem) {
         const rt = tr.querySelector('td.prg-rtot');
         const rh = tr.querySelector('td.prg-rhetd');
         // Ne pas écraser le « — » des lignes sans coefficient.
-        if (rt && rt.textContent !== '—') rt.textContent = Math.round(tot * 100) / 100;
-        if (rh && rh.textContent !== '—') rh.textContent = Math.round(h * 100) / 100;
+        if (rt && rt.textContent !== '—') rt.textContent = _progH(tot) || '0';
+        if (rh && rh.textContent !== '—') rh.textContent = _progH(h) || '0';
     });
     const gt = tbl.querySelector('td.prg-gtot');
     const gh = tbl.querySelector('td.prg-ghetd');
-    if (gt) gt.textContent = Math.round(gTot * 100) / 100;
-    if (gh) gh.textContent = Math.round(gHetd * 100) / 100;
+    if (gt) gt.textContent = _progH(gTot) || '0';
+    if (gh) gh.textContent = _progH(gHetd) || '0';
+    progSyntheses();         // heures des alternants, coûts et bilans suivent la saisie
 }
 
-// Cases Nature et Domaine d'une ligne de matière : deux listes pour une ressource,
-// « — » pour le reste (les SAÉ ne sont pas classées). Un domaine retiré de la
-// liste commune mais encore porté par la matière reste proposé, pour ne pas le
-// perdre en silence au prochain enregistrement.
+// Case Domaine d'une ligne de matière : une liste pour une ressource, « — » pour
+// le reste (les SAÉ ne sont pas classées). Un domaine retiré de la liste commune
+// mais encore porté par la matière reste proposé, pour ne pas le perdre en
+// silence au prochain enregistrement.
 function _progClasseCells(co) {
-    if (co.kind !== 'RES') return '<td style="padding:1px;text-align:center;color:#d1d5db">—</td>'.repeat(2);
+    if (co.kind !== 'RES') return '<td style="padding:1px;text-align:center;color:#d1d5db">—</td>';
     const st = 'padding:2px 4px;border:1px solid #d1d5db;border-radius:4px;font-size:.8rem';
     const opt = (val, lib, cur) => `<option value="${esc(val)}"${val === (cur || '') ? ' selected' : ''}>${esc(lib)}</option>`;
-    const natures = [['', '—']].concat((_matClasses.natures || []).map(n => [n.code, n.nom]));
     const doms = (_matClasses.domaines || []).slice();
     if (co.domaine && !doms.includes(co.domaine)) doms.push(co.domaine);
-    return `<td style="padding:1px"><select class="prg-nature" style="${st}">${
-            natures.map(([v, l]) => opt(v, l, co.nature)).join('')}</select></td>
-        <td style="padding:1px"><select class="prg-domaine" style="${st};max-width:140px">${
+    return `<td style="padding:1px"><select class="prg-domaine" style="${st};max-width:140px">${
             [['', '—']].concat(doms.map(d => [d, d])).map(([v, l]) => opt(v, l, co.domaine)).join('')}</select></td>`;
 }
 
@@ -4777,29 +5019,44 @@ function _collectProg() {
         if (!d) return;
         // Copie des composants d'origine (préserve tout ce qui n'est pas édité)
         const components = (d.components || []).map(c => ({ ...c, volumes: { ...(c.volumes || {}) } }));
-        const codeByMi = {};
+        const codeByMi = {}, renommes = {};
         tbl.querySelectorAll('tr[data-mi]').forEach(tr => {
             const mi = +tr.dataset.mi;
             const comp = components[mi];
             if (!comp) return;
             const q = (sel, cur) => { const e = tr.querySelector(sel); return e ? e.value.trim() : cur; };
             comp.apogee_code = q('.prg-apogee', comp.apogee_code);
+            const ancien = comp.code;
             comp.code = q('.prg-code', comp.code);
+            if (ancien && comp.code && ancien !== comp.code) renommes[ancien] = comp.code;
             comp.short_label = q('.prg-short', comp.short_label);
             comp.label = q('.prg-label', comp.label);
             const kindSel = tr.querySelector('.prg-kind');
             if (kindSel) comp.kind = kindSel.value;
-            // Nature / domaine : ressources seulement ; une matière qui cesse d'en
-            // être une perd son classement.
-            ['nature', 'domaine'].forEach(f => {
-                const sel = tr.querySelector('.prg-' + f);
-                if (sel) { if (sel.value) comp[f] = sel.value; else delete comp[f]; }
-            });
-            if (comp.kind !== 'RES') { delete comp.nature; delete comp.domaine; }
+            // Domaine : ressources seulement ; une matière qui cesse d'en être une
+            // perd son classement. `nature` est un ancien champ, plus utilisé.
+            const selDom = tr.querySelector('.prg-domaine');
+            if (selDom) { if (selDom.value) comp.domaine = selDom.value; else delete comp.domaine; }
+            delete comp.nature;
+            if (comp.kind !== 'RES') delete comp.domaine;
+            // Réalisée par les ALT : SAÉ et PAÉ seulement ; `alt: false` quand décochée
+            const cbAlt = tr.querySelector('.prg-alt');
+            if (cbAlt) { if (cbAlt.checked) delete comp.alt; else comp.alt = false; }
+            if (comp.kind !== 'SAE') delete comp.alt;
             tr.querySelectorAll('input.prg-vol').forEach(inp => {
                 const raw = inp.value.trim().replace(',', '.');
                 comp.volumes[inp.dataset.vk] = (raw !== '' && !isNaN(parseFloat(raw))) ? parseFloat(raw) : null;
             });
+            // Maquette des alternants : seules les heures saisies sont rangées (une case
+            // vide reprend l'heure FTP)
+            if (tr.querySelector('input.prg-valt')) {
+                const va = {};
+                tr.querySelectorAll('input.prg-valt').forEach(inp => {
+                    const raw = inp.value.trim().replace(',', '.');
+                    if (raw !== '' && !isNaN(parseFloat(raw))) va[inp.dataset.vk] = parseFloat(raw);
+                });
+                if (Object.keys(va).length) comp.volumes_alt = va; else delete comp.volumes_alt;
+            }
             codeByMi[mi] = comp.code;
         });
         d.components = components;
@@ -4814,6 +5071,10 @@ function _collectProg() {
                     comps[ci].coeffs[code] = parseFloat(v);
             });
             d.competences = comps;
+        } else if (Object.keys(renommes).length) {
+            // Grille Matières : un code renommé emporte ses coefficients
+            d.competences = (d.competences || []).map(c => ({ ...c, coeffs: Object.fromEntries(
+                Object.entries(c.coeffs || {}).map(([code, v]) => [renommes[code] || code, v])) }));
         }
     });
 }
@@ -7037,7 +7298,7 @@ function renderEtudiantFiche() {
 // référence de la promotion, motifs — ; l'écran lit, et écrit le journal.
 let _etuSuivi = null;          // payload /students/<id>/suivi de la fiche ouverte
 let _etuSuiviCharge = null;    // fiche dont le suivi est en cours de chargement
-let _suiviGroupe = 'gim';      // séries affichées : gim (moyenne et UE), nat, dom
+let _suiviGroupe = 'gim';      // séries affichées : gim (moyenne et UE) ou dom (domaines)
 let _suiviSem = null;          // rang du semestre affiché dans l'étoile (null = le dernier)
 let _suiviForm = null;         // entrée en cours d'écriture : {kind, id, valeurs}
 let _convData = null;          // payload /suivi/convoquer
@@ -7156,7 +7417,7 @@ function suiviEvolution(d) {
     const titre = `<div class="section-title">Évolution <span style="font-weight:400;color:#9ca3af;font-size:.82rem">
         — son profil au semestre choisi, face au semestre précédent et à sa promotion (moyenne ± un écart-type)</span></div>`;
     if (!pts.length) return titre + '<div class="empty">Pas encore de notes.</div>';
-    const groupes = [['gim', 'Moyenne et UE'], ['nat', 'Natures'], ['dom', 'Domaines']]
+    const groupes = [['gim', 'Moyenne et UE'], ['dom', 'Domaines']]
         .filter(([g]) => _spSeries(ev, g).length);
     if (!groupes.some(([g]) => g === _suiviGroupe)) _suiviGroupe = groupes[0][0];
     if (_suiviSem === null || _suiviSem >= pts.length) _suiviSem = pts.length - 1;
@@ -7307,7 +7568,7 @@ function _spBullePromo(v, r) {
         z !== null ? `<br>Écart à la promotion : ${z >= 0 ? '+' : '−'}${_spFr(Math.abs(z))} écart-type` : ''}`;
 }
 
-// L'étoile principale : une branche par UE, nature ou domaine, au semestre choisi
+// L'étoile principale : une branche par UE ou par domaine, au semestre choisi
 function suiviEtoile(pts, series) {
     const C = _SP_ETOILE, ok = v => v !== undefined && v !== null;
     const cur = pts[_suiviSem], prev = _suiviSem > 0 ? pts[_suiviSem - 1] : null;
@@ -10520,7 +10781,7 @@ function renderContentEdit() {
                         </div>
                     </td>`;
                 } else {
-                    html += `<td class="pn-cell${pn ? '' : ' pn-empty'}" rowspan="${span}">${pn ? esc(pn) : 'Aucun contenu renseigné.'}</td>`;
+                    html += `<td class="pn-cell${pn ? '' : ' pn-empty'}" rowspan="${span}">${pn ? pnHtml(pn) : 'Aucun contenu renseigné.'}</td>`;
                 }
             }
             html += `</tr>`;
@@ -16543,10 +16804,10 @@ function statsResultats(d) {
         </div></div>`;
 }
 
-// ----- Sous-onglet Nature & domaines -----
-// Les ressources classées dans Programme › Matières (nature : technique, théorique,
-// tertiaire ; domaine d'ingénierie) : la moyenne de chaque étudiant par catégorie,
-// pondérée par le poids des ressources, puis ce qu'en dit chaque groupe.
+// ----- Sous-onglet Domaines -----
+// Les ressources classées dans Programme › Matières (domaine d'ingénierie) : la
+// moyenne de chaque étudiant par domaine, pondérée par le poids des ressources,
+// puis ce qu'en dit chaque groupe.
 // Une case = moyenne des étudiants du groupe, sur le fond des notes (rouge < 8,
 // orange < 10, bleu < 14, vert au-delà) ; vide sous l'effectif minimal.
 function stCatCase(c, mini) {
@@ -16559,11 +16820,9 @@ function stCatCase(c, mini) {
 function stCatMatrix(rows, cols, head, mini) {
     const list = (rows || []).filter(r => r && cols.some(c => r[1][c.cle]));
     if (!list.length) return '<div class="st-none">Aucune donnée (effectifs trop faibles ou ressources non classées)</div>';
-    const sep = c => c.axe === 'domaine' && c === cols.find(x => x.axe === 'domaine') ? 'border-left:2px solid #c4b5fd;' : '';
     return `<div style="overflow-x:auto"><table class="st-tbl"><thead><tr><th>${esc(head)}</th>${
-            cols.map(c => `<th style="${sep(c)}text-align:center">${esc(c.nom)}</th>`).join('')}</tr></thead><tbody>${
-            list.map(([lbl, v]) => `<tr><td>${esc(String(lbl))}</td>${cols.map(c =>
-                stCatCase(v[c.cle], mini).replace('<td style="', `<td style="${sep(c)}`)).join('')}</tr>`).join('')
+            cols.map(c => `<th style="text-align:center">${esc(c.nom)}</th>`).join('')}</tr></thead><tbody>${
+            list.map(([lbl, v]) => `<tr><td>${esc(String(lbl))}</td>${cols.map(c => stCatCase(v[c.cle], mini)).join('')}</tr>`).join('')
         }</tbody></table></div>`;
 }
 
@@ -16574,15 +16833,11 @@ function statsCategories(d) {
     const mini = k.mini || 5;
     const cols = k.colonnes || [];
     const nom = Object.fromEntries(cols.map(c => [c.cle, c.nom]));
-    const lienProg = 'Programme › Matières (colonnes Nature et Domaine)';
-    if (!cv.avec_nature && !cv.avec_domaine)
-        return `<div class="empty">Aucune ressource n'est encore classée. Renseignez la nature et le domaine
-            des ressources dans <strong>${lienProg}</strong> : les statistiques apparaîtront ici.</div>`;
-    const synth = (k.synthese || []);
-    const kpiNat = synth.filter(s => s.cle.startsWith('N:')).map((s, i) => stKpi(nom[s.cle],
-        s.stats ? stNum(s.stats.moy, 2) : '—',
-        s.stats ? `${stNum(s.stats.n)} étudiants · ${stNum(s.stats.sous10, 1)} % sous 10` : 'pas assez de notes',
-        ['#0369a1', '#7c3aed', '#15803d'][i]));
+    const lienProg = 'Programme › Matières (colonne Domaine)';
+    if (!cv.avec_domaine)
+        return `<div class="empty">Aucune ressource n'a encore de domaine. Renseignez le domaine des ressources
+            dans <strong>${lienProg}</strong> : les statistiques apparaîtront ici.</div>`;
+    const synth = k.synthese || [];
     const ligne = s => {
         const st = s.stats;
         const an = y => s.annees && s.annees[y] ? `<td style="text-align:center;${_noteFond({ note: s.annees[y].moy })}"
@@ -16592,33 +16847,21 @@ function statsCategories(d) {
             <td>${st ? stNum(st.med, 2) : '—'}</td><td>${st ? stNum(st.sous10, 1) + ' %' : '—'}</td>
             <td>${stBox(st)}</td>${an(1)}${an(2)}${an(3)}</tr>`;
     };
-    const tableSynth = (titre, filtre) => {
-        const rs = synth.filter(s => s.cle.startsWith(filtre));
-        return rs.length ? `<table class="st-tbl"><thead><tr><th>${titre}</th><th>Étud.</th><th>Moy.</th><th>Méd.</th>
+    const tableSynth = synth.length ? `<table class="st-tbl"><thead><tr><th>Domaine</th><th>Étud.</th><th>Moy.</th><th>Méd.</th>
             <th>&lt; 10</th><th style="width:26%">Répartition (0–20)</th><th>A1</th><th>A2</th><th>A3</th></tr></thead>
-            <tbody>${rs.map(ligne).join('')}</tbody></table>` : '<div class="st-none">Aucun domaine défini</div>';
-    };
-    const domCols = (k.domaines || []).map(dn => ({ cle: dn, nom: dn, axe: 'domaine' }));
-    const croise = (k.croisement || []).map(([c, v]) => [nom['N:' + c] || c, v]);
+            <tbody>${synth.map(ligne).join('')}</tbody></table>` : '<div class="st-none">Aucun domaine défini</div>';
     const champs = [['bac', 'Série de bac'], ['sexe', 'Sexe'], ['recrutement', 'Recrutement'], ['cursus', 'Études antérieures']];
-    const sansNat = cv.sans_nature || [];
+    const sansDom = cv.sans_domaine || [];
     return `<div class="st-kpis">
-            ${stKpi('Ressources classées', `${stNum(cv.avec_nature)} / ${stNum(cv.ressources)}`,
-                `ont une nature · ${stNum(cv.avec_domaine)} ont un domaine`, '#64748b')}
-            ${kpiNat.join('')}
+            ${stKpi('Ressources classées', `${stNum(cv.avec_domaine)} / ${stNum(cv.ressources)}`, 'ont un domaine', '#64748b')}
         </div>
         <div style="font-size:.8rem;color:#6b7280;margin:-4px 0 12px">
-            Ressources seulement (les SAÉ ne sont pas classées). Pour chaque étudiant, la moyenne d'une catégorie
+            Ressources seulement (les SAÉ ne sont pas classées). Pour chaque étudiant, la moyenne d'un domaine
             pondère ses notes par le poids de chaque ressource (somme de ses coefficients dans les UE) ; un groupe
             est résumé par la moyenne de ses étudiants, affichée à partir de ${mini} étudiants. Classement à tenir
             dans ${lienProg}.</div>
-        <div class="st-sec"><h2>Par nature et par domaine <small>toutes années, puis année par année</small></h2>
-            <div class="st-grid wide">
-                ${stCard('Nature', tableSynth('Nature', 'N:'))}
-                ${stCard('Domaine', tableSynth('Domaine', 'D:'))}
-            </div></div>
-        <div class="st-sec"><h2>Croisement nature × domaine <small>par exemple technique × mécanique</small></h2>
-            ${stCard('Moyenne des étudiants', stCatMatrix(croise, domCols, 'Nature', mini))}</div>
+        <div class="st-sec"><h2>Par domaine <small>toutes années, puis année par année</small></h2>
+            ${stCard('Domaine', tableSynth)}</div>
         <div class="st-sec"><h2>Par cohorte et par sous-cohorte</h2>
             ${stCard('Par promotion', stCatMatrix(k.par_promo, cols, 'Promotion', mini))}
             <div style="margin-top:14px">${stCard('FTP / ALT', stCatMatrix(k.par_face, cols, 'Sous-cohorte', mini),
@@ -16628,9 +16871,9 @@ function statsCategories(d) {
         <div class="st-sec"><h2>Réussite en 1re année <small>cohortes dont la 1re année est terminée</small></h2>
             ${stCard('Moyennes de 1re année selon l\'issue', stCatMatrix(k.reussite, cols, 'Issue', mini),
                 'quelles faiblesses précèdent un échec')}</div>
-        ${sansNat.length ? `<div class="st-sec"><h2>Ressources notées sans nature <small>à classer</small></h2>
-            ${stCard('Hors statistiques par nature', `<table class="st-tbl"><thead><tr><th>Code</th><th>Ressource</th>
-                <th>Notes</th><th>Promotions</th></tr></thead><tbody>${sansNat.map(([c, l, n, p]) =>
+        ${sansDom.length ? `<div class="st-sec"><h2>Ressources notées sans domaine <small>à classer</small></h2>
+            ${stCard('Hors statistiques par domaine', `<table class="st-tbl"><thead><tr><th>Code</th><th>Ressource</th>
+                <th>Notes</th><th>Promotions</th></tr></thead><tbody>${sansDom.map(([c, l, n, p]) =>
                     `<tr><td>${esc(c)}</td><td>${esc(l)}</td><td>${stNum(n)}</td><td>${esc(p.join(', '))}</td></tr>`).join('')}
                 </tbody></table>`)}</div>` : ''}`;
 }
