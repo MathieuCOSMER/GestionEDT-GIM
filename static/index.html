@@ -7015,6 +7015,17 @@ function _noteCell(m) {
                                                      : Number(m.note).toFixed(2);
 }
 
+// Fond d'une note de matière, pour repérer d'un coup d'œil où ça pèche et où ça
+// brille : rouge sous 8, orange sous 10, rien de 10 à 12, bleu sous 14, vert
+// au-delà. ABI compte 0 : rouge aussi. N (neutralisée) ne compte pas : rien.
+function _noteFond(m) {
+    if (!m) return '';
+    const v = m.mention === 'ABI' ? 0 : m.note;
+    if (v === null || v === undefined) return '';
+    const bg = v < 8 ? '#fee2e2' : v < 10 ? '#ffedd5' : v < 12 ? '' : v < 14 ? '#dbeafe' : '#dcfce7';
+    return bg ? 'background:' + bg : '';
+}
+
 // Bulletin d'un semestre : une table par UE, puis ce qui ne compte dans aucune
 // (bonification, pénalité d'assiduité), qui pèse sur les moyennes autrement.
 function bulletinSemestre(s) {
@@ -7028,7 +7039,7 @@ function bulletinSemestre(s) {
                 <td style="white-space:nowrap;font-size:.76rem"><strong>${esc(m.code)}</strong></td>
                 <td style="font-size:.76rem;color:#6b7280;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n.label || '')}</td>
                 <td style="text-align:center;font-size:.72rem;color:#9ca3af">${m.coeff}</td>
-                <td style="text-align:center;font-weight:600;font-size:.8rem">${_noteCell(n)}</td></tr>`;
+                <td style="text-align:center;font-weight:600;font-size:.8rem;${_noteFond(n)}">${_noteCell(n)}</td></tr>`;
         }).join('');
         const moy = (u.moyenne === null || u.moyenne === undefined) ? '—' : Number(u.moyenne).toFixed(2);
         const stl = (u.moyenne === null || u.moyenne === undefined) ? 'color:#9ca3af'
