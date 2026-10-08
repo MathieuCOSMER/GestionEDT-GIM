@@ -1441,6 +1441,7 @@
         <button type="button" class="subtab" id="st-subtab-recrutement" onclick="showStatsTab('recrutement')">Recrutement</button>
         <button type="button" class="subtab" id="st-subtab-parcours" onclick="showStatsTab('parcours')">Parcours &amp; jury</button>
         <button type="button" class="subtab" id="st-subtab-resultats" onclick="showStatsTab('resultats')">Résultats</button>
+        <button type="button" class="subtab" id="st-subtab-categories" onclick="showStatsTab('categories')">Nature &amp; domaines</button>
         <button type="button" class="subtab" id="st-subtab-enseignement" onclick="showStatsTab('enseignement')">Enseignement</button>
         <button type="button" class="subtab" id="st-subtab-annees" onclick="showStatsTab('annees')">Années</button>
     </div>
@@ -1834,6 +1835,22 @@
             <button type="button" class="btn btn-secondary" onclick="closeModal('modal-notes-pen')">Annuler</button>
             <button type="button" class="btn btn-secondary" onclick="clearPenalty()">Effacer</button>
             <button type="button" class="btn btn-primary" onclick="applyPenalty()">Valider</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL DOMAINES D'INGÉNIERIE (classement des ressources pour les stats) ===== -->
+<div class="modal-backdrop" id="modal-domaines">
+    <div class="modal" style="max-width:480px">
+        <h2>Domaines d'ingénierie</h2>
+        <p style="color:#6b7280;font-size:.85rem;margin-top:0">Liste commune à tous les programmes, pour classer les
+            ressources dans les statistiques. Renommer un domaine le renomme dans toutes les matières ; le retirer
+            les laisse sans domaine.</p>
+        <div id="domaines-liste"></div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="addDomaine()" style="margin:4px 0 12px">+ Ajouter un domaine</button>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-domaines')">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="saveDomaines()">Enregistrer</button>
         </div>
     </div>
 </div>
@@ -3027,7 +3044,7 @@ async function loadPage(name, forceReload) {
         else if (name === 'statistiques') {
             if (tabHidden('st:' + _statsTab))
                 _statsTab = _firstVisibleTab('st:', ['apercu', 'etudiants', 'recrutement', 'parcours',
-                                                     'resultats', 'enseignement', 'annees']);
+                                                     'resultats', 'categories', 'enseignement', 'annees']);
             await loadStats();
         }
         else if (name === 'comparaison') { await loadComparaison(); }
@@ -4355,8 +4372,17 @@ function _progPlaceholder(msg) {
         '<div class="empty">' + msg + '</div>';
 }
 
+// Classement des ressources pour les statistiques : natures (fixes) et domaines
+// d'ingénierie (liste commune à tous les programmes, modifiable).
+let _matClasses = { natures: [], domaines: [] };
+
+async function loadMatClasses() {
+    try { _matClasses = await api('/matiere-domaines'); } catch (e) { /* garde l'existant */ }
+}
+
 async function loadProgramme() {
     try { _progList = await api('/programmes'); } catch (e) { _progList = []; }
+    await loadMatClasses();
     const sel = document.getElementById('prog-select');
     let cur = _progId || '';
     sel.innerHTML = '<option value="">—</option>' + _progList.map(p =>
@@ -4530,6 +4556,8 @@ function renderProgMatieres() {
             <th style="padding:4px 6px;text-align:left">Code</th>
             <th style="padding:4px 6px;text-align:left">Libellé court</th>
             <th style="padding:4px 6px;text-align:left">Libellé</th>
+            <th style="padding:4px 6px;text-align:left;background:#fdf4ff" title="Pour les statistiques seulement (onglet Stats › Nature &amp; domaines) : technique, théorique ou tertiaire. Ressources uniquement.">Nature</th>
+            <th style="padding:4px 6px;text-align:left;background:#fdf4ff" title="Pour les statistiques seulement : grand domaine de l'ingénierie. Ressources uniquement.">Domaine</th>
             <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Cours magistral">CM</th>
             <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Travaux dirigés">TD</th>
             <th style="padding:4px 2px;text-align:center;background:#ecfeff" title="Travaux pratiques">TP</th>
@@ -4562,6 +4590,7 @@ function renderProgMatieres() {
                 <td style="padding:1px"><input class="prg-code" value="${esc(co.code || '')}" style="width:84px;${inS};font-weight:600"></td>
                 <td style="padding:1px"><input class="prg-short" value="${esc(co.short_label || '')}" placeholder="—" style="width:110px;${inS}"></td>
                 <td style="padding:1px"><input class="prg-label" value="${esc(co.label || '')}" placeholder="—" style="width:170px;${inS}"></td>
+                ${_progClasseCells(co)}
                 ${volCells}${totCells}`;
             return `<tr data-mi="${mi}">${def}</tr>`;
         }).join('');
@@ -4571,7 +4600,7 @@ function renderProgMatieres() {
         const gTot = volTot('cm') + volTot('td') + volTot('tp') + volTot('pt');
         const gHetd = volTot('cm') * H.CM + volTot('td') * H.TD + volTot('tp') * H.TP + volTot('pt') * H.PT;
         const totalRow = `<tr style="background:#f9fafb;font-weight:600">
-            <td colspan="6" style="background:#f9fafb;padding:4px 8px;text-align:right">Total semestre</td>
+            <td colspan="8" style="background:#f9fafb;padding:4px 8px;text-align:right">Total semestre</td>
             ${volTotCell('cm')}${volTotCell('td')}${volTotCell('tp')}${volTotCell('pt')}
             <td class="prg-gtot" data-sem="${sem}" style="text-align:center;padding:2px 6px;background:#eef2ff">${Math.round(gTot * 100) / 100}</td>
             <td class="prg-ghetd" data-sem="${sem}" style="text-align:center;padding:2px 6px;color:#4f46e5;background:#eef2ff">${Math.round(gHetd * 100) / 100}</td></tr>`;
@@ -4587,6 +4616,12 @@ function renderProgMatieres() {
         <p style="font-size:.8rem;color:#6b7280;margin:0 0 4px">
             Définition des matières (Type / Code Apogée / Code / Libellés) et heures attribuées (CM / TD / TP / PT).
             Utilisez « + Créer matière » pour en ajouter, les flèches pour réordonner.</p>
+        <p style="font-size:.8rem;color:#6b7280;margin:0 0 4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span><strong>Nature</strong> et <strong>Domaine</strong> classent les ressources pour les statistiques
+            (Stats › Nature &amp; domaines) ; ils ne changent aucune moyenne. Domaines :
+            ${(_matClasses.domaines || []).length ? esc(_matClasses.domaines.join(' · ')) : '<em>aucun</em>'}</span>
+            ${editUI('prog:matieres') ? `<button type="button" class="btn btn-secondary btn-sm" onclick="openDomaines()"
+                title="Liste commune à tous les programmes">Gérer les domaines…</button>` : ''}</p>
         ${blocks || '<div class="empty">Aucune année sélectionnée.</div>'}`;
 }
 
@@ -4639,6 +4674,85 @@ function updateProgHetdTotals(sem) {
     if (gh) gh.textContent = Math.round(gHetd * 100) / 100;
 }
 
+// Cases Nature et Domaine d'une ligne de matière : deux listes pour une ressource,
+// « — » pour le reste (les SAÉ ne sont pas classées). Un domaine retiré de la
+// liste commune mais encore porté par la matière reste proposé, pour ne pas le
+// perdre en silence au prochain enregistrement.
+function _progClasseCells(co) {
+    if (co.kind !== 'RES') return '<td style="padding:1px;text-align:center;color:#d1d5db">—</td>'.repeat(2);
+    const st = 'padding:2px 4px;border:1px solid #d1d5db;border-radius:4px;font-size:.8rem';
+    const opt = (val, lib, cur) => `<option value="${esc(val)}"${val === (cur || '') ? ' selected' : ''}>${esc(lib)}</option>`;
+    const natures = [['', '—']].concat((_matClasses.natures || []).map(n => [n.code, n.nom]));
+    const doms = (_matClasses.domaines || []).slice();
+    if (co.domaine && !doms.includes(co.domaine)) doms.push(co.domaine);
+    return `<td style="padding:1px"><select class="prg-nature" style="${st}">${
+            natures.map(([v, l]) => opt(v, l, co.nature)).join('')}</select></td>
+        <td style="padding:1px"><select class="prg-domaine" style="${st};max-width:140px">${
+            [['', '—']].concat(doms.map(d => [d, d])).map(([v, l]) => opt(v, l, co.domaine)).join('')}</select></td>`;
+}
+
+// ----- Liste des domaines d'ingénierie (commune à tous les programmes) -----
+// Éditée dans une fenêtre : renommer un domaine le renomme dans toutes les
+// matières, le retirer les laisse sans domaine. Enregistrée aussitôt, à part du
+// programme (bouton « Enregistrer » inutile).
+let _domEdit = [];      // [{nom, ancien}]
+
+function openDomaines() {
+    _domEdit = (_matClasses.domaines || []).map(d => ({ nom: d, ancien: d }));
+    renderDomaines();
+    openModal('modal-domaines');
+}
+
+function renderDomaines() {
+    const el = document.getElementById('domaines-liste');
+    const bout = (sym, titre, action, off) => `<button type="button" title="${titre}" ${off ? 'disabled' : ''}
+        onclick="${action}" style="border:none;background:none;cursor:${off ? 'default' : 'pointer'};
+        color:${off ? '#d1d5db' : '#6b7280'};padding:0 3px">${sym}</button>`;
+    el.innerHTML = _domEdit.length ? _domEdit.map((d, i) => `<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+            <input value="${esc(d.nom)}" oninput="_domEdit[${i}].nom = this.value" maxlength="60"
+                placeholder="Nom du domaine" style="flex:1;padding:4px 6px;border:1px solid #d1d5db;border-radius:4px">
+            ${bout('▲', 'Monter', `moveDomaine(${i},-1)`, i === 0)}${bout('▼', 'Descendre', `moveDomaine(${i},1)`, i === _domEdit.length - 1)}
+            ${bout('🗑', 'Retirer', `_domEdit.splice(${i},1);renderDomaines()`, false)}
+            ${d.ancien && d.nom.trim() !== d.ancien ? `<span style="font-size:.7rem;color:#9ca3af">était « ${esc(d.ancien)} »</span>` : ''}
+        </div>`).join('') : '<div style="color:#9ca3af;font-size:.85rem;margin-bottom:6px">Aucun domaine.</div>';
+}
+
+function moveDomaine(i, dir) {
+    const j = i + dir;
+    if (j < 0 || j >= _domEdit.length) return;
+    [_domEdit[i], _domEdit[j]] = [_domEdit[j], _domEdit[i]];
+    renderDomaines();
+}
+
+function addDomaine() {
+    _domEdit.push({ nom: '', ancien: null });
+    renderDomaines();
+    const ins = document.querySelectorAll('#domaines-liste input');
+    if (ins.length) ins[ins.length - 1].focus();
+}
+
+async function saveDomaines() {
+    const retires = (_matClasses.domaines || []).filter(d => !_domEdit.some(x => x.ancien === d));
+    if (retires.length && !confirm(`Retirer ${retires.map(d => '« ' + d + ' »').join(', ')} ?\n\n`
+            + 'Les matières de tous les programmes qui y sont rattachées n\'auront plus de domaine.')) return;
+    try {
+        // Le serveur reporte renommages et retraits dans les programmes enregistrés ;
+        // on fait de même dans la grille ouverte, sans perdre ses saisies en attente.
+        if (_progData) _collectProg();
+        const r = await api('/matiere-domaines', { method: 'PUT', body: JSON.stringify({ domaines: _domEdit }) });
+        const renomme = {};
+        _domEdit.forEach(d => { if (d.ancien && d.nom.trim() && d.ancien !== d.nom.trim()) renomme[d.ancien] = d.nom.trim(); });
+        _matClasses.domaines = r.domaines;
+        if (_progData) Object.values(_progData).forEach(d => ((d && d.components) || []).forEach(c => {
+            if (renomme[c.domaine]) c.domaine = renomme[c.domaine];
+            else if (retires.includes(c.domaine)) delete c.domaine;
+        }));
+        closeModal('modal-domaines');
+        renderProgTables();
+        toast('Domaines enregistrés');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
 // Changement de type d'une matière dans la grille : re-rendu pour adapter les colonnes
 // de volumes (RES = CM/TD/TP, SAE = TD/TP/PT) sans perdre la saisie en cours.
 function progKindChanged() {
@@ -4670,6 +4784,13 @@ function _collectProg() {
             comp.label = q('.prg-label', comp.label);
             const kindSel = tr.querySelector('.prg-kind');
             if (kindSel) comp.kind = kindSel.value;
+            // Nature / domaine : ressources seulement ; une matière qui cesse d'en
+            // être une perd son classement.
+            ['nature', 'domaine'].forEach(f => {
+                const sel = tr.querySelector('.prg-' + f);
+                if (sel) { if (sel.value) comp[f] = sel.value; else delete comp[f]; }
+            });
+            if (comp.kind !== 'RES') { delete comp.nature; delete comp.domaine; }
             tr.querySelectorAll('input.prg-vol').forEach(inp => {
                 const raw = inp.value.trim().replace(',', '.');
                 comp.volumes[inp.dataset.vk] = (raw !== '' && !isNaN(parseFloat(raw))) ? parseFloat(raw) : null;
@@ -15155,7 +15276,7 @@ function renderStats() {
     document.querySelectorAll('#stats-subtabs .subtab').forEach(b =>
         b.classList.toggle('active', b.id === 'st-subtab-' + _statsTab));
     const render = { apercu: statsApercu, etudiants: statsEtudiants, recrutement: statsRecrutement,
-                     parcours: statsParcours, resultats: statsResultats,
+                     parcours: statsParcours, resultats: statsResultats, categories: statsCategories,
                      enseignement: statsEnseignement, annees: statsAnnees };
     el.innerHTML = (render[_statsTab] || statsApercu)(d);
 }
@@ -15653,6 +15774,98 @@ function statsResultats(d) {
             <strong>spécialités de terminale</strong> se lit dans l'onglet
             <strong>Recrutement</strong>.
         </div></div>`;
+}
+
+// ----- Sous-onglet Nature & domaines -----
+// Les ressources classées dans Programme › Matières (nature : technique, théorique,
+// tertiaire ; domaine d'ingénierie) : la moyenne de chaque étudiant par catégorie,
+// pondérée par le poids des ressources, puis ce qu'en dit chaque groupe.
+// Une case = moyenne des étudiants du groupe, sur le fond des notes (rouge < 8,
+// orange < 10, bleu < 14, vert au-delà) ; vide sous l'effectif minimal.
+function stCatCase(c, mini) {
+    if (!c) return `<td style="text-align:center;color:#d1d5db" title="Moins de ${mini} étudiants">—</td>`;
+    return `<td style="text-align:center;${_noteFond({ note: c.moy })}"
+        title="${c.n} étudiant(s) · ${stNum(c.sous10, 1)} % sous 10"><strong>${stNum(c.moy, 2)}</strong>
+        <span style="font-size:.68rem;color:#6b7280">n=${c.n}</span></td>`;
+}
+
+function stCatMatrix(rows, cols, head, mini) {
+    const list = (rows || []).filter(r => r && cols.some(c => r[1][c.cle]));
+    if (!list.length) return '<div class="st-none">Aucune donnée (effectifs trop faibles ou ressources non classées)</div>';
+    const sep = c => c.axe === 'domaine' && c === cols.find(x => x.axe === 'domaine') ? 'border-left:2px solid #c4b5fd;' : '';
+    return `<div style="overflow-x:auto"><table class="st-tbl"><thead><tr><th>${esc(head)}</th>${
+            cols.map(c => `<th style="${sep(c)}text-align:center">${esc(c.nom)}</th>`).join('')}</tr></thead><tbody>${
+            list.map(([lbl, v]) => `<tr><td>${esc(String(lbl))}</td>${cols.map(c =>
+                stCatCase(v[c.cle], mini).replace('<td style="', `<td style="${sep(c)}`)).join('')}</tr>`).join('')
+        }</tbody></table></div>`;
+}
+
+function statsCategories(d) {
+    const k = d.categories;
+    if (!k) return '<div class="empty">Aucune donnée</div>';
+    const cv = k.couverture || {};
+    const mini = k.mini || 5;
+    const cols = k.colonnes || [];
+    const nom = Object.fromEntries(cols.map(c => [c.cle, c.nom]));
+    const lienProg = 'Programme › Matières (colonnes Nature et Domaine)';
+    if (!cv.avec_nature && !cv.avec_domaine)
+        return `<div class="empty">Aucune ressource n'est encore classée. Renseignez la nature et le domaine
+            des ressources dans <strong>${lienProg}</strong> : les statistiques apparaîtront ici.</div>`;
+    const synth = (k.synthese || []);
+    const kpiNat = synth.filter(s => s.cle.startsWith('N:')).map((s, i) => stKpi(nom[s.cle],
+        s.stats ? stNum(s.stats.moy, 2) : '—',
+        s.stats ? `${stNum(s.stats.n)} étudiants · ${stNum(s.stats.sous10, 1)} % sous 10` : 'pas assez de notes',
+        ['#0369a1', '#7c3aed', '#15803d'][i]));
+    const ligne = s => {
+        const st = s.stats;
+        const an = y => s.annees && s.annees[y] ? `<td style="text-align:center;${_noteFond({ note: s.annees[y].moy })}"
+            title="${s.annees[y].n} étudiant(s)">${stNum(s.annees[y].moy, 2)}</td>` : '<td style="text-align:center;color:#d1d5db">—</td>';
+        return `<tr><td>${esc(nom[s.cle])}</td><td>${st ? stNum(st.n) : '—'}</td>
+            <td style="${st ? _noteFond({ note: st.moy }) : ''}"><strong>${st ? stNum(st.moy, 2) : '—'}</strong></td>
+            <td>${st ? stNum(st.med, 2) : '—'}</td><td>${st ? stNum(st.sous10, 1) + ' %' : '—'}</td>
+            <td>${stBox(st)}</td>${an(1)}${an(2)}${an(3)}</tr>`;
+    };
+    const tableSynth = (titre, filtre) => {
+        const rs = synth.filter(s => s.cle.startsWith(filtre));
+        return rs.length ? `<table class="st-tbl"><thead><tr><th>${titre}</th><th>Étud.</th><th>Moy.</th><th>Méd.</th>
+            <th>&lt; 10</th><th style="width:26%">Répartition (0–20)</th><th>A1</th><th>A2</th><th>A3</th></tr></thead>
+            <tbody>${rs.map(ligne).join('')}</tbody></table>` : '<div class="st-none">Aucun domaine défini</div>';
+    };
+    const domCols = (k.domaines || []).map(dn => ({ cle: dn, nom: dn, axe: 'domaine' }));
+    const croise = (k.croisement || []).map(([c, v]) => [nom['N:' + c] || c, v]);
+    const champs = [['bac', 'Série de bac'], ['sexe', 'Sexe'], ['recrutement', 'Recrutement'], ['cursus', 'Études antérieures']];
+    const sansNat = cv.sans_nature || [];
+    return `<div class="st-kpis">
+            ${stKpi('Ressources classées', `${stNum(cv.avec_nature)} / ${stNum(cv.ressources)}`,
+                `ont une nature · ${stNum(cv.avec_domaine)} ont un domaine`, '#64748b')}
+            ${kpiNat.join('')}
+        </div>
+        <div style="font-size:.8rem;color:#6b7280;margin:-4px 0 12px">
+            Ressources seulement (les SAÉ ne sont pas classées). Pour chaque étudiant, la moyenne d'une catégorie
+            pondère ses notes par le poids de chaque ressource (somme de ses coefficients dans les UE) ; un groupe
+            est résumé par la moyenne de ses étudiants, affichée à partir de ${mini} étudiants. Classement à tenir
+            dans ${lienProg}.</div>
+        <div class="st-sec"><h2>Par nature et par domaine <small>toutes années, puis année par année</small></h2>
+            <div class="st-grid wide">
+                ${stCard('Nature', tableSynth('Nature', 'N:'))}
+                ${stCard('Domaine', tableSynth('Domaine', 'D:'))}
+            </div></div>
+        <div class="st-sec"><h2>Croisement nature × domaine <small>par exemple technique × mécanique</small></h2>
+            ${stCard('Moyenne des étudiants', stCatMatrix(croise, domCols, 'Nature', mini))}</div>
+        <div class="st-sec"><h2>Par cohorte et par sous-cohorte</h2>
+            ${stCard('Par promotion', stCatMatrix(k.par_promo, cols, 'Promotion', mini))}
+            <div style="margin-top:14px">${stCard('FTP / ALT', stCatMatrix(k.par_face, cols, 'Sous-cohorte', mini),
+                'sous-cohorte de l\'année de la note')}</div></div>
+        <div class="st-sec"><h2>Profil d'entrée</h2>
+            ${champs.map(([c, t]) => `<div style="margin-bottom:14px">${stCard(t, stCatMatrix((k.profil || {})[c], cols, t, mini))}</div>`).join('')}</div>
+        <div class="st-sec"><h2>Réussite en 1re année <small>cohortes dont la 1re année est terminée</small></h2>
+            ${stCard('Moyennes de 1re année selon l\'issue', stCatMatrix(k.reussite, cols, 'Issue', mini),
+                'quelles faiblesses précèdent un échec')}</div>
+        ${sansNat.length ? `<div class="st-sec"><h2>Ressources notées sans nature <small>à classer</small></h2>
+            ${stCard('Hors statistiques par nature', `<table class="st-tbl"><thead><tr><th>Code</th><th>Ressource</th>
+                <th>Notes</th><th>Promotions</th></tr></thead><tbody>${sansNat.map(([c, l, n, p]) =>
+                    `<tr><td>${esc(c)}</td><td>${esc(l)}</td><td>${stNum(n)}</td><td>${esc(p.join(', '))}</td></tr>`).join('')}
+                </tbody></table>`)}</div>` : ''}`;
 }
 
 function statsEnseignement(d) {

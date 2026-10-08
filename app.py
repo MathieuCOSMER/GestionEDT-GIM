@@ -1967,6 +1967,16 @@ def _apply_programmes_migrations(db):
             FOREIGN KEY (programme_id) REFERENCES programmes(id) ON DELETE CASCADE
         )
     ''')
+    # Domaines d'ingénierie des ressources (onglet Stats › Nature & domaines) : une
+    # liste commune à tous les programmes, pour que « Mécanique » désigne la même
+    # chose d'une maquette à l'autre. Les matières la référencent par son NOM.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS matiere_domaines (
+            id    INTEGER PRIMARY KEY AUTOINCREMENT,
+            nom   TEXT NOT NULL UNIQUE,
+            ordre INTEGER NOT NULL DEFAULT 0
+        )
+    ''')
     db.commit()
 
 def _init_programmes_db():
@@ -3188,6 +3198,7 @@ _TAB_TREE = [
         _tn('st:recrutement', 'Recrutement', _TALL + _TRESP),
         _tn('st:parcours', 'Parcours & jury', _TALL + _TRESP),
         _tn('st:resultats', 'Résultats', _TALL + _TRESP),
+        _tn('st:categories', 'Nature & domaines', _TALL + _TRESP),
         _tn('st:enseignement', 'Enseignement', _TALL + _TRESP),
         _tn('st:annees', 'Années', _TALL + _TRESP),
     ]),
@@ -9620,9 +9631,100 @@ def import_programmes():
             report['created'] += 1
         _store_programme_data(grdb, pid, _ensure_volumes(data))
         grdb.execute('UPDATE programmes SET updated_at=CURRENT_TIMESTAMP WHERE id=?', (pid,))
+    # Domaines cités par les matières importées mais inconnus ici : on les ajoute à
+    # la liste, sans quoi le classement se perdrait d'une installation à l'autre.
+    for p in progs:
+        if isinstance(p.get('data'), dict):
+            _domaines_ajouter(grdb, _domaines_cites(p['data']))
     grdb.commit()
     _audit('PROGRAMMES_IMPORT', ip=_client_ip(), user=session.get('user'), **report)
     return jsonify({'ok': True, 'report': report})
+
+# ---- Nature et domaine d'une ressource : deux classements pour les statistiques ----
+# Ils ne servent qu'à l'onglet Stats › Nature & domaines : ni les moyennes d'UE, ni
+# les bulletins, ni le jury n'en tiennent compte. Seules les RESSOURCES sont
+# classées (les SAÉ mêlent tout et brouilleraient la lecture). Chaque ressource
+# porte, dans les données de son programme, `nature` (un code ci-dessous) et
+# `domaine` (le nom d'un domaine de la liste commune), l'un et l'autre facultatifs.
+_MATIERE_NATURES = (('TECH', 'Technique'), ('THEO', 'Théorique'), ('TERT', 'Tertiaire'))
+
+def _domaines_liste(grdb):
+    return [r['nom'] for r in grdb.execute('SELECT nom FROM matiere_domaines ORDER BY ordre, id')]
+
+def _domaines_cites(data):
+    """Noms de domaine portés par les matières d'un programme."""
+    return {(c.get('domaine') or '').strip()
+            for d in (data or {}).values() if isinstance(d, dict)
+            for c in (d.get('components') or []) if (c.get('domaine') or '').strip()}
+
+def _domaines_ajouter(grdb, noms):
+    connus = set(_domaines_liste(grdb))
+    rang = (grdb.execute('SELECT MAX(ordre) m FROM matiere_domaines').fetchone()['m'] or 0) + 1
+    for nom in sorted(n for n in noms if n not in connus):
+        grdb.execute('INSERT INTO matiere_domaines(nom, ordre) VALUES(?,?)', (nom, rang))
+        rang += 1
+
+def _domaines_reporter(grdb, renommes, retires):
+    """Répercute sur tous les programmes un domaine renommé ({ancien: nouveau})
+    ou retiré de la liste (ses matières redeviennent sans domaine)."""
+    for r in grdb.execute('SELECT programme_id, data FROM programme_data').fetchall():
+        try:
+            data = json.loads(r['data'])
+        except ValueError:
+            continue
+        change = False
+        for d in data.values():
+            if not isinstance(d, dict):
+                continue
+            for c in d.get('components') or []:
+                dom = (c.get('domaine') or '').strip()
+                if dom in renommes:
+                    c['domaine'] = renommes[dom]
+                    change = True
+                elif dom in retires:
+                    c.pop('domaine', None)
+                    change = True
+        if change:
+            _store_programme_data(grdb, r['programme_id'], data)
+
+@app.route('/api/matiere-domaines', methods=['GET'])
+def get_matiere_domaines():
+    """Les deux classements proposés pour les ressources : les natures (fixes) et
+    les domaines d'ingénierie (liste modifiable). Lecture ouverte, comme les programmes."""
+    return jsonify({'natures': [{'code': c, 'nom': n} for c, n in _MATIERE_NATURES],
+                    'domaines': _domaines_liste(get_programmes_db())})
+
+@app.route('/api/matiere-domaines', methods=['PUT'])
+def save_matiere_domaines():
+    """Remplace la liste des domaines. Corps : {domaines: [{nom, ancien}]} dans
+    l'ordre voulu — `ancien` est le nom d'avant pour un domaine renommé, absent
+    pour un nouveau. Un domaine qui disparaît de la liste est retiré des matières."""
+    err = _require_admin()
+    if err:
+        return err
+    items = (request.get_json(silent=True) or {}).get('domaines')
+    if not isinstance(items, list):
+        return error_response('Liste « domaines » attendue', 400)
+    grdb = get_programmes_db()
+    avant = _domaines_liste(grdb)
+    noms, renommes = [], {}
+    for it in items:
+        nom = ' '.join(str((it or {}).get('nom') or '').split())[:60]
+        if not nom:
+            continue
+        if nom.lower() in (n.lower() for n in noms):
+            return error_response(f'Domaine en double : « {nom} »', 400)
+        noms.append(nom)
+        ancien = (it or {}).get('ancien')
+        if ancien in avant and ancien != nom:
+            renommes[ancien] = nom
+    retires = set(avant) - set(noms) - set(renommes)
+    grdb.execute('DELETE FROM matiere_domaines')
+    for i, nom in enumerate(noms):
+        grdb.execute('INSERT INTO matiere_domaines(nom, ordre) VALUES(?,?)', (nom, i))
+    _domaines_reporter(grdb, renommes, retires)
+    grdb.commit()
+    return jsonify({'domaines': _domaines_liste(grdb)})
 
 @app.route('/api/programmes/<int:prog_id>', methods=['DELETE'])
 def delete_programme(prog_id):
@@ -16148,8 +16250,10 @@ def _abandons_par_semaine(students, ordre):
     return out
 
 def _stats_promo_notes(pdb, pid, coeffs):
-    """Toutes les notes matière d'une promotion : [{sem, year, sid, code, label, note, mention}].
-    Les matières sans coefficient et les colonnes BONUS/PEN sont écartées."""
+    """Toutes les notes matière d'une promotion : [{sem, year, sid, code, label, note,
+    mention, poids, nature, domaine}]. Les matières sans coefficient et les colonnes
+    BONUS/PEN sont écartées. `poids` = somme des coefficients de la matière dans les
+    UE du semestre ; `nature` et `domaine` = son classement (ressources seulement)."""
     out = []
     for sem in _PROMO_SEMESTERS:
         d = coeffs.get(sem) or {}
@@ -16158,14 +16262,21 @@ def _stats_promo_notes(pdb, pid, coeffs):
                  if c.get('kind') not in _STATS_SKIP_KINDS}
         if not comps:
             continue
+        poids = {}
+        for cpt in d.get('competences', []):
+            for code, w in (cpt.get('coeffs') or {}).items():
+                poids[code] = poids.get(code, 0) + (w or 0)
         for r in _marks_rows(pdb, pid, sem):
             c = comps.get(r['matiere_code'])
             if not c or r['note'] is None:
                 continue
+            res = c.get('kind') == 'RES'
             out.append({'sem': sem, 'year': _sem_year(sem), 'sid': r['student_id'],
                         'code': r['matiere_code'], 'label': c.get('label') or r['matiere_code'],
                         'kind': c.get('kind') or '', 'note': r['note'],
-                        'mention': r['mention']})
+                        'mention': r['mention'], 'poids': poids.get(r['matiere_code'], 0),
+                        'nature': (c.get('nature') or None) if res else None,
+                        'domaine': ((c.get('domaine') or '').strip() or None) if res else None})
     return out
 
 def _stats_group_avg(rows, keyfn, valfn=lambda r: r['note'], mini=3):
@@ -16437,6 +16548,118 @@ def _issue_annee1(s, a1):
         return 'Abandon'
     return {'ADM': 'Validée', 'ADMJ': 'Validée', 'AJAC': 'Passage avec dettes (AJAC)',
             'AJ': 'Échec (AJ / RED)', 'RED': 'Échec (AJ / RED)'}.get(dec)
+
+_STATS_CAT_MINI = 5      # moins de 5 étudiants : moyenne non significative, non affichée
+
+def _stats_categories(notes, prof, annee1, domaines):
+    """Résultats par NATURE (technique, théorique, tertiaire) et par DOMAINE
+    d'ingénierie des ressources, et par leur croisement (technique × mécanique…).
+
+    Seules les ressources classées comptent. Pour chaque étudiant, la moyenne d'une
+    catégorie pondère ses notes par le poids de chaque ressource (somme de ses
+    coefficients dans les UE) ; les statistiques d'un groupe portent ensuite sur ces
+    moyennes d'étudiants — chacun compte une fois, quel que soit son nombre de notes."""
+    natures = dict(_MATIERE_NATURES)
+    cites = sorted({n['domaine'] for n in notes if n.get('domaine')} - set(domaines))
+    doms = list(domaines) + cites
+    cats = [('N', c) for c in natures] + [('D', d) for d in doms]
+    cle = lambda k: k[0] + ':' + ':'.join(k[1:])
+    res = [n for n in notes if n['kind'] == 'RES' and n.get('poids')]
+
+    def cats_de(n):
+        out = []
+        if n.get('nature') in natures:
+            out.append(('N', n['nature']))
+        if n.get('domaine'):
+            out.append(('D', n['domaine']))
+        if len(out) == 2:
+            out.append(('X', n['nature'], n['domaine']))
+        return out
+
+    def moyennes(groupe):
+        """{(groupe, sid, catégorie): moyenne pondérée de l'étudiant}"""
+        acc = {}
+        for n in res:
+            g = groupe(n)
+            if g is None:
+                continue
+            for k in cats_de(n):
+                a = acc.setdefault((g, n['sid'], k), [0.0, 0.0])
+                a[0] += n['poids'] * n['note']
+                a[1] += n['poids']
+        return {key: s / w for key, (s, w) in acc.items() if w}
+
+    def index(avgs, regroupe=lambda g, sid: g):
+        idx = {}
+        for (g, sid, k), v in avgs.items():
+            r = regroupe(g, sid)
+            if r is not None:
+                idx.setdefault((r, k), []).append(v)
+        return idx
+
+    def case(vals):
+        if not vals or len(vals) < _STATS_CAT_MINI:
+            return None
+        return {'moy': round(sum(vals) / len(vals), 2), 'n': len(vals),
+                'sous10': round(100.0 * sum(1 for v in vals if v < 10) / len(vals), 1)}
+
+    tout = moyennes(lambda n: 'tous')
+    par_an = moyennes(lambda n: n['year'])
+    i_tout, i_an = index(tout), index(par_an)
+    i_promo = index(moyennes(lambda n: n['promo']))
+    i_face = index(moyennes(lambda n: n.get('face')))
+
+    synthese = []
+    for k in cats:
+        vals = i_tout.get(('tous', k), [])
+        st = _num_stats(vals) if len(vals) >= _STATS_CAT_MINI else None
+        if st:
+            st['sous10'] = case(vals)['sous10']
+        synthese.append({'cle': cle(k), 'stats': st,
+                         'annees': {y: case(i_an.get((y, k))) for y in (1, 2, 3)}})
+
+    croisement = [[c, {d: case(i_tout.get(('tous', ('X', c, d)))) for d in doms}] for c in natures]
+    promos = sorted({n['promo'] for n in res}, reverse=True)
+    par_promo = [[p, {cle(k): case(i_promo.get((p, k))) for k in cats}] for p in promos]
+    par_face = [[f, {cle(k): case(i_face.get((f, k))) for k in cats}] for f in _SUBCOHORTS]
+
+    # Profil d'entrée : la moyenne de catégorie de chaque étudiant, regroupée selon
+    # sa série de bac, son sexe, sa voie de recrutement, ses études antérieures.
+    profil = {}
+    for champ, ordre in (('bac', _STUDENT_BAC), ('sexe', _STUDENT_SEXE),
+                         ('recrutement', _STUDENT_PROFILE.get('recrutement')),
+                         ('cursus', _STUDENT_CURSUS)):
+        idx = index(tout, lambda g, sid, champ=champ: (prof.get(sid) or {}).get(champ) or None)
+        valeurs = _ordonner([[v] for v in {v for v, _ in idx}], list(ordre or []))
+        lignes = [[v[0], {cle(k): case(idx.get((v[0], k))) for k in cats}] for v in valeurs]
+        profil[champ] = [l for l in lignes if any(l[1].values())]
+
+    # Réussite : moyennes de catégorie en 1re année selon son issue (cohortes dont la
+    # 1re année est terminée) — quelles faiblesses précèdent un échec.
+    issue = {sid: _issue_annee1(prof[sid], a1) for sid, a1 in annee1.items() if sid in prof}
+    i_issue = index({key: v for key, v in par_an.items() if key[0] == 1},
+                    lambda g, sid: issue.get(sid))
+    reussite = [[i, {cle(k): case(i_issue.get((i, k))) for k in cats}] for i in _ISSUES_1]
+
+    # Couverture du classement : ressources notées, et celles qui n'ont pas de nature.
+    vues, sans = {}, {}
+    for n in res:
+        m = (n['pid'], n['sem'], n['code'])
+        vues[m] = n
+        if not n.get('nature'):
+            s = sans.setdefault((n['code'], n['label']), [0, set()])
+            s[0] += 1
+            s[1].add(n['promo'])
+    couverture = {'ressources': len(vues),
+                  'avec_nature': sum(1 for n in vues.values() if n.get('nature')),
+                  'avec_domaine': sum(1 for n in vues.values() if n.get('domaine')),
+                  'sans_nature': [[c, l, nb, sorted(p)] for (c, l), (nb, p) in sorted(sans.items())]}
+    return {'colonnes': [{'cle': cle(k), 'axe': 'nature' if k[0] == 'N' else 'domaine',
+                          'nom': natures.get(k[1], k[1])} for k in cats],
+            'natures': [[c, n] for c, n in natures.items()], 'domaines': doms,
+            'synthese': synthese, 'croisement': croisement, 'par_promo': par_promo,
+            'par_face': par_face, 'profil': profil, 'reussite': reussite,
+            'couverture': couverture, 'mini': _STATS_CAT_MINI}
 
 def _ordonner(rows, ordre):
     """Remet [[clé, …], …] dans l'ordre d'une échelle (les clés inconnues à la fin)."""
@@ -16842,6 +17065,8 @@ def _stats_academique(pdb):
         if n['year'] == 1 and n['pid'] in finies and _profile_key(n['label']).startswith('mathematiques'):
             mb.setdefault(n['sid'], []).append(n['note'])
     maths_but = {sid: round(sum(v) / len(v), 2) for sid, v in mb.items()}
+    # Résultats par nature et domaine des ressources (sous-onglet Nature & domaines)
+    categories = _stats_categories(notes, prof, annee1, _domaines_liste(get_programmes_db()))
 
     # --- dossier ParcourSup : niveau du recrutement, et ce qu'il annonce des résultats
     admis_etudiant = {sid: 100.0 * ok / tot for sid, (ok, tot) in ue_par_etudiant.items() if tot}
@@ -16894,7 +17119,8 @@ def _stats_academique(pdb):
     }
     return {'promotions': promos, 'profil': profil, 'cohortes': cohortes,
             'resultats': resultats, 'jury': jury, 'encadrement': encadrement,
-            'parcoursup': parcoursup, 'candidature': candidature, 'nb_etudiants': len(students)}
+            'parcoursup': parcoursup, 'candidature': candidature, 'nb_etudiants': len(students),
+            'categories': categories}
 
 def _stats_enseignement(db):
     """Service, matières, volumes et salles de la base année fournie."""

@@ -1396,6 +1396,9 @@ function _aideProgramme() {
         <p>La définition de chaque matière du programme : <b>type</b>, <b>code</b> (R1.01, SAE1.02…), <b>libellé court</b> et <b>libellé</b>, <b>code Apogée</b>
         (sert aux imports de notes), et ses <b>volumes</b> : CM, TD et TP pour une ressource ; TD, TP et PT (projet tutoré) pour une SAÉ.
         Les colonnes Total h et HETD totalisent chaque matière et chaque semestre.</p>
+        <p>Les colonnes <b>Nature</b> (technique, théorique, tertiaire) et <b>Domaine</b> (grand domaine d'ingénierie) classent les <b>ressources</b> pour
+        ${_aLien('stats-categories', 'Statistiques › Nature & domaines')} ; elles ne changent aucune moyenne.
+        ${_aSiModif('prog:matieres', `La liste des domaines, commune à tous les programmes, se modifie avec ${_aUi('Gérer les domaines…')} : renommer un domaine le renomme dans toutes les matières.`)}</p>
         <p>Ces volumes sont ceux du <b>programme</b>${_aSi('svc:matieres', ` : ils servent de référence (colonne PN) dans ${_aLien('matieres', 'Service › Matières')}, où l'on répartit
         les heures réellement données entre FTP, ALT et sous-matières`)}.</p>
         ${_aSi('prog:actions', _aTip(`une nouvelle matière se crée depuis le sous-onglet ${_aUi('Actions')} (${_aUi('+ Créer matière')}) ; elle apparaît ensuite ici et dans les Coefficients.`))}` },
@@ -1472,6 +1475,18 @@ function _aideStats() {
             <li><b>Comparaisons</b> par semestre, par promotion, par sous-cohorte ;</li>
             <li><b>Croisements profil × résultats</b> : par série de bac, par voie de recrutement.</li>
         </ul>`),
+    sec('categories', 'Nature & domaines', 'nature domaine technique théorique tertiaire mécanique électronique ingénierie ressources classement compétences',
+        `<p>Les résultats des <b>ressources</b> regroupées selon deux classements faits dans Programme › Matières : leur <b>nature</b>
+        (technique, théorique, tertiaire) et leur <b>domaine d'ingénierie</b> (mécanique, électronique…). Les SAÉ n'y entrent pas.</p>
+        <ul>
+            <li>La moyenne d'un étudiant dans une catégorie pondère ses notes par le <b>poids</b> de chaque ressource (somme de ses coefficients dans les UE) ;
+                un groupe est résumé par la moyenne de ses étudiants, affichée à partir de 5 étudiants ;</li>
+            <li><b>Par nature et par domaine</b>, toutes années puis année par année ; <b>croisement</b> nature × domaine (technique × mécanique…) ;</li>
+            <li><b>Par promotion</b>, par sous-cohorte FTP / ALT, et selon le <b>profil d'entrée</b> (bac, sexe, recrutement, études antérieures) ;</li>
+            <li><b>Réussite en 1re année</b> : les moyennes de 1re année selon l'issue (validée, AJAC, échec, abandon) ;</li>
+            <li>la liste des ressources notées <b>sans nature</b>, à classer.</li>
+        </ul>
+        ${_aEx('lire une case', `« Théorique : 3,80 n=42 » sur la ligne Échec : les 42 étudiants en échec en 1re année y avaient en moyenne 3,80 dans les ressources théoriques.`)}`),
     sec('enseignement', 'Enseignement', 'heures maquette enseignants hetd médiane charge par semaine corps statut sessions salles',
         `<ul>
             <li><b>Volume horaire</b> : heures de maquette par type et par semestre, charge par semaine, part mutualisée ;</li>
