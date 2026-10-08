@@ -5981,8 +5981,9 @@ def delete_student_photo(person_id):
 #   • son JOURNAL : commentaires et signalements des enseignants (lus par toute
 #     l'équipe), comptes rendus d'entretien (direction seulement) ;
 #   • la liste À CONVOQUER : les étudiants de l'année active que des critères
-#     réglables désignent (notes faibles, baisse, assiduité, année en danger,
-#     parcours fragile, signalement non traité).
+#     réglables désignent — sur les notes seulement (UE sous la moyenne,
+#     plusieurs matières sous 8, chute d'un semestre à l'autre), plus les
+#     signalements de comportement ou de fraude non traités.
 # Journal et convocation sont rattachés à la PERSONNE (registre) : ils la suivent
 # d'une cohorte à l'autre. Droits (arbre des onglets) : etu:suivi — voir
 # l'évolution et le journal, modifier = écrire commentaires et signalements ;
@@ -5991,24 +5992,21 @@ def delete_student_photo(person_id):
 # Les notes n'étant pas datées, l'évolution se lit d'un semestre à l'autre.
 
 _SP_KINDS = ('COMMENT', 'SIGNAL', 'ENTRETIEN')
-_SP_SIGNAL_MOTIFS = ('Absences', 'Retards', 'Travail non rendu', 'Comportement',
+_SP_SIGNAL_MOTIFS = ('Absences', 'Retards', 'Travail non rendu', 'Comportement', 'Fraude',
                      'Difficultés', 'Autre')
 # Critères de convocation et leurs seuils par défaut (None = critère désactivé).
-# Ils portent sur le dernier semestre noté de l'année en cours.
+# Les motifs ne portent que sur les notes — dernier semestre noté de l'année en
+# cours —, et sur le comportement signalé par un enseignant (choix du
+# département : ni l'assiduité, ni le parcours, ni la décision de jury projetée).
 _SP_SEUILS = {
-    'ue_faible': 8.0,          # une UE du semestre sous ce seuil
-    'moy_faible': 10.0,        # moyenne des UE du semestre sous ce seuil
-    'note_faible': 8.0,        # au moins `nb_notes_faibles` notes sous ce seuil
-    'nb_notes_faibles': 3,
-    'baisse': 2.0,             # recul d'au moins tant de points sur le semestre précédent
-    'absences_h': 8.0,         # heures d'absence injustifiée au-delà (pénalité appliquée)
-    'abi': 1,                  # au moins tant d'ABI
-    'annee': True,             # année ajournée en l'état des notes
-    'parcours': True,          # AJAC l'an dernier, ou année refaite
-    'signalements': True,      # signalement non traité
+    'ue_faible': 10.0,         # une UE du semestre sous la moyenne
+    'note_faible': 8.0,        # au moins `nb_notes_faibles` matières sous ce seuil (ABI = 0)
+    'nb_notes_faibles': 2,
+    'baisse': 2.0,             # chute de SES notes d'au moins tant de points depuis le semestre précédent
+    'comportement': True,      # signalement de comportement ou de fraude non traité
 }
-_SP_BOOLS = ('annee', 'parcours', 'signalements')
-_SP_ENTIERS = ('nb_notes_faibles', 'abi')
+_SP_BOOLS = ('comportement',)
+_SP_ENTIERS = ('nb_notes_faibles',)
 _SP_TEXTE_MAX = 4000
 
 def _tab_edit(key):
@@ -6182,9 +6180,15 @@ def _sp_motifs(pdb, fiches, pts, cache, seuils, ouverts):
     """Motifs de convocation d'un étudiant de l'année active ; None s'il n'en suit
     aucune (sorti, en césure, cohorte terminée ou pas commencée). Chaque motif a un
     type, un texte et ses `cles` — une par fait constaté —, qui permettent de
-    reconnaître un motif NOUVEAU après un entretien. Notes, baisse et assiduité
-    portent sur le dernier semestre noté de l'année en cours, la baisse en le
-    comparant au semestre suivi juste avant."""
+    reconnaître un motif NOUVEAU après un entretien. Sur les notes seulement : UE
+    sous la moyenne et matières faibles au dernier semestre noté, chute depuis le
+    semestre suivi juste avant ; et les signalements de comportement ou de fraude
+    non traités (`ouverts` : [(id, date, motif)]).
+
+    Le dernier semestre noté est celui de l'année en cours ; tant que rien n'y est
+    noté (la rentrée), c'est le dernier de l'année précédente — sans quoi les
+    résultats de fin d'année, la chute du S1 au S2 par exemple, disparaîtraient de
+    la liste au moment même où l'on convoque."""
     f = fiches[-1] if fiches else None
     if not f or f['statut'] != 'Actif':
         return None
@@ -6192,113 +6196,97 @@ def _sp_motifs(pdb, fiches, pts, cache, seuils, ouverts):
     y = _annee_en_cours(pr['start'])
     if not y or f['id'] not in pr['rosters'].get(y, set()):
         return None
-    sid, comp, motifs = str(f['id']), pr['comp'], []
+    motifs = []
+    debut = (pr['start'] or 0) + y - 1            # l'année universitaire active
     cur = next((p for p in reversed(pts) if p['fiche'] == f['id'] and p['year'] == y), None)
+    if cur is None and pts and pts[-1]['debut'] == debut - 1:
+        cur = pts[-1]
+    # Un semestre d'une autre année que l'active porte son année : « S2 (25-26) »
+    lib = lambda p: p['sem'] if p['debut'] == debut else '%s (%s)' % (
+        p['sem'], re.sub(r'^20(\d\d)-20(\d\d)$', r'\1-\2', p['annee_univ'] or ''))
     if cur:
         sem, v = cur['sem'], cur['valeurs']
+        ls, tag = lib(cur), '%d%s' % (cur['debut'], cur['sem'])   # libellé, et repère des clés
         i = pts.index(cur)
         prev = pts[i - 1] if i > 0 else None
-        # Résultats faibles
-        items, cles, detail = [], [], ''
-        s = seuils.get('moy_faible')
-        if s is not None and v.get('gim') is not None and v['gim'] < s:
-            items.append('moyenne %s' % _sp_fr(v['gim']))
-            cles.append('MOY:' + sem)
+        # UE sous la moyenne
         s = seuils.get('ue_faible')
         if s is not None:
             ues = sorted((k for k in v if k.startswith('ue:')), key=lambda k: int(k[3:]))
             basses = [k for k in ues if v[k] < s]
-            if basses and len(basses) == len(ues) > 1:
-                bas, haut = min(v[k] for k in basses), max(v[k] for k in basses)
-                items.append('toutes les UE sous %s (%s)' % (
-                    _sp_fr(s, None), _sp_fr(bas) if bas == haut else '%s à %s' % (_sp_fr(bas), _sp_fr(haut))))
-            elif basses:
-                items.append('UE sous %s : %s' % (_sp_fr(s, None), ', '.join(
-                    'UE%s %s' % (k[3:], _sp_fr(v[k])) for k in basses)))
-            cles += ['UE:%s:%s' % (sem, k[3:]) for k in basses]
+            if basses:
+                if len(basses) == len(ues) > 1:
+                    bas, haut = min(v[k] for k in basses), max(v[k] for k in basses)
+                    texte = 'toutes les UE sous %s (%s)' % (
+                        _sp_fr(s, None), _sp_fr(bas) if bas == haut else '%s à %s' % (_sp_fr(bas), _sp_fr(haut)))
+                else:
+                    texte = ', '.join('UE%s %s' % (k[3:], _sp_fr(v[k])) for k in basses)
+                motifs.append({'type': 'ue', 'texte': '%s : %s' % (ls, texte),
+                               'cles': ['UE:%s:%s' % (tag, k[3:]) for k in basses]})
+        # Plusieurs matières sous 8 — une ABI compte 0, comme dans les moyennes
         s, nb = seuils.get('note_faible'), seuils.get('nb_notes_faibles')
         if s is not None and nb:
-            faibles = sorted(((n, l) for _c, l, n, m in cur['notes'] if m != 'ABI' and n < s))
+            ordre = cache[cur['pid']]['ordre'].get(sem, {})     # la cohorte du semestre retenu
+
+            def nom(code, label):
+                court = (ordre.get(code) or (0, '', ''))[1]
+                return court if court and len(court) <= 12 else code
+            faibles = sorted(((n, c, l, m) for c, l, n, m in cur['notes'] if n < s), key=lambda x: x[0])
             if len(faibles) >= nb:
-                items.append('%d notes < %s' % (len(faibles), _sp_fr(s, None)))
-                cles.append('NOTES:' + sem)
-                detail = ' · '.join('%s %s' % (l, _sp_fr(n)) for n, l in faibles)
-        if items:
-            motifs.append({'type': 'notes', 'texte': '%s : %s' % (sem, ' · '.join(items)),
-                           'cles': cles, 'detail': detail})
-        # Baisse sur le semestre précédent, AU-DELÀ de celle de la promotion : un
-        # semestre plus dur pour tous ne désigne personne (les notes faibles, elles,
-        # restent signalées par le critère précédent). Seules la moyenne et les UE
-        # comptent : une nature ou un domaine ne réunit parfois qu'une ou deux
-        # ressources, et désignerait presque tout le monde (ils restent lisibles
-        # dans l'évolution de la fiche).
+                note = lambda n, m: 'ABI' if m == 'ABI' else _sp_fr(n)
+                # Les six plus basses dans le texte ; toutes, avec leur libellé, au survol
+                motifs.append({
+                    'type': 'matieres',
+                    'texte': '%s : %d matières sous %s — %s%s' % (ls, len(faibles), _sp_fr(s, None), ' · '.join(
+                        '%s %s' % (nom(c, l), note(n, m)) for n, c, l, m in faibles[:6]),
+                        ' …' if len(faibles) > 6 else ''),
+                    'cles': ['MAT:%s:%s' % (tag, c) for _n, c, _l, _m in faibles],
+                    'detail': ' · '.join('%s %s %s' % (c, l, note(n, m)) for n, c, l, m in faibles)})
+        # Chute depuis le semestre précédent, mesurée sur SES PROPRES notes (choix du
+        # département : on ne la rapporte pas à la promotion). Seules la moyenne et
+        # les UE comptent : une nature ou un domaine ne réunit parfois qu'une ou deux
+        # ressources (ils restent lisibles dans l'évolution de la fiche).
         s = seuils.get('baisse')
         if prev and s is not None:
-            pv, rp, rc = prev['valeurs'], prev['ref'], cur['ref']
-            baisses = []
-            for k in v:
-                if k not in pv or not (k == 'gim' or k.startswith('ue:')):
-                    continue
-                promo = rp[k]['moy'] - rc[k]['moy'] if k in rp and k in rc else 0.0
-                if (pv[k] - v[k]) - promo >= s:
-                    baisses.append(((pv[k] - v[k]) - promo, k, pv[k] - v[k], promo))
-            baisses.sort(reverse=True)
+            pv = prev['valeurs']
+            baisses = sorted(((pv[k] - v[k], k) for k in v
+                              if k in pv and (k == 'gim' or k.startswith('ue:')) and pv[k] - v[k] >= s),
+                             reverse=True)
             if baisses:
-                fmt = lambda d: ('−' if d >= 0 else '+') + _sp_fr(abs(d))
                 motifs.append({
                     'type': 'baisse',
-                    'texte': 'Baisse %s → %s : %s%s' % (
-                        prev['sem'], sem, ' · '.join('%s %s (promo %s)' % (_sp_court(k), fmt(d), fmt(p))
-                                                     for _e, k, d, p in baisses[:3]),
+                    'texte': 'Chute %s → %s : %s%s' % (
+                        prev['sem'] if prev['debut'] == cur['debut'] else lib(prev), ls,
+                        ' · '.join('%s %s → %s (−%s)' % (
+                            _sp_court(k), _sp_fr(pv[k]), _sp_fr(v[k]), _sp_fr(d)) for d, k in baisses[:3]),
                         ' …' if len(baisses) > 3 else ''),
-                    'cles': ['BAISSE:%s:%s' % (sem, k) for _e, k, _d, _p in baisses],
+                    'cles': ['BAISSE:%s:%s' % (tag, k) for _d, k in baisses],
                     'detail': ' · '.join('%s %s → %s' % (_sp_court(k), _sp_fr(pv[k]), _sp_fr(v[k]))
-                                         for _e, k, _d, _p in baisses)})
-        # Assiduité
-        items, cles = [], []
-        s = seuils.get('absences_h')
-        if s is not None and (cur['absences'] or 0) > s:
-            items.append("%s h d'absence injustifiée" % _sp_fr(cur['absences'], None))
-            cles.append('ABS:' + sem)
-        s = seuils.get('abi')
-        nabi = sum(1 for _c, _l, _n, m in cur['notes'] if m == 'ABI')
-        if s and nabi >= s:
-            items.append('%d ABI' % nabi)
-            cles.append('ABI:' + sem)
-        if items:
-            motifs.append({'type': 'assiduite', 'texte': '%s : %s' % (sem, ' · '.join(items)),
-                           'cles': cles})
-    # Année en danger : la décision du jury, calculée sur les notes déjà là, est AJ
-    if seuils.get('annee') and comp['decisions'].get((y, sid)) == 'AJ':
-        codes = comp['ue_codes'].get((y, sid)) or {}
-        ok = sum(1 for c in codes.values() if c in ('ADM', 'ADMJ', 'CMP'))
-        motifs.append({'type': 'annee', 'cles': ['ANNEE:%s:%d' % (pr['pid'], y)],
-                       'texte': "Année %d ajournée en l'état des notes : %d UE validée(s) sur %d"
-                                % (y, ok, len(codes))})
-    # Parcours fragile : des UE de l'an dernier à rattraper, ou une année refaite
-    if seuils.get('parcours'):
-        if y > 1 and comp['decisions'].get((y - 1, sid)) == 'AJAC':
-            dettes = sorted(u for u, c in (comp['ue_codes'].get((y - 1, sid)) or {}).items()
-                            if c == 'AJ')
-            motifs.append({'type': 'parcours', 'cles': ['AJAC:%s:%d' % (pr['pid'], y - 1)],
-                           'texte': 'AJAC en année %d : %s à rattraper' % (
-                               y - 1, ', '.join('UE%d' % u for u in dettes) or 'UE')})
-        orig = pdb.execute('SELECT reason FROM student_origin WHERE student_id=?',
-                           (f['id'],)).fetchone()
-        if orig and orig['reason'] == 'RED' and (f['entry_year'] or 1) == y:
-            motifs.append({'type': 'parcours', 'cles': ['RED:%s:%d' % (pr['pid'], y)],
-                           'texte': "Refait l'année %d" % y})
-    if seuils.get('signalements') and ouverts:
-        motifs.append({'type': 'signal', 'cles': ['SIG:%d' % i for i in ouverts],
-                       'texte': '%d signalement(s) non traité(s)' % len(ouverts)})
+                                         for _d, k in baisses)})
+    # Signalements de comportement ou de fraude non traités, un motif par sorte
+    if seuils.get('comportement'):
+        for sorte in _SP_MOTIFS_CONVOQUE:
+            ces = [(i, d) for i, d, mo in ouverts if mo == sorte]
+            if not ces:
+                continue
+            dates = ', '.join('%s/%s/%s' % (d[8:10], d[5:7], d[:4]) for _i, d in ces if d)
+            motifs.append({'type': sorte.lower(), 'cles': ['SIG:%d' % i for i, _d in ces],
+                           'texte': '%d signalement(s) de %s non traité(s)%s' % (
+                               len(ces), sorte.lower(), ' : ' + dates if dates else '')})
     return {'motifs': motifs, 'fiche': f, 'promo': pr, 'year': y,
-            'sem': cur['sem'] if cur else None,
+            'sem': lib(cur) if cur else None,
             'gim': cur['valeurs'].get('gim') if cur else None}
 
+# Seul un signalement de COMPORTEMENT ou de FRAUDE non traité fait convoquer :
+# les autres (absences, retards, travail non rendu…) restent au journal.
+_SP_MOTIFS_CONVOQUE = ('Comportement', 'Fraude')
+
 def _sp_ouverts(pdb, person_id):
-    return [r['id'] for r in pdb.execute(
-        "SELECT id FROM student_suivi WHERE person_id=? AND kind='SIGNAL' AND statut='OUVERT'",
-        (person_id,))]
+    """Signalements qui font convoquer, non traités : [(id, date, motif)]."""
+    return [(r['id'], r['date_fait'], r['motif']) for r in pdb.execute(
+        """SELECT id, date_fait, motif FROM student_suivi WHERE person_id=? AND kind='SIGNAL'
+           AND statut='OUVERT' AND motif IN (%s) ORDER BY date_fait""" % ','.join('?' * len(_SP_MOTIFS_CONVOQUE)),
+        (person_id,) + _SP_MOTIFS_CONVOQUE)]
 
 def _sp_etat(pdb, person_id):
     r = pdb.execute('SELECT etat, date, par, motifs FROM student_convocation WHERE person_id=?',
@@ -6344,7 +6332,8 @@ def _sp_payload(pdb, person_id):
     moi = session.get('user')
     rows = pdb.execute('''SELECT * FROM student_suivi WHERE person_id=?
                           ORDER BY date_fait DESC, id DESC''', (person_id,)).fetchall()
-    ouverts = [r['id'] for r in rows if r['kind'] == 'SIGNAL' and r['statut'] == 'OUVERT']
+    ouverts = sorted(((r['id'], r['date_fait'], r['motif']) for r in rows if r['kind'] == 'SIGNAL'
+                      and r['statut'] == 'OUVERT' and r['motif'] in _SP_MOTIFS_CONVOQUE), key=lambda o: o[1])
     journal = []
     for r in rows:
         if r['kind'] == 'ENTRETIEN' and not voit_direction:
@@ -6545,8 +6534,10 @@ def get_suivi_convoquer():
     pdb = get_promotions_db()
     seuils = _sp_seuils(pdb)
     ouverts, entretiens = {}, {}
-    for r in pdb.execute("SELECT id, person_id FROM student_suivi WHERE kind='SIGNAL' AND statut='OUVERT'"):
-        ouverts.setdefault(r['person_id'], []).append(r['id'])
+    for r in pdb.execute("""SELECT id, person_id, date_fait, motif FROM student_suivi WHERE kind='SIGNAL'
+                            AND statut='OUVERT' AND motif IN (%s) ORDER BY date_fait"""
+                         % ','.join('?' * len(_SP_MOTIFS_CONVOQUE)), _SP_MOTIFS_CONVOQUE):
+        ouverts.setdefault(r['person_id'], []).append((r['id'], r['date_fait'], r['motif']))
     for r in pdb.execute('''SELECT person_id, date_fait, prochain FROM student_suivi
                             WHERE kind='ENTRETIEN' ORDER BY date_fait, id'''):
         entretiens[r['person_id']] = r          # le plus récent l'emporte

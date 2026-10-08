@@ -1290,8 +1290,9 @@ function _aideEtudiants() {
         <h3>Journal de suivi</h3>
         <ul>
             ${_aSiModif('etu:suivi', `<li>${_aUi('+ Commentaire')} : une observation, rattachée si besoin à une matière ;</li>
-            <li>${_aUi('+ Signaler un problème')} : la date des faits, un motif (absences, retards, travail non rendu, comportement, difficultés…), la description.
-                Un signalement reste <b>non traité</b> tant que son auteur ou la direction ne l'a pas marqué traité, et il met l'étudiant dans la liste à convoquer ;</li>`)}
+            <li>${_aUi('+ Signaler un problème')} : la date des faits, un motif (absences, retards, travail non rendu, comportement, fraude, difficultés…), la description.
+                Un signalement reste <b>non traité</b> tant que son auteur ou la direction ne l'a pas marqué traité ; un signalement de
+                <b>comportement</b> ou de <b>fraude</b> non traité met l'étudiant dans la liste à convoquer ;</li>`)}
             ${_aSi('etu:convoquer', `<li>${_aUi('+ Entretien')} : date, participants, compte rendu, décisions, prochain point ; l'étudiant passe alors <b>reçu</b>.
                 Les entretiens ne sont lus que par qui voit la liste ${_aLien('etu-convoquer', 'À convoquer')} ;</li>`)}
             <li>commentaires et signalements sont lus par toute l'équipe ; chacun modifie ou supprime les siens${_aSi('etu:convoquer', ', la direction tous')}.</li>
@@ -1300,20 +1301,22 @@ function _aideEtudiants() {
 
     { id: 'etu-convoquer', rub: R, titre: 'Les étudiants à convoquer', chemin: 'Étudiants › À convoquer',
       onglet: 'etu:convoquer', cible: 'etudiants/convoquer',
-      mots: 'convoquer convocation entretien alerte notes faibles baisse absences abi ajourné ajac redoublant signalement critères seuils',
+      mots: 'convoquer convocation entretien alerte notes faibles ue moyenne matières chute baisse comportement fraude signalement critères seuils',
       html: () => `
         <p>La vue ${_aUi('À convoquer')} de l'onglet Étudiants liste les étudiants de l'<b>année active</b> que des critères désignent. Elle est
         recalculée à chaque affichage ; ${_aUi('Critères…')} montre les seuils${_aSiModif('etu:convoquer', ' et permet de les régler (case vide = critère désactivé)')}.</p>
         <h3>Les critères</h3>
+        <p>Sur les <b>notes</b> seulement — celles de son dernier semestre noté : celui de l'année en cours, ou, tant que rien n'y est
+        noté (la rentrée), le dernier de l'an dernier, marqué de son année (« S2 (25-26) ») —, et sur le comportement signalé :</p>
         <ul>
-            <li><b>Notes faibles</b>, au dernier semestre noté de l'année : une UE sous 8, la moyenne des UE sous 10, ou au moins 3 notes sous 8 ;</li>
-            <li><b>Baisse</b> : la moyenne ou une UE recule d'au moins 2 points <b>de plus que la promotion</b> depuis le semestre précédent — un semestre plus
-                dur pour tous ne désigne personne ;</li>
-            <li><b>Assiduité</b> : plus de 8 h d'absence injustifiée (la pénalité s'applique), ou une ABI ;</li>
-            <li><b>Année en danger</b> : l'année serait ajournée en l'état des notes ;</li>
-            <li><b>Parcours</b> : AJAC l'an dernier (UE à rattraper), ou année refaite ;</li>
-            <li><b>Signalement</b> d'un enseignant non traité.</li>
+            <li><b>UE sous la moyenne</b> : une UE du semestre sous 10 ;</li>
+            <li><b>Matières faibles</b> : au moins 2 matières sous 8 (une ABI compte 0, comme dans les moyennes) ;</li>
+            <li><b>Chute</b> : sa moyenne des UE ou une UE baisse d'au moins 2 points depuis le semestre précédent, sur ses propres notes —
+                dans l'année (S1 → S2) comme d'une année à l'autre (S2 → S3, S4 → S5) ;</li>
+            <li><b>Comportement</b> ou <b>fraude</b> : un signalement de ce motif non traité. Les autres signalements (absences, retards,
+                travail non rendu…) restent au journal sans faire convoquer.</li>
         </ul>
+        <p>L'assiduité, le parcours (AJAC, redoublement) et la décision de jury ne font pas convoquer : ils restent lisibles dans la fiche.</p>
         ${_aSiModif('etu:convoquer', `<h3>Convoquer, recevoir, écarter</h3>
         <ul>
             <li>${_aUi('Convoquer')} note la convocation du jour : l'étudiant reste dans la liste jusqu'à son entretien ;</li>

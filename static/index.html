@@ -7045,13 +7045,13 @@ let _convPerime = false;       // une écriture dans une fiche a pu changer la l
 let _convFiltres = { promo: '', face: '', tous: false, q: '' };
 let _convReglages = false;     // panneau des critères ouvert
 
+// Motifs de convocation : sur les notes seulement, et le comportement signalé
 const _SP_TYPES = {
-    notes: ['Notes faibles', '#fee2e2', '#b91c1c'],
-    baisse: ['Baisse', '#ffedd5', '#c2410c'],
-    assiduite: ['Assiduité', '#f3e8ff', '#7e22ce'],
-    annee: ['Année en danger', '#fecaca', '#991b1b'],
-    parcours: ['Parcours', '#dbeafe', '#1d4ed8'],
-    signal: ['Signalement', '#fef3c7', '#b45309'],
+    ue: ['UE sous la moyenne', '#fee2e2', '#b91c1c'],
+    matieres: ['Matières faibles', '#ffedd5', '#c2410c'],
+    baisse: ['Chute', '#fef3c7', '#b45309'],
+    comportement: ['Comportement', '#f3e8ff', '#7e22ce'],
+    fraude: ['Fraude', '#fecaca', '#991b1b'],
 };
 const _SP_KIND_LIB = { COMMENT: ['Commentaire', '#e0e7ff', '#3730a3'],
                        SIGNAL: ['Signalement', '#fef3c7', '#b45309'],
@@ -7502,8 +7502,9 @@ function suiviFormulaire(d) {
             `<textarea id="sp-texte" rows="4" style="${st};resize:vertical">${esc(val('sp-texte', e.texte))}</textarea>`)}
         ${ent ? `<div style="margin-top:8px">${champ('Décisions, engagements', `<textarea id="sp-decisions" rows="2"
             style="${st};resize:vertical">${esc(val('sp-decisions', e.decisions))}</textarea>`)}</div>` : ''}
-        <div style="font-size:.74rem;color:#6b7280;margin:8px 0">L'étudiant peut demander à lire ce journal : écrivez des faits
-            observables, sans jugement sur la personne, et aucune information de santé ou de vie privée.</div>
+        <div style="font-size:.74rem;color:#6b7280;margin:8px 0">${sig ? `Seul un signalement de <strong>comportement</strong> ou de
+            <strong>fraude</strong> non traité met l'étudiant dans la liste à convoquer ; les autres restent au journal. ` : ''}L'étudiant peut demander
+            à lire ce journal : écrivez des faits observables, sans jugement sur la personne, et aucune information de santé ou de vie privée.</div>
         <div style="display:flex;gap:8px;justify-content:flex-end">
             <button class="btn btn-secondary btn-sm" onclick="fermerSuiviForm()">Annuler</button>
             <button class="btn btn-primary btn-sm" onclick="enregistrerSuivi()">Enregistrer</button></div></div>`;
@@ -7634,8 +7635,8 @@ function renderConvoquer() {
                 Afficher aussi les reçus et écartés</label>
         </div>
         <div style="font-size:.78rem;color:#6b7280;margin-bottom:8px">Étudiants de l'année active (${esc(d.annee || '')}) désignés par
-            les critères, sur le dernier semestre noté. Un étudiant reçu ou écarté ne revient qu'avec un nouveau motif.
-            Cliquez un nom pour ouvrir son suivi.</div>
+            les critères, sur leur dernier semestre noté — celui de l'an dernier, marqué de son année, tant que rien n'est noté
+            cette année. Un étudiant reçu ou écarté ne revient qu'avec un nouveau motif. Cliquez un nom pour ouvrir son suivi.</div>
         <div id="conv-lignes"></div>`;
     renderConvoquerLignes();
 }
@@ -7695,24 +7696,20 @@ async function convoquerDepuisListe(personId, etat) {
 
 function convReglagesHtml(s, modif) {
     const dis = modif ? '' : ' disabled';
-    const num = (k, w) => `<input type="number" min="0" max="100" step="${['nb_notes_faibles', 'abi'].includes(k) ? 1 : 0.5}"
+    const num = (k, w) => `<input type="number" min="0" max="100" step="${k === 'nb_notes_faibles' ? 1 : 0.5}"
         id="cr-${k}" value="${s[k] === null || s[k] === undefined ? '' : s[k]}"${dis}
         style="width:${w || 60}px;padding:2px 4px;border:1px solid #d1d5db;border-radius:4px">`;
     const box = k => `<input type="checkbox" id="cr-${k}"${s[k] ? ' checked' : ''}${dis}>`;
     return `<div style="border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px;margin-bottom:10px;background:#fafafa;font-size:.84rem">
-        <div style="font-weight:700;margin-bottom:6px">Critères de convocation <span style="font-weight:400;color:#6b7280">— notes,
-            baisse et assiduité portent sur le dernier semestre noté de l'année ; case vide = critère désactivé</span></div>
+        <div style="font-weight:700;margin-bottom:6px">Critères de convocation <span style="font-weight:400;color:#6b7280">— sur les
+            notes du dernier semestre noté (l'an dernier tant que rien n'est noté cette année), et le comportement signalé ;
+            case vide = critère désactivé</span></div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:6px 18px">
-            <label>Une UE sous ${num('ue_faible')}</label>
-            <label>Moyenne des UE sous ${num('moy_faible')}</label>
-            <label>Au moins ${num('nb_notes_faibles', 50)} notes sous ${num('note_faible')}</label>
-            <label title="Comparée à celle de la promotion sur la même période : un semestre plus dur pour tous ne désigne personne">Baisse
-                de la moyenne ou d'une UE d'au moins ${num('baisse')} points de plus que la promo</label>
-            <label>Plus de ${num('absences_h')} h d'absence injustifiée</label>
-            <label>Au moins ${num('abi', 50)} ABI</label>
-            <label>${box('annee')} Année ajournée en l'état des notes</label>
-            <label>${box('parcours')} Parcours fragile : AJAC l'an dernier, année refaite</label>
-            <label>${box('signalements')} Signalement d'un enseignant non traité</label>
+            <label>Une UE sous ${num('ue_faible')} (la moyenne)</label>
+            <label title="Une ABI compte 0, comme dans les moyennes">Au moins ${num('nb_notes_faibles', 50)} matières sous ${num('note_faible')}</label>
+            <label title="Sur ses propres notes : la moyenne des UE ou une UE, du semestre précédent à celui-ci — d'une année à l'autre aussi (S2 → S3, S4 → S5)">Chute
+                de la moyenne ou d'une UE d'au moins ${num('baisse')} points depuis le semestre précédent</label>
+            <label>${box('comportement')} Signalement de comportement ou de fraude non traité</label>
         </div>
         ${modif ? `<div style="text-align:right;margin-top:8px"><button class="btn btn-primary btn-sm"
             onclick="enregistrerConvReglages()">Enregistrer les critères</button></div>` : ''}</div>`;
@@ -7720,9 +7717,9 @@ function convReglagesHtml(s, modif) {
 
 async function enregistrerConvReglages() {
     const corps = {};
-    ['ue_faible', 'moy_faible', 'note_faible', 'nb_notes_faibles', 'baisse', 'absences_h', 'abi']
+    ['ue_faible', 'note_faible', 'nb_notes_faibles', 'baisse']
         .forEach(k => { corps[k] = document.getElementById('cr-' + k).value; });
-    ['annee', 'parcours', 'signalements'].forEach(k => { corps[k] = document.getElementById('cr-' + k).checked; });
+    corps.comportement = document.getElementById('cr-comportement').checked;
     try {
         await api('/suivi/reglages', { method: 'PUT', body: JSON.stringify(corps) });
         toast('Critères enregistrés');
@@ -7742,7 +7739,7 @@ function exportConvoquer() {
         e.gim === null || e.gim === undefined ? '' : String(e.gim).replace('.', ','),
         (e.motifs || []).map(m => m.texte).join(' | '), etatLib(e), _dateFr((e.etat || {}).date),
         _dateFr(e.entretien), _dateFr(e.prochain)].map(cell).join(';')));
-    const blob = new Blob(['﻿' + lignes.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const blob = new Blob(['\ufeff' + lignes.join('\r\n')], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'a_convoquer.csv';
