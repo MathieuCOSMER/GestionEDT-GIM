@@ -6941,7 +6941,34 @@ function tableauUEStatique(a) {
             <td style="text-align:center;font-weight:600">${note(u.annual)}</td>
             <td style="text-align:center">${u.code ? `<span style="padding:1px 7px;border-radius:6px;
                 font-size:.7rem;font-weight:700;background:${_JURY_COUL[u.code] || '#f3f4f6'}">${esc(u.code)}</span>`
-                : '<span style="color:#d1d5db">—</span>'}</td></tr>`).join('')}</tbody></table></div>`;
+                : '<span style="color:#d1d5db">—</span>'}</td></tr>`).join('')}</tbody>${tableauUEAjustements(a)}</table></div>`;
+}
+
+// Sous le tableau des UE, ce qui a bougé les moyennes sans être une note : la
+// pénalité d'assiduité, déjà retranchée de chaque UE du semestre, et la
+// bonification, ajoutée à chaque moyenne annuelle. Rien n'est affiché si
+// l'une ou l'autre ne vaut aucun point.
+function tableauUEAjustements(a) {
+    const ues = a.ues || [];
+    const cles = ['odd', 'even'];
+    const pens = (a.semestres || []).map((sem, i) => {
+        const r = (a.releves || []).find(x => x.semester === sem) || {};
+        const p = r.penalite;
+        // Un semestre sans moyenne (mobilité, rien de noté) n'a rien subi.
+        return p && p.points > 0 && ues.some(u => u[cles[i]] != null) ? p : null;
+    });
+    const bon = a.bonus && a.bonus.points > 0 && ues.some(u => u.annual != null) ? a.bonus : null;
+    if (!pens.some(Boolean) && !bon) return '';
+    const vide = '<td></td>';
+    const td = (txt, titre, coul) => `<td style="text-align:center;font-size:.78rem;color:${coul}"
+        title="${esc(titre)}">${txt}</td>`;
+    const lib = (txt, titre) => `<td style="text-align:left;font-size:.76rem;color:#6b7280" title="${esc(titre)}">${txt}</td>`;
+    return `<tfoot>${pens.some(Boolean) ? `<tr>${lib("Pénalité d'assiduité",
+            'Déjà retranchée de chaque moyenne d\'UE du semestre — barème IUT Toulon : 0 jusqu\'à 8 h, −0,05 pt/h de la 9e à la 18e h, −0,1 pt/h ensuite')}
+        ${pens.map(p => p ? td('−' + Number(p.points).toFixed(2), _fmtPts(p.heures) + " h d'absence injustifiée", '#b91c1c') : vide).join('')}
+        ${vide}${vide}</tr>` : ''}${bon ? `<tr>${lib('Bonification sport/art',
+            "Ajoutée à chaque moyenne annuelle d'UE (meilleure note des deux semestres, 0,05 pt par point au-dessus de 10, 0,5 pt au plus)")}
+        ${vide}${vide}${td('+' + Number(bon.points).toFixed(2), 'Note sport/art : ' + _fmtPts(bon.note) + '/20', '#15803d')}${vide}</tr>` : ''}</tfoot>`;
 }
 
 // En-tête d'une année : ce qu'elle dit en une ligne — l'année universitaire, la
@@ -6993,6 +7020,7 @@ function _noteCell(m) {
 function bulletinSemestre(s) {
     const notes = {};
     (s.matieres || []).forEach(m => { notes[m.code] = m; });
+    const pen = s.penalite && s.penalite.points > 0 ? s.penalite : null;
     const ues = (s.ues || []).map(u => {
         const lignes = (u.matieres || []).map(m => {
             const n = notes[m.code] || {};
@@ -7005,13 +7033,24 @@ function bulletinSemestre(s) {
         const moy = (u.moyenne === null || u.moyenne === undefined) ? '—' : Number(u.moyenne).toFixed(2);
         const stl = (u.moyenne === null || u.moyenne === undefined) ? 'color:#9ca3af'
             : (u.moyenne >= 10 ? 'background:#f0fdf4;color:#166534' : 'background:#fef2f2;color:#b91c1c');
+        // La pénalité d'assiduité se retranche de la moyenne des notes : on montre
+        // les deux étapes, sauf si la moyenne retenue est celle d'un passage
+        // précédent (redoublant), qui ne doit rien à la pénalité de ce semestre.
+        const avecPen = pen && u.moyenne != null && u.brute != null
+            && !(u.red && u.red.source === 'ancienne');
+        const etapes = avecPen ? `<tr><td colspan="3" style="text-align:right;font-size:.76rem;color:#6b7280">Moyenne des notes</td>
+                <td style="text-align:center;font-size:.8rem">${Number(u.brute).toFixed(2)}</td></tr>
+            <tr><td colspan="3" style="text-align:right;font-size:.76rem;color:#b91c1c"
+                    title="Barème IUT Toulon : 0 jusqu'à 8 h, −0,05 pt/h de la 9e à la 18e h, −0,1 pt/h ensuite">
+                    Pénalité d'assiduité (${_fmtPts(pen.heures)} h)</td>
+                <td style="text-align:center;font-size:.8rem;color:#b91c1c">−${Number(pen.points).toFixed(2)}</td></tr>` : '';
         return `<div style="margin:0 12px 10px 0">
             <table class="pn-table" style="width:auto;min-width:300px;table-layout:auto">
                 <thead><tr><th colspan="2" style="text-align:left;background:#ede9fe;color:#4c1d95">UE${u.num} · ${esc(u.name)}</th>
                     <th title="Coefficient de la matière dans cette UE" style="background:#ede9fe;color:#4c1d95">coef</th>
                     <th style="background:#ede9fe;color:#4c1d95">note</th></tr></thead>
                 <tbody>${lignes}</tbody>
-                <tfoot><tr><td colspan="3" style="text-align:right;font-size:.78rem;font-weight:600">Moyenne de l'UE${
+                <tfoot>${etapes}<tr><td colspan="3" style="text-align:right;font-size:.78rem;font-weight:600">Moyenne de l'UE${
                     u.red ? _redMark(u.red) : ''}</td>
                     <td title="${esc(u.red ? _redTitle(u.red, s.semester) : '')}"
                         style="text-align:center;font-weight:700;font-size:.85rem;${stl}">${moy}</td></tr></tfoot>
@@ -7019,10 +7058,19 @@ function bulletinSemestre(s) {
     }).join('');
     const dans = new Set((s.ues || []).flatMap(u => (u.matieres || []).map(m => m.code)));
     const hors = (s.matieres || []).filter(m => !dans.has(m.code) && (m.note !== null || m.mention));
-    const horsBloc = hors.length ? `<div style="font-size:.78rem;color:#6b7280;margin:2px 0 8px">
-        <strong>Hors UE :</strong> ${hors.map(m => `${esc(m.label || m.code)} ${_noteCell(m)}${
-            m.kind === 'PEN' ? ' h' : ''}`).join(' · ')}
-        <span style="color:#9ca3af">— la bonification s'ajoute à la moyenne annuelle, la pénalité d'assiduité se retranche de chaque UE</span></div>` : '';
+    // Pénalité et bonification ne pèsent dans aucune UE à la façon d'une note :
+    // on dit ce qu'elles valent en points et où elles s'appliquent.
+    const horsItem = m => {
+        if (m.kind === 'PEN' && s.penalite) return `<span style="color:#b91c1c"><strong>Pénalité d'assiduité</strong> :
+            ${_fmtPts(s.penalite.heures)} h d'absence injustifiée → ${s.penalite.points > 0
+                ? '−' + _fmtPts(s.penalite.points) + ' pt sur chaque UE du semestre' : 'aucune pénalité (8 h tolérées)'}</span>`;
+        if (m.kind === 'BONUS' && s.bonus) return `<span style="color:#15803d"><strong>Bonification sport/art</strong> :
+            ${_fmtPts(s.bonus.note)}/20 → ${s.bonus.points > 0 ? '+' + _fmtPts(s.bonus.points) + ' pt' : 'aucun point (note ≤ 10)'}
+            <span style="color:#9ca3af">— la meilleure des deux semestres s'ajoute à chaque moyenne annuelle d'UE</span></span>`;
+        return `${esc(m.label || m.code)} ${_noteCell(m)}`;
+    };
+    const horsBloc = hors.length ? `<div style="font-size:.78rem;color:#6b7280;margin:2px 0 8px;display:flex;flex-direction:column;gap:2px">
+        ${hors.map(m => `<div>${horsItem(m)}</div>`).join('')}</div>` : '';
     return `<div style="margin:0 0 14px">
         <div style="font-size:.82rem;font-weight:700;color:#4c1d95;margin-bottom:4px">Bulletin ${esc(s.semester)}
             <span style="font-weight:400;color:#9ca3af">— ${s.notees} note(s) sur ${(s.matieres || []).length} matières</span></div>

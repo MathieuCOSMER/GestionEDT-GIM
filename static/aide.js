@@ -1257,6 +1257,9 @@ function _aideEtudiants() {
         <h3>Sous-onglet « Notes et résultats »</h3>
         <p>Le relevé de toute la scolarité, semestre par semestre : pour chaque UE, les matières qui y pèsent avec leur coefficient et leur note, puis la
         moyenne obtenue. Les années faites dans une autre cohorte y figurent aussi.</p>
+        <p>Quand l'étudiant a une <b>pénalité d'assiduité</b>, chaque UE du semestre détaille le calcul : moyenne des notes, pénalité retranchée
+        (avec le nombre d'heures), puis moyenne de l'UE. Le tableau de l'année reprend, sous les UE, la pénalité de chaque semestre et la
+        <b>bonification sport/art</b> ajoutée aux moyennes annuelles. Une moyenne d'UE nettement sous les notes s'explique souvent ainsi.</p>
         ${_aSi('promo:effectif', _aTip(`depuis les Effectifs, un clic sur un nom ouvre la fiche dans une fenêtre ; ${_aUi('Fiche complète et résultats →')} la rouvre dans l'onglet Étudiants, avec les notes.`))}` },
 
     { id: 'etu-photos', rub: R, titre: 'Photos et trombinoscope', chemin: 'Étudiants › Trombinoscope',

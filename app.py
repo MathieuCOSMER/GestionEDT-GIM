@@ -5239,12 +5239,22 @@ def _student_parcours(pdb, person_id):
             # référence du semestre (les matières sans coefficient en sont absentes,
             # comme dans la grille des bulletins), avec sa note ou sa mention.
             releves = []
+            bonus_note = None        # meilleure note sport/art des deux semestres
             for sem in (so, se):
                 ref = ref_all.get(sem) or {}
                 comps_sem = _visible_note_components(ref.get('components', []),
                                                      ref.get('competences', []))
                 notes = {r['matiere_code']: r for r in _marks_rows(pdb, pid, sem, with_mentions=True)
                          if r['student_id'] == f['id']}
+                # Pénalité d'assiduité et bonification : la fiche montre ce qu'elles
+                # ont retranché ou ajouté, avec le barème du calcul (_penalty_points,
+                # _bonus_points) — sans quoi une moyenne d'UE sous ses notes paraît fausse.
+                pen_code = _code_by_kind(ref.get('components', []), 'PEN')
+                pen_h = (notes.get(pen_code) or {}).get('note') if pen_code else None
+                bon_code = _code_by_kind(ref.get('components', []), 'BONUS')
+                bon_n = (notes.get(bon_code) or {}).get('note') if bon_code else None
+                if bon_n is not None:
+                    bonus_note = bon_n if bonus_note is None else max(bonus_note, bon_n)
                 lignes = [{'code': c['code'],
                            'label': c.get('label') or c.get('apogee_name') or c['code'],
                            'kind': c.get('kind'),
@@ -5264,8 +5274,17 @@ def _student_parcours(pdb, person_id):
                     nom_ue = (cpt.get('name') or '').strip()
                     num_ue = comp['nums'].get(nom_ue)
                     poids = {k: v for k, v in (cpt.get('coeffs') or {}).items() if v}
+                    # Moyenne des notes AVANT pénalité, pondérée comme dans
+                    # _semester_competence_averages (les seules notes chiffrées).
+                    num = den = 0.0
+                    for c, w in poids.items():
+                        n = (notes.get(c) or {}).get('note')
+                        if n is not None:
+                            num += w * n
+                            den += w
                     ues_sem.append({
                         'num': num_ue, 'name': nom_ue,
+                        'brute': round(num / den, 2) if den else None,
                         'moyenne': (comp['sem_avgs'].get(sem, {}).get(sid_txt) or {}).get(num_ue),
                         'red': (comp['sem_kept'].get(sem) or {}).get('%s_%s' % (f['id'], num_ue)),
                         'matieres': [{'code': c, 'coeff': poids[c]}
@@ -5273,7 +5292,11 @@ def _student_parcours(pdb, person_id):
                     })
                 releves.append({'semester': sem, 'matieres': lignes, 'ues': ues_sem,
                                 'notees': sum(1 for x in lignes
-                                              if x['note'] is not None or x['mention'])})
+                                              if x['note'] is not None or x['mention']),
+                                'penalite': {'heures': pen_h, 'points': _penalty_points(pen_h)}
+                                            if pen_h is not None else None,
+                                'bonus': {'note': bon_n, 'points': _bonus_points(bon_n)}
+                                         if bon_n is not None else None})
             moyennes = [u['annual'] for u in ues if u['annual'] is not None]
             annees.append({'year': y, 'releves': releves,
                            'annee_univ': '%d-%d' % (debut, debut + 1) if debut else '',
@@ -5282,6 +5305,10 @@ def _student_parcours(pdb, person_id):
                                                                              f['formation'] or 'FTP'),
                            'jury': comp['decisions'].get((y, str(f['id']))),
                            'semestres': [so, se], 'ues': ues,
+                           # Bonification ajoutée à chaque moyenne annuelle d'UE :
+                           # la meilleure note sport/art des deux semestres.
+                           'bonus': {'note': bonus_note, 'points': _bonus_points(bonus_note)}
+                                    if bonus_note is not None else None,
                            # Moyenne générale de l'année : moyenne des moyennes
                            # annuelles d'UE, comme dans la grille de jury.
                            'gim': round(sum(moyennes) / len(moyennes), 2) if moyennes else None,
