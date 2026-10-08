@@ -7121,6 +7121,10 @@ function suiviBandeau(d) {
     else if (!d.motifs.length) motifs = `<div style="font-size:.84rem;color:#166534">Rien à signaler
         pour l'instant${d.en_cours && !d.en_cours.sem ? " (pas encore de note cette année)" : ''}.</div>`;
     else motifs = d.motifs.map(_spMotif).join('');
+    // Redoublant : l'année qu'il refait, ses notes ne font pas convoquer
+    if (d.en_cours && d.en_cours.redouble) motifs += `<div style="font-size:.8rem;color:#6b7280;margin-top:4px">Refait
+        l'année ${d.en_cours.redouble} : ses notes ne le font pas convoquer cette année — seul un signalement de comportement
+        ou de fraude le peut.</div>`;
     const etat = !dr.voir_direction || d.motifs === null ? ''
         : (d.etat ? _spEtat(d.etat) : d.motifs.length ? _spPastille('À convoquer', '#fee2e2', '#b91c1c') : '')
           + (d.nouveau ? ' ' + _spPastille('nouveau motif', '#fef3c7', '#b45309',
@@ -7659,7 +7663,8 @@ function renderConvoquerLignes() {
         <td style="white-space:nowrap"><a href="#" onclick="openEtudiant(${e.person_id}, 'suivi');return false"
             style="font-weight:700">${esc(e.nom || '')}</a> ${esc(e.prenom || '')}
             <div style="font-size:.72rem;color:#9ca3af">${esc(e.numero || '')}</div></td>
-        <td style="white-space:nowrap">${esc(e.promotion)} · A${e.annee}<div style="font-size:.72rem;color:#6b7280">${esc(e.formation || '')}</div></td>
+        <td style="white-space:nowrap">${esc(e.promotion)} · A${e.annee}<div style="font-size:.72rem;color:#6b7280">${esc(e.formation || '')}${
+            e.redouble ? ` · refait l'A${e.redouble}` : ''}</div></td>
         <td style="text-align:center;${e.gim !== null && e.gim !== undefined ? _noteFond({ note: e.gim }) : ''}">${
             e.gim !== null && e.gim !== undefined ? `<strong>${_spFr(e.gim)}</strong>
                 <div style="font-size:.7rem;color:#6b7280">${esc(e.sem || '')}</div>` : '<span style="color:#d1d5db">—</span>'}</td>
@@ -7711,6 +7716,8 @@ function convReglagesHtml(s, modif) {
                 de la moyenne ou d'une UE d'au moins ${num('baisse')} points depuis le semestre précédent</label>
             <label>${box('comportement')} Signalement de comportement ou de fraude non traité</label>
         </div>
+        <div style="font-size:.78rem;color:#6b7280;margin-top:6px">Un redoublant n'est pas convoqué pour ses notes pendant l'année
+            qu'il refait : seul un signalement de comportement ou de fraude le fait convoquer.</div>
         ${modif ? `<div style="text-align:right;margin-top:8px"><button class="btn btn-primary btn-sm"
             onclick="enregistrerConvReglages()">Enregistrer les critères</button></div>` : ''}</div>`;
 }

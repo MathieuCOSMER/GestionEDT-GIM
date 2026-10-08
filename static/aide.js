@@ -1316,7 +1316,9 @@ function _aideEtudiants() {
             <li><b>Comportement</b> ou <b>fraude</b> : un signalement de ce motif non traité. Les autres signalements (absences, retards,
                 travail non rendu…) restent au journal sans faire convoquer.</li>
         </ul>
-        <p>L'assiduité, le parcours (AJAC, redoublement) et la décision de jury ne font pas convoquer : ils restent lisibles dans la fiche.</p>
+        <p>Un <b>redoublant</b> n'est pas convoqué pour ses notes pendant l'année qu'il refait — celles de l'année ratée sont la raison
+        même de son redoublement — ; seul un signalement de comportement ou de fraude le fait convoquer. L'assiduité, le parcours (AJAC)
+        et la décision de jury ne font pas convoquer : ils restent lisibles dans la fiche.</p>
         ${_aSiModif('etu:convoquer', `<h3>Convoquer, recevoir, écarter</h3>
         <ul>
             <li>${_aUi('Convoquer')} note la convocation du jour : l'étudiant reste dans la liste jusqu'à son entretien ;</li>

@@ -6188,7 +6188,11 @@ def _sp_motifs(pdb, fiches, pts, cache, seuils, ouverts):
     Le dernier semestre noté est celui de l'année en cours ; tant que rien n'y est
     noté (la rentrée), c'est le dernier de l'année précédente — sans quoi les
     résultats de fin d'année, la chute du S1 au S2 par exemple, disparaîtraient de
-    la liste au moment même où l'on convoque."""
+    la liste au moment même où l'on convoque.
+
+    Un REDOUBLANT n'est pas convoqué pour ses notes pendant l'année qu'il refait
+    (choix du département) : celles de l'année ratée sont la raison même du
+    redoublement. Restent les signalements de comportement ou de fraude."""
     f = fiches[-1] if fiches else None
     if not f or f['statut'] != 'Actif':
         return None
@@ -6197,14 +6201,16 @@ def _sp_motifs(pdb, fiches, pts, cache, seuils, ouverts):
     if not y or f['id'] not in pr['rosters'].get(y, set()):
         return None
     motifs = []
+    orig = pdb.execute('SELECT reason FROM student_origin WHERE student_id=?', (f['id'],)).fetchone()
+    redouble = bool(orig and orig['reason'] == 'RED' and (f['entry_year'] or 1) == y)
     debut = (pr['start'] or 0) + y - 1            # l'année universitaire active
     cur = next((p for p in reversed(pts) if p['fiche'] == f['id'] and p['year'] == y), None)
-    if cur is None and pts and pts[-1]['debut'] == debut - 1:
+    if cur is None and not redouble and pts and pts[-1]['debut'] == debut - 1:
         cur = pts[-1]
     # Un semestre d'une autre année que l'active porte son année : « S2 (25-26) »
     lib = lambda p: p['sem'] if p['debut'] == debut else '%s (%s)' % (
         p['sem'], re.sub(r'^20(\d\d)-20(\d\d)$', r'\1-\2', p['annee_univ'] or ''))
-    if cur:
+    if cur and not redouble:
         sem, v = cur['sem'], cur['valeurs']
         ls, tag = lib(cur), '%d%s' % (cur['debut'], cur['sem'])   # libellé, et repère des clés
         i = pts.index(cur)
@@ -6275,7 +6281,8 @@ def _sp_motifs(pdb, fiches, pts, cache, seuils, ouverts):
                                len(ces), sorte.lower(), ' : ' + dates if dates else '')})
     return {'motifs': motifs, 'fiche': f, 'promo': pr, 'year': y,
             'sem': lib(cur) if cur else None,
-            'gim': cur['valeurs'].get('gim') if cur else None}
+            'gim': cur['valeurs'].get('gim') if cur else None,
+            'redouble': y if redouble else None}
 
 # Seul un signalement de COMPORTEMENT ou de FRAUDE non traité fait convoquer :
 # les autres (absences, retards, travail non rendu…) restent au journal.
@@ -6393,7 +6400,8 @@ def _sp_payload(pdb, person_id):
                         'matieres': p['matieres']} for p in pts],
             'series': series, 'annees': annees},
         'motifs': m['motifs'] if m else None,
-        'en_cours': {'promo': m['promo']['name'], 'year': m['year'], 'sem': m['sem']} if m else None,
+        'en_cours': {'promo': m['promo']['name'], 'year': m['year'], 'sem': m['sem'],
+                     'redouble': m['redouble']} if m else None,
         'etat': etat, 'journal': journal, 'signal_motifs': list(_SP_SIGNAL_MOTIFS),
         'matieres': matieres,
         'droits': {'ecrire': _tab_edit('etu:suivi'), 'direction': direction,
@@ -6565,7 +6573,7 @@ def get_suivi_convoquer():
             'person_id': person, 'nom': e['nom'], 'prenom': e['prenom'], 'numero': e['numero'],
             'promotion': m['promo']['name'], 'annee': m['year'], 'sem': m['sem'], 'gim': m['gim'],
             'formation': _sp_face(pdb, m['promo'], m['year'], m['fiche']['id']),
-            'motifs': m['motifs'], 'a_convoquer': dans, 'nouveau': nouveau,
+            'motifs': m['motifs'], 'a_convoquer': dans, 'nouveau': nouveau, 'redouble': m['redouble'],
             'etat': {k: etat[k] for k in ('etat', 'date', 'par')} if etat else None,
             'entretien': ent['date_fait'] if ent else None,
             'prochain': ent['prochain'] if ent else None,
