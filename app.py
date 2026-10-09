@@ -1815,6 +1815,14 @@ def _apply_promotions_migrations(db):
             data TEXT NOT NULL
         )
     ''')
+    # Marqueurs techniques de la base (ex. version de règle de calcul déjà
+    # appliquée aux données, cf _sync_matiere_marks_rule).
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS promo_meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    ''')
     # Provenance de la valeur réellement stockée ('import'/'manuel'/'saisie'),
     # tracée pour l'audit et l'aperçu d'import. NULL = antérieur à la migration.
     try:
@@ -1973,6 +1981,11 @@ def _init_promotions_db():
     db = _open_promotions_db()
     try:
         _apply_promotions_migrations(db)
+        try:
+            with app.app_context():
+                _sync_matiere_marks_rule(db)
+        except Exception as e:
+            _audit('MARKS_RULE_SYNC_ERROR', error=str(e))
     finally:
         db.close()
 
@@ -11484,6 +11497,51 @@ def _recompute_matiere_marks(pdb, pid, semester, keys):
                            DO UPDATE SET note=excluded.note, mention=excluded.mention, source='saisie' ''',
                         (pid, semester, s['id'], key, note, mention))
     pdb.commit()
+
+# Version de la règle de report saisie enseignante → note matière. Le report
+# n'a lieu qu'à l'enregistrement d'une saisie : quand la règle change, les
+# sous-notes saisies AVANT la mise à jour restent reportées selon l'ancienne
+# règle tant que personne ne les réenregistre (Saisie Notes, qui calcule sa
+# colonne Moy. dans le navigateur, montre déjà la nouvelle). Incrémenter cette
+# version les fait toutes recalculer une fois, au démarrage.
+#   2 = moyenne reportée même incomplète (2026-10-09)
+_MATIERE_MARKS_RULE = 2
+
+def _saisie_all_keys(pdb, pid, semester):
+    """Clés de toutes les matières à sous-matières du semestre, faces confondues."""
+    year_label = _promo_semester_year(pdb, pid, semester)
+    path = db_path_for_year(year_label) if year_label else None
+    if not (path and os.path.isfile(path)):
+        return set()
+    ydb = _open_connection(path)
+    try:
+        return {k for f in _SUBCOHORTS for k in _saisie_groups(ydb, semester, f)}
+    finally:
+        ydb.close()
+
+def _sync_matiere_marks_rule(pdb):
+    """Recalcule une fois toutes les notes matière issues de la saisie
+    enseignante si _MATIERE_MARKS_RULE a changé depuis le dernier passage.
+    Un semestre en échec est retenté au démarrage suivant."""
+    row = pdb.execute("SELECT value FROM promo_meta WHERE key='matiere_marks_rule'").fetchone()
+    if row and int(row['value']) >= _MATIERE_MARKS_RULE:
+        return
+    failed = 0
+    for r in pdb.execute('''SELECT DISTINCT m.promotion_id, m.semester FROM submatiere_marks m
+                            JOIN promotions p ON p.id = m.promotion_id''').fetchall():
+        pid, semester = r['promotion_id'], r['semester']
+        try:
+            _recompute_matiere_marks(pdb, pid, semester, _saisie_all_keys(pdb, pid, semester))
+        except Exception as e:
+            pdb.rollback()
+            failed += 1
+            _audit('MARKS_RULE_SYNC_ERROR', promo=pid, semester=semester, error=str(e))
+    if failed:
+        return
+    pdb.execute('''INSERT INTO promo_meta(key, value) VALUES('matiere_marks_rule', ?)
+                   ON CONFLICT(key) DO UPDATE SET value=excluded.value''', (str(_MATIERE_MARKS_RULE),))
+    pdb.commit()
+    _audit('MARKS_RULE_SYNC', rule=_MATIERE_MARKS_RULE)
 
 def _saisie_status(pdb, pid, semester, formation):
     """{matiere_code: 'definitif'|'provisoire'} pour les matières dont des
