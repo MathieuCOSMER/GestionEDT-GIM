@@ -1686,7 +1686,8 @@ def _apply_promotions_migrations(db):
 
     # Saisie des notes PAR SOUS-MATIÈRE (onglet Saisie Notes, enseignants).
     # La note matière (student_marks) = moyenne pondérée des sous-notes,
-    # recalculée automatiquement quand toutes les sous-notes comptées sont là.
+    # recalculée automatiquement dès qu'une sous-note est saisie (signalée
+    # incomplète dans Bulletins tant que toutes ne sont pas là).
     db.execute('''
         CREATE TABLE IF NOT EXISTS submatiere_marks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -5312,12 +5313,16 @@ def _student_parcours(pdb, person_id):
             # comme dans la grille des bulletins), avec sa note ou sa mention.
             releves = []
             bonus_note = None        # meilleure note sport/art des deux semestres
+            form_annee = _year_formation_map(pdb, pid, y).get(f['id'], f['formation'] or 'FTP')
             for sem in (so, se):
                 ref = ref_all.get(sem) or {}
                 comps_sem = _visible_note_components(ref.get('components', []),
                                                      ref.get('competences', []))
                 notes = {r['matiere_code']: r for r in _marks_rows(pdb, pid, sem, with_mentions=True)
                          if r['student_id'] == f['id']}
+                # Note matière issue d'une saisie enseignante encore incomplète
+                partiel = {k: v for (_s, k), v in _partial_matiere_marks(
+                    pdb, pid, sem, [{'id': f['id'], 'formation': form_annee}]).items()}
                 # Pénalité d'assiduité et bonification : la fiche montre ce qu'elles
                 # ont retranché ou ajouté, avec le barème du calcul (_penalty_points,
                 # _bonus_points) — sans quoi une moyenne d'UE sous ses notes paraît fausse.
@@ -5331,7 +5336,8 @@ def _student_parcours(pdb, person_id):
                            'label': c.get('label') or c.get('apogee_name') or c['code'],
                            'kind': c.get('kind'),
                            'note': (notes.get(c['code']) or {}).get('note'),
-                           'mention': (notes.get(c['code']) or {}).get('mention')}
+                           'mention': (notes.get(c['code']) or {}).get('mention'),
+                           'incomplete': partiel.get(c['code'])}
                           for c in comps_sem]
                 # Le bulletin du semestre : ce qui compose chaque UE — les matières
                 # qui y pèsent, avec leur coefficient — et la moyenne qui en sort.
@@ -5373,8 +5379,7 @@ def _student_parcours(pdb, person_id):
             annees.append({'year': y, 'releves': releves,
                            'annee_univ': '%d-%d' % (debut, debut + 1) if debut else '',
                            'en_cours': y == _annee_en_cours(f['start_year']),
-                           'formation': _year_formation_map(pdb, pid, y).get(f['id'],
-                                                                             f['formation'] or 'FTP'),
+                           'formation': form_annee,
                            'jury': comp['decisions'].get((y, str(f['id']))),
                            'semestres': [so, se], 'ues': ues,
                            # Bonification ajoutée à chaque moyenne annuelle d'UE :
@@ -10980,8 +10985,15 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     # calculées depuis la saisie enseignante : quand les deux divergent, la grille
     # signale l'écart au lieu de laisser l'une écraser l'autre en silence.
     note_sources = _matiere_sources(pdb, pid, semester, formation) if formation in _SUBCOHORTS else {}
-    computed = {f'{sid}_{key}': v for (sid, key), v in
-                _computed_matiere_marks(pdb, pid, semester, None, students).items()}
+    # Une moyenne incomplète (sous-matière pas encore notée) est reportée mais
+    # signalée (`partial`) ; elle ne sert pas à signaler un écart avec une note
+    # importée — comparer une note finale à une moyenne partielle n'a pas de sens.
+    missing = {}
+    computed = _computed_matiere_marks(pdb, pid, semester, None, students, missing)
+    partial = {f'{sid}_{key}': subs for (sid, key), subs in
+               _partial_matiere_marks(pdb, pid, semester, students, missing).items()}
+    computed = {f'{sid}_{key}': v for (sid, key), v in computed.items()
+                if (sid, key) not in missing}
     # Rappels : toutes les années précédentes (moyennes annuelles) puis le semestre antérieur.
     # kind ('year'/'semester') + year/sem servent au front pour grouper et coder les colonnes (UExy/UExNy).
     previous = []
@@ -11035,6 +11047,8 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
             # 'saisie' = note calculée (lecture seule dans Bulletins) / 'import' =
             # note importée ou saisie à la main (le recalcul ne l'écrase pas)
             'note_sources': note_sources, 'computed': computed,
+            # {sid_matière: [sous-matières manquantes]} : moyenne de saisie incomplète
+            'partial': partial,
             # Mobilité sortante : {sid: établissement} pour CE semestre — UE validées
             # par équivalence, aucune note de matière à saisir
             'mobility': {str(k): v.get(semester, '') for k, v in
@@ -11356,14 +11370,19 @@ def _set_matiere_source(pdb, pid, semester, formation, code, source):
                    DO UPDATE SET source=excluded.source, updated_at=CURRENT_TIMESTAMP''',
                 (pid, semester, formation, code, source))
 
-def _computed_matiere_marks(pdb, pid, semester, keys=None, students=None):
-    """{(student_id, clé matière): moyenne pondérée des sous-notes} — seulement
-    pour les matières dont TOUTES les sous-matières comptées (pondération > 0 sur
-    la face de l'étudiant) ont une note. Indépendant de l'origine officielle :
-    sert au report automatique ET à l'affichage de l'écart dans Bulletins.
-    `keys=None` = toutes les matières du semestre.
+def _computed_matiere_marks(pdb, pid, semester, keys=None, students=None, missing=None):
+    """{(student_id, clé matière): moyenne pondérée des sous-notes} — calculée
+    dès qu'AU MOINS UNE sous-matière comptée (pondération > 0 sur la face de
+    l'étudiant) a une note, sur les seules sous-notes présentes. Indépendant de
+    l'origine officielle : sert au report automatique ET à l'affichage de
+    l'écart dans Bulletins. `keys=None` = toutes les matières du semestre.
 
-    La valeur est 'ABI' (et non 0) quand toutes les sous-notes comptées sont des
+    Une moyenne qui ne porte pas sur toutes les sous-matières comptées est
+    INCOMPLÈTE : si `missing` (dict) est fourni, il reçoit
+    {(student_id, clé): ['R1.04a (CARRE)', …]} — les sous-matières qui manquent,
+    avec leurs enseignants, pour que Bulletins le signale.
+
+    La valeur est 'ABI' (et non 0) quand toutes les sous-notes présentes sont des
     absences injustifiées : la note vaut bien 0, mais l'absence doit rester
     lisible dans Bulletins et au jury au lieu de se confondre avec un vrai zéro."""
     if not pdb.execute('''SELECT 1 FROM submatiere_marks WHERE promotion_id=? AND semester=?
@@ -11396,12 +11415,15 @@ def _computed_matiere_marks(pdb, pid, semester, keys=None, students=None):
                 w = weights.get((f, c['code']))
                 w = 1.0 if w is None else w
                 if _saisie_counted(c, w):
-                    wsubs.append((c['code'], w))
-            if not wsubs:
-                continue
-            vals = [(notes.get((s['id'], code)), w) for code, w in wsubs]
-            if any(v is None for v, _ in vals):
-                continue   # saisie incomplète : pas de moyenne
+                    wsubs.append((c, w))
+            vals = [(notes[(s['id'], c['code'])], w) for c, w in wsubs
+                    if (s['id'], c['code']) in notes]
+            if not vals:
+                continue   # aucune sous-note : pas de moyenne
+            if missing is not None and len(vals) < len(wsubs):
+                missing[(s['id'], key)] = [
+                    c['code'] + (f" ({', '.join(sorted(c['teachers']))})" if c['teachers'] else '')
+                    for c, _ in wsubs if (s['id'], c['code']) not in notes]
             if all(v[1] == 'ABI' for v, _ in vals):
                 out[(s['id'], key)] = 'ABI'      # absent à tout : 0, mais signalé
             else:
@@ -11409,30 +11431,58 @@ def _computed_matiere_marks(pdb, pid, semester, keys=None, students=None):
                                             / sum(w for _, w in vals), 2)
     return out
 
+def _partial_matiere_marks(pdb, pid, semester, students, missing=None):
+    """{(student_id, clé matière): [sous-matières manquantes]} — notes matière
+    reportées depuis une saisie enseignante INCOMPLÈTE, c.-à-d. en origine
+    'saisie' sur la face de l'étudiant. Bulletins et la fiche étudiant les
+    signalent. `missing` : résultat déjà obtenu de _computed_matiere_marks."""
+    if missing is None:
+        missing = {}
+        _computed_matiere_marks(pdb, pid, semester, None, students, missing)
+    if not missing:
+        return {}
+    srcs = {f: _matiere_sources(pdb, pid, semester, f) for f in _SUBCOHORTS}
+    faces = {s['id']: _face(s['formation']) for s in students}
+    return {(sid, key): subs for (sid, key), subs in missing.items()
+            if srcs[faces[sid]].get(key) == 'saisie'}
+
 def _recompute_matiere_marks(pdb, pid, semester, keys):
     """Reporte la moyenne pondérée des sous-notes dans la note matière
     (student_marks, utilisée par Bulletins/Jury) — UNIQUEMENT pour les matières
     dont l'origine officielle est la saisie sur la face de l'étudiant
     (_matiere_sources). Une note importée ou corrigée à la main dans Bulletins
     n'est donc jamais écrasée en silence : l'écart avec la moyenne calculée est
-    signalé dans la grille, et l'admin arbitre en basculant l'origine."""
+    signalé dans la grille, et l'admin arbitre en basculant l'origine.
+
+    La moyenne est reportée même incomplète (Bulletins la signale). Un étudiant
+    qui n'a plus aucune sous-note perd la note calculée qui en venait — sauf si
+    l'admin a figé la matière en « note importée »."""
     if not keys:
         return
     students, _ = _semester_roster(pdb, pid, semester)
     computed = _computed_matiere_marks(pdb, pid, semester, keys, students)
-    if not computed:
-        return
-    faces = {s['id']: _face(s['formation']) for s in students}
     srcs = {f: _matiere_sources(pdb, pid, semester, f) for f in _SUBCOHORTS}
-    for (sid, key), avg in computed.items():
-        if srcs[faces[sid]].get(key) != 'saisie':
-            continue   # note officielle importée/manuelle : on ne l'écrase pas
-        note, mention = (0.0, 'ABI') if avg == 'ABI' else (avg, None)
-        pdb.execute('''INSERT INTO student_marks(promotion_id, semester, student_id, matiere_code, note, mention, source)
-                       VALUES(?,?,?,?,?,?,'saisie')
-                       ON CONFLICT(promotion_id, semester, student_id, matiere_code)
-                       DO UPDATE SET note=excluded.note, mention=excluded.mention, source='saisie' ''',
-                    (pid, semester, sid, key, note, mention))
+    frozen = {(r['formation'], r['matiere_code']) for r in pdb.execute(
+        '''SELECT formation, matiere_code FROM matiere_note_source
+           WHERE promotion_id=? AND semester=? AND source='import' ''', (pid, semester))}
+    for s in students:
+        f = _face(s['formation'])
+        for key in keys:
+            avg = computed.get((s['id'], key))
+            if avg is None:
+                if (f, key) not in frozen:
+                    pdb.execute('''DELETE FROM student_marks WHERE promotion_id=? AND semester=?
+                                   AND student_id=? AND matiere_code=? AND source='saisie' ''',
+                                (pid, semester, s['id'], key))
+                continue
+            if srcs[f].get(key) != 'saisie':
+                continue   # note officielle importée/manuelle : on ne l'écrase pas
+            note, mention = (0.0, 'ABI') if avg == 'ABI' else (avg, None)
+            pdb.execute('''INSERT INTO student_marks(promotion_id, semester, student_id, matiere_code, note, mention, source)
+                           VALUES(?,?,?,?,?,?,'saisie')
+                           ON CONFLICT(promotion_id, semester, student_id, matiere_code)
+                           DO UPDATE SET note=excluded.note, mention=excluded.mention, source='saisie' ''',
+                        (pid, semester, s['id'], key, note, mention))
     pdb.commit()
 
 def _saisie_status(pdb, pid, semester, formation):

@@ -8160,8 +8160,11 @@ function _noteCell(m) {
         return `<span title="${m.mention === 'ABI' ? 'Absence injustifiée — comptée 0'
             : 'Matière neutralisée — hors moyenne, faute d\'enseignant'}"
             style="font-size:.7rem;font-weight:700;color:${m.mention === 'ABI' ? '#b91c1c' : '#6b7280'}">${esc(m.mention)}</span>`;
-    return (m.note === null || m.note === undefined) ? '<span style="color:#d1d5db">—</span>'
-                                                     : Number(m.note).toFixed(2);
+    if (m.note === null || m.note === undefined) return '<span style="color:#d1d5db">—</span>';
+    // Moyenne de saisie enseignante à laquelle il manque une sous-matière
+    if (m.incomplete) return `<span title="${esc('Moyenne INCOMPLÈTE des sous-notes — il manque : ' + m.incomplete.join(', '))}"
+        style="cursor:help">${Number(m.note).toFixed(2)} <span style="font-size:.66rem;font-weight:700;color:#b45309">⚠ incompl.</span></span>`;
+    return Number(m.note).toFixed(2);
 }
 
 // Fond d'une note de matière, pour repérer d'un coup d'œil où ça pèche et où ça
@@ -8190,7 +8193,10 @@ function bulletinSemestre(s) {
                 <td style="text-align:center;font-size:.72rem;color:#9ca3af">${m.coeff}</td>
                 <td style="text-align:center;font-weight:600;font-size:.8rem;${_noteFond(n)}">${_noteCell(n)}</td></tr>`;
         }).join('');
-        const moy = (u.moyenne === null || u.moyenne === undefined) ? '—' : Number(u.moyenne).toFixed(2);
+        // Une note matière incomplète rend la moyenne de l'UE provisoire
+        const incompl = (u.matieres || []).filter(m => (notes[m.code] || {}).incomplete).map(m => m.code);
+        const moy = (u.moyenne === null || u.moyenne === undefined) ? '—' : Number(u.moyenne).toFixed(2)
+            + (incompl.length ? ' <span style="font-size:.66rem;color:#b45309">⚠</span>' : '');
         const stl = (u.moyenne === null || u.moyenne === undefined) ? 'color:#9ca3af'
             : (u.moyenne >= 10 ? 'background:#f0fdf4;color:#166534' : 'background:#fef2f2;color:#b91c1c');
         // La pénalité d'assiduité se retranche de la moyenne des notes : on montre
@@ -8212,7 +8218,8 @@ function bulletinSemestre(s) {
                 <tbody>${lignes}</tbody>
                 <tfoot>${etapes}<tr><td colspan="3" style="text-align:right;font-size:.78rem;font-weight:600">Moyenne de l'UE${
                     u.red ? _redMark(u.red) : ''}</td>
-                    <td title="${esc(u.red ? _redTitle(u.red, s.semester) : '')}"
+                    <td title="${esc((u.red ? _redTitle(u.red, s.semester) : '')
+                        + (incompl.length && u.moyenne != null ? (u.red ? ' — ' : '') + 'Moyenne provisoire : note(s) matière incomplète(s) (' + incompl.join(', ') + ')' : ''))}"
                         style="text-align:center;font-weight:700;font-size:.85rem;${stl}">${moy}</td></tr></tfoot>
             </table></div>`;
     }).join('');
@@ -8980,8 +8987,9 @@ function _saisieLegend() {
     return `<p style="font-size:.78rem;color:#6b7280;margin:8px 2px">Notes sur 20, ou <strong>ABI</strong>
         (absence injustifiée : comptée 0 ; si toutes les sous-notes comptées sont ABI, la note matière l'est aussi).
         🔒 = colonne d'un autre enseignant (lecture seule). La colonne <strong>Moy.</strong> affiche la
-        <span style="color:#166534">moyenne pondérée</span> dès que toutes les sous-notes comptées sont saisies ;
-        sinon elle montre la note matière actuelle de Bulletins (<span style="color:#1e40af">📥 importée</span>
+        <span style="color:#166534">moyenne pondérée</span> des sous-notes déjà saisies — tant qu'il en manque,
+        elle est marquée <span style="color:#b45309">incompl.</span> (et signalée comme telle dans Bulletins) ;
+        sans aucune sous-note, elle montre la note matière actuelle de Bulletins (<span style="color:#1e40af">📥 importée</span>
         ou saisie par l'administration). La moyenne devient la note matière, <strong>sauf</strong> pour les
         matières marquées <span style="color:#b45309">⚠ note importée</span> : leur note vient d'un import
         ou d'une saisie de l'administration et n'est pas écrasée (l'écart est signalé dans les deux onglets).</p>`;
@@ -9001,24 +9009,29 @@ function _saisieWeight(i, g, s) {
     return isNaN(w) ? s.weight : w;
 }
 
-// Moyenne pondérée courante des sous-notes : le nombre, `'ABI'` si toutes les
-// sous-notes comptées sont des absences injustifiées (la note vaut 0, mais
-// l'absence reste lisible), `null` si une note manque encore (moyenne non
-// calculable), `undefined` si aucune sous-matière ne compte sur cette face.
+// Moyenne pondérée courante des sous-notes, calculée sur celles déjà saisies
+// (miroir de _computed_matiere_marks) : { val, missing }. `val` = le nombre,
+// `'ABI'` si toutes les sous-notes présentes sont des absences injustifiées (la
+// note vaut 0, mais l'absence reste lisible), `null` si aucune n'est saisie,
+// `undefined` si aucune sous-matière ne compte sur cette face. `missing` = les
+// sous-matières comptées sans note : la moyenne est alors incomplète.
 function _saisieAvgVal(i, g, sid) {
-    let sw = 0, sum = 0, abi = true;
+    let sw = 0, sum = 0, abi = true, counted = 0;
+    const missing = [];
     for (const s of g.subs) {
         if (!s.face_ok) continue;                    // pas de séance sur cette face
         const w = _saisieWeight(i, g, s);
         if (!(w > 0)) continue;                      // pondération 0 : exclue
+        counted++;
         const raw = _saisieCellRaw(i, s.code, sid);
         const v = _sortNum(raw);
-        if (v === null) return null;                 // saisie incomplète
+        if (v === null) { missing.push(s.code); continue; }
         if (raw !== 'ABI') abi = false;
         sw += w; sum += v * w;
     }
-    if (!sw) return undefined;
-    return abi ? 'ABI' : Math.round(sum / sw * 100) / 100;
+    if (!counted) return { val: undefined, missing };
+    if (!sw) return { val: null, missing };
+    return { val: abi ? 'ABI' : Math.round(sum / sw * 100) / 100, missing };
 }
 
 // Colonne « Moy. » d'une matière : la moyenne pondérée quand elle est calculable
@@ -9027,9 +9040,12 @@ function _saisieAvgVal(i, g, sid) {
 function _saisieNoteCell(i, g, sid) {
     const off = ((_sbd(i) || {}).official || {})[sid + '_' + g.key];
     const hasOff = off !== undefined && off !== null && off !== '';
-    const live = _saisieAvgVal(i, g, sid);
+    const { val: live, missing } = _saisieAvgVal(i, g, sid);
+    const part = missing.length > 0 && live !== null && live !== undefined;
     const GREEN = 'background:#f0fdf4;color:#166534';
     const BLUE = 'background:#eff6ff;color:#1e40af';
+    const AMBER = 'background:#fffbeb;color:#92400e';
+    const tag = txt => `<div style="font-size:.62rem;font-weight:400;color:#b45309;line-height:1.1">${txt}</div>`;
     const showOff = hasOff && (g.source !== 'saisie' || live === null || live === undefined);
     if (showOff) {
         const l = _sortNum(live), num = _sortNum(off);   // ABI = 0 des deux côtés
@@ -9037,14 +9053,18 @@ function _saisieNoteCell(i, g, sid) {
         return {
             style: BLUE,
             title: g.source === 'saisie'
-                ? `Note matière actuelle (Bulletins) : ${off} — la moyenne la remplacera dès que toutes les sous-notes seront saisies`
+                ? `Note matière actuelle (Bulletins) : ${off} — la moyenne la remplacera dès qu'une sous-note sera saisie`
                 : `Note matière (Bulletins) : ${off} — importée ou saisie par l'administration, elle n'est pas remplacée par la moyenne`,
-            html: `📥 ${esc(String(off))}`
-                + (gap ? `<div style="font-size:.62rem;font-weight:400;color:#b45309;line-height:1.1">moy. ${live}</div>` : '')
+            html: `📥 ${esc(String(off))}` + (gap ? tag(`moy. ${live}${part ? ' (incompl.)' : ''}`) : '')
         };
     }
     if (live === undefined) return { style: GREEN, title: 'Aucune sous-matière comptée sur cette face', html: '<span style="color:#d1d5db">—</span>' };
-    if (live === null) return { style: GREEN, title: 'Moyenne incomplète — il manque au moins une sous-note', html: '<span style="color:#d1d5db">…</span>' };
+    if (live === null) return { style: GREEN, title: 'Aucune sous-note saisie', html: '<span style="color:#d1d5db">…</span>' };
+    if (part) return {
+        style: AMBER,
+        title: `Moyenne INCOMPLÈTE — calculée sans ${missing.join(', ')} ; elle devient quand même la note matière, signalée incomplète dans Bulletins et la fiche étudiant`,
+        html: esc(String(live)) + tag('incompl.')
+    };
     if (live === 'ABI') return { style: GREEN, title: "Absence injustifiée à toutes les sous-notes comptées — la note matière vaut 0, l'absence reste signalée (ABI)", html: 'ABI' };
     return { style: GREEN, title: 'Moyenne pondérée des sous-notes — devient la note matière (Bulletins)', html: String(live) };
 }
@@ -9535,7 +9555,7 @@ async function toggleNoteSource(code, src) {
     const sem = document.getElementById('notes-sem-select').value;
     const sub = (document.getElementById('notes-sub-select') || {}).value || 'FTP';
     const msg = src === 'saisie'
-        ? `${code} : la note deviendra la moyenne pondérée des sous-notes (onglet Saisie Notes) et sera remise à jour à chaque saisie.\n\nLes notes actuelles de cette colonne (import / saisie manuelle) seront remplacées dès qu'une moyenne complète est disponible.\n\nContinuer ?`
+        ? `${code} : la note deviendra la moyenne pondérée des sous-notes (onglet Saisie Notes) et sera remise à jour à chaque saisie.\n\nLes notes actuelles de cette colonne (import / saisie manuelle) seront remplacées dès qu'une sous-note est saisie (moyenne signalée incomplète tant qu'il en manque).\n\nContinuer ?`
         : `${code} : la note redevient libre — elle ne sera plus recalculée depuis la saisie enseignante et gardera sa valeur actuelle.\n\nContinuer ?`;
     if (!confirm(msg)) return;
     try {
@@ -9882,7 +9902,7 @@ function renderNotesGrid() {
             // ↺ : redoublant dont cette UE garde la note du passage précédent (meilleure des deux)
             const rk = _redKept(d, s.id, ci);
             const miss = (semMiss[ci] || []);
-            return `<td class="nz-avg" data-sid="${s.id}" data-ci="${ci}" onclick="toggleUeVaq(${s.id}, ${ci})" title="${esc(_UE_TITLE[st] + _redSuffix(rk) + _ueMissTitle(d, avg[ci], miss) + ' — cliquez pour marquer cette UE validée par acquis (VAQ)')}" style="cursor:pointer;text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}">${_fmtAvg(avg[ci])}${_redMark(rk)}${_ueMissMark(avg[ci], miss)}</td>`;
+            return `<td class="nz-avg" data-sid="${s.id}" data-ci="${ci}" onclick="toggleUeVaq(${s.id}, ${ci})" title="${esc(_UE_TITLE[st] + _redSuffix(rk) + _ueMissTitle(d, avg[ci], miss, s.id) + ' — cliquez pour marquer cette UE validée par acquis (VAQ)')}" style="cursor:pointer;text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}">${_fmtAvg(avg[ci])}${_redMark(rk)}${_ueMissMark(avg[ci], miss)}</td>`;
         }).join('') : '';
         const cells = cg.notes ? mats.map((m, mi2) => {
             const v = d.marks[s.id + '_' + m.code];
@@ -9895,6 +9915,12 @@ function renderNotesGrid() {
             // Matière en mode « calculée » : la note vient de la saisie enseignante
             // et est refaite à chaque enregistrement — elle n'est pas éditable ici.
             if (_noteSource(d, m.code) === 'saisie') {
+                // Moyenne reportée alors qu'une sous-matière n'est pas encore notée
+                const part = (d.partial || {})[s.id + '_' + m.code];
+                if (part && v !== undefined && v !== null) {
+                    return `<td title="${esc('Moyenne INCOMPLÈTE des sous-notes (onglet Saisie Notes) — il manque : ' + part.join(', ') + '. Elle se complétera à la saisie.')}"
+                        style="padding:2px;text-align:center;background:#fffbeb;color:#92400e;font-weight:600;font-size:.9rem${bl}">${esc(String(v))}<div style="font-size:.6rem;font-weight:400;line-height:1.1;color:#b45309">⚠ incompl.</div></td>`;
+                }
                 return `<td title="Moyenne pondérée des sous-notes (onglet Saisie Notes) — pour la modifier, basculez la matière en « note importée »"
                     style="padding:2px;text-align:center;background:#f0fdf4;color:#166534;font-weight:600;font-size:.9rem${bl}">${v === undefined || v === null ? '—' : esc(String(v))}</td>`;
             }
@@ -9985,11 +10011,12 @@ function refreshIncompleteBanner() {
     const reste = Object.keys(parMat).length - Math.min(6, Object.keys(parMat).length);
     el.innerHTML = `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;
                 padding:8px 12px;margin-bottom:10px;font-size:.83rem;color:#92400e">
-            <strong>⚠ ${nUe} moyenne(s) d'UE calculée(s) avec des notes manquantes</strong>
+            <strong>⚠ ${nUe} moyenne(s) d'UE calculée(s) avec des notes manquantes ou incomplètes</strong>
             — ${eleves.size} étudiant(s) concerné(s). Ces moyennes sont provisoires : le coefficient
-            des matières sans note est retiré du calcul. Les cellules concernées portent
+            des matières sans note est retiré du calcul, et une note matière <strong>⚠ incompl.</strong>
+            ne porte que sur les sous-notes déjà saisies. Les cellules concernées portent
             <strong>⚠</strong> (survolez pour le détail).
-            <div style="margin-top:4px">Matières le plus souvent sans note : ${top}${reste > 0 ? ` <span>+${reste} autre(s)</span>` : ''}</div>
+            <div style="margin-top:4px">Matières le plus souvent sans note complète : ${top}${reste > 0 ? ` <span>+${reste} autre(s)</span>` : ''}</div>
         </div>`;
 }
 
@@ -10110,8 +10137,10 @@ const NOTE_MENTIONS = ['ABI', 'N'];
 
 // Matières SANS AUCUNE valeur qui pèsent dans chaque UE : ce sont les notes
 // manquantes, celles qui font qu'une moyenne d'UE ne porte pas sur tout ce
-// qu'elle devrait. VAQ et N n'en font pas partie — leur mise hors calcul est
-// voulue, pas un oubli. Retourne un tableau [ci] -> [codes de matières].
+// qu'elle devrait. S'y ajoutent les notes matière INCOMPLÈTES (moyenne de
+// saisie enseignante à laquelle il manque une sous-matière). VAQ et N n'en font
+// pas partie — leur mise hors calcul est voulue, pas un oubli. Retourne un
+// tableau [ci] -> [codes de matières].
 function _liveSemMissing(d, sid) {
     const vaq = _ueVaqList(d, sid);
     return (d.competences || []).map((c, ci) =>
@@ -10120,9 +10149,15 @@ function _liveSemMissing(d, sid) {
             .filter(([code, coeff]) => {
                 if (!coeff) return false;
                 const v = d.marks[sid + '_' + code];
-                return v === undefined || v === null || String(v).trim() === '';
+                return v === undefined || v === null || String(v).trim() === ''
+                    || _notePartial(d, sid, code);
             })
             .map(([code]) => code));
+}
+
+// Note matière issue d'une saisie enseignante incomplète (et affichée comme telle)
+function _notePartial(d, sid, code) {
+    return _noteSource(d, code) === 'saisie' && !!(d.partial || {})[sid + '_' + code];
 }
 
 // UE validées par acquis pour un étudiant, en rangs de compétence
@@ -10184,10 +10219,13 @@ function _ueMissMark(avg, miss) {
         ? ` <span style="font-size:.7rem;color:#b45309;font-weight:700">⚠${miss.length}</span>` : '';
 }
 
-function _ueMissTitle(d, avg, miss) {
+function _ueMissTitle(d, avg, miss, sid) {
     if (avg === null || avg === undefined || !miss || !miss.length) return '';
-    return ` — ATTENTION : moyenne calculée sans ${miss.length} note(s) manquante(s) : `
-        + miss.map(c => _matLabel(d, c)).join(', ');
+    const part = miss.filter(c => _notePartial(d, sid, c));
+    const vide = miss.filter(c => !part.includes(c));
+    return ' — ATTENTION : moyenne provisoire'
+        + (vide.length ? ` — calculée sans ${vide.length} note(s) manquante(s) : ` + vide.map(c => _matLabel(d, c)).join(', ') : '')
+        + (part.length ? ` — note(s) matière incomplète(s) : ` + part.map(c => _matLabel(d, c)).join(', ') : '');
 }
 
 // Moyennes d'UE du semestre affiché (miroir de _semester_competence_averages)
@@ -10247,7 +10285,7 @@ function refreshStudentAverages(sid) {
         const rk = _redKept(d, sid, ci);
         const st = _ueStatus(sem[ci], year[ci]);
         td.style.cssText = `text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}`;
-        td.title = _UE_TITLE[st] + _redSuffix(rk) + _ueMissTitle(d, sem[ci], miss[ci] || []);
+        td.title = _UE_TITLE[st] + _redSuffix(rk) + _ueMissTitle(d, sem[ci], miss[ci] || [], sid);
         td.innerHTML = _fmtAvg(sem[ci]) + _redMark(rk) + _ueMissMark(sem[ci], miss[ci] || []);
     });
     document.querySelectorAll(`#notes-content td.nz-yavg[data-sid="${sid}"]`).forEach(td => {
