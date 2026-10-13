@@ -529,35 +529,39 @@
 
 <!-- ===== PAGE DE CONNEXION ===== -->
 <div id="login-overlay">
-    <div class="login-card">
+    <!-- Vrai <form> (champs nommés, bouton submit) : c'est ce que les navigateurs
+         surveillent pour proposer de mémoriser l'identifiant et le mot de passe.
+         Les autres boutons sont en type="button" pour ne pas déclencher l'envoi. -->
+    <form class="login-card" id="login-form" onsubmit="event.preventDefault(); doLogin()">
         <h2>Gestion EDT — IUT GIM</h2>
         <div class="login-sub">Connexion requise</div>
         <div class="form-group">
-            <label>Identifiant</label>
-            <input id="login-user" autocomplete="username" oninput="onLoginUserInput()" onkeydown="if(event.key==='Enter')loginEnterFromUser()">
+            <label for="login-user">Identifiant</label>
+            <input id="login-user" name="username" autocomplete="username" oninput="onLoginUserInput()"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();loginEnterFromUser()}">
         </div>
         <div class="form-group" id="login-pass-group">
-            <label>Mot de passe</label>
-            <input id="login-pass" type="password" autocomplete="current-password"
-                   placeholder="Mot de passe (optionnel — accès Promotions)"
-                   onkeydown="if(event.key==='Enter')doLogin()">
+            <label for="login-pass">Mot de passe</label>
+            <input id="login-pass" name="password" type="password" autocomplete="current-password"
+                   placeholder="Mot de passe (optionnel — accès Promotions)">
         </div>
         <!-- Création du mot de passe par l'enseignant (visible si l'admin l'a autorisée) -->
         <div id="login-init-form" style="display:none">
             <div class="form-group">
-                <label>Nouveau mot de passe</label>
-                <input id="login-init-p1" type="password" autocomplete="new-password">
+                <label for="login-init-p1">Nouveau mot de passe</label>
+                <input id="login-init-p1" type="password" autocomplete="new-password"
+                       onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('login-init-p2').focus()}">
             </div>
             <div class="form-group">
-                <label>Confirmez le mot de passe</label>
+                <label for="login-init-p2">Confirmez le mot de passe</label>
                 <input id="login-init-p2" type="password" autocomplete="new-password"
-                       onkeydown="if(event.key==='Enter')submitPwdInit()">
+                       onkeydown="if(event.key==='Enter'){event.preventDefault();submitPwdInit()}">
             </div>
             <div style="font-size:.78rem;color:#6b7280;margin:-4px 0 10px">
                 Au moins 8 caractères, dont une majuscule et un caractère spécial.
             </div>
-            <button class="btn btn-primary" onclick="submitPwdInit()">Enregistrer et se connecter</button>
-            <button class="btn btn-secondary" style="margin-left:6px" onclick="cancelPwdInit()">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="submitPwdInit()">Enregistrer et se connecter</button>
+            <button type="button" class="btn btn-secondary" style="margin-left:6px" onclick="cancelPwdInit()">Annuler</button>
         </div>
         <!-- Enseignant administrateur ou responsable : choix de la session après connexion
              (boutons construits par showSessionModeChoice) -->
@@ -567,11 +571,11 @@
         </div>
         <div id="login-error"></div>
         <div id="login-main-actions">
-            <button class="btn btn-primary" id="login-submit-btn" onclick="doLogin()">Se connecter</button>
-            <button class="btn btn-secondary" id="login-init-btn" style="display:none;margin-left:6px"
+            <button type="submit" class="btn btn-primary" id="login-submit-btn">Se connecter</button>
+            <button type="button" class="btn btn-secondary" id="login-init-btn" style="display:none;margin-left:6px"
                     onclick="showPwdInit()">Initialiser mon mot de passe</button>
         </div>
-    </div>
+    </form>
 </div>
 
 <nav>
@@ -2360,7 +2364,35 @@ async function mapLimit(items, limit, fn) {
 // ===== AUTHENTIFICATION =====
 function showLogin() {
     document.getElementById('login-overlay').style.display = 'flex';
-    document.getElementById('login-user').focus();
+    // Dernier identifiant utilisé sur ce poste : utile aussi aux enseignants qui se
+    // connectent sans mot de passe (rien que le navigateur puisse mémoriser)
+    const user = document.getElementById('login-user');
+    if (!user.value) {
+        try { user.value = localStorage.getItem('loginUser') || ''; } catch (e) { /* stockage indisponible */ }
+        if (user.value) onLoginUserInput();
+    }
+    (user.value ? document.getElementById('login-pass') : user).focus();
+}
+
+// La connexion passe par fetch, sans rechargement : on aide le navigateur à
+// reconnaître une connexion réussie pour qu'il propose d'enregistrer le mot de passe.
+//  - Chrome / Edge : API Credential Management (HTTPS ou localhost) ;
+//  - Firefox : retrait du formulaire du DOM après un fetch réussi (remis aussitôt) ;
+//  - Safari : l'envoi du <form> lui suffit.
+// Le mot de passe n'est effacé du champ qu'ensuite, le temps que le navigateur le lise.
+function rememberLogin(username, password) {
+    try { localStorage.setItem('loginUser', username); } catch (e) { /* stockage indisponible */ }
+    if (password) {
+        if (window.PasswordCredential) {
+            navigator.credentials.store(new PasswordCredential({ id: username, password, name: username }))
+                .catch(() => { /* refusé ou indisponible : sans conséquence */ });
+        }
+        const form = document.getElementById('login-form');
+        const parent = form.parentNode, next = form.nextSibling;
+        form.remove();
+        parent.insertBefore(form, next);
+    }
+    setTimeout(() => { document.getElementById('login-pass').value = ''; }, 1500);
 }
 
 // Mot de passe : obligatoire pour l'admin, optionnel pour un enseignant
@@ -2748,7 +2780,6 @@ async function checkAuth() {
 
 // Entrée dans l'application une fois la session ouverte (et son type choisi)
 function finishLogin(me) {
-    document.getElementById('login-pass').value = '';
     document.getElementById('login-overlay').style.display = 'none';
     applyRole(me);
     goHome();
@@ -2764,7 +2795,7 @@ function showSessionModeChoice(me) {
     document.getElementById('login-mode-text').textContent =
         `Vous disposez ${rights}. Quelle session souhaitez-vous ouvrir ?`;
     document.getElementById('login-mode-buttons').innerHTML = modes.map((m, i) =>
-        `<button class="btn ${m === 'teacher' ? 'btn-secondary' : 'btn-primary'}"${i ? ' style="margin-top:8px"' : ''}
+        `<button type="button" class="btn ${m === 'teacher' ? 'btn-secondary' : 'btn-primary'}"${i ? ' style="margin-top:8px"' : ''}
             onclick="chooseSessionMode('${m}')">${esc(sessionModeLabel(m))}</button>`).join('');
     document.getElementById('login-pass-group').style.display = 'none';
     document.getElementById('login-main-actions').style.display = 'none';
@@ -2833,7 +2864,7 @@ async function doLogin() {
     errEl.textContent = '';
     try {
         const me = await api('/login', { method: 'POST', body: JSON.stringify({ username, password }) });
-        document.getElementById('login-pass').value = '';
+        rememberLogin(username, password);
         if ((me.modes || []).length > 1) { showSessionModeChoice(me); return; }
         finishLogin(me);
     } catch (e) {
