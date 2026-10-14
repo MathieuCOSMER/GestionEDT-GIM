@@ -5395,6 +5395,13 @@ async function onPromoChange() {
     // universitaire choisie en haut à droite (répartition calendaire courante).
     const yg = _ygForTopYear(_promoData.promotion.start_year);
     _calYG = yg; _grpYG = yg; _effYear = yg;
+    // Bulletins : semestre en cours de la promotion qu'on vient de choisir (le
+    // choix fait à la main tient tant qu'on reste sur la même promotion).
+    if (_notesSemPromo !== id) {
+        _notesSemPromo = id;
+        const sem = _semEnCoursPromo(_promoData.promotion.start_year);
+        if (sem) document.getElementById('notes-sem-select').value = sem;
+    }
     _togglePromoButtons(true);
     loadEffectif();
     if (_promoTab === 'saisie') loadSaisieGrid();
@@ -9516,6 +9523,7 @@ function guardJuryReload() {
 }
 
 let _notesSub = 'FTP', _jurySub = 'FTP';
+let _notesSemPromo = null;   // promotion dont le semestre de Bulletins a été présélectionné
 
 async function loadNotesGrid() {
     const pid = document.getElementById('promo-select').value;
@@ -13596,12 +13604,40 @@ function _calQ() {
 // Année de progression (1/2/3) d'une cohorte correspondant à l'année
 // universitaire ACTIVE de l'établissement (state.defaultYear — les onglets hors
 // Service enseignant ne dépendent pas du sélecteur d'année du Service).
+// Cohorte terminée → sa dernière année (3) ; pas encore commencée → 1.
 function _ygForTopYear(startYear) {
     const yv = state.defaultYear || '';
     const topStart = parseInt((yv.split('-')[0]) || '');
     if (!topStart || !startYear) return 1;
     const yg = topStart - startYear + 1;
-    return (yg >= 1 && yg <= 3) ? yg : 1;
+    return Math.min(3, Math.max(1, yg));
+}
+
+// Semestre en cours d'une promotion dans l'année universitaire active (S1…S6) ;
+// cohorte terminée → son dernier semestre (S6), pas encore commencée → S1.
+function _semEnCoursPromo(startYear) {
+    const topStart = parseInt(((state.defaultYear || '').split('-')[0]) || '');
+    if (!topStart || !startYear) return null;
+    const yg = topStart - startYear + 1;
+    if (yg > 3) return 'S6';
+    if (yg < 1) return 'S1';
+    return 'S' + (2 * yg - (_semestrePairEnCours(topStart) ? 0 : 1));
+}
+
+// Le semestre pair de l'année universitaire commençant en topStart est-il en
+// cours ? Année active encore à venir → non (impair), déjà finie → oui ; sinon
+// d'après la semaine du jour et les débuts de semestre du Calendrier.
+function _semestrePairEnCours(topStart) {
+    const c = state.config || {};
+    const impair = parseInt(c.semester_odd_start_week) || 36;
+    const pair = parseInt(c.semester_even_start_week) || 5;
+    const d = new Date(), w = _isoWeekNow();
+    // Année universitaire du jour : elle change à la semaine de rentrée (une
+    // semaine 1 ISO de fin décembre appartient encore à l'année commencée)
+    const auj = d.getMonth() >= 6 && (w >= impair || d.getMonth() === 11) ? d.getFullYear() : d.getFullYear() - 1;
+    if (topStart !== auj) return topStart < auj;
+    const rang = s => s >= impair ? s - impair : s + 53 - impair;   // ordre scolaire
+    return rang(w) >= rang(pair);
 }
 
 // Année en cours d'une promotion selon l'année universitaire active :

@@ -640,7 +640,8 @@ function _aideDemarrer() {
         <table><thead><tr><th>Réglage</th><th>Où</th><th>Ce qu'il change</th></tr></thead><tbody>
             <tr><td><b>Année active</b></td><td>Réglée par le superadmin${_aSi('nav:parametres', ` (${_aOng('Paramètres')})`)}</td><td>L'année de travail du site, l'année « en cours » : c'est elle qu'ouvrent les onglets qui n'ont pas leur propre sélecteur.</td></tr>
             ${_aSi('nav:service', `<tr><td><b>Année du Service</b></td><td>Liste ${_aUi('Année')} à droite de la barre du ${_aOng('Service')}</td><td>Seulement les vues du Service. Elle permet de consulter ou de préparer une autre année <b>sans rien changer pour les autres</b>. Elle part de l'année active.</td></tr>`)}
-            ${_aSi('nav:promotions', `<tr><td><b>Année de la cohorte</b></td><td>${_aOng('Promotions')}</td><td>Une promotion vit trois ans : on choisit son année d'étude (1, 2 ou 3), affichée avec l'année universitaire correspondante.</td></tr>`)}
+            ${_aSi('nav:promotions', `<tr><td><b>Année de la cohorte</b></td><td>${_aOng('Promotions')}</td><td>Une promotion vit trois ans : on choisit son année d'étude (1, 2 ou 3), affichée avec l'année universitaire correspondante.
+                Au choix d'une promotion, c'est son année en cours qui s'ouvre ; pour une promotion terminée, sa dernière année (3) ; dans les Bulletins, le semestre en cours.</td></tr>`)}
             ${_aSi(['nav:stages', 'nav:alternance'], `<tr><td><b>Année universitaire</b></td><td>${_aSi('nav:stages', _aOng('Stages'))} ${_aSi('nav:alternance', _aOng('Alternance'))}</td><td>Les fiches de suivi d'une année.</td></tr>`)}
         </tbody></table>
         ${_aSi(['nav:service', 'nav:promotions'], _aEx('en 2026-2027', `
@@ -1103,6 +1104,9 @@ function _aidePromotions() {
       html: () => `
         <p>Pour une sous-cohorte et un semestre : les notes de chaque matière, les moyennes d'UE du semestre et le bilan de l'année.
         C'est la grille de référence avant le jury.</p>
+        <p>À chaque changement de promotion, le <b>semestre en cours</b> s'affiche de lui-même (d'après l'année universitaire active
+        et les dates des semestres du Calendrier) ; pour une promotion terminée, son dernier semestre (${_aUi('S6')}).
+        Un autre semestre choisi à la main reste affiché tant que l'on garde la même promotion.</p>
         <h3>Les colonnes</h3>
         <p>Cases ${_aUi('Colonnes')} pour afficher ou masquer chaque groupe : <b>Rappel années précédentes</b>, <b>Statut & bilan année</b>,
         <b>Semestre précédent</b>, <b>UE du semestre</b>, <b>Notes (matières)</b>. Un clic sur un en-tête trie (meilleure moyenne d'abord).</p>
