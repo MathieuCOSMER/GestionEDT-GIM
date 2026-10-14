@@ -1262,15 +1262,20 @@ function _aideEtudiants() {
         <p>Quand l'étudiant a une <b>pénalité d'assiduité</b>, chaque UE du semestre détaille le calcul : moyenne des notes, pénalité retranchée
         (avec le nombre d'heures), puis moyenne de l'UE. Le tableau de l'année reprend, sous les UE, la pénalité de chaque semestre et la
         <b>bonification sport/art</b> ajoutée aux moyennes annuelles. Une moyenne d'UE nettement sous les notes s'explique souvent ainsi.</p>
+        ${_aSiModif('etu:suivi', `<h3>Sous-onglet « Signalement »</h3>
+        <p>Écrire un commentaire ou signaler un problème, et reprendre ce que vous avez écrit : voir ${_aLien('etu-suivi', "le suivi d'un étudiant")}.</p>`)}
         ${_aSi('etu:suivi', `<h3>Sous-onglet « Suivi »</h3>
-        <p>L'évolution de ses moyennes face à sa promotion, ses motifs de convocation et le journal de suivi : voir ${_aLien('etu-suivi', "le suivi d'un étudiant")}.</p>`)}
+        <p>Ses motifs de convocation, le journal de suivi (commentaires, signalements${_aSi('etu:convoquer', ', entretiens')}) et l'évolution de
+        ses moyennes face à sa promotion : voir ${_aLien('etu-suivi', "le suivi d'un étudiant")}.</p>`)}
         ${_aSi('promo:effectif', _aTip(`depuis les Effectifs, un clic sur un nom ouvre la fiche dans une fenêtre ; ${_aUi('Fiche complète et résultats →')} la rouvre dans l'onglet Étudiants, avec les notes.`))}` },
 
-    { id: 'etu-suivi', rub: R, titre: "Le suivi d'un étudiant", chemin: 'Étudiants › fiche › Suivi',
+    { id: 'etu-suivi', rub: R, titre: "Le suivi d'un étudiant", chemin: 'Étudiants › fiche › Signalement, Suivi',
       onglet: 'etu:suivi', cible: 'etudiants/liste',
-      mots: 'suivi évolution moyenne promotion classe écart-type courbe commentaire signalement problème entretien journal baisse',
+      mots: 'suivi évolution moyenne promotion classe écart-type courbe commentaire signalement signaler problème entretien journal baisse',
       html: () => `
-        <p>Le sous-onglet ${_aUi('Suivi')} de la fiche réunit ce qu'il faut pour parler avec l'étudiant de son parcours.</p>
+        <p>Le sous-onglet ${_aUi('Suivi')} de la fiche réunit ce qu'il faut pour parler avec l'étudiant de son parcours : ses motifs de
+        convocation, le journal de suivi, puis l'évolution de ses moyennes.${_aSiModif('etu:suivi', ` Commentaires et signalements
+        s'écrivent dans le sous-onglet voisin, ${_aUi('Signalement')} ; ${_aUi('Suivi')} ne fait que les afficher.`)}</p>
         <h3>Évolution</h3>
         <ul>
             <li>Un <b>graphique en étoile</b> : un axe par UE — ou, avec ${_aUi('Domaines')}, par domaine d'ingénierie des ressources —,
@@ -1288,15 +1293,22 @@ function _aideEtudiants() {
         </ul>
         <p>Les notes ne sont pas datées : l'évolution se lit d'un semestre à l'autre. La moyenne de la promotion écarte ceux qui ont abandonné.</p>
         <h3>Journal de suivi</h3>
+        <p>Dans ${_aUi('Suivi')}, du plus récent au plus ancien, avec en tête le compte des commentaires, des signalements (et de ceux non traités)${
+            _aSi('etu:convoquer', ' et des entretiens')}. Commentaires et signalements y sont en <b>lecture seule</b>.</p>
+        ${_aSiModif('etu:suivi', `<h3>Écrire : le sous-onglet « Signalement »</h3>
         <ul>
-            ${_aSiModif('etu:suivi', `<li>${_aUi('+ Commentaire')} : une observation, rattachée si besoin à une matière ;</li>
-            <li>${_aUi('+ Signaler un problème')} : la date des faits, un motif (absences, retards, travail non rendu, comportement, fraude, difficultés…), la description.
-                Un signalement reste <b>non traité</b> tant que son auteur ou la direction ne l'a pas marqué traité ; un signalement de
-                <b>comportement</b> ou de <b>fraude</b> non traité met l'étudiant dans la liste à convoquer ;</li>`)}
-            ${_aSi('etu:convoquer', `<li>${_aUi('+ Entretien')} : date, participants, compte rendu, décisions, prochain point ; l'étudiant passe alors <b>reçu</b>.
-                Les entretiens ne sont lus que par qui voit la liste ${_aLien('etu-convoquer', 'À convoquer')} ;</li>`)}
-            <li>commentaires et signalements sont lus par toute l'équipe ; chacun modifie ou supprime les siens${_aSi('etu:convoquer', ', la direction tous')}.</li>
-        </ul>
+            <li>en tête, choisir ${_aUi('Ajouter un commentaire')} — une observation, rattachée si besoin à une matière — ou
+                ${_aUi('Signaler un problème')} — la date des faits, un motif (absences, retards, travail non rendu, comportement, fraude,
+                difficultés…), la description. Passer de l'un à l'autre garde ce qui est déjà tapé, comme changer de sous-onglet ;</li>
+            <li>un signalement reste <b>non traité</b> tant que son auteur ou la direction ne l'a pas marqué traité ; un signalement de
+                <b>comportement</b> ou de <b>fraude</b> non traité met l'étudiant dans la liste à convoquer ;</li>
+            <li>dessous, la liste de ce que vous pouvez reprendre${_aSi('etu:convoquer', ' (les vôtres ; tous pour la direction)')} :
+                ${_aUi('✎')} le recharge dans le formulaire, ${_aUi('Marquer traité')} / ${_aUi('Rouvrir')} pour un signalement, ${_aUi('🗑')} le supprime.</li>
+        </ul>`)}
+        ${_aSi('etu:convoquer', `<p>${_aSiModif('etu:convoquer', `${_aUi('+ Entretien')}, dans le cadre des motifs de convocation de ${_aUi('Suivi')} :
+            date, participants, compte rendu, décisions, prochain point ; l'étudiant passe alors <b>reçu</b>. `)}Les entretiens ne sont lus
+            que par qui voit la liste ${_aLien('etu-convoquer', 'À convoquer')}.</p>`)}
+        <p>Commentaires et signalements sont lus par toute l'équipe ; chacun modifie ou supprime les siens${_aSi('etu:convoquer', ', la direction tous')}.</p>
         ${_aTip("l'étudiant peut demander à lire ce journal : écrivez des faits observables, sans jugement sur la personne, et rien sur sa santé ou sa vie privée.")}` },
 
     { id: 'etu-convoquer', rub: R, titre: 'Les étudiants à convoquer', chemin: 'Étudiants › À convoquer',

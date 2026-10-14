@@ -143,6 +143,30 @@
         .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
         .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         .section-title { font-size: .85rem; font-weight: 700; color: #374151; margin: 14px 0 6px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
+        /* Fiche étudiant (onglet Étudiants) : un cadre blanc par bloc d'information,
+           un titre net au-dessus d'un filet, un corps de texte à taille de lecture */
+        .fiche-bloc { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 18px 16px;
+                      margin-bottom: 18px; box-shadow: 0 1px 2px rgba(15,23,42,.05); font-size: .92rem; }
+        .fiche-bloc-tete { display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap;
+                           margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #eef0f3; }
+        .fiche-bloc-tete h3 { font-size: 1.05rem; font-weight: 700; color: #1f2937; margin: 0; }
+        .fiche-sous { font-size: .86rem; color: #6b7280; }
+        .fiche-actions { margin-left: auto; display: inline-flex; gap: 6px; flex-wrap: wrap; }
+        .fiche-aide { font-size: .86rem; color: #6b7280; line-height: 1.5; }
+        .fiche-bloc h4 { font-size: .96rem; font-weight: 700; color: #374151; margin: 18px 0 8px; }
+        .fiche-bloc .form-group label { font-size: .85rem; }
+        .fiche-bloc .subtab { font-size: .86rem; padding: 5px 12px; }
+        .fiche-annee + .fiche-annee { border-top: 1px dashed #d1d5db; margin-top: 6px; padding-top: 16px; }
+        /* Sous-onglet Signalement : le choix entre commentaire et signalement */
+        .sp-choix-grille { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-bottom: 14px; }
+        .sp-choix { display: flex; gap: 10px; align-items: flex-start; text-align: left; padding: 10px 14px; font: inherit;
+                    border: 2px solid #e5e7eb; border-radius: 8px; background: #fff; color: #374151; cursor: pointer; }
+        .sp-choix:hover:not(:disabled) { border-color: #a5b4fc; }
+        .sp-choix:disabled { cursor: default; }
+        .sp-choix:disabled:not(.actif) { opacity: .45; }
+        .sp-choix-ic { font-size: 1.3rem; line-height: 1.2; }
+        .sp-choix strong { display: block; font-size: .95rem; }
+        .sp-choix small { display: block; font-size: .82rem; color: #6b7280; margin-top: 2px; }
         .types-table { width: 100%; border-collapse: collapse; }
         .types-table th { padding: 5px 8px; font-size: .78rem; text-align: left; color: #6b7280; background: #f9fafb; }
         .types-table td { padding: 4px 6px; vertical-align: middle; }
@@ -1587,7 +1611,7 @@
 <div class="modal-backdrop" id="modal-student-card">
     <div class="modal modal-wide">
         <h2 id="student-card-title">Fiche étudiant</h2>
-        <p style="color:#6b7280;font-size:.85rem;margin-top:0">
+        <p style="color:#6b7280;font-size:.85rem;margin:0 0 14px">
             Ce qui est saisi ici décrit <strong>l'étudiant</strong>, pas l'année qu'il passe dans une
             cohorte : son état civil, son sexe, sa voie de recrutement et son dossier ParcourSup le
             suivent d'une cohorte à l'autre — <strong>une seule saisie vaut pour toutes</strong>,
@@ -2616,7 +2640,7 @@ function _currentTabKey() {
     if (_servicePages.includes(name)) return 'svc:' + name;
     if (name === 'promotions') return _promoSaisieOnly ? 'nav:saisie' : 'promo:' + _promoTab;
     if (name === 'programme') return 'prog:' + _progTab;
-    if (name === 'etudiants') return _etuSelected ? (_etuFicheTab === 'suivi' ? 'etu:suivi' : 'etu:liste')
+    if (name === 'etudiants') return _etuSelected ? (_ficheSuivi() ? 'etu:suivi' : 'etu:liste')
                                                  : (_etuVue === 'convoquer' ? 'etu:convoquer' : 'etu:liste');
     return name ? 'nav:' + name : null;
 }
@@ -7255,7 +7279,8 @@ async function openEtudiant(personId, tab, form) {
         _etuSemestre = '';        // un autre étudiant : on repart de sa scolarité entière
         _etuSuivi = null;
         _suiviSem = null;         // l'étoile s'ouvre sur son dernier semestre
-        _suiviForm = form ? { kind: form, id: null } : null;
+        _suiviForm = form === 'ENTRETIEN' ? _spNouveauForm(form) : null;
+        _signalForm = form && form !== 'ENTRETIEN' ? _spNouveauForm(form) : null;
         renderEtudiants();
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
@@ -7265,18 +7290,34 @@ function fermerEtudiant() {
     _studentCard = null;
     _etuSuivi = null;
     _suiviForm = null;
+    _signalForm = null;
     renderEtudiants();
 }
 
-// La fiche se lit en trois temps : qui il est (état civil, profil, dossier de
+// La fiche se lit en quatre temps : qui il est (état civil, profil, dossier de
 // candidature, cohortes traversées), ce qu'il a obtenu (le relevé de toute sa
-// scolarité), et son suivi (évolution face à la promotion, journal). Des
-// sous-onglets plutôt qu'une page à dérouler.
+// scolarité), ce que l'équipe en écrit (Signalement : commentaires et problèmes
+// signalés) et son suivi (motifs de convocation, journal, évolution face à la
+// promotion). Des sous-onglets plutôt qu'une page à dérouler.
 let _etuFicheTab = 'infos';
+
+// Les deux sous-onglets du suivi pédagogique (droit etu:suivi) : Signalement pour
+// écrire, Suivi pour lire
+function _ficheSuivi(tab) { return ['signalement', 'suivi'].includes(tab || _etuFicheTab); }
 
 function showEtuFicheTab(tab) {
     _etuFicheTab = tab;
     renderEtudiantFiche();
+}
+
+// Un bloc d'information de la fiche : cadre blanc, titre, sous-titre gris et, à
+// droite, ses commandes. `titre`, `sous`, `extra` et `actions` sont du HTML déjà
+// échappé ; `accent` borde le cadre à gauche (alerte, formulaire en cours).
+function _ficheBloc(titre, corps, o = {}) {
+    return `<section class="fiche-bloc"${o.attrs ? ' ' + o.attrs : ''}${
+        o.accent ? ` style="border-left:4px solid ${o.accent}"` : ''}>
+        <div class="fiche-bloc-tete"><h3>${titre}</h3>${o.sous ? `<span class="fiche-sous">${o.sous}</span>` : ''}${
+            o.extra || ''}${o.actions ? `<span class="fiche-actions">${o.actions}</span>` : ''}</div>${corps}</section>`;
 }
 
 // La fiche se construit d'un seul bloc : une erreur dans une section effacerait
@@ -7285,6 +7326,7 @@ function showEtuFicheTab(tab) {
 function corpsFiche(d) {
     try {
         if (_etuFicheTab === 'suivi') return studentSuivi();
+        if (_etuFicheTab === 'signalement') return studentSignalement();
         return _etuFicheTab === 'notes' ? studentNotes(d) : studentSections(d, { large: true });
     } catch (e) {
         console.error('fiche étudiant :', e);
@@ -7297,41 +7339,50 @@ function renderEtudiantFiche() {
     const d = _studentCard;
     if (!d) return;
     _spBrouillon();
-    // Sous-onglet fermé à la session : on se rabat sur celui qui lui est ouvert
-    if (_etuFicheTab === 'suivi' && tabHidden('etu:suivi')) _etuFicheTab = 'infos';
-    if (_etuFicheTab !== 'suivi' && tabHidden('etu:liste') && !tabHidden('etu:suivi')) _etuFicheTab = 'suivi';
+    // Sous-onglet fermé à la session : on se rabat sur celui qui lui est ouvert.
+    // Signalement n'est proposé qu'à qui peut écrire au journal (modifier etu:suivi).
+    if (_ficheSuivi() && tabHidden('etu:suivi')) _etuFicheTab = 'infos';
+    if (_etuFicheTab === 'signalement' && !canEditTab('etu:suivi')) _etuFicheTab = 'suivi';
+    if (!_ficheSuivi() && tabHidden('etu:liste') && !tabHidden('etu:suivi')) _etuFicheTab = 'suivi';
     const s = d.student;
     const nb = (_etuData.students || []).find(x => x.id === s.id) || {};
     const onglet = (cle, libelle, titre) => `<button type="button" class="subtab${
         _etuFicheTab === cle ? ' active' : ''}" title="${esc(titre)}"
         onclick="showEtuFicheTab('${cle}')">${esc(libelle)}</button>`;
     document.getElementById('etu-content').innerHTML = `
-        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
             <button class="btn btn-secondary btn-sm" onclick="fermerEtudiant()">${
                 _etuVue === 'convoquer' ? '← Étudiants à convoquer' : '← Liste des étudiants'}</button>
-            ${s.photo ? `<img src="${_photoUrl(s)}" alt="" style="width:36px;height:45px;object-fit:cover;border-radius:4px">` : ''}
-            <h2 style="margin:0">${esc(s.nom || '')} <span style="font-weight:400">${esc(s.prenom || '')}</span></h2>
-            ${s.numero ? `<span style="color:#6b7280;font-size:.85rem">n° ${esc(s.numero)}</span>` : ''}
-            ${nb.promotion ? `<span style="color:#6b7280;font-size:.85rem">${esc(nb.promotion)}${
+            ${s.photo ? `<img src="${_photoUrl(s)}" alt="" style="width:40px;height:50px;object-fit:cover;border-radius:4px">` : ''}
+            <h2 style="margin:0;font-size:1.35rem">${esc(s.nom || '')} <span style="font-weight:400">${esc(s.prenom || '')}</span></h2>
+            ${s.numero ? `<span style="color:#4b5563;font-size:.95rem">n° ${esc(s.numero)}</span>` : ''}
+            ${nb.promotion ? `<span style="color:#4b5563;font-size:.95rem">${esc(nb.promotion)}${
                 nb.annee ? ' · année ' + nb.annee : ''}</span>` : ''}
         </div>
-        <div class="subtabs" style="margin-bottom:12px">
+        <div class="subtabs" style="margin-bottom:16px">
             ${tabHidden('etu:liste') ? '' : onglet('infos', 'Informations', "État civil, profil, dossier de candidature et cohortes traversées")
                 + onglet('notes', 'Notes et résultats', "Le relevé de toute sa scolarité, matière par matière")}
-            ${tabHidden('etu:suivi') ? '' : onglet('suivi', 'Suivi', "Évolution des moyennes face à la promotion, motifs de convocation, commentaires, signalements et entretiens")}
+            ${tabHidden('etu:suivi') ? '' : (canEditTab('etu:suivi') ? onglet('signalement', 'Signalement',
+                    "Écrire un commentaire ou signaler un problème, reprendre ce que vous avez écrit") : '')
+                + onglet('suivi', 'Suivi', "Motifs de convocation, journal des commentaires et signalements, évolution des moyennes face à la promotion")}
         </div>
         ${corpsFiche(d)}`;
 }
 
 // ===== SUIVI PÉDAGOGIQUE =====
-// Le sous-onglet « Suivi » de la fiche (évolution, motifs, journal) et la vue
-// « À convoquer » de l'onglet Étudiants. Le serveur calcule tout — moyennes,
-// référence de la promotion, motifs — ; l'écran lit, et écrit le journal.
+// Les sous-onglets « Signalement » (écrire commentaires et signalements, reprendre
+// les siens) et « Suivi » (motifs, journal en lecture, entretiens, évolution) de la
+// fiche, et la vue « À convoquer » de l'onglet Étudiants. Le serveur calcule tout
+// — moyennes, référence de la promotion, motifs — ; l'écran lit, et écrit le journal.
 let _etuSuivi = null;          // payload /students/<id>/suivi de la fiche ouverte
 let _etuSuiviCharge = null;    // fiche dont le suivi est en cours de chargement
 let _suiviGroupe = 'gim';      // séries affichées : gim (moyenne et UE) ou dom (domaines)
 let _suiviSem = null;          // rang du semestre affiché dans l'étoile (null = le dernier)
-let _suiviForm = null;         // entrée en cours d'écriture : {kind, id, valeurs}
+// Entrées en cours d'écriture, {kind, id, jeton, valeurs} : l'entretien dans Suivi,
+// le commentaire ou signalement dans Signalement — chacune garde son brouillon
+// quand on passe d'un sous-onglet à l'autre.
+let _suiviForm = null;
+let _signalForm = null;
 let _convData = null;          // payload /suivi/convoquer
 let _convPerime = false;       // une écriture dans une fiche a pu changer la liste
 let _convFiltres = { promo: '', face: '', tous: false, q: '' };
@@ -7364,13 +7415,14 @@ const _spFr = v => v === null || v === undefined ? '—' : Number(v).toFixed(2).
 const _spAn = u => String(u || '').replace(/^20(\d\d)-20(\d\d)$/, '$1-$2');
 
 function _spPastille(txt, bg, fg, titre) {
-    return `<span title="${esc(titre || '')}" style="display:inline-block;padding:1px 8px;border-radius:999px;
-        font-size:.72rem;font-weight:600;background:${bg};color:${fg};white-space:nowrap">${esc(txt)}</span>`;
+    return `<span title="${esc(titre || '')}" style="display:inline-block;padding:2px 9px;border-radius:999px;
+        font-size:.76rem;font-weight:600;background:${bg};color:${fg};white-space:nowrap">${esc(txt)}</span>`;
 }
-function _spMotif(m) {
+// `grand` : dans la fiche, à taille de lecture ; sinon (liste À convoquer) compact
+function _spMotif(m, grand) {
     const [lib, bg, fg] = _SP_TYPES[m.type] || [m.type, '#f3f4f6', '#374151'];
-    return `<div style="display:flex;gap:6px;align-items:baseline;margin:2px 0">${_spPastille(lib, bg, fg)}
-        <span style="font-size:.8rem" title="${esc(m.detail || '')}">${esc(m.texte)}</span></div>`;
+    return `<div style="display:flex;gap:8px;align-items:baseline;margin:${grand ? '5px' : '2px'} 0">${_spPastille(lib, bg, fg)}
+        <span style="font-size:${grand ? '.92rem' : '.8rem'}" title="${esc(m.detail || '')}">${esc(m.texte)}</span></div>`;
 }
 function _spEtat(e) {
     if (!e) return '';
@@ -7391,9 +7443,12 @@ async function loadSuiviFiche(force) {
     } finally {
         if (_etuSuiviCharge === pid) _etuSuiviCharge = null;
     }
-    if (_etuSelected === pid && _etuFicheTab === 'suivi') renderEtudiantFiche();
+    if (_etuSelected === pid && _ficheSuivi()) renderEtudiantFiche();
 }
 
+// Suivi se lit : motifs de convocation, journal (commentaires et signalements
+// en lecture seule — ils s'écrivent dans Signalement), puis l'évolution. Seuls
+// les entretiens, affaire de la direction, s'y rédigent, avec la convocation.
 function studentSuivi() {
     const d = _etuSuivi;
     if (!d || d._pid !== _etuSelected) {
@@ -7401,20 +7456,22 @@ function studentSuivi() {
         return '<div class="spinner">Chargement du suivi…</div>';
     }
     if (d._erreur) return `<div class="empty">Suivi indisponible : ${esc(d._erreur)}</div>`;
-    return suiviBandeau(d) + suiviEvolution(d) + suiviJournal(d);
+    // Entretien repris puis supprimé entre-temps : le formulaire n'a plus d'objet
+    if (_suiviForm && _suiviForm.id && !(d.journal || []).some(x => x.id === _suiviForm.id)) _suiviForm = null;
+    return suiviBandeau(d) + (_suiviForm ? spFormulaire(d, 'suivi') : '') + suiviJournal(d) + suiviEvolution(d);
 }
 
 // Motifs de convocation du moment, et l'état de la convocation (direction)
 function suiviBandeau(d) {
     const dr = d.droits || {};
     let motifs;
-    if (d.motifs === null) motifs = `<div style="font-size:.84rem;color:#6b7280">Pas inscrit dans l'année active :
+    if (d.motifs === null) motifs = `<div class="fiche-aide">Pas inscrit dans l'année active :
         aucun motif n'est calculé.</div>`;
-    else if (!d.motifs.length) motifs = `<div style="font-size:.84rem;color:#166534">Rien à signaler
+    else if (!d.motifs.length) motifs = `<div style="color:#166534">Rien à signaler
         pour l'instant${d.en_cours && !d.en_cours.sem ? " (pas encore de note cette année)" : ''}.</div>`;
-    else motifs = d.motifs.map(_spMotif).join('');
+    else motifs = d.motifs.map(m => _spMotif(m, true)).join('');
     // Redoublant : l'année qu'il refait, ses notes ne font pas convoquer
-    if (d.en_cours && d.en_cours.redouble) motifs += `<div style="font-size:.8rem;color:#6b7280;margin-top:4px">Refait
+    if (d.en_cours && d.en_cours.redouble) motifs += `<div class="fiche-aide" style="margin-top:8px">Refait
         l'année ${d.en_cours.redouble} : ses notes ne le font pas convoquer cette année — seul un signalement de comportement
         ou de fraude le peut.</div>`;
     const etat = !dr.voir_direction || d.motifs === null ? ''
@@ -7424,18 +7481,17 @@ function suiviBandeau(d) {
     const bouton = (lib, action, titre) => `<button class="btn btn-secondary btn-sm" onclick="${action}"
         title="${esc(titre || '')}">${lib}</button>`;
     const e = d.etat && d.etat.etat;
-    const actions = dr.direction && d.motifs !== null ? [
+    const actions = (dr.direction && d.motifs !== null ? [
         e !== 'CONVOQUE' ? bouton('Convoquer', "suiviConvocation('CONVOQUE')", "Convocation envoyée aujourd'hui : il reste dans la liste jusqu'à son entretien") : '',
         e !== 'ECARTE' && e !== 'RECU' ? bouton('Écarter', "suiviConvocation('ECARTE')", "Pas besoin de le recevoir pour ces motifs : il ne reviendra dans la liste qu'avec un nouveau motif") : '',
         e ? bouton('Réinitialiser', 'suiviConvocation(null)', "Efface l'état de convocation") : '',
-    ].join('') : '';
-    return `<div style="border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;margin-bottom:14px;background:#fafafa">
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
-            <strong>${dr.voir_direction ? 'Motifs de convocation' : "Points d'attention"}</strong>
-            ${d.en_cours ? `<span style="font-size:.8rem;color:#6b7280">${esc(d.en_cours.promo)} · année ${d.en_cours.year}${
-                d.en_cours.sem ? ' · ' + esc(d.en_cours.sem) : ''}</span>` : ''}
-            ${etat}<span style="margin-left:auto;display:inline-flex;gap:6px;flex-wrap:wrap">${actions}</span>
-        </div>${motifs}</div>`;
+    ].join('') : '') + (dr.direction ? bouton('+ Entretien', "ouvrirSuiviForm('ENTRETIEN')",
+        "Rédiger le compte rendu d'un entretien : l'étudiant est alors noté reçu") : '');
+    const accent = d.motifs === null ? '#d1d5db' : d.motifs.length ? '#f87171' : '#4ade80';
+    return _ficheBloc(dr.voir_direction ? 'Motifs de convocation' : "Points d'attention", motifs, {
+        accent, actions,
+        sous: d.en_cours ? `${esc(d.en_cours.promo)} · année ${d.en_cours.year}${d.en_cours.sem ? ' · ' + esc(d.en_cours.sem) : ''}` : '',
+        extra: etat ? `<span style="display:inline-flex;gap:6px;flex-wrap:wrap">${etat}</span>` : '' });
 }
 
 function _spSeries(ev, groupe) {
@@ -7445,23 +7501,23 @@ function _spSeries(ev, groupe) {
 function suiviEvolution(d) {
     const ev = d.evolution || {};
     const pts = ev.points || [];
-    const titre = `<div class="section-title">Évolution <span style="font-weight:400;color:#9ca3af;font-size:.82rem">
-        — son profil au semestre choisi, face au semestre précédent et à sa promotion (moyenne ± un écart-type)</span></div>`;
-    if (!pts.length) return titre + '<div class="empty">Pas encore de notes.</div>';
+    const titre = 'Évolution', sous = 'son profil au semestre choisi, face au semestre précédent et à sa promotion (moyenne ± un écart-type)';
+    if (!pts.length) return _ficheBloc(titre, '<div class="fiche-aide">Pas encore de notes.</div>', { sous });
     const groupes = [['gim', 'Moyenne et UE'], ['dom', 'Domaines']]
         .filter(([g]) => _spSeries(ev, g).length);
     if (!groupes.some(([g]) => g === _suiviGroupe)) _suiviGroupe = groupes[0][0];
     if (_suiviSem === null || _suiviSem >= pts.length) _suiviSem = pts.length - 1;
     const series = _spSeries(ev, _suiviGroupe);
     const onglet = (actif, lib, action, aide) => `<button type="button" class="subtab${actif ? ' active' : ''}"
-        style="font-size:.78rem;padding:3px 10px" onclick="${action}" title="${esc(aide || '')}">${lib}</button>`;
-    return titre + `<div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        onclick="${action}" title="${esc(aide || '')}">${lib}</button>`;
+    return _ficheBloc(titre, `<div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:10px">
             <div class="subtabs" style="margin:0">${groupes.map(([g, lib]) =>
                 onglet(g === _suiviGroupe, lib, `choisirSuiviGroupe('${g}')`)).join('')}</div>
             <div class="subtabs" style="margin:0">${pts.map((p, i) => onglet(i === _suiviSem,
                 `${esc(p.sem)} <span style="color:#9ca3af">${esc(_spAn(p.annee_univ))}</span>`,
                 `choisirSuiviSem(${i})`, `Afficher le ${p.sem} ${p.annee_univ} (${p.promo})`)).join('')}</div>
-        </div>` + suiviEtoile(pts, series) + suiviTableau(pts, series, ev.annees || []) + suiviEtoilesMatieres(pts);
+        </div>` + suiviEtoile(pts, series) + suiviTableau(pts, series, ev.annees || []), { sous })
+        + suiviEtoilesMatieres(pts);
 }
 
 function choisirSuiviGroupe(g) { _suiviGroupe = g; renderEtudiantFiche(); }
@@ -7575,7 +7631,7 @@ function spEtoile(cfg) {
         <svg id="${id}" viewBox="0 ${haut} ${W} ${bas - haut}" style="width:100%;height:auto;display:block">${defs}${grille}${promo}${
             avant}${choisi}${fleches}${pointsAvant}${pointsChoisi}${etiquettes}${cibles}</svg>
         <div id="${id}-bulle" style="position:absolute;display:none;pointer-events:none;background:#111827;color:#fff;
-            font-size:.78rem;line-height:1.35;padding:6px 9px;border-radius:6px;max-width:260px;z-index:5"></div></div>`;
+            font-size:.84rem;line-height:1.4;padding:7px 10px;border-radius:6px;max-width:280px;z-index:5"></div></div>`;
 }
 
 function spBulle(id, i) {
@@ -7607,7 +7663,7 @@ function suiviEtoile(pts, series) {
     let resume = '';
     if (_suiviGroupe === 'gim' && ok(cur.valeurs.gim)) {
         const g = cur.valeurs.gim, r = (cur.ref || {}).gim;
-        resume = `<div style="font-size:.88rem;margin:2px 0 6px">Moyenne des UE au ${esc(cur.sem)} ${esc(_spAn(cur.annee_univ))} :
+        resume = `<div style="font-size:.98rem;margin:2px 0 10px">Moyenne des UE au ${esc(cur.sem)} ${esc(_spAn(cur.annee_univ))} :
             <strong>${_spFr(g)}</strong> ${prev && ok(prev.valeurs.gim) ? _spDelta(g - prev.valeurs.gim) : ''}${
             r ? ` <span style="color:#6b7280">— promo ${_spFr(r.moy)} ± ${_spFr(r.ecart)}</span>` : ''}</div>`;
     }
@@ -7620,15 +7676,15 @@ function suiviEtoile(pts, series) {
             bulle: `<strong>${esc(s.nom)}</strong><br>${esc(cur.sem)} ${esc(_spAn(cur.annee_univ))} : <strong>${_spFr(v)}</strong>${
                 ok(pv) ? ` <span style="color:#d1d5db">(${esc(prev.sem)} : ${_spFr(pv)})</span>` : ''}${_spBullePromo(v, ref)}` };
     });
-    if (axes.length < 3) return resume + `<div style="font-size:.84rem;color:#6b7280;margin:6px 0 12px">Il faut au moins trois
+    if (axes.length < 3) return resume + `<div class="fiche-aide" style="margin:6px 0 12px">Il faut au moins trois
         séries notées au ${esc(cur.sem)} pour un graphique en étoile : les valeurs sont dans le tableau.</div>`;
     const avecPromo = axes.every(a => a.ref), avecAvant = !!prev && axes.some(a => ok(a.pv));
     const cle = (dessin, lib) => `<span style="display:inline-flex;align-items:center;gap:6px;margin-right:18px;white-space:nowrap">
         <svg width="30" height="14" aria-hidden="true">${dessin}</svg>${lib}</span>`;
     const fleche = (c, gauche) => `<line x1="${gauche ? 26 : 4}" y1="7" x2="${gauche ? 9 : 21}" y2="7" stroke="${c}" stroke-width="2.5"/>
         <path d="${gauche ? 'M3,7 L11,3 L11,11 z' : 'M27,7 L19,3 L19,11 z'}" fill="${c}"/>`;
-    return resume + `<div style="border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px;background:#fff;margin-bottom:10px">
-        <div style="font-size:.78rem;color:#374151;display:flex;flex-wrap:wrap;row-gap:4px">
+    return resume + `<div style="border:1px solid #eef0f3;border-radius:8px;padding:10px 12px;background:#fcfcfd;margin-bottom:14px">
+        <div style="font-size:.84rem;color:#374151;display:flex;flex-wrap:wrap;row-gap:4px">
             ${cle(`<line x1="2" y1="7" x2="28" y2="7" stroke="${C.choisi}" stroke-width="2"/><circle cx="15" cy="7" r="4.5" fill="${C.choisi}" stroke="#fff" stroke-width="2"/>`,
                 `${esc(cur.sem)} ${esc(_spAn(cur.annee_univ))} (semestre choisi)`)}
             ${avecAvant ? cle(`<line x1="2" y1="7" x2="28" y2="7" stroke="${C.avant}" stroke-width="1.5"/><circle cx="15" cy="7" r="4" fill="#fff" stroke="${C.avant}" stroke-width="2"/>`,
@@ -7637,7 +7693,7 @@ function suiviEtoile(pts, series) {
             ${avecPromo ? cle(`<rect x="1" y="2" width="28" height="10" rx="2" fill="${C.promo}" fill-opacity=".22"/><line x1="2" y1="7" x2="28" y2="7" stroke="${C.promo}" stroke-width="2"/>`,
                 'Promotion : moyenne ± un écart-type') : ''}</div>
         ${spEtoile({ id: 'sp-etoile', W: 880, R: 220, axes, avant: avecAvant, fleches: avecAvant })}
-        <div style="font-size:.72rem;color:#6b7280">De 0 au centre à 20 au bord ; l'anneau plus marqué est la moyenne de 10.${avecAvant
+        <div style="font-size:.8rem;color:#6b7280">De 0 au centre à 20 au bord ; l'anneau plus marqué est la moyenne de 10.${avecAvant
             ? " Les flèches vont du semestre précédent au semestre choisi, à partir d'un point d'écart." : ''}
             Survolez une branche pour le détail ; choisissez un autre semestre au-dessus ou dans le tableau.</div></div>`;
 }
@@ -7648,9 +7704,9 @@ function suiviEtoilesMatieres(pts) {
     const C = _SP_ETOILE, ok = v => v !== undefined && v !== null;
     const cartes = pts.map((p, i) => {
         const mats = (p.matieres || []).filter(m => ok(m.note));
-        const tete = `<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:2px">
-            <strong>${esc(p.sem)} ${esc(_spAn(p.annee_univ))}</strong>
-            <span style="font-size:.76rem;color:#6b7280">${esc(p.promo)} · ${mats.length} matière(s) notée(s)${
+        const tete = `<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+            <strong style="font-size:.98rem">${esc(p.sem)} ${esc(_spAn(p.annee_univ))}</strong>
+            <span style="font-size:.84rem;color:#6b7280">${esc(p.promo)} · ${mats.length} matière(s) notée(s)${
                 ok(p.valeurs.gim) ? ' · moyenne des UE ' + _spFr(p.valeurs.gim) : ''}</span></div>`;
         const axes = mats.map(m => {
             const court = m.court && m.court.length <= 12 ? m.court : m.code;
@@ -7661,14 +7717,13 @@ function suiviEtoilesMatieres(pts) {
                     : `Note : <strong>${_spFr(m.note)}</strong>`}${_spBullePromo(m.note, m.ref)}` };
         });
         const corps = axes.length >= 3 ? spEtoile({ id: 'sp-mat-' + i, W: 560, R: 150, axes, petit: true })
-            : '<div style="font-size:.82rem;color:#9ca3af;margin:8px 0">Moins de trois matières notées : voir le bulletin.</div>';
+            : '<div class="fiche-aide" style="margin:8px 0">Moins de trois matières notées : voir le bulletin.</div>';
         return `<div style="border:${i === _suiviSem ? '2px solid ' + C.choisi : '1px solid #e5e7eb'};border-radius:8px;
-            padding:8px 10px;background:#fff">${tete}${corps}</div>`;
+            padding:10px 12px;background:#fff">${tete}${corps}</div>`;
     }).join('');
-    return `<div class="section-title" style="margin-top:16px">Par matière <span style="font-weight:400;color:#9ca3af;font-size:.82rem">
-            — une étoile par semestre, une branche par matière notée : sa note (point bleu) face à la promotion
-            (moyenne ± un écart-type, en gris)</span></div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:12px;margin-bottom:10px">${cartes}</div>`;
+    return _ficheBloc('Par matière',
+        `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:14px">${cartes}</div>`,
+        { sous: 'une étoile par semestre, une branche par matière notée : sa note (point bleu) face à la promotion (moyenne ± un écart-type, en gris)' });
 }
 
 // Le tableau des mêmes séries, tous semestres : la valeur (fond des notes),
@@ -7680,7 +7735,7 @@ function suiviTableau(pts, series, annees) {
     const tete = pts.map((p, i) => `<th onclick="choisirSuiviSem(${i})" title="Afficher ce semestre dans l'étoile"
         style="text-align:center;white-space:nowrap;cursor:pointer;${i === _suiviSem
             ? 'background:#eef4fc;box-shadow:inset 0 -2px 0 #2a78d6' : ''}">${esc(p.sem)}
-        <div style="font-weight:400;color:#9ca3af;font-size:.68rem">${esc(_spAn(p.annee_univ))} · ${esc(p.promo)}</div></th>`).join('');
+        <div style="font-weight:400;color:#6b7280;font-size:.74rem;text-transform:none">${esc(_spAn(p.annee_univ))} · ${esc(p.promo)}</div></th>`).join('');
     const cellule = (s, p, i) => {
         const v = p.valeurs[s.cle], r = (p.ref || {})[s.cle];
         if (v === undefined || v === null) return '<td style="text-align:center;color:#d1d5db">—</td>';
@@ -7690,104 +7745,211 @@ function suiviTableau(pts, series, annees) {
             if (w !== undefined && w !== null) { avant = w; break; }
         }
         const delta = avant === null ? null : v - avant;
-        const fleche = delta === null || Math.abs(delta) < 0.005 ? '' : `<span style="font-size:.68rem;font-weight:600;color:${
+        const fleche = delta === null || Math.abs(delta) < 0.005 ? '' : `<span style="font-size:.76rem;font-weight:600;color:${
             delta > 0 ? '#15803d' : '#b91c1c'}">${delta > 0 ? '▲' : '▼'}${_spFr(Math.abs(delta))}</span>`;
         const z = r && r.ecart ? (v - r.moy) / r.ecart : null;
         const titre = r ? `Promo : ${_spFr(r.moy)} ± ${_spFr(r.ecart)} (${r.n} étudiants)${z === null ? ''
             : ` — ${z >= 0 ? '+' : '−'}${_spFr(Math.abs(z))} écart-type`}` : '';
         return `<td style="text-align:center;${_noteFond({ note: v })}" title="${esc(titre)}"><strong>${_spFr(v)}</strong> ${fleche}
-            ${r ? `<div style="font-size:.66rem;color:#4b5563">promo ${_spFr(r.moy)} ± ${_spFr(r.ecart)}</div>` : ''}</td>`;
+            ${r ? `<div style="font-size:.74rem;color:#4b5563">promo ${_spFr(r.moy)} ± ${_spFr(r.ecart)}</div>` : ''}</td>`;
     };
     const lignes = series.map(s => `<tr><td style="text-align:left;white-space:nowrap">${s.cle === 'gim'
             ? `<strong>${esc(s.nom)}</strong>` : esc(s.nom)}</td>${pts.map((p, i) => cellule(s, p, i)).join('')}</tr>`).join('');
     const assiduite = _suiviGroupe !== 'gim' ? '' : `<tr><td style="text-align:left;color:#6b7280">Absences injustifiées</td>${
-            pts.map(p => `<td style="text-align:center;font-size:.8rem;color:${(p.absences || 0) > 8 ? '#b91c1c' : '#6b7280'}">${
+            pts.map(p => `<td style="text-align:center;font-size:.86rem;color:${(p.absences || 0) > 8 ? '#b91c1c' : '#6b7280'}">${
                 p.absences === null || p.absences === undefined ? '—' : String(p.absences).replace('.', ',') + ' h'}</td>`).join('')}</tr>
-        <tr><td style="text-align:left;color:#6b7280">ABI</td>${pts.map(p => `<td style="text-align:center;font-size:.8rem;color:${
+        <tr><td style="text-align:left;color:#6b7280">ABI</td>${pts.map(p => `<td style="text-align:center;font-size:.86rem;color:${
             p.abi ? '#b91c1c' : '#9ca3af'}">${p.abi || '—'}</td>`).join('')}</tr>`;
-    const jurys = annees.filter(a => a.decision).map(a => `<span style="margin-right:12px">Année ${a.year} <span style="color:#9ca3af">${
+    const jurys = annees.filter(a => a.decision).map(a => `<span style="margin-right:14px">Année ${a.year} <span style="color:#6b7280">${
         esc(_spAn(a.annee_univ))}</span> : ${_spPastille(a.decision, _JURY_COUL[a.decision] || '#f3f4f6', '#111827', _JURY_LIB[a.decision] || '')}</span>`).join('');
-    return `<div style="overflow-x:auto;margin-bottom:6px"><table class="pn-table" style="width:auto;min-width:420px;table-layout:auto">
+    return `<div style="overflow-x:auto"><table class="pn-table" style="width:auto;min-width:420px;table-layout:auto;margin-bottom:10px">
             <thead><tr><th style="text-align:left">Série</th>${tete}</tr></thead><tbody>${lignes}${assiduite}</tbody></table></div>
-        ${jurys ? `<div style="font-size:.8rem;margin:4px 0 6px">Jury : ${jurys}</div>` : ''}`;
+        ${jurys ? `<div style="font-size:.9rem;margin:2px 0 0">Jury : ${jurys}</div>` : ''}`;
 }
 
-// Journal : commentaires et signalements de l'équipe, entretiens (direction)
+// Journal (Suivi) : commentaires et signalements de l'équipe, entretiens
+// (direction), en lecture. Seuls les entretiens s'y reprennent ; commentaires et
+// signalements s'écrivent et se reprennent dans le sous-onglet Signalement.
 function suiviJournal(d) {
     const dr = d.droits || {};
-    const bouton = (kind, lib) => `<button class="btn btn-secondary btn-sm" onclick="ouvrirSuiviForm('${kind}')">${lib}</button>`;
-    const boutons = (dr.ecrire ? bouton('COMMENT', '+ Commentaire') + bouton('SIGNAL', '+ Signaler un problème') : '')
-        + (dr.direction ? bouton('ENTRETIEN', '+ Entretien') : '');
-    const entrees = (d.journal || []).map(e => suiviEntree(e, d)).join('')
-        || '<div style="color:#9ca3af;font-size:.85rem;margin:6px 0 0 2px">Rien d\'écrit pour l\'instant.</div>';
-    return `<div class="section-title" style="margin-top:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">Journal de suivi
-            <span style="font-weight:400;color:#9ca3af;font-size:.82rem">— ${dr.voir_direction
-                ? 'commentaires, signalements et entretiens' : "commentaires et signalements de l'équipe"}, du plus récent au plus ancien</span>
-            <span style="margin-left:auto;display:inline-flex;gap:6px;flex-wrap:wrap">${boutons}</span></div>
-        ${_suiviForm ? suiviFormulaire(d) : ''}${entrees}`;
+    const j = d.journal || [];
+    const compte = (kind, un, plus) => { const n = j.filter(e => e.kind === kind).length; return n ? `${n} ${n > 1 ? plus : un}` : ''; };
+    const nonTraites = j.filter(e => e.kind === 'SIGNAL' && e.statut !== 'TRAITE').length;
+    const resume = [compte('COMMENT', 'commentaire', 'commentaires'),
+        compte('SIGNAL', 'signalement', 'signalements') + (nonTraites ? ` (${nonTraites} non traité${nonTraites > 1 ? 's' : ''})` : ''),
+        compte('ENTRETIEN', 'entretien', 'entretiens')].filter(Boolean).join(' · ');
+    const ecrire = dr.ecrire && canEditTab('etu:suivi') ? `<div class="fiche-aide" style="margin-bottom:12px">Pour écrire un
+        commentaire ou signaler un problème, ou reprendre ce que vous avez écrit : sous-onglet
+        <a href="#" onclick="showEtuFicheTab('signalement');return false">Signalement</a>.</div>` : '';
+    const entrees = j.map(e => suiviEntree(e, d, { gerer: e.kind === 'ENTRETIEN' })).join('')
+        || '<div class="fiche-aide">Rien d\'écrit pour l\'instant.</div>';
+    return _ficheBloc('Journal de suivi', ecrire + entrees, {
+        sous: `${dr.voir_direction ? 'commentaires, signalements et entretiens' : "commentaires et signalements de l'équipe"}, du plus récent au plus ancien`,
+        actions: resume ? `<span style="font-size:.86rem;font-weight:600;color:#374151">${resume}</span>` : '' });
 }
 
-function suiviEntree(e, d) {
+// Une entrée du journal. `o.gerer` : ses commandes (modifier, supprimer, marquer
+// traité) quand on a la main dessus ; `o.enCours` : celle qu'on est en train de reprendre.
+function suiviEntree(e, d, o = {}) {
     const [lib, bg, fg] = _SP_KIND_LIB[e.kind] || [e.kind, '#f3f4f6', '#374151'];
     const moi = (d.droits || {}).moi;
-    const tete = [_spPastille(lib, bg, fg), `<strong style="font-size:.85rem">${_dateFr(e.date_fait)}</strong>`,
-        e.motif ? `<span style="font-size:.8rem;font-weight:600">${esc(e.motif)}</span>` : '',
-        e.matiere ? `<span style="font-size:.8rem;color:#4b5563">${esc(e.matiere)}</span>` : '',
-        `<span style="font-size:.75rem;color:#9ca3af">par ${esc(e.auteur)}${e.auteur === moi ? ' (vous)' : ''}</span>`].filter(Boolean).join(' ');
+    const tete = [_spPastille(lib, bg, fg), `<strong style="font-size:.92rem">${_dateFr(e.date_fait)}</strong>`,
+        e.motif ? `<span style="font-size:.9rem;font-weight:600">${esc(e.motif)}</span>` : '',
+        e.matiere ? `<span style="font-size:.88rem;color:#4b5563">${esc(e.matiere)}</span>` : '',
+        `<span style="font-size:.84rem;color:#6b7280">par ${esc(e.auteur)}${e.auteur === moi ? ' (vous)' : ''}</span>`].filter(Boolean).join(' ');
     const statut = e.kind !== 'SIGNAL' ? '' : e.statut === 'TRAITE'
         ? _spPastille('Traité' + (e.traite_le ? ' le ' + _dateFr(e.traite_le) : ''), '#dcfce7', '#166534', e.traite_par ? 'par ' + e.traite_par : '')
         : _spPastille('Non traité', '#fee2e2', '#b91c1c');
-    const actions = !e.modifiable ? '' : `<span style="margin-left:auto;display:inline-flex;gap:4px">
+    const enCours = o.enCours ? _spPastille('en cours de modification', '#e0e7ff', '#3730a3') : '';
+    const ouvrir = e.kind === 'ENTRETIEN' ? 'ouvrirSuiviForm' : 'ouvrirSignalForm';
+    const actions = !(o.gerer && e.modifiable) ? '' : `<span style="margin-left:auto;display:inline-flex;gap:4px">
         ${e.kind === 'SIGNAL' ? `<button class="btn btn-secondary btn-sm" onclick="suiviStatut(${e.id}, '${e.statut === 'TRAITE' ? 'OUVERT' : 'TRAITE'}')">${
             e.statut === 'TRAITE' ? 'Rouvrir' : 'Marquer traité'}</button>` : ''}
-        <button class="btn btn-secondary btn-sm" onclick="ouvrirSuiviForm('${e.kind}', ${e.id})" title="Modifier">✎</button>
+        <button class="btn btn-secondary btn-sm" onclick="${ouvrir}('${e.kind}', ${e.id})" title="Modifier">✎</button>
         <button class="btn btn-secondary btn-sm" onclick="supprimerSuivi(${e.id})" title="Supprimer" style="color:#b91c1c">🗑</button></span>`;
-    const texte = t => t ? `<div style="white-space:pre-wrap;font-size:.86rem;margin-top:4px">${esc(t)}</div>` : '';
+    const texte = t => t ? `<div style="white-space:pre-wrap;font-size:.93rem;line-height:1.5;color:#1f2937;margin-top:6px">${esc(t)}</div>` : '';
     const corps = e.kind !== 'ENTRETIEN' ? texte(e.texte) : [
-        e.participants ? `<div style="font-size:.8rem;color:#4b5563;margin-top:2px">Participants : ${esc(e.participants)}</div>` : '',
+        e.participants ? `<div style="font-size:.88rem;color:#4b5563;margin-top:4px">Participants : ${esc(e.participants)}</div>` : '',
         texte(e.texte),
-        e.decisions ? `<div style="font-size:.84rem;margin-top:4px"><strong>Décisions :</strong>
+        e.decisions ? `<div style="font-size:.92rem;line-height:1.5;margin-top:6px"><strong>Décisions :</strong>
             <span style="white-space:pre-wrap">${esc(e.decisions)}</span></div>` : '',
-        e.prochain ? `<div style="font-size:.8rem;color:#166534;margin-top:4px">Prochain point : ${_dateFr(e.prochain)}</div>` : ''].join('');
-    return `<div style="border:1px solid #e5e7eb;border-left:4px solid ${fg};border-radius:8px;padding:8px 12px;margin-bottom:8px;background:#fff">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${tete} ${statut}${actions}</div>${corps}</div>`;
+        e.prochain ? `<div style="font-size:.88rem;color:#166534;margin-top:6px">Prochain point : ${_dateFr(e.prochain)}</div>` : ''].join('');
+    return `<div style="border:1px solid ${o.enCours ? '#a5b4fc' : '#e5e7eb'};border-left:4px solid ${fg};border-radius:8px;
+        padding:10px 14px;margin-bottom:10px;background:${o.enCours ? '#f5f7ff' : '#fff'}">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${tete} ${statut}${enCours}${actions}</div>${corps}</div>`;
+}
+
+// ----- Fiche › Signalement -----
+// Le pupitre du journal : on y écrit un commentaire ou un signalement, et on y
+// reprend ce qu'on a écrit (les siens ; tout pour la direction, qui modère). Le
+// sous-onglet Suivi ne fait que les afficher.
+function studentSignalement() {
+    const d = _etuSuivi;
+    if (!d || d._pid !== _etuSelected) {
+        loadSuiviFiche();
+        return '<div class="spinner">Chargement du journal…</div>';
+    }
+    if (d._erreur) return `<div class="empty">Journal indisponible : ${esc(d._erreur)}</div>`;
+    if (!(d.droits || {}).ecrire) return `<div class="empty">Votre profil ne permet pas d'écrire au journal de suivi :
+        il se lit dans le sous-onglet Suivi.</div>`;
+    // Entrée reprise puis supprimée entre-temps : on repart d'un formulaire vierge
+    if (_signalForm && _signalForm.id && !(d.journal || []).some(x => x.id === _signalForm.id)) _signalForm = null;
+    if (!_signalForm) _signalForm = _spNouveauForm('COMMENT');
+    return spFormulaire(d, 'signal') + signalListe(d);
+}
+
+// Ce qu'on peut reprendre : ses propres écrits, ou tous pour la direction
+function signalListe(d) {
+    const dr = d.droits || {};
+    const liste = (d.journal || []).filter(e => e.kind !== 'ENTRETIEN' && e.modifiable);
+    const enCours = _signalForm && _signalForm.id;
+    const entrees = liste.map(e => suiviEntree(e, d, { gerer: true, enCours: e.id === enCours })).join('')
+        || `<div class="fiche-aide">${dr.direction ? 'Aucun commentaire ni signalement pour cet étudiant.'
+            : "Vous n'avez rien écrit sur cet étudiant pour l'instant."}</div>`;
+    const lien = `<a href="#" onclick="showEtuFicheTab('suivi');return false">Suivi</a>`;
+    return _ficheBloc(dr.direction ? 'Commentaires et signalements' : 'Vos commentaires et signalements',
+        `<div class="fiche-aide" style="margin-bottom:12px">${dr.direction
+            ? `Ceux de toute l'équipe : la direction peut les reprendre, les supprimer et clore les signalements.
+               Le journal complet, entretiens compris, se lit dans ${lien}.`
+            : `Vous reprenez ici ce que vous avez écrit ; le journal de toute l'équipe se lit dans ${lien}.`}
+            Un signalement reste <strong>non traité</strong> tant que son auteur ou la direction ne l'a pas marqué traité.</div>` + entrees,
+        { sous: 'du plus récent au plus ancien' });
 }
 
 const _SP_CHAMPS = ['sp-date', 'sp-motif', 'sp-matiere', 'sp-participants', 'sp-prochain', 'sp-texte', 'sp-decisions'];
+// Le choix offert en tête du sous-onglet Signalement
+const _SP_CHOIX = [
+    ['COMMENT', '💬', 'Ajouter un commentaire', 'Une observation sur son travail ou son attitude, rattachée si besoin à une matière'],
+    ['SIGNAL', '⚠️', 'Signaler un problème', 'Absences, retards, travail non rendu, comportement, fraude, difficultés…'],
+];
 
-// Ce qui est tapé dans le formulaire survit à un nouveau rendu de la fiche (clic
-// sur une courbe, chargement…) : on le relève avant de redessiner.
+let _spJeton = 0;
+function _spNouveauForm(kind, id) { return { kind, id: id || null, jeton: ++_spJeton }; }
+
+// Ce qui est tapé dans un formulaire survit à un nouveau rendu de la fiche (clic
+// sur une courbe, changement de sous-onglet, chargement…) : on le relève avant de
+// redessiner, dans l'entrée que le formulaire affiché représente (son jeton) —
+// jamais dans celle qu'on vient d'ouvrir à sa place.
 function _spBrouillon() {
-    if (!_suiviForm || _suiviForm.frais || !document.getElementById('sp-texte')) return;
-    _suiviForm.valeurs = {};
-    _SP_CHAMPS.forEach(id => { const el = document.getElementById(id); if (el) _suiviForm.valeurs[id] = el.value; });
+    const el = document.getElementById('sp-form');
+    const f = el && [_suiviForm, _signalForm].find(x => x && String(x.jeton) === el.dataset.jeton);
+    if (!f) return;
+    f.valeurs = {};
+    _SP_CHAMPS.forEach(id => { const c = document.getElementById(id); if (c) f.valeurs[id] = c.value; });
 }
 
+// Le formulaire vient d'être dessiné : on l'amène sous les yeux, curseur dans le texte
+function _spMontrerForm() {
+    const el = document.getElementById('sp-form'), t = document.getElementById('sp-texte');
+    if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    if (t) t.focus({ preventScroll: true });
+}
+
+// Entretien (Suivi) : nouveau, ou repris (`id`)
 function ouvrirSuiviForm(kind, id) {
-    _suiviForm = { kind, id: id || null, frais: true };
+    _suiviForm = _spNouveauForm(kind, id);
+    _etuFicheTab = 'suivi';
     renderEtudiantFiche();
-    _suiviForm.frais = false;
-    const t = document.getElementById('sp-texte');
-    if (t) { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); t.focus(); }
+    _spMontrerForm();
 }
 
 function fermerSuiviForm() { _suiviForm = null; renderEtudiantFiche(); }
 
-function suiviFormulaire(d) {
-    const f = _suiviForm;
+// Commentaire ou signalement repris depuis la liste du sous-onglet Signalement
+function ouvrirSignalForm(kind, id) {
+    _signalForm = _spNouveauForm(kind, id);
+    _etuFicheTab = 'signalement';
+    renderEtudiantFiche();
+    _spMontrerForm();
+}
+
+// Formulaire vierge : Effacer (même type), ou Annuler une reprise
+function nouveauSignalForm(kind) {
+    const t = document.getElementById('sp-texte');
+    if (kind && t && t.value.trim() && !confirm('Effacer ce qui est écrit ?')) return;
+    _signalForm = _spNouveauForm(kind || 'COMMENT');
+    renderEtudiantFiche();
+}
+
+// Commentaire ↔ signalement, sans perdre ce qui est déjà tapé (relevé au rendu)
+function choisirSignalKind(kind) {
+    if (!_signalForm || _signalForm.id || _signalForm.kind === kind) return;
+    _signalForm.kind = kind;
+    renderEtudiantFiche();
+    const t = document.getElementById('sp-texte');
+    if (t) t.focus({ preventScroll: true });
+}
+
+// Formulaire d'une entrée du journal : `quel` = 'signal' (commentaire ou
+// signalement, sous-onglet Signalement) ou 'suivi' (entretien, sous-onglet Suivi)
+function spFormulaire(d, quel) {
+    const f = quel === 'signal' ? _signalForm : _suiviForm;
     const e = f.id ? (d.journal || []).find(x => x.id === f.id) || {} : {};
     const val = (id, dflt) => f.valeurs && id in f.valeurs ? f.valeurs[id] : (dflt || '');
-    const st = 'width:100%;padding:5px 7px;border:1px solid #d1d5db;border-radius:6px;font:inherit;box-sizing:border-box';
-    const champ = (label, html) => `<div class="form-group" style="margin:0"><label style="font-size:.78rem">${label}</label>${html}</div>`;
+    const st = 'width:100%;padding:7px 9px;border:1px solid #d1d5db;border-radius:6px;font:inherit;font-size:.92rem;box-sizing:border-box';
+    const champ = (label, html) => `<div class="form-group" style="margin:0"><label>${label}</label>${html}</div>`;
     const ent = f.kind === 'ENTRETIEN', sig = f.kind === 'SIGNAL';
-    return `<div style="border:1px solid #c7d2fe;background:#f8faff;border-radius:8px;padding:12px;margin-bottom:12px">
-        <div style="font-weight:700;margin-bottom:8px">${f.id ? 'Modifier' : 'Nouveau'} : ${esc((_SP_KIND_LIB[f.kind] || [''])[0].toLowerCase())}</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:10px">
+    const fg = (_SP_KIND_LIB[f.kind] || [])[2] || '#6b7280';
+    const choix = quel !== 'signal' ? '' : `<div class="sp-choix-grille">${_SP_CHOIX.map(([k, ic, titre, aide]) => {
+        const [, cbg, cfg] = _SP_KIND_LIB[k], actif = k === f.kind;
+        return `<button type="button" class="sp-choix${actif ? ' actif' : ''}"${f.id ? ' disabled' : ''} aria-pressed="${actif}"
+            ${actif ? `style="border-color:${cfg};background:${cbg}"` : ''} onclick="choisirSignalKind('${k}')">
+            <span class="sp-choix-ic" aria-hidden="true">${ic}</span><span><strong>${titre}</strong><small>${aide}</small></span></button>`;
+    }).join('')}</div>`;
+    const titre = f.id ? `Modifier ${ent ? "l'entretien" : sig ? 'le signalement' : 'le commentaire'} du ${_dateFr(e.date_fait)}`
+        : ent ? 'Nouvel entretien' : 'Écrire au journal de suivi';
+    const sous = f.id ? '' : ent ? "compte rendu — l'étudiant sera noté reçu" : "lu par toute l'équipe pédagogique";
+    const annuler = quel !== 'signal' ? `<button class="btn btn-secondary" onclick="fermerSuiviForm()">Annuler</button>`
+        : f.id ? `<button class="btn btn-secondary" onclick="nouveauSignalForm()">Annuler</button>`
+        : `<button class="btn btn-secondary" onclick="nouveauSignalForm('${f.kind}')" title="Vider le formulaire">Effacer</button>`;
+    const enregistrer = f.id ? 'Enregistrer les modifications' : ent ? "Enregistrer l'entretien"
+        : sig ? 'Enregistrer le signalement' : 'Enregistrer le commentaire';
+    const corps = choix + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:12px">
             ${champ(ent ? "Date de l'entretien" : sig ? 'Date des faits' : 'Date',
                 `<input type="date" id="sp-date" value="${esc(val('sp-date', e.date_fait || _isoAujourdhui()))}" style="${st}">`)}
             ${sig ? champ('Motif', `<select id="sp-motif" style="${st}">${(d.signal_motifs || []).map(m =>
                 `<option${m === val('sp-motif', e.motif) ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select>`) : ''}
-            ${champ('Matière <span style="color:#9ca3af">(facultatif)</span>', `<input id="sp-matiere" list="sp-matieres"
+            ${champ('Matière <span style="color:#9ca3af;font-weight:400">(facultatif)</span>', `<input id="sp-matiere" list="sp-matieres"
                 value="${esc(val('sp-matiere', e.matiere))}" style="${st}"><datalist id="sp-matieres">${
                 (d.matieres || []).map(m => `<option value="${esc(m)}">`).join('')}</datalist>`)}
             ${ent ? champ('Participants', `<input id="sp-participants" value="${esc(val('sp-participants', e.participants))}"
@@ -7795,28 +7957,28 @@ function suiviFormulaire(d) {
             ${ent ? champ('Prochain point', `<input type="date" id="sp-prochain" value="${esc(val('sp-prochain', e.prochain))}" style="${st}">`) : ''}
         </div>
         ${champ(ent ? 'Compte rendu' : sig ? 'Description des faits' : 'Commentaire',
-            `<textarea id="sp-texte" rows="4" style="${st};resize:vertical">${esc(val('sp-texte', e.texte))}</textarea>`)}
-        ${ent ? `<div style="margin-top:8px">${champ('Décisions, engagements', `<textarea id="sp-decisions" rows="2"
-            style="${st};resize:vertical">${esc(val('sp-decisions', e.decisions))}</textarea>`)}</div>` : ''}
-        <div style="font-size:.74rem;color:#6b7280;margin:8px 0">${sig ? `Seul un signalement de <strong>comportement</strong> ou de
+            `<textarea id="sp-texte" rows="5" style="${st};resize:vertical;line-height:1.5">${esc(val('sp-texte', e.texte))}</textarea>`)}
+        ${ent ? `<div style="margin-top:12px">${champ('Décisions, engagements', `<textarea id="sp-decisions" rows="3"
+            style="${st};resize:vertical;line-height:1.5">${esc(val('sp-decisions', e.decisions))}</textarea>`)}</div>` : ''}
+        <div class="fiche-aide" style="margin:10px 0 0">${sig ? `Seul un signalement de <strong>comportement</strong> ou de
             <strong>fraude</strong> non traité met l'étudiant dans la liste à convoquer ; les autres restent au journal. ` : ''}L'étudiant peut demander
             à lire ce journal : écrivez des faits observables, sans jugement sur la personne, et aucune information de santé ou de vie privée.</div>
-        <div style="display:flex;gap:8px;justify-content:flex-end">
-            <button class="btn btn-secondary btn-sm" onclick="fermerSuiviForm()">Annuler</button>
-            <button class="btn btn-primary btn-sm" onclick="enregistrerSuivi()">Enregistrer</button></div></div>`;
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">${annuler}
+            <button class="btn btn-primary" onclick="enregistrerSuivi('${quel}')">${enregistrer}</button></div>`;
+    return _ficheBloc(titre, corps, { sous, accent: fg, attrs: `id="sp-form" data-jeton="${f.jeton}"` });
 }
 
 // Chaque écriture renvoie le suivi à jour de la fiche ; la liste À convoquer,
-// elle, sera recalculée à son prochain affichage. `fermer` : le formulaire
-// ouvert se referme (après l'enregistrement de son contenu).
-async function _spEcrire(url, options, message, fermer) {
+// elle, sera recalculée à son prochain affichage. `apres` : ce qu'il advient du
+// formulaire une fois son contenu enregistré.
+async function _spEcrire(url, options, message, apres) {
     const pid = _etuSelected;
     try {
         const d = await api(url, options);
         if (_etuSelected !== pid) return true;      // une autre fiche a été ouverte entre-temps
         _etuSuivi = Object.assign(d, { _pid: pid });
         _convPerime = true;
-        if (fermer) _suiviForm = null;
+        if (apres) apres();
         renderEtudiantFiche();
         if (message) toast(message);
         return true;
@@ -7826,8 +7988,8 @@ async function _spEcrire(url, options, message, fermer) {
     }
 }
 
-function enregistrerSuivi() {
-    const f = _suiviForm;
+function enregistrerSuivi(quel) {
+    const f = quel === 'signal' ? _signalForm : _suiviForm;
     if (!f) return;
     const val = id => { const el = document.getElementById(id); return el ? el.value : undefined; };
     const corps = { kind: f.kind, date_fait: val('sp-date'), texte: val('sp-texte'), matiere: val('sp-matiere') };
@@ -7835,9 +7997,14 @@ function enregistrerSuivi() {
     if (f.kind === 'ENTRETIEN') Object.assign(corps, {
         participants: val('sp-participants'), decisions: val('sp-decisions'), prochain: val('sp-prochain') });
     const pid = _etuSelected;
+    const message = f.id ? 'Enregistré' : { ENTRETIEN: "Entretien enregistré — l'étudiant est noté reçu",
+        SIGNAL: 'Signalement enregistré', COMMENT: 'Commentaire enregistré' }[f.kind];
+    // L'entretien se referme ; Signalement repart d'un formulaire vierge du même type
     return _spEcrire(f.id ? `/students/${pid}/suivi/${f.id}` : `/students/${pid}/suivi`,
-        { method: f.id ? 'PUT' : 'POST', body: JSON.stringify(corps) },
-        f.kind === 'ENTRETIEN' && !f.id ? "Entretien enregistré — l'étudiant est noté reçu" : 'Enregistré', true);
+        { method: f.id ? 'PUT' : 'POST', body: JSON.stringify(corps) }, message, () => {
+            if (quel === 'signal') _signalForm = _spNouveauForm(f.id ? 'COMMENT' : f.kind);
+            else _suiviForm = null;
+        });
 }
 
 function suiviStatut(id, statut) {
@@ -7961,7 +8128,7 @@ function renderConvoquerLignes() {
             e.gim !== null && e.gim !== undefined ? `<strong>${_spFr(e.gim)}</strong>
                 <div style="font-size:.7rem;color:#6b7280">${esc(e.sem || '')}</div>` : '<span style="color:#d1d5db">—</span>'}</td>
         <td>${_spTrace(e.trace)}</td>
-        <td style="min-width:340px">${(e.motifs || []).map(_spMotif).join('')}</td>
+        <td style="min-width:340px">${(e.motifs || []).map(m => _spMotif(m)).join('')}</td>
         <td style="white-space:nowrap">${et ? _spEtat(e.etat) : _spPastille('À convoquer', '#fee2e2', '#b91c1c')}${e.nouveau
             ? `<div style="margin-top:3px">${_spPastille('nouveau motif', '#fef3c7', '#b45309', "Apparu depuis l'entretien ou la mise à l'écart")}</div>` : ''}
             ${e.entretien ? `<div style="font-size:.72rem;color:#6b7280;margin-top:3px">Entretien le ${_dateFr(e.entretien)}${
@@ -8109,9 +8276,9 @@ function tableauUEStatique(a) {
     const ues = a.ues || [];
     const vide = !ues.some(u => u.odd != null || u.even != null || u.annual != null);
     if (!ues.length || vide)
-        return `<div style="color:#9ca3af;font-size:.8rem;margin:4px 0 0 2px">Pas encore de notes${
+        return `<div class="fiche-aide" style="margin:4px 0 0 2px">Pas encore de notes${
             a.en_cours ? ' — année en cours' : ''}.</div>`;
-    return `<div style="overflow:auto;margin:6px 0 2px"><table class="pn-table" style="width:auto;min-width:340px">
+    return `<div style="overflow:auto;margin:6px 0 4px"><table class="pn-table" style="width:auto;min-width:340px;margin-bottom:6px">
         <thead><tr><th style="text-align:left">UE</th><th>${esc(a.semestres[0])}</th><th>${esc(a.semestres[1])}</th>
             <th title="Moyenne de l'année">Année</th><th title="ADM admis · ADMJ admis par jury · CMP compensée · AJ ajournée">Décision</th></tr></thead>
         <tbody>${ues.map(u => `<tr>
@@ -8119,8 +8286,8 @@ function tableauUEStatique(a) {
             <td style="text-align:center">${note(u.odd)}</td>
             <td style="text-align:center">${note(u.even)}</td>
             <td style="text-align:center;font-weight:600">${note(u.annual)}</td>
-            <td style="text-align:center">${u.code ? `<span style="padding:1px 7px;border-radius:6px;
-                font-size:.7rem;font-weight:700;background:${_JURY_COUL[u.code] || '#f3f4f6'}">${esc(u.code)}</span>`
+            <td style="text-align:center">${u.code ? `<span style="padding:2px 8px;border-radius:6px;
+                font-size:.78rem;font-weight:700;background:${_JURY_COUL[u.code] || '#f3f4f6'}">${esc(u.code)}</span>`
                 : '<span style="color:#d1d5db">—</span>'}</td></tr>`).join('')}</tbody>${tableauUEAjustements(a)}</table></div>`;
 }
 
@@ -8140,9 +8307,9 @@ function tableauUEAjustements(a) {
     const bon = a.bonus && a.bonus.points > 0 && ues.some(u => u.annual != null) ? a.bonus : null;
     if (!pens.some(Boolean) && !bon) return '';
     const vide = '<td></td>';
-    const td = (txt, titre, coul) => `<td style="text-align:center;font-size:.78rem;color:${coul}"
+    const td = (txt, titre, coul) => `<td style="text-align:center;font-size:.86rem;color:${coul}"
         title="${esc(titre)}">${txt}</td>`;
-    const lib = (txt, titre) => `<td style="text-align:left;font-size:.76rem;color:#6b7280" title="${esc(titre)}">${txt}</td>`;
+    const lib = (txt, titre) => `<td style="text-align:left;font-size:.84rem;color:#6b7280" title="${esc(titre)}">${txt}</td>`;
     return `<tfoot>${pens.some(Boolean) ? `<tr>${lib("Pénalité d'assiduité",
             'Déjà retranchée de chaque moyenne d\'UE du semestre — barème IUT Toulon : 0 jusqu\'à 8 h, −0,05 pt/h de la 9e à la 18e h, −0,1 pt/h ensuite')}
         ${pens.map(p => p ? td('−' + Number(p.points).toFixed(2), _fmtPts(p.heures) + " h d'absence injustifiée", '#b91c1c') : vide).join('')}
@@ -8155,8 +8322,8 @@ function tableauUEAjustements(a) {
 // sous-cohorte, la décision de jury, la moyenne générale, la mobilité.
 function teteAnnee(a) {
     const etiq = (txt, bg, titre) => `<span title="${esc(titre || '')}" style="display:inline-block;
-        padding:1px 7px;border-radius:6px;font-size:.68rem;font-weight:700;background:${bg};margin-left:6px">${esc(txt)}</span>`;
-    return `Année ${a.year} <span style="color:#9ca3af">${esc(a.annee_univ || '')}</span>
+        padding:2px 8px;border-radius:6px;font-size:.76rem;font-weight:700;background:${bg};margin-left:6px">${esc(txt)}</span>`;
+    return `<strong>Année ${a.year}</strong> <span style="color:#6b7280">${esc(a.annee_univ || '')}</span>
         · ${esc(a.formation)}${a.jury ? ` · <strong>${esc(_JURY_LIB[a.jury] || a.jury)}</strong>` : ''}${
         a.en_cours ? etiq('en cours', '#dcfce7', "Année que suit sa cohorte pendant l'année universitaire active") : ''}${
         a.gim != null ? ` <span style="color:#6b7280">— moyenne générale <strong>${a.gim.toFixed(2)}</strong></span>` : ''}${
@@ -8190,11 +8357,11 @@ function _noteCell(m) {
     if (m.mention)
         return `<span title="${m.mention === 'ABI' ? 'Absence injustifiée — comptée 0'
             : 'Matière neutralisée — hors moyenne, faute d\'enseignant'}"
-            style="font-size:.7rem;font-weight:700;color:${m.mention === 'ABI' ? '#b91c1c' : '#6b7280'}">${esc(m.mention)}</span>`;
+            style="font-size:.78rem;font-weight:700;color:${m.mention === 'ABI' ? '#b91c1c' : '#6b7280'}">${esc(m.mention)}</span>`;
     if (m.note === null || m.note === undefined) return '<span style="color:#d1d5db">—</span>';
     // Moyenne de saisie enseignante à laquelle il manque une sous-matière
     if (m.incomplete) return `<span title="${esc('Moyenne INCOMPLÈTE des sous-notes — il manque : ' + m.incomplete.join(', '))}"
-        style="cursor:help">${Number(m.note).toFixed(2)} <span style="font-size:.66rem;font-weight:700;color:#b45309">⚠ incompl.</span></span>`;
+        style="cursor:help">${Number(m.note).toFixed(2)} <span style="font-size:.74rem;font-weight:700;color:#b45309">⚠ incompl.</span></span>`;
     return Number(m.note).toFixed(2);
 }
 
@@ -8219,10 +8386,11 @@ function bulletinSemestre(s) {
         const lignes = (u.matieres || []).map(m => {
             const n = notes[m.code] || {};
             return `<tr style="background:${_KIND_COUL[n.kind] || '#fff'}">
-                <td style="white-space:nowrap;font-size:.76rem"><strong>${esc(m.code)}</strong></td>
-                <td style="font-size:.76rem;color:#6b7280;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n.label || '')}</td>
-                <td style="text-align:center;font-size:.72rem;color:#9ca3af">${m.coeff}</td>
-                <td style="text-align:center;font-weight:600;font-size:.8rem;${_noteFond(n)}">${_noteCell(n)}</td></tr>`;
+                <td style="white-space:nowrap;font-size:.86rem"><strong>${esc(m.code)}</strong></td>
+                <td style="font-size:.86rem;color:#4b5563;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                    title="${esc(n.label || '')}">${esc(n.label || '')}</td>
+                <td style="text-align:center;font-size:.82rem;color:#6b7280">${m.coeff}</td>
+                <td style="text-align:center;font-weight:600;font-size:.9rem;${_noteFond(n)}">${_noteCell(n)}</td></tr>`;
         }).join('');
         // Une note matière incomplète rend la moyenne de l'UE provisoire
         const incompl = (u.matieres || []).filter(m => (notes[m.code] || {}).incomplete).map(m => m.code);
@@ -8235,23 +8403,23 @@ function bulletinSemestre(s) {
         // précédent (redoublant), qui ne doit rien à la pénalité de ce semestre.
         const avecPen = pen && u.moyenne != null && u.brute != null
             && !(u.red && u.red.source === 'ancienne');
-        const etapes = avecPen ? `<tr><td colspan="3" style="text-align:right;font-size:.76rem;color:#6b7280">Moyenne des notes</td>
-                <td style="text-align:center;font-size:.8rem">${Number(u.brute).toFixed(2)}</td></tr>
-            <tr><td colspan="3" style="text-align:right;font-size:.76rem;color:#b91c1c"
+        const etapes = avecPen ? `<tr><td colspan="3" style="text-align:right;font-size:.84rem;color:#6b7280">Moyenne des notes</td>
+                <td style="text-align:center;font-size:.88rem">${Number(u.brute).toFixed(2)}</td></tr>
+            <tr><td colspan="3" style="text-align:right;font-size:.84rem;color:#b91c1c"
                     title="Barème IUT Toulon : 0 jusqu'à 8 h, −0,05 pt/h de la 9e à la 18e h, −0,1 pt/h ensuite">
                     Pénalité d'assiduité (${_fmtPts(pen.heures)} h)</td>
-                <td style="text-align:center;font-size:.8rem;color:#b91c1c">−${Number(pen.points).toFixed(2)}</td></tr>` : '';
-        return `<div style="margin:0 12px 10px 0">
-            <table class="pn-table" style="width:auto;min-width:300px;table-layout:auto">
+                <td style="text-align:center;font-size:.88rem;color:#b91c1c">−${Number(pen.points).toFixed(2)}</td></tr>` : '';
+        return `<div style="margin:0 14px 12px 0">
+            <table class="pn-table" style="width:auto;min-width:320px;table-layout:auto;margin-bottom:0">
                 <thead><tr><th colspan="2" style="text-align:left;background:#ede9fe;color:#4c1d95">UE${u.num} · ${esc(u.name)}</th>
                     <th title="Coefficient de la matière dans cette UE" style="background:#ede9fe;color:#4c1d95">coef</th>
                     <th style="background:#ede9fe;color:#4c1d95">note</th></tr></thead>
                 <tbody>${lignes}</tbody>
-                <tfoot>${etapes}<tr><td colspan="3" style="text-align:right;font-size:.78rem;font-weight:600">Moyenne de l'UE${
+                <tfoot>${etapes}<tr><td colspan="3" style="text-align:right;font-size:.86rem;font-weight:600">Moyenne de l'UE${
                     u.red ? _redMark(u.red) : ''}</td>
                     <td title="${esc((u.red ? _redTitle(u.red, s.semester) : '')
                         + (incompl.length && u.moyenne != null ? (u.red ? ' — ' : '') + 'Moyenne provisoire : note(s) matière incomplète(s) (' + incompl.join(', ') + ')' : ''))}"
-                        style="text-align:center;font-weight:700;font-size:.85rem;${stl}">${moy}</td></tr></tfoot>
+                        style="text-align:center;font-weight:700;font-size:.94rem;${stl}">${moy}</td></tr></tfoot>
             </table></div>`;
     }).join('');
     const dans = new Set((s.ues || []).flatMap(u => (u.matieres || []).map(m => m.code)));
@@ -8267,11 +8435,11 @@ function bulletinSemestre(s) {
             <span style="color:#9ca3af">— la meilleure des deux semestres s'ajoute à chaque moyenne annuelle d'UE</span></span>`;
         return `${esc(m.label || m.code)} ${_noteCell(m)}`;
     };
-    const horsBloc = hors.length ? `<div style="font-size:.78rem;color:#6b7280;margin:2px 0 8px;display:flex;flex-direction:column;gap:2px">
+    const horsBloc = hors.length ? `<div style="font-size:.88rem;color:#4b5563;margin:2px 0 10px;display:flex;flex-direction:column;gap:3px">
         ${hors.map(m => `<div>${horsItem(m)}</div>`).join('')}</div>` : '';
-    return `<div style="margin:0 0 14px">
-        <div style="font-size:.82rem;font-weight:700;color:#4c1d95;margin-bottom:4px">Bulletin ${esc(s.semester)}
-            <span style="font-weight:400;color:#9ca3af">— ${s.notees} note(s) sur ${(s.matieres || []).length} matières</span></div>
+    return `<div style="margin:0 0 16px">
+        <div style="font-size:.95rem;font-weight:700;color:#4c1d95;margin-bottom:8px">Bulletin ${esc(s.semester)}
+            <span style="font-weight:400;color:#6b7280;font-size:.88rem">— ${s.notees} note(s) sur ${(s.matieres || []).length} matières</span></div>
         ${horsBloc}
         <div style="display:flex;flex-wrap:wrap">${ues}</div></div>`;
 }
@@ -8283,29 +8451,26 @@ function studentNotes(d) {
         (a.releves || []).forEach(s => { if (!semestres.includes(s.semester)) semestres.push(s.semester); })));
     semestres.sort();
     const bouton = (val, lib, titre) => `<button type="button" class="subtab${_etuSemestre === val ? ' active' : ''}"
-        title="${esc(titre)}" style="font-size:.78rem;padding:3px 10px" onclick="showEtuSemestre('${val}')">${esc(lib)}</button>`;
-    const choix = semestres.length > 1 ? `<div class="subtabs" style="margin-bottom:10px">
+        title="${esc(titre)}" style="font-size:.86rem;padding:5px 12px" onclick="showEtuSemestre('${val}')">${esc(lib)}</button>`;
+    const choix = semestres.length > 1 ? `<div class="subtabs" style="margin-bottom:12px">
         ${bouton('', 'Toute la scolarité', 'Tous les semestres, année par année')}
         ${semestres.map(s => bouton(s, s, 'Le bulletin de ' + s)).join('')}</div>` : '';
 
+    // Un cadre par cohorte traversée ; ses années séparées par un filet
     const cartes = (d.parcours || []).map(i => {
         const annees = (i.annees || []).map(a => {
             const releves = (a.releves || []).filter(s => !_etuSemestre || s.semester === _etuSemestre);
             if (!releves.length) return '';
-            return `<div style="margin:10px 0 14px">
-                <div style="font-size:.9rem;margin-bottom:6px">${teteAnnee(a)}</div>
+            return `<div class="fiche-annee">
+                <div style="font-size:1rem;color:#1f2937;margin-bottom:10px">${teteAnnee(a)}</div>
                 ${releves.map(bulletinSemestre).join('')}
                 ${_etuSemestre ? '' : tableauUEStatique(a)}</div>`;
         }).filter(Boolean).join('');
         if (!annees) return '';
-        return `<div style="border-left:3px solid #c7d2fe;padding:6px 0 6px 10px;margin-bottom:14px">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                <strong>${esc(i.promotion)}</strong>
-                <span style="color:#6b7280;font-size:.82rem">entré en année ${i.entry_year} · ${esc(i.formation)}</span>
-                ${i.origin ? `<span style="color:#6b7280;font-size:.8rem">— venu de ${esc(i.origin.promo)}</span>` : ''}
-            </div>${annees}</div>`;
+        return _ficheBloc(esc(i.promotion), annees, {
+            sous: `entré en année ${i.entry_year} · ${esc(i.formation)}${i.origin ? ` — venu de ${esc(i.origin.promo)}` : ''}` });
     }).filter(Boolean).join('');
-    return choix + `<div style="font-size:.82rem;color:#6b7280;margin-bottom:10px">
+    return choix + `<div class="fiche-aide" style="margin-bottom:14px">
             Le bulletin de chaque semestre : les matières qui composent chaque UE, leur coefficient et
             leur note, puis la moyenne de l'UE. Une matière compte dans plusieurs UE, avec des poids
             différents. Les années faites dans une autre cohorte y figurent aussi — elles se lisent sur
@@ -8339,10 +8504,10 @@ function studentSections(d, opts = {}) {
     const s = d.student;
     const dis = !editUI('etu:liste') ? ' disabled' : '';
     const champ = (label, field, aide) => `<div class="form-group" style="margin:0">
-        <label style="font-size:.78rem" title="${esc(aide || '')}">${label}</label>
+        <label title="${esc(aide || '')}">${label}</label>
         <input value="${esc(s[field] || '')}"${dis} onchange="changeRegistreField('${field}', this.value)"></div>`;
     const nombre = (label, field, aide) => `<div class="form-group" style="margin:0">
-        <label style="font-size:.78rem" title="${esc(aide || '')}">${label}</label>
+        <label title="${esc(aide || '')}">${label}</label>
         <input type="number" min="0" max="20" value="${s[field] == null ? '' : s[field]}"${dis}
             onchange="changeRegistreField('${field}', this.value)"></div>`;
     const liste = (label, field, aide) => {
@@ -8352,7 +8517,7 @@ function studentSections(d, opts = {}) {
             return `<option${o === cur ? ' selected' : ''}${lab ? ` title="${esc(lab)}"` : ''}>${esc(o)}</option>`;
         })).join('');
         return `<div class="form-group" style="margin:0">
-            <label style="font-size:.78rem" title="${esc(aide || '')}">${label}</label>
+            <label title="${esc(aide || '')}">${label}</label>
             <select${dis} onchange="changeRegistreField('${field}', this.value)">${opts2}</select></div>`;
     };
     // Sa photo, reprise d'un trombinoscope (onglet Étudiants) ou déposée ici.
@@ -8360,7 +8525,7 @@ function studentSections(d, opts = {}) {
         ${s.photo ? `<img src="${_photoUrl(s)}" alt="Photo de ${esc((s.nom || '') + ' ' + (s.prenom || ''))}"
                 style="width:110px;height:138px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb;display:block">`
             : `<div style="width:110px;height:138px;border-radius:8px;border:1px dashed #d1d5db;display:flex;
-                align-items:center;justify-content:center;color:#9ca3af;font-size:.75rem">Pas de photo</div>`}
+                align-items:center;justify-content:center;color:#9ca3af;font-size:.82rem">Pas de photo</div>`}
         ${dis ? '' : `<div style="display:flex;gap:4px;justify-content:center;margin-top:6px">
             <label class="btn btn-secondary btn-sm" style="cursor:pointer;margin:0"
                 title="Une image (JPEG, PNG, WebP…) : elle est enregistrée en JPEG">${s.photo ? 'Changer' : 'Ajouter'}
@@ -8369,15 +8534,15 @@ function studentSections(d, opts = {}) {
             ${s.photo ? `<button type="button" class="btn btn-secondary btn-sm" onclick="retirerPhoto()"
                 title="Retirer la photo">✕</button>` : ''}</div>`}
     </div>`;
-    const identite = `<div class="section-title">Informations du candidat</div>
-        <div style="display:flex;gap:16px;align-items:flex-start">${photo}
-        <div style="flex:1;min-width:0;display:grid;grid-template-columns:repeat(${opts.large ? 4 : 3}, 1fr);gap:10px">
+    const identite = _ficheBloc('Informations du candidat', `
+        <div style="display:flex;gap:18px;align-items:flex-start">${photo}
+        <div style="flex:1;min-width:0;display:grid;grid-template-columns:repeat(${opts.large ? 4 : 3}, 1fr);gap:12px">
             ${champ('Nom', 'nom')}${champ('Prénom', 'prenom')}
             ${champ('N° Apogée', 'numero', "Numéro Apogée de l'étudiant")}
             ${champ('Naissance', 'naissance', 'Date de naissance (jj/mm/aaaa)')}
             <div class="form-group" style="margin:0">
-                <label style="font-size:.78rem" title="Âge aujourd'hui, calculé depuis la date de naissance">Âge</label>
-                <div style="padding:7px 0;font-size:.9rem">${_ageDepuis(s.naissance) == null
+                <label title="Âge aujourd'hui, calculé depuis la date de naissance">Âge</label>
+                <div style="padding:7px 0;font-size:.92rem">${_ageDepuis(s.naissance) == null
                     ? '<span style="color:#9ca3af">—</span>' : _ageDepuis(s.naissance) + ' ans'}</div></div>
             ${liste('Sexe', 'sexe')}
             ${liste('Recrutement', 'recrutement', 'PS : ParcourSup · EC : eCandidat · ADIUT : candidats étrangers · HP : hors procédure')}
@@ -8385,52 +8550,49 @@ function studentSections(d, opts = {}) {
             ${liste('Série de bac', 'bac', "Reprise du classement ParcourSup ; à compléter à la main pour qui n'y figure pas")}
             ${nombre('Ans depuis le bac', 'bac_ecart', "Années entre l'obtention du bac et l'entrée en BUT — 0 : entré juste après")}
             ${liste('Études antérieures', 'cursus', "Études suivies entre le bac et le BUT — à renseigner dès que « Ans depuis le bac » est supérieur à 0")}
-        </div></div>`;
+        </div></div>`);
 
     const etiq = (txt, bg, titre) => `<span title="${esc(titre || '')}" style="display:inline-block;
-        padding:1px 7px;border-radius:6px;font-size:.68rem;font-weight:700;background:${bg};margin-left:6px">${esc(txt)}</span>`;
+        padding:2px 8px;border-radius:6px;font-size:.76rem;font-weight:700;background:${bg};margin-left:6px">${esc(txt)}</span>`;
 
-    const ligneAnnee = a => `<li>${teteAnnee(a)}</li>`;
+    const ligneAnnee = a => `<li style="margin:3px 0">${teteAnnee(a)}</li>`;
 
     const cartes = (d.parcours || []).map(i => {
         const annees = (i.annees || []).length
-            ? '<ul style="margin:6px 0 0;padding-left:18px;font-size:.85rem">'
+            ? '<ul style="margin:8px 0 0;padding-left:20px;font-size:.92rem">'
               + i.annees.map(ligneAnnee).join('') + '</ul>'
-            : `<div style="color:#9ca3af;font-size:.82rem;margin-top:4px">Hors effectif de cette cohorte.</div>`;
+            : `<div class="fiche-aide" style="margin-top:6px">Hors effectif de cette cohorte.</div>`;
         const venu = i.origin
             ? etiq(i.origin.reason === 'CESURE' ? 'reprise après césure' : 'redoublant', '#ddd6fe',
                    'Fiche ouverte depuis la promotion ' + i.origin.promo)
-              + `<span style="color:#6b7280;font-size:.8rem"> venu de ${esc(i.origin.promo)}</span>` : '';
+              + `<span style="color:#6b7280;font-size:.86rem"> venu de ${esc(i.origin.promo)}</span>` : '';
         const sortie = [i.abandon ? 'abandon — ' + i.abandon : '',
                         i.cesure_year ? 'césure en année ' + i.cesure_year : '',
                         i.devenir ? i.devenir.resume : ''].filter(Boolean).join(' · ');
-        return `<div style="border-left:3px solid #c7d2fe;padding:6px 0 6px 10px;margin-bottom:10px">
+        return `<div style="border-left:3px solid #c7d2fe;padding:8px 0 8px 14px;margin-bottom:12px">
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                <strong>${esc(i.promotion)}</strong>
-                <span style="color:#6b7280;font-size:.82rem">entré en année ${i.entry_year} · ${esc(i.formation)}</span>
+                <strong style="font-size:.98rem">${esc(i.promotion)}</strong>
+                <span style="color:#4b5563;font-size:.88rem">entré en année ${i.entry_year} · ${esc(i.formation)}</span>
                 ${etiq(i.statut, _statutColor(i.statut))}${venu}
-                ${i.nb_notes ? `<span style="margin-left:auto;color:#9ca3af;font-size:.78rem">${i.nb_notes} note(s)</span>` : ''}
+                ${i.nb_notes ? `<span style="margin-left:auto;color:#6b7280;font-size:.84rem">${i.nb_notes} note(s)</span>` : ''}
             </div>
             ${annees}
-            ${sortie ? `<div style="color:#6b7280;font-size:.82rem;margin-top:4px">${esc(sortie)}</div>` : ''}
+            ${sortie ? `<div style="color:#4b5563;font-size:.88rem;margin-top:6px">${esc(sortie)}</div>` : ''}
         </div>`;
     }).join('');
-    const parcours = `<div class="section-title" style="margin-top:16px">Parcours
-            <span style="font-weight:400;color:#9ca3af;font-size:.82rem">— les cohortes qu'il a traversées</span></div>`
-        + (cartes || '<div class="empty">Aucune inscription.</div>');
+    const parcours = _ficheBloc('Parcours', cartes || '<div class="fiche-aide">Aucune inscription.</div>',
+        { sous: "les cohortes qu'il a traversées" });
 
     // Dossier ParcourSup : il vient de l'import du classement, mais reste saisissable
     // — un candidat hors ParcourSup (eCandidat, ADIUT, hors procédure) ou qu'un homonyme a fait
     // manquer au rapprochement n'a aucun autre moyen d'avoir son dossier.
     const psChamp = c => `<div class="form-group" style="margin:0">
-        <label style="font-size:.74rem;color:#6b7280" title="${esc(c.title || '')}">${esc(c.label)}</label>
+        <label style="color:#4b5563" title="${esc(c.title || '')}">${esc(c.label)}</label>
         <input value="${esc(s[c.field] === null || s[c.field] === undefined ? '' : s[c.field])}"${dis}
             ${c.type === 'INTEGER' || c.type === 'REAL' ? ' style="max-width:110px"' : ''}
             onchange="changeRegistreField('${c.field}', this.value)"></div>`;
-    const ps = `<div class="section-title" style="margin-top:16px">Dossier ParcourSup
-            <span style="font-weight:400;color:#9ca3af;font-size:.82rem">— repris de l'import du classement, modifiable</span></div>
-        <div style="display:grid;grid-template-columns:repeat(${opts.large ? 4 : 2}, 1fr);gap:8px">
-            ${(d.ps_columns || []).map(psChamp).join('')}</div>`;
+    const ps = _ficheBloc('Dossier ParcourSup', `<div style="display:grid;grid-template-columns:repeat(${opts.large ? 4 : 2}, 1fr);gap:12px">
+            ${(d.ps_columns || []).map(psChamp).join('')}</div>`, { sous: "repris de l'import du classement, modifiable" });
 
     return identite + parcours + ps + candidatureSection(d.candidature);
 }
@@ -8442,14 +8604,14 @@ function candidatureSection(c) {
     const vide = '<span style="color:#9ca3af">—</span>';
     const v = x => (x === null || x === undefined || x === '') ? vide : esc(String(x));
     const item = (label, val, title) => `<div title="${esc(title || '')}">
-        <div style="font-size:.72rem;color:#6b7280">${label}</div><div style="font-size:.86rem">${val}</div></div>`;
+        <div style="font-size:.82rem;color:#6b7280">${label}</div><div style="font-size:.92rem;margin-top:1px">${val}</div></div>`;
     const o = c.origine || {}, b = c.bac || {}, bo = c.bourse || {}, ct = c.contact || {};
     const joint = arr => arr.filter(Boolean).join(' · ');
-    const grille = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px">
+    const grille = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px 14px">
         ${item('Pays', v(o.pays))}
         ${item('Département', o.departement ? esc(o.departement_code + ' — ' + o.departement) : vide, 'Déduit du code postal du candidat')}
         ${o.ville_source === 'lycee'
-            ? item('Ville (lycée)', esc(o.ville) + (o.ville_departement ? ` <span style="color:#9ca3af;font-size:.74rem">(${esc(o.ville_departement)})</span>` : ''),
+            ? item('Ville (lycée)', esc(o.ville) + (o.ville_departement ? ` <span style="color:#6b7280;font-size:.82rem">(${esc(o.ville_departement)})</span>` : ''),
                    "Commune de l'établissement d'origine le plus récent — cet export ne donne pas la ville du candidat")
             : item('Ville', v(o.ville), 'Commune de résidence du candidat')}
         ${item('Code postal', v(o.code_postal))}
@@ -8464,9 +8626,9 @@ function candidatureSection(c) {
         ${item('Artiste confirmé', c.artiste ? '<strong>Oui</strong> — ' + v(joint([c.artiste.discipline, c.artiste.instrument])) : 'Non')}
         ${c.avis_ce ? item('Avis du chef d\'établissement', v(c.avis_ce), 'Capacité à réussir (fiche Avenir)') : ''}
     </div>`;
-    const detail = (titre, obj, labels) => obj ? `<details style="margin-top:8px">
-        <summary style="cursor:pointer;font-size:.84rem;font-weight:600">${titre}</summary>
-        <dl style="display:grid;grid-template-columns:max-content 1fr;gap:3px 12px;font-size:.82rem;margin:6px 0 0 14px">
+    const detail = (titre, obj, labels) => obj ? `<details style="margin-top:10px">
+        <summary style="cursor:pointer;font-size:.92rem;font-weight:600">${titre}</summary>
+        <dl style="display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;font-size:.9rem;margin:8px 0 0 16px">
             ${labels.filter(([k]) => obj[k]).map(([k, l]) =>
                 `<dt style="color:#6b7280">${l}</dt><dd style="margin:0;white-space:pre-line">${esc(obj[k])}</dd>`).join('')}
         </dl></details>` : '';
@@ -8478,11 +8640,11 @@ function candidatureSection(c) {
             ['discipline', 'Discipline'], ['instrument', 'Instrument'], ['annees_pratique', 'Années de pratique'],
             ['groupe', 'Groupe'], ['ecole', 'École'], ['evenements', 'Événements'], ['prix', 'Prix / titres'],
             ['entrainement', 'Pratique hebdo']]);
-    const th = 'style="text-align:left;font-size:.76rem;padding:4px 6px;background:#f3f4f6"';
-    const td = 'style="font-size:.8rem;padding:4px 6px;vertical-align:top;border-top:1px solid #e5e7eb"';
-    const thNote = 'style="text-align:center;font-size:.76rem;padding:4px 6px;background:#f3f4f6;width:48px"';
-    const tdNote = 'style="text-align:center;font-size:.8rem;padding:4px 6px;vertical-align:top;border-top:1px solid #e5e7eb"';
-    const petit = t => t ? `<div style="color:#6b7280;font-size:.74rem;white-space:pre-line">${esc(t)}</div>` : '';
+    const th = 'style="text-align:left;font-size:.8rem;padding:6px 8px;background:#f3f4f6"';
+    const td = 'style="font-size:.88rem;padding:6px 8px;vertical-align:top;border-top:1px solid #e5e7eb"';
+    const thNote = 'style="text-align:center;font-size:.8rem;padding:6px 8px;background:#f3f4f6;width:52px"';
+    const tdNote = 'style="text-align:center;font-size:.88rem;padding:6px 8px;vertical-align:top;border-top:1px solid #e5e7eb"';
+    const petit = t => t ? `<div style="color:#6b7280;font-size:.82rem;white-space:pre-line">${esc(t)}</div>` : '';
     const scol = (c.scolarite || []).map(e => `<tr>
         <td ${td}>${esc(e.annee)}</td><td ${td}>${v(e.niveau)}</td>
         <td ${td}>${v(joint([e.formation !== e.niveau ? e.formation : '', e.filiere, e.serie, e.specialite]))}${petit(e.section)}${petit(e.elements)}</td>
@@ -8492,20 +8654,19 @@ function candidatureSection(c) {
         const lignes = bl.matieres.map(m => `<tr><td ${td}>${esc(m.matiere)}</td>
             ${m.notes.slice(0, n).map(x => `<td ${tdNote}>${x == null ? vide : x}</td>`).join('')}
             <td ${td}>${m.appreciations.slice(0, n).map((a, i) => a ? `<div><strong>${ab}${i + 1}</strong> : ${esc(a)}</div>` : '').join('') || vide}</td></tr>`).join('');
-        return `<div style="margin-top:10px;font-size:.84rem;font-weight:600">${v(bl.annee)}${bl.niveau ? ' — ' + esc(bl.niveau) : ''}${bl.serie ? ' · ' + esc(bl.serie) : ''}
+        return `<div style="margin:14px 0 6px;font-size:.92rem;font-weight:600">${v(bl.annee)}${bl.niveau ? ' — ' + esc(bl.niveau) : ''}${bl.serie ? ' · ' + esc(bl.serie) : ''}
                 <span style="font-weight:400;color:#6b7280">(${sem ? 'semestres' : 'trimestres'})</span></div>
             <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
                 <thead><tr><th ${th}>Matière</th>${Array.from({ length: n }, (_, i) => `<th ${thNote}>${ab}${i + 1}</th>`).join('')}<th ${th}>Appréciations</th></tr></thead>
                 <tbody>${lignes}</tbody></table></div>`;
     }).join('');
-    return `<div class="section-title" style="margin-top:16px">Dossier de candidature
-            <span style="font-weight:400;color:#9ca3af;font-size:.82rem">— export ParcourSup${c.fichier ? ' « ' + esc(c.fichier) + ' »' : ''}${c.imported_at ? ', importé le ' + esc(String(c.imported_at).slice(0, 10)) : ''}</span></div>
-        ${grille}${details}
-        ${scol ? `<div style="margin-top:14px;font-weight:600;font-size:.88rem">Scolarité antérieure</div>
+    return _ficheBloc('Dossier de candidature', `${grille}${details}
+        ${scol ? `<h4>Scolarité antérieure</h4>
             <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
                 <thead><tr><th ${th}>Année</th><th ${th}>Niveau</th><th ${th}>Formation</th><th ${th}>Établissement</th></tr></thead>
                 <tbody>${scol}</tbody></table></div>` : ''}
-        ${bulletins ? `<div style="margin-top:14px;font-weight:600;font-size:.88rem">Bulletins — matières scientifiques et appréciations des enseignants</div>${bulletins}` : ''}`;
+        ${bulletins ? `<h4>Bulletins — matières scientifiques et appréciations des enseignants</h4>${bulletins}` : ''}`,
+        { sous: `export ParcourSup${c.fichier ? ' « ' + esc(c.fichier) + ' »' : ''}${c.imported_at ? ', importé le ' + esc(String(c.imported_at).slice(0, 10)) : ''}` });
 }
 
 function renderStudentCard() {
