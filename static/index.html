@@ -6633,10 +6633,13 @@ async function deleteStudentFiche(sid) {
     if (!s) return;
     const qui = `${s.nom || ''} ${s.prenom || ''}`.trim() || 'cet étudiant';
     const n = s.nb_notes || 0;
+    const o = s.origin && ['RED', 'CESURE'].includes(s.origin.reason) ? s.origin : null;
     if (!confirm(`Supprimer la fiche de ${qui} ?\n\n`
         + `Elle disparaît des 3 années de la cohorte`
         + (n ? `, avec ses ${n} note(s).` : `.`)
         + `\nCette action est irréversible.\n\n`
+        + (o ? `Cette fiche vient ${o.reason === 'RED' ? 'du redoublement' : 'de la reprise après césure'} décidé${o.reason === 'RED' ? '' : 'e'} `
+             + `en ${o.promo} : la décision y redeviendra à prendre (onglet Devenir).\n\n` : '')
         + `S'il ne fait que ne pas poursuivre, utilisez plutôt ⊘ : il sort de l'année `
         + `${_effYear} et des suivantes, mais ses années précédentes sont conservées.`)) return;
     try {

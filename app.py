@@ -1986,6 +1986,11 @@ def _init_promotions_db():
                 _sync_matiere_marks_rule(db)
         except Exception as e:
             _audit('MARKS_RULE_SYNC_ERROR', error=str(e))
+        try:
+            _repair_red_transfers(db)
+        except Exception as e:
+            db.rollback()
+            _audit('RED_REPAIR_ERROR', error=str(e))
     finally:
         db.close()
 
@@ -5264,7 +5269,14 @@ def delete_promotion_student(pid, sid):
         return err
     db = get_promotions_db()
     person_id = _fiche_person(db, sid)
-    db.execute('DELETE FROM promotion_students WHERE id=? AND promotion_id=?', (sid, pid))
+    if db.execute('DELETE FROM promotion_students WHERE id=? AND promotion_id=?', (sid, pid)).rowcount:
+        # Fiche d'accueil d'un redoublant ou d'une reprise après césure : la
+        # décision prise dans la cohorte d'origine redevient à prendre, au lieu
+        # d'annoncer une réinscription qui n'existe plus.
+        db.execute('DELETE FROM promotion_red_transfer WHERE target_student_id=?', (sid,))
+        db.execute('DELETE FROM promotion_cesure_transfer WHERE target_student_id=?', (sid,))
+        _audit('PROMO_STUDENT_DELETE', ip=_client_ip(), user=session.get('user'),
+               promo=pid, student=sid, person=person_id)
     # Supprimer sa dernière inscription retire l'étudiant du registre ; ses autres
     # cohortes, s'il en a, l'y gardent avec son dossier.
     _person_prune(db, person_id)
@@ -9248,6 +9260,67 @@ def _reconcile_red_transfers(db, pid, comp=None):
             n += 1
     if n:
         db.commit()
+    _repair_red_transfers(db)
+    return n
+
+def _red_inscrire(db, target_id, pid, sid, person_id, formation, year):
+    """Inscrit le redoublant `sid` de la promo `pid` dans la promo cible
+    `target_id`, à l'année redoublée. Retourne l'id de la fiche créée ; ne
+    committe pas."""
+    # Même étudiant, nouvelle inscription : son état civil, son sexe, sa voie de
+    # recrutement et son dossier ParcourSup le suivent sans être recopiés.
+    cur = db.execute('''INSERT INTO promotion_students(promotion_id, person_id,
+                                                      statut, formation, entry_year)
+                        VALUES(?,?,'Actif',?,?)''', (target_id, person_id, formation, year))
+    target_student_id = cur.lastrowid
+    # Parcours continu : la nouvelle fiche pointe vers celle d'origine, dont
+    # le jury/les bulletins reprendront les années antérieures (_marks_rows)
+    db.execute('''INSERT OR REPLACE INTO student_origin
+                      (student_id, origin_student_id, origin_promotion_id, reason)
+                  VALUES(?,?,?,'RED')''', (target_student_id, sid, pid))
+    db.execute("UPDATE promotion_students SET statut='RED' WHERE id=?", (sid,))
+    return target_student_id
+
+def _repair_red_transfers(db):
+    """Rend sa fiche d'accueil au redoublant dont la décision FTP/ALT désigne une
+    fiche qui n'existe plus. Une telle décision s'affichait comme prise dans
+    Devenir alors que l'étudiant ne figurait dans aucun effectif de la cohorte
+    cible : c'est arrivé quand la fiche d'accueil était supprimée de l'effectif,
+    ce qui ne touchait pas à la décision (delete_promotion_student la remet
+    désormais « à décider »).
+
+    Une fiche qu'il a déjà dans la cohorte cible est reprise plutôt que doublée.
+    Ni jury ni session : sûr au démarrage. Committe ; retourne le nombre réparé."""
+    n = 0
+    for t in db.execute('''SELECT t.promotion_id, t.student_id, t.decision, s.person_id
+                           FROM promotion_red_transfer t
+                           JOIN promotion_students s ON s.id = t.student_id
+                           LEFT JOIN promotion_students c ON c.id = t.target_student_id
+                           WHERE t.decision IN ('FTP', 'ALT') AND c.id IS NULL''').fetchall():
+        pid, sid = t['promotion_id'], t['student_id']
+        dec = db.execute('''SELECT MAX(year) AS year FROM jury_decisions
+                            WHERE promotion_id=? AND student_id=? AND ue_num=0 AND decision='RED' ''',
+                         (pid, sid)).fetchone()
+        target_id, _ = _red_target_promo(db, pid)
+        if not (dec and dec['year'] and target_id):
+            continue
+        deja = db.execute('SELECT id FROM promotion_students WHERE promotion_id=? AND person_id=?',
+                          (target_id, t['person_id'])).fetchone()
+        if deja:
+            target_student_id = deja['id']
+            db.execute('''INSERT OR REPLACE INTO student_origin
+                              (student_id, origin_student_id, origin_promotion_id, reason)
+                          VALUES(?,?,?,'RED')''', (target_student_id, sid, pid))
+        else:
+            target_student_id = _red_inscrire(db, target_id, pid, sid, t['person_id'],
+                                              t['decision'], dec['year'])
+        db.execute('UPDATE promotion_red_transfer SET target_student_id=? WHERE promotion_id=? AND student_id=?',
+                   (target_student_id, pid, sid))
+        _audit('RED_REPAIR', promo=pid, student=sid, target=target_student_id,
+               decision=t['decision'], year=dec['year'], reprise=bool(deja))
+        n += 1
+    if n:
+        db.commit()
     return n
 
 def _red_decide(db, pid, sid, decision, detail=None, libelle=None):
@@ -9282,19 +9355,7 @@ def _red_decide(db, pid, sid, decision, detail=None, libelle=None):
         target_id = _ensure_target_promo(db, pid)   # crée la promo cible si absente
         if not target_id:
             return 'Promotion cible introuvable'
-        # Même étudiant, nouvelle inscription : son état civil, son sexe, sa voie de
-        # recrutement et son dossier ParcourSup le suivent sans être recopiés.
-        cur = db.execute('''INSERT INTO promotion_students(promotion_id, person_id,
-                                                          statut, formation, entry_year)
-                            VALUES(?,?,'Actif',?,?)''',
-                         (target_id, s['person_id'], decision, year))
-        target_student_id = cur.lastrowid
-        # Parcours continu : la nouvelle fiche pointe vers celle d'origine, dont
-        # le jury/les bulletins reprendront les années antérieures (_marks_rows)
-        db.execute('''INSERT OR REPLACE INTO student_origin
-                          (student_id, origin_student_id, origin_promotion_id, reason)
-                      VALUES(?,?,?,'RED')''', (target_student_id, sid, pid))
-        db.execute("UPDATE promotion_students SET statut='RED' WHERE id=?", (sid,))
+        target_student_id = _red_inscrire(db, target_id, pid, sid, s['person_id'], decision, year)
     db.execute('''INSERT OR REPLACE INTO promotion_red_transfer
                       (promotion_id, student_id, decision, target_student_id, detail, libelle)
                   VALUES(?,?,?,?,?,?)''',
