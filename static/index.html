@@ -365,6 +365,8 @@
         .jr-badge.jr-bad { background: #fee2e2; color: #b91c1c; }
         .jr-badge.jr-write { background: #dbeafe; color: #1e40af; }
         .jr-badge.jr-info { background: #f3f4f6; color: #4b5563; }
+        .jr-bilan { background: #eff6ff; border: 1px solid #bfdbfe; border-left: 4px solid #3b82f6; border-radius: 6px;
+                    padding: 10px 14px; margin-bottom: 12px; font-size: .88rem; line-height: 1.5; }
         /* Édition inline répartition */
         .repartition-wrap td.cell-hours:hover, .repartition-wrap td.cell-empty:hover { outline: 2px solid #6366f1; outline-offset: -2px; cursor: pointer; }
         .cell-arrows { display: flex; flex-direction: column; align-items: center; gap: 0; line-height: 1; }
@@ -1221,7 +1223,12 @@
     <div class="toolbar">
         <h1>Journal</h1>
         <div class="filters" id="journal-filtres" style="display:none">
-            <label>Type :</label>
+            <label>Enseignant :</label>
+            <select id="journal-user" onchange="loadJournal()"
+                    title="Choisir un compte affiche tout l'historique conservé de ses actions">
+                <option value="">Tous</option>
+            </select>
+            <label style="margin-left:12px">Type :</label>
             <select id="journal-type" onchange="renderJournal()">
                 <option value="">Tous</option>
                 <option value="LOGIN">Connexions</option>
@@ -1230,14 +1237,16 @@
             </select>
             <input type="text" id="journal-search" placeholder="Rechercher (IP, utilisateur, chemin…)"
                    oninput="renderJournal()" style="margin-left:12px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;width:230px">
-            <label style="margin-left:12px">Lignes :</label>
-            <select id="journal-lines" onchange="loadJournal()">
-                <option value="200">200</option>
-                <option value="500">500</option>
-                <option value="1000">1000</option>
-                <option value="2000">2000</option>
-            </select>
-            <button class="btn btn-secondary btn-sm" style="margin-left:12px" onclick="loadJournal()">Rafraîchir</button>
+            <span id="journal-lines-wrap">
+                <label style="margin-left:12px">Lignes :</label>
+                <select id="journal-lines" onchange="loadJournal()">
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                    <option value="1000">1000</option>
+                    <option value="2000">2000</option>
+                </select>
+            </span>
+            <button class="btn btn-secondary btn-sm" style="margin-left:12px" onclick="loadJournalUsers(); loadJournal()">Rafraîchir</button>
         </div>
     </div>
     <div class="subtabs">
@@ -3686,6 +3695,10 @@ async function checkPnPdf() {
 // modifications). Les filtres de la barre ne concernent que l'activité.
 let _journalLines = [];
 let _journalTab = 'sauvegardes';
+// Historique d'un compte (filtre Enseignant) : son bilan, et la liste des comptes
+let _journalSummary = null;
+let _journalUsersLoaded = false;
+let _journalReq = 0;
 
 function showJournalTab(tab) {
     _journalTab = tab;
@@ -3698,18 +3711,49 @@ function showJournalTab(tab) {
     else loadJournal();
 }
 
+// Sans compte choisi : les N dernières lignes du journal. Un compte choisi : tout
+// l'historique conservé de ses actions (archives du journal comprises).
 async function loadJournal() {
     if (_journalTab === 'sauvegardes') return loadBackups();
+    if (!_journalUsersLoaded) loadJournalUsers();
     const el = document.getElementById('journal-content');
     const n = (document.getElementById('journal-lines') || {}).value || 200;
+    const user = (document.getElementById('journal-user') || {}).value || '';
+    document.getElementById('journal-lines-wrap').style.display = user ? 'none' : '';
     el.innerHTML = '<div class="spinner">Chargement…</div>';
+    const req = ++_journalReq;      // une réponse dépassée par un autre choix est ignorée
     try {
-        const data = await api('/audit-log?lines=' + n);
+        const data = await api(user ? '/audit-log?user=' + encodeURIComponent(user) : '/audit-log?lines=' + n);
+        if (req !== _journalReq) return;
         _journalLines = (data && data.lines) || [];
+        _journalSummary = user ? Object.assign({ name: user }, (data && data.summary) || {}) : null;
         renderJournal();
     } catch (e) {
-        el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
+        if (req === _journalReq) el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
     }
+}
+
+// Liste des comptes du filtre Enseignant : Admin, enseignants de l'année, puis les
+// autres auteurs vus au journal ; chacun avec son nombre d'entrées. Le choix en
+// cours est conservé.
+async function loadJournalUsers() {
+    _journalUsersLoaded = true;
+    const sel = document.getElementById('journal-user');
+    if (!sel) return;
+    let accounts;
+    try { accounts = ((await api('/audit-log/users')) || {}).accounts || []; }
+    catch (e) { _journalUsersLoaded = false; return; }
+    const cur = sel.value;
+    const opt = a => `<option value="${esc(a.name)}"${a.count ? '' : ' style="color:#9ca3af"'}>${esc(a.name)}${
+        a.count ? ` (${a.count})` : ' — aucune activité'}</option>`;
+    const groupe = (g, label) => {
+        const l = accounts.filter(a => a.group === g);
+        return l.length ? `<optgroup label="${label}">${l.map(opt).join('')}</optgroup>` : '';
+    };
+    sel.innerHTML = '<option value="">Tous</option>' + groupe('admin', 'Administration')
+        + groupe('teacher', 'Enseignants') + groupe('other', 'Autres comptes vus au journal');
+    sel.value = accounts.some(a => a.name === cur) ? cur : '';
+    if (sel.value !== cur) loadJournal();
 }
 
 // ----- Sauvegardes (backups) -----
@@ -10939,6 +10983,26 @@ function journalEventClass(ev) {
     return 'jr-info';
 }
 
+// « 2026-10-09 14:08:58,942 » -> « 09/10/2026 14:08 »
+function _jrDate(ts) {
+    const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})/.exec(ts || '');
+    return m ? `${m[3]}/${m[2]}/${m[1]} ${m[4]}` : (ts || '—');
+}
+
+// Bilan de l'historique d'un compte (filtre Enseignant)
+function journalSummaryHtml(s) {
+    if (!s.total) return `<div class="jr-bilan"><strong>${esc(s.name)}</strong> :
+        aucune action dans l'historique conservé du journal.</div>`;
+    const plus = s.total > _journalLines.length
+        ? ` Seules les ${_journalLines.length} plus récentes sont listées.` : '';
+    return `<div class="jr-bilan"><strong>${esc(s.name)}</strong> —
+        ${s.total} entrée${s.total > 1 ? 's' : ''} depuis le ${_jrDate(s.first)}, dernière le ${_jrDate(s.last)}.<br>
+        Connexions : <strong>${s.logins}</strong>${s.last_login ? ` (dernière le ${_jrDate(s.last_login)})` : ''}
+        · Modifications : <strong>${s.writes}</strong>${s.last_write ? ` (dernière le ${_jrDate(s.last_write)})` : ''}.${plus}
+        <div style="color:#6b7280;font-size:.8rem;margin-top:4px">Ses seules actions : ce que d'autres ont fait sur son compte
+        (mot de passe, droits) n'y figure pas. Le journal garde environ 6 Mo d'historique ; au-delà, les plus anciennes lignes sont effacées.</div></div>`;
+}
+
 function renderJournal() {
     const el = document.getElementById('journal-content');
     const typeF = (document.getElementById('journal-type') || {}).value || '';
@@ -10948,8 +11012,13 @@ function renderJournal() {
     else if (typeF === 'LOGIN_FAIL') rows = rows.filter(r => r.event === 'LOGIN_FAIL' || r.event === 'LOGIN_BLOCKED');
     else if (typeF) rows = rows.filter(r => r.event === typeF);
     if (q) rows = rows.filter(r => r.raw.toLowerCase().includes(q));
-    if (!rows.length) { el.innerHTML = '<div class="empty">Aucune entrée.</div>'; return; }
-    el.innerHTML = `<table class="journal-table"><thead><tr>
+    const bilan = _journalSummary ? journalSummaryHtml(_journalSummary) : '';
+    if (!rows.length) {
+        el.innerHTML = bilan + (_journalSummary && !_journalSummary.total ? ''
+            : '<div class="empty">Aucune entrée.</div>');
+        return;
+    }
+    el.innerHTML = bilan + `<table class="journal-table"><thead><tr>
             <th style="width:170px">Date / heure</th>
             <th style="width:130px">Événement</th>
             <th>Détails</th>

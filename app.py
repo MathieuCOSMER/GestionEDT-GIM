@@ -101,11 +101,12 @@ _CONSTRAINTS_DIR = os.environ.get('EDT_CONSTRAINTS_DIR') or os.path.join(_BASE_D
 _LOG_DIR = os.path.join(_BASE_DIR, 'logs')
 os.makedirs(_LOG_DIR, exist_ok=True)
 AUDIT_LOG_PATH = os.path.join(_LOG_DIR, 'audit.log')
+_AUDIT_BACKUPS = 5      # archives audit.log.1 (récente) … audit.log.5 (ancienne)
 audit_log = logging.getLogger('edt.audit')
 if not audit_log.handlers:
     audit_log.setLevel(logging.INFO)
     _audit_handler = RotatingFileHandler(AUDIT_LOG_PATH, maxBytes=1_000_000,
-                                         backupCount=5, encoding='utf-8')
+                                         backupCount=_AUDIT_BACKUPS, encoding='utf-8')
     _audit_handler.setFormatter(logging.Formatter('%(asctime)s | %(message)s'))
     audit_log.addHandler(_audit_handler)
     audit_log.propagate = False
@@ -3534,13 +3535,61 @@ def put_tab_access():
            **{prof: f"{len(conf[prof]['view'])}v/{len(conf[prof]['edit'])}e" for prof in _TAB_PROFILES})
     return jsonify(_tab_access_conf())
 
+def _audit_read_all():
+    """Toutes les lignes conservées du journal d'audit, archives de rotation
+    comprises, de la plus ancienne à la plus récente."""
+    lines = []
+    for path in [f'{AUDIT_LOG_PATH}.{i}' for i in range(_AUDIT_BACKUPS, 0, -1)] + [AUDIT_LOG_PATH]:
+        if os.path.isfile(path):
+            with open(path, encoding='utf-8', errors='replace') as f:
+                lines.extend(l.rstrip('\n') for l in f if l.strip())
+    return lines
+
+def _audit_parse(line):
+    """« date | EVENT | k=v | … » -> (date, EVENT, {k: v})."""
+    parts = line.split(' | ')
+    fields = dict(p.split('=', 1) for p in parts[2:] if '=' in p)
+    return parts[0], (parts[1] if len(parts) > 1 else ''), fields
+
+def _audit_author(event, fields):
+    """Auteur d'une ligne du journal (champ user=), sans casse : la connexion se
+    fait au nom insensible à la casse. L'initialisation d'un mot de passe est faite
+    par l'enseignant lui-même, nommé teacher= ; ailleurs teacher= désigne la
+    personne visée par l'action d'un autre, pas son auteur."""
+    who = fields.get('teacher') if event == 'TEACHER_PWD_INIT' else fields.get('user')
+    who = (who or '').strip()
+    return who.casefold() if who and who not in ('-', 'None') else None
+
 @app.route('/api/audit-log', methods=['GET'])
 def audit_log_view():
     """Renvoie les dernières lignes du journal d'audit (superadmin, ou profil
-    auquel le superadmin a ouvert l'onglet Journal)."""
+    auquel le superadmin a ouvert l'onglet Journal). Avec ?user=NOM : tout
+    l'historique conservé des actions de ce compte (archives comprises), du plus
+    récent au plus ancien, et son bilan (connexions, modifications)."""
     err = None if _tab_visible('nav:journal') else _require_superadmin()
     if err:
         return err
+    user = (request.args.get('user') or '').strip()
+    if user:
+        key = user.casefold()
+        mine = []
+        summary = {'total': 0, 'logins': 0, 'writes': 0, 'first': None, 'last': None,
+                   'last_login': None, 'last_write': None}
+        for line in _audit_read_all():
+            ts, event, fields = _audit_parse(line)
+            if _audit_author(event, fields) != key:
+                continue
+            mine.append(line)
+            summary['first'] = summary['first'] or ts
+            summary['last'] = ts
+            if event == 'LOGIN_OK':
+                summary['logins'] += 1
+                summary['last_login'] = ts
+            elif event == 'WRITE':
+                summary['writes'] += 1
+                summary['last_write'] = ts
+        summary['total'] = len(mine)
+        return jsonify({'lines': mine[::-1][:5000], 'summary': summary})
     try:
         n = max(1, min(int(request.args.get('lines', 200)), 2000))
     except (TypeError, ValueError):
@@ -3550,6 +3599,46 @@ def audit_log_view():
     with open(AUDIT_LOG_PATH, encoding='utf-8') as f:
         lines = f.readlines()
     return jsonify({'lines': [l.rstrip('\n') for l in lines[-n:]][::-1]})
+
+@app.route('/api/audit-log/users', methods=['GET'])
+def audit_log_users():
+    """Comptes dont le journal donne l'historique : le compte fixe Admin, les
+    enseignants de l'année, puis les autres auteurs vus au journal (enseignant
+    d'une autre année, fiche supprimée). Pour chacun : nombre d'entrées dont il est
+    l'auteur et date de la dernière. Un échec de connexion ne fait pas d'un nom
+    tapé un compte : seules les lignes d'une session ouverte en révèlent un autre."""
+    err = None if _tab_visible('nav:journal') else _require_superadmin()
+    if err:
+        return err
+    stats, seen = {}, {}
+    for line in _audit_read_all():
+        ts, event, fields = _audit_parse(line)
+        who = _audit_author(event, fields)
+        if not who:
+            continue
+        st = stats.setdefault(who, {'count': 0, 'last': None})
+        st['count'] += 1
+        st['last'] = ts
+        if event not in ('LOGIN_FAIL', 'LOGIN_BLOCKED'):
+            seen.setdefault(who, (fields.get('teacher') if event == 'TEACHER_PWD_INIT'
+                                  else fields.get('user')).strip())
+    accounts, done = [], set()
+    def add(name, group):
+        k = name.casefold()
+        if k in done:
+            return
+        done.add(k)
+        st = stats.get(k, {})
+        accounts.append({'name': name, 'group': group,
+                         'count': st.get('count', 0), 'last': st.get('last')})
+    for name in AUTH_USERS:
+        add(name, 'admin')
+    for r in get_db().execute('SELECT name FROM teachers ORDER BY name COLLATE NOCASE'):
+        if (r['name'] or '').strip():
+            add(r['name'].strip(), 'teacher')
+    for name in sorted(seen.values(), key=str.casefold):
+        add(name, 'other')
+    return jsonify({'accounts': accounts})
 
 @app.route('/api/backups', methods=['GET'])
 def list_backups():
