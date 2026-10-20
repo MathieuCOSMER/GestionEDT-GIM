@@ -183,14 +183,29 @@ def list_years():
 # Le contexte de travail est l'année universitaire (base edt_<année>.db, toutes
 # cohortes S1→S6). Créer une promotion crée/complète ses 3 années universitaires
 # en copiant l'année existante la plus récente qui la précède.
-def _copy_db_with_migrations(src, dest):
-    """Copie une base SQLite puis met à jour son schéma."""
+def _copy_db_with_migrations(src, dest, year=None):
+    """Copie une base SQLite puis met à jour son schéma. `year` : l'année de la
+    copie, dont on retire ce qui n'appartient qu'à l'année d'origine (salons)."""
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     shutil.copy2(src, dest)
     db = sqlite3.connect(dest)
     db.row_factory = sqlite3.Row
     _apply_migrations(db)
+    if year:
+        _salons_purge(db, year)
     db.close()
+
+def _salons_purge(db, year):
+    """Retire d'une base d'année les salons d'une autre année : ceux qu'elle tient
+    de la base dont elle a été copiée. Leurs présents, comptes rendus et pièces
+    jointes partent avec eux — explicitement, la copie n'activant pas les clés
+    étrangères."""
+    autres = 'SELECT id FROM salons WHERE annee <> ?'
+    for table in ('salon_enseignants', 'salon_etudiants', 'salon_comptes_rendus',
+                  'salon_visiteurs', 'salon_fichiers'):
+        db.execute(f'DELETE FROM {table} WHERE salon_id IN ({autres})', (year,))
+    db.execute('DELETE FROM salons WHERE annee <> ?', (year,))
+    db.commit()
 
 def _ensure_academic_year_db(year):
     """Crée la base d'une année universitaire si absente. Source de copie :
@@ -213,7 +228,7 @@ def _ensure_academic_year_db(year):
         elif later:
             src = db_path_for_year(later[0])    # sinon année suivante la plus proche
     if src and os.path.exists(src):
-        _copy_db_with_migrations(src, path)
+        _copy_db_with_migrations(src, path, year)
     else:
         _init_fresh_db(path)
     return path
@@ -2603,6 +2618,96 @@ def _apply_migrations(db):
             FOREIGN KEY (elp_id)        REFERENCES grade_elps(id) ON DELETE CASCADE
         )
     ''')
+
+    # ======================= SALONS ÉTUDIANTS (onglet Salons) =======================
+    # Les salons, forums et portes ouvertes de l'année universitaire de la base, leurs
+    # présents et leur compte rendu. `annee` répète l'année de la base : une base
+    # créée par copie d'une autre année en hérite les lignes, qui n'y sont jamais lues
+    # et sont effacées à la copie (_salons_purge).
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS salons (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            annee       TEXT NOT NULL,
+            nom         TEXT NOT NULL,
+            type        TEXT NOT NULL DEFAULT 'salon',     -- cf _SALON_TYPES
+            lieu        TEXT,
+            jour        TEXT,            -- AAAA-MM-JJ ; NULL = date à préciser
+            jour_info   TEXT,            -- « fin janvier », « à confirmer »…
+            duree       TEXT NOT NULL DEFAULT 'journee',   -- journee / matin / apres-midi
+            horaires    TEXT,
+            besoin      INTEGER,         -- enseignants souhaités par créneau
+            infos       TEXT,            -- infos pratiques : stand, contact, matériel…
+            created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at  TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    # Enseignants présents : inscrits par le responsable, ou par eux-mêmes (titulaires)
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS salon_enseignants (
+            salon_id    INTEGER NOT NULL,
+            teacher_id  INTEGER NOT NULL,
+            creneau     TEXT NOT NULL DEFAULT 'journee',
+            inscrit_par TEXT,
+            created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (salon_id, teacher_id),
+            FOREIGN KEY (salon_id) REFERENCES salons(id) ON DELETE CASCADE,
+            FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE
+        )
+    ''')
+    # Étudiants présents : la personne du registre (promotions.db › students), et son
+    # inscription de l'année au moment de l'ajout ; `libelle` garde son nom lisible si
+    # sa fiche quitte le registre.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS salon_etudiants (
+            salon_id     INTEGER NOT NULL,
+            person_id    INTEGER NOT NULL,
+            promotion_id INTEGER,
+            annee_etude  INTEGER,
+            formation    TEXT,
+            libelle      TEXT,
+            creneau      TEXT NOT NULL DEFAULT 'journee',
+            created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (salon_id, person_id),
+            FOREIGN KEY (salon_id) REFERENCES salons(id) ON DELETE CASCADE
+        )
+    ''')
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS salon_comptes_rendus (
+            salon_id    INTEGER PRIMARY KEY,
+            visiteurs   INTEGER,
+            texte       TEXT,
+            auteur      TEXT,
+            updated_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (salon_id) REFERENCES salons(id) ON DELETE CASCADE
+        )
+    ''')
+    # Public rencontré (compte rendu) : formation en cours, classe, précision libre
+    # (spécialité, filière) et nombre de visiteurs — cf _SALON_PUBLICS
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS salon_visiteurs (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            salon_id    INTEGER NOT NULL,
+            niveau      TEXT NOT NULL,
+            classe      TEXT,
+            precision   TEXT,
+            nombre      INTEGER NOT NULL,
+            FOREIGN KEY (salon_id) REFERENCES salons(id) ON DELETE CASCADE
+        )
+    ''')
+    # Pièces jointes du compte rendu, dans la base : les sauvegardes les emportent
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS salon_fichiers (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            salon_id    INTEGER NOT NULL,
+            nom         TEXT NOT NULL,
+            mime        TEXT,
+            taille      INTEGER,
+            data        BLOB NOT NULL,
+            auteur      TEXT,
+            created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (salon_id) REFERENCES salons(id) ON DELETE CASCADE
+        )
+    ''')
     db.commit()
 
 def get_year_config():
@@ -2837,6 +2942,7 @@ _YEAR_OVERRIDE_PREFIXES = (
     '/api/export/repartition',
     '/api/import/repartition',
     '/api/compare/hyperplanning',  # comparaison d'un export Hyperplanning
+    '/api/salons',               # onglet Salons : son propre sélecteur d'année
 )
 
 @app.before_request
@@ -2961,9 +3067,10 @@ def _reset_login_failures(ip):
         _login_state.pop(ip, None)
 
 # ---- Sessions : responsabilités, modes, identité renvoyée à l'interface ----
-# Responsabilités de formation (colonne teachers.responsabilites), dans l'ordre
-# d'affichage. Chacune a son profil d'onglets « resp_<clé> » (_TAB_TREE).
-_RESP_KEYS = ('ftp', 'alt', 'stage')
+# Responsabilités (colonne teachers.responsabilites), dans l'ordre d'affichage :
+# les trois de formation, puis les salons étudiants. Chacune a son profil
+# d'onglets « resp_<clé> » (_TAB_TREE).
+_RESP_KEYS = ('ftp', 'alt', 'stage', 'salon')
 
 def _resp_parse(value):
     """Responsabilités connues d'une valeur stockée (« ftp,alt » → ['ftp', 'alt'])."""
@@ -3200,10 +3307,11 @@ def session_mode():
 
 # ===== Accès aux onglets par profil : voir / modifier (réglé par le superadmin) =====
 # Profils : admin (enseignant administrateur), resp_ftp / resp_alt / resp_stage
-# (responsable de la formation FTP, de la formation ALT, des stages),
-# teacher_pwd (enseignant connecté avec son mot de passe), teacher (enseignant
-# connecté par son seul nom). La session normale d'un responsable cumule les
-# profils de toutes ses responsabilités et celui de l'enseignant avec mot de passe.
+# (responsable de la formation FTP, de la formation ALT, des stages), resp_salon
+# (responsable des salons étudiants), teacher_pwd (enseignant connecté avec son
+# mot de passe), teacher (enseignant connecté par son seul nom). La session normale
+# d'un responsable cumule les profils de toutes ses responsabilités et celui de
+# l'enseignant avec mot de passe.
 # _TAB_TREE fixe les onglets et, pour chacun, les profils qui le VOIENT et le
 # MODIFIENT par défaut (droits historiques des rôles). Le superadmin enregistre
 # des écarts (settings « tab_access » = {profil: {view: {clé: bool}, edit: {…}}}) :
@@ -3214,9 +3322,14 @@ def session_mode():
 # Le superadmin (compte Admin) n'est soumis à rien de tout cela.
 _TA, _TP, _TT = 'admin', 'teacher_pwd', 'teacher'
 _RF, _RA, _RS = 'resp_ftp', 'resp_alt', 'resp_stage'
-_TAB_PROFILES = (_TA, _RF, _RA, _RS, _TP, _TT)
+_RSL = 'resp_salon'
+_TAB_PROFILES = (_TA, _RF, _RA, _RS, _RSL, _TP, _TT)
 _TALL = [_TA, _TP, _TT]
+# Responsables de formation : ils voient promotions, étudiants, programme… en vue
+# d'administration. Celui des salons n'a que son onglet ; le reste, il le voit
+# comme tout enseignant (profil teacher_pwd de sa session normale).
 _TRESP = [_RF, _RA, _RS]
+_TRESP_ALL = _TRESP + [_RSL]
 
 def _tn(key, label, view, edit=None, never=(), children=None):
     """edit=None : onglet sans modification propre (consultation seule)."""
@@ -3228,7 +3341,8 @@ def _tn(key, label, view, edit=None, never=(), children=None):
 #   • FTP  : EDT (répartition, calendrier), matières, services et contraintes,
 #            groupes, effectifs, étudiants, jury et devenir (FTP et ALT) ;
 #   • ALT  : onglet Alternance (fiches des alternants), jury et devenir (FTP et ALT) ;
-#   • stages : onglet Stages (fiches des stagiaires FTP).
+#   • stages : onglet Stages (fiches des stagiaires FTP) ;
+#   • salons : onglet Salons (calendrier, présents, comptes rendus).
 # Onglets Stages et Alternance : fiches de suivi (entreprise, tuteurs, contacts,
 # mission) et statistiques, pour le responsable du domaine et l'admin ; l'enseignant
 # avec mot de passe les consulte et modifie celles des étudiants qu'il suit.
@@ -3237,7 +3351,7 @@ def _tn(key, label, view, edit=None, never=(), children=None):
 # par _tuteurs_formations().
 # Ordre des nœuds de premier niveau = ordre de la barre d'onglets.
 _TAB_TREE = [
-    _tn('nav:saisie', 'Saisie Notes', [_TP], [_TP], never=[_TA, _TT] + _TRESP),
+    _tn('nav:saisie', 'Saisie Notes', [_TP], [_TP], never=[_TA, _TT] + _TRESP_ALL),
     _tn('nav:service', 'Service', _TALL + [_RF], children=[
         _tn('svc:repartition-enseignant', 'Bilan Global', _TALL + [_RF], _TALL + [_RF]),
         _tn('svc:repartition', 'Répartition Calendaire', _TALL + [_RF], children=[
@@ -3253,11 +3367,11 @@ _TAB_TREE = [
         _tn('promo:effectif', 'Effectifs', [_TA, _TP] + _TRESP, [_TA, _RF]),
         _tn('promo:groupes', 'Groupes', [_TA, _TP] + _TRESP, [_TA, _RF]),
         _tn('promo:calendrier', 'Calendrier', [_TA, _RF], [_TA, _RF]),
-        _tn('promo:saisie', 'Saisie Notes', [_TA], [_TA], never=[_TP, _TT] + _TRESP),
+        _tn('promo:saisie', 'Saisie Notes', [_TA], [_TA], never=[_TP, _TT] + _TRESP_ALL),
         _tn('promo:notes', 'Bulletins', [_TA, _TP] + _TRESP, [_TA]),
         _tn('promo:jury', 'Jury', [_TA, _TP] + _TRESP, [_TA, _RF, _RA]),
         _tn('promo:devenir', 'Devenir', [_TA, _RF, _RA], [_TA, _RF, _RA]),
-        _tn('promo:actions', 'Actions', [_TA], [_TA], never=[_TP, _TT] + _TRESP),
+        _tn('promo:actions', 'Actions', [_TA], [_TA], never=[_TP, _TT] + _TRESP_ALL),
     ]),
     # Suivi : voir = évolution et journal ; modifier = écrire commentaires et
     # signalements. À convoquer : voir = la liste et les entretiens ; modifier =
@@ -3276,7 +3390,7 @@ _TAB_TREE = [
         _tn('prog:coeff', 'Coefficients', _TALL + _TRESP, [_TA]),
         _tn('prog:matieres', 'Matières', _TALL + _TRESP, [_TA]),
         _tn('prog:contenu', 'Contenu', _TALL + _TRESP, _TALL),
-        _tn('prog:actions', 'Actions', [_TA], [_TA], never=[_TP, _TT] + _TRESP),
+        _tn('prog:actions', 'Actions', [_TA], [_TA], never=[_TP, _TT] + _TRESP_ALL),
     ]),
     _tn('nav:statistiques', 'Statistiques', _TALL + _TRESP, children=[
         _tn('st:apercu', "Vue d'ensemble", _TALL + _TRESP),
@@ -3291,10 +3405,16 @@ _TAB_TREE = [
     _tn('nav:enseignants', 'Enseignant', [_TA, _RF], [_TA]),
     _tn('nav:salles', 'Salles', [_TA], [_TA]),
     _tn('nav:journal', 'Journal (audit, sauvegardes)', [], []),
-    _tn('nav:parametres', 'Paramètres', [_TA], never=[_TP, _TT] + _TRESP),
+    _tn('nav:parametres', 'Paramètres', [_TA], never=[_TP, _TT] + _TRESP_ALL),
+    # Salons étudiants (salons, forums, portes ouvertes) de l'année : le responsable
+    # des salons et l'admin tiennent le calendrier, les présents et les comptes
+    # rendus ; tout enseignant le consulte. Le droit « modifier » de l'enseignant ne
+    # couvre que son inscription (titulaire) et le compte rendu des salons où il est
+    # inscrit — contrôle dans les handlers (_salons_droits).
+    _tn('nav:salons', 'Salons', [_TA, _RSL, _TP, _TT], [_TA, _RSL, _TP, _TT]),
     _tn('nav:mon-compte', 'Mon Compte', [_TP, _TT], [_TP, _TT]),
     # Mode d'emploi du site : ouvert à tous, rien à y modifier
-    _tn('nav:aide', 'Aide', _TALL + _TRESP),
+    _tn('nav:aide', 'Aide', _TALL + _TRESP_ALL),
 ]
 _TAB_NODES = {}
 def _index_tab_tree(nodes):
@@ -3359,6 +3479,9 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     (r'^/api/suivi/reglages$', ['etu:convoquer'], ''),
     (r'^/api/promotions/\d+/(coefficients|programme)', ['promo:actions'], ''),
     (r'^/api/promotions(/\d+)?$', ['promo:actions'], ''),
+    # Le handler distingue : gestion du salon (responsable, admin), inscription d'un
+    # titulaire, compte rendu d'un enseignant inscrit (_salons_droits)
+    (r'^/api/salons(/.*)?$', ['nav:salons'], ''),
     (r'^/api/backups$', ['nav:journal'], ''),
 ]]
 
@@ -13043,8 +13166,9 @@ def set_teacher_admin(teacher_id):
 
 @app.route('/api/teachers/<int:teacher_id>/responsabilites', methods=['PUT'])
 def set_teacher_responsabilites(teacher_id):
-    """Confie ou retire des responsabilités de formation à un enseignant (superadmin).
-    Body {responsabilites: ['ftp', 'alt', 'stage']} — la liste complète voulue.
+    """Confie ou retire des responsabilités à un enseignant (superadmin) : formation
+    FTP, formation ALT, stages, salons étudiants.
+    Body {responsabilites: ['ftp', 'alt', 'stage', 'salon']} — la liste complète voulue.
 
     Comme les droits d'administration, elles peuvent être confiées avant que
     l'enseignant ait défini son mot de passe, mais ne s'appliquent qu'aux sessions
@@ -13061,7 +13185,7 @@ def set_teacher_responsabilites(teacher_id):
         return error_response('Teacher not found', 404)
     voulu = (request.get_json() or {}).get('responsabilites')
     if not isinstance(voulu, list) or any(r not in _RESP_KEYS for r in voulu):
-        return error_response('Responsabilités invalides (ftp, alt, stage)', 400)
+        return error_response('Responsabilités invalides (ftp, alt, stage, salon)', 400)
     voulu = _resp_parse(','.join(voulu))
     avant = _resp_parse(row['responsabilites'])
     db.execute('UPDATE teachers SET responsabilites = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
@@ -13205,6 +13329,747 @@ def public_external_hours():
         WHERE is_public = 1 ORDER BY teacher_id, id
     ''').fetchall()
     return jsonify(rows_to_list(rows)), 200
+
+# ======================= SALONS ÉTUDIANTS (onglet Salons) =======================
+# Les salons, forums et portes ouvertes d'une année universitaire, rangés dans la
+# base de cette année (?year= en choisit une autre, comme pour le Service). Le
+# responsable des salons (responsabilité « salon ») et l'admin tiennent le
+# calendrier, les présents et les comptes rendus ; chaque enseignant titulaire s'y
+# inscrit lui-même, et un enseignant inscrit rédige le compte rendu du salon. Les
+# étudiants présents se choisissent parmi les inscrits de l'année. Tout est gardé
+# pour le bilan, année par année et d'une année sur l'autre.
+
+_SALON_TYPES = (('salon', 'Salon'), ('forum', 'Forum / lycée'),
+                ('jpo', 'Portes ouvertes'), ('autre', 'Autre'))
+_SALON_CRENEAUX = (('journee', 'Journée'), ('matin', 'Matin'), ('apres-midi', 'Après-midi'))
+# Demi-journées que représente une présence : la mesure de l'engagement de chacun
+_SALON_DEMI = {'journee': 2, 'matin': 1, 'apres-midi': 1}
+# Public rencontré (compte rendu) : formation en cours du visiteur, puis sa classe.
+# Chaque classe dit l'année de formation qu'elle représente, pour compter ensemble
+# les terminales des trois voies.
+_SALON_PUBLICS = (
+    ('college', 'Collège', (('4e', '4e'), ('3e', '3e'))),
+    ('lycee_gt', 'Lycée général et techno', (
+        ('2nde', '2nde'), ('1re générale', '1re'), ('1re techno', '1re'),
+        ('Tle générale', 'Terminale'), ('Tle techno', 'Terminale'))),
+    ('lycee_pro', 'Lycée professionnel', (
+        ('CAP', 'CAP'), ('2nde pro', '2nde'), ('1re pro', '1re'), ('Tle pro', 'Terminale'))),
+    ('sup', 'Études supérieures', (
+        ('Bac+1', 'Bac+1'), ('Bac+2', 'Bac+2'), ('Bac+3 et plus', 'Bac+3 et plus'))),
+    ('autre', 'Autre public', (
+        ('Parent / famille', 'Autre public'), ("Adulte (reprise d'études)", 'Autre public'),
+        ('Enseignant / PsyEN', 'Autre public'), ('Autre', 'Autre public'))),
+)
+_SALON_ANNEES = ('4e', '3e', 'CAP', '2nde', '1re', 'Terminale', 'Bac+1', 'Bac+2',
+                 'Bac+3 et plus', 'Autre public')
+_SALON_FICHIER_EXT = {'.pdf', '.doc', '.docx', '.odt', '.rtf', '.txt', '.xls', '.xlsx', '.ods',
+                      '.csv', '.ppt', '.pptx', '.odp', '.png', '.jpg', '.jpeg', '.webp'}
+_SALON_FICHIER_MAX = 5 * 1024 * 1024      # les pièces jointes vivent dans la base
+_SALON_FICHIERS_MAX = 10                  # par salon
+
+def _salon_libelle(choix, code):
+    return dict(choix).get(code, code)
+
+def _salon_cle(nom):
+    """Clé de rapprochement d'un nom de salon d'une année sur l'autre : sans casse,
+    sans accents, espaces réduits."""
+    s = unicodedata.normalize('NFD', str(nom or ''))
+    return ' '.join(''.join(c for c in s if not unicodedata.combining(c)).split()).casefold()
+
+def _salons_lecture():
+    """403 si la session ne voit pas l'onglet Salons, sinon None."""
+    tabs = _session_tabs()
+    if tabs is not None and 'nav:salons' not in tabs['visible']:
+        return error_response('Accès réservé', 403)
+    return None
+
+def _salons_modifiable():
+    """Droit « modifier » de l'onglet (réglable par le superadmin) : pour un
+    enseignant, il ne couvre que son inscription et ses comptes rendus."""
+    tabs = _session_tabs()
+    return tabs is None or 'nav:salons' in tabs['edit']
+
+def _salons_gestion():
+    """La session tient-elle les salons : créer, modifier, inscrire n'importe qui ?
+    Superadmin, admin selon son droit « modifier », responsable des salons."""
+    return _admin_power('nav:salons')
+
+def _salons_voit_etudiants():
+    """Les noms des étudiants présents : pour qui lit les promotions (mêmes règles
+    que _require_promo_read). Une connexion au seul nom n'en voit que le nombre."""
+    return (session.get('role') == 'admin' or bool(session.get('promo_access'))
+            or _tab_visible('nav:promotions') or _tab_visible('nav:etudiants'))
+
+def _salon_titulaire(t):
+    return (t['status'] or 'Titulaire') == 'Titulaire'
+
+def _salon_row(db, sid):
+    """Le salon `sid` de l'année consultée, ou None (un salon d'une autre année,
+    hérité d'une copie de base, n'existe pas pour elle)."""
+    return db.execute('SELECT * FROM salons WHERE id=? AND annee=?',
+                      (sid, get_current_year() or '')).fetchone()
+
+def _salon_creneau(salon, voulu):
+    """Créneau d'une présence : celui demandé, sauf pour un salon d'une demi-journée,
+    qui n'en a qu'un."""
+    if salon['duree'] != 'journee':
+        return salon['duree']
+    return voulu if voulu in _SALON_DEMI else 'journee'
+
+def _salon_inscrit(db, sid, teacher_id):
+    return db.execute('SELECT 1 FROM salon_enseignants WHERE salon_id=? AND teacher_id=?',
+                      (sid, teacher_id)).fetchone() is not None
+
+def _salon_peut_cr(db, sid, moi):
+    """Compte rendu et pièces jointes : le responsable des salons et l'admin, ou un
+    enseignant inscrit à ce salon (droit « modifier » de l'onglet)."""
+    if _salons_gestion():
+        return True
+    return bool(moi and _salons_modifiable() and _salon_inscrit(db, sid, moi['id']))
+
+def _salon_valeurs(data, actuel=None):
+    """Champs d'un salon lus dans le corps de la requête, contrôlés : (valeurs, erreur).
+    Un champ absent garde sa valeur actuelle."""
+    v = {k: actuel[k] for k in actuel.keys()} if actuel else {}
+
+    def texte(cle, n):
+        if cle in data:
+            v[cle] = (str(data.get(cle) or '')).strip()[:n] or None
+    texte('nom', 120)
+    texte('lieu', 200)
+    texte('jour_info', 100)
+    texte('horaires', 100)
+    texte('infos', 2000)
+    if not v.get('nom'):
+        return None, 'Nom du salon requis'
+    if 'type' in data or not actuel:
+        v['type'] = data.get('type') if data.get('type') in dict(_SALON_TYPES) else 'salon'
+    if 'duree' in data or not actuel:
+        v['duree'] = data.get('duree') if data.get('duree') in _SALON_DEMI else 'journee'
+    if 'jour' in data:
+        jour = str(data.get('jour') or '').strip()
+        if jour:
+            try:
+                jour = datetime.strptime(jour, '%Y-%m-%d').date().isoformat()
+            except ValueError:
+                return None, 'Date invalide (attendu : AAAA-MM-JJ)'
+        v['jour'] = jour or None
+    if 'besoin' in data:
+        b = data.get('besoin')
+        if b in (None, ''):
+            v['besoin'] = None
+        else:
+            try:
+                v['besoin'] = int(b)
+            except (TypeError, ValueError):
+                return None, "Nombre d'enseignants souhaités invalide"
+            if not 0 <= v['besoin'] <= 50:
+                return None, "Nombre d'enseignants souhaités invalide (0 à 50)"
+    return v, None
+
+def _salons_inscrits(pdb, annee):
+    """Étudiants inscrits l'année universitaire `annee` : l'effectif de l'année d'étude
+    que chaque cohorte suit alors (les cohortes des onglets Stages et Alternance) —
+    une césure n'y figure pas. {person_id: inscription}"""
+    try:
+        start = int(str(annee)[:4])
+    except ValueError:
+        return {}
+    out = {}
+    for pid, name, yg in _suivi_cohorts(pdb, start):
+        roster = _year_rosters(pdb, pid).get(yg, set())
+        faces = _year_formation_map(pdb, pid, yg)
+        for r in pdb.execute('''SELECT s.id, s.person_id, s.statut, e.nom, e.prenom, e.numero
+                                FROM promotion_students s %s WHERE s.promotion_id=?''' % _FICHE_JOIN,
+                             (pid,)):
+            if r['id'] in roster:
+                out[r['person_id']] = {
+                    'person_id': r['person_id'], 'nom': r['nom'] or '', 'prenom': r['prenom'] or '',
+                    'numero': r['numero'] or '', 'statut': r['statut'], 'promotion_id': pid,
+                    'promotion': name, 'annee_etude': yg, 'formation': faces.get(r['id'], 'FTP')}
+    return out
+
+def _salons_lignes(db, annee, table, cols):
+    """Lignes d'une table de présents / de compte rendu, pour les salons de l'année,
+    groupées par salon."""
+    out = {}
+    for r in db.execute(f'''SELECT salon_id, {cols} FROM {table}
+                            WHERE salon_id IN (SELECT id FROM salons WHERE annee=?)''', (annee,)):
+        out.setdefault(r['salon_id'], []).append(r)
+    return out
+
+def _salon_cr(cr, lignes):
+    """Compte rendu d'un salon pour l'écran : `total` = les visiteurs annoncés, ou à
+    défaut la somme du public détaillé."""
+    if not cr and not lignes:
+        return None
+    somme = sum(l['nombre'] for l in lignes)
+    vis = cr['visiteurs'] if cr else None
+    return {'visiteurs': vis, 'somme': somme, 'total': vis if vis is not None else somme,
+            'texte': (cr['texte'] if cr else '') or '', 'auteur': cr['auteur'] if cr else None,
+            'updated_at': cr['updated_at'] if cr else None,
+            'lignes': [{'niveau': l['niveau'], 'classe': l['classe'] or '',
+                        'precision': l['precision'] or '', 'nombre': l['nombre']} for l in lignes]}
+
+def _salons_payload(db, annee):
+    """L'onglet Salons d'une année : salons dans l'ordre du calendrier (les dates à
+    préciser à la fin), présents, compte rendu, pièces jointes, et ce que la session
+    peut y faire."""
+    moi = _my_teacher_row(db)
+    gestion = _salons_gestion()
+    modif = _salons_modifiable()
+    voit = _salons_voit_etudiants()
+    today = datetime.now().date().isoformat()
+    teachers = {r['id']: r for r in db.execute('SELECT id, name, status FROM teachers')}
+    ens = _salons_lignes(db, annee, 'salon_enseignants', 'teacher_id, creneau, inscrit_par')
+    etu = _salons_lignes(db, annee, 'salon_etudiants',
+                         'person_id, promotion_id, annee_etude, formation, libelle, creneau')
+    vis = _salons_lignes(db, annee, 'salon_visiteurs', 'niveau, classe, precision, nombre')
+    fic = _salons_lignes(db, annee, 'salon_fichiers', 'id, nom, taille, auteur, created_at')
+    crs = {r['salon_id']: r for r in db.execute(
+        '''SELECT * FROM salon_comptes_rendus
+           WHERE salon_id IN (SELECT id FROM salons WHERE annee=?)''', (annee,))}
+    personnes, promos = {}, {}
+    if voit and etu:
+        pdb = get_promotions_db()
+        ids = sorted({r['person_id'] for rows in etu.values() for r in rows})
+        for i in range(0, len(ids), 500):
+            lot = ids[i:i + 500]
+            for r in pdb.execute('SELECT id, nom, prenom FROM students WHERE id IN (%s)'
+                                 % ','.join('?' * len(lot)), lot):
+                personnes[r['id']] = r
+        promos = {r['id']: r['name'] for r in pdb.execute('SELECT id, name FROM promotions')}
+    salons = []
+    for s in db.execute('SELECT * FROM salons WHERE annee=?', (annee,)):
+        presents = []
+        for r in ens.get(s['id'], []):
+            t = teachers.get(r['teacher_id'])
+            if t:
+                presents.append({'teacher_id': t['id'], 'nom': t['name'], 'creneau': r['creneau'],
+                                 'vacataire': not _salon_titulaire(t), 'inscrit_par': r['inscrit_par'],
+                                 'moi': bool(moi and moi['id'] == t['id'])})
+        presents.sort(key=lambda p: _salon_cle(p['nom']))
+        creneaux = [p['creneau'] for p in presents]
+        # [[créneau, enseignants], …] dans l'ordre de la journée (une liste : jsonify
+        # trierait les clés d'un dict) ; une présence à la journée compte dans les deux
+        couverture = ([['matin', sum(1 for c in creneaux if c in ('journee', 'matin'))],
+                       ['apres-midi', sum(1 for c in creneaux if c in ('journee', 'apres-midi'))]]
+                      if s['duree'] == 'journee' else [[s['duree'], len(creneaux)]])
+        etudiants = None
+        if voit:
+            etudiants = []
+            for r in etu.get(s['id'], []):
+                p = personnes.get(r['person_id'])
+                etudiants.append({'person_id': r['person_id'],
+                                  'nom': p['nom'] if p else '', 'prenom': p['prenom'] if p else '',
+                                  'libelle': r['libelle'] or '', 'inconnu': p is None,
+                                  'promotion': promos.get(r['promotion_id'], ''),
+                                  'annee_etude': r['annee_etude'], 'formation': r['formation'] or '',
+                                  'creneau': r['creneau']})
+            etudiants.sort(key=lambda e: (_salon_cle(e['nom'] or e['libelle']), _salon_cle(e['prenom'])))
+        inscrit = next((p for p in presents if p['moi']), None)
+        salons.append({
+            'id': s['id'], 'nom': s['nom'], 'type': s['type'],
+            'type_label': _salon_libelle(_SALON_TYPES, s['type']),
+            'lieu': s['lieu'] or '', 'jour': s['jour'], 'jour_info': s['jour_info'] or '',
+            'duree': s['duree'], 'horaires': s['horaires'] or '', 'besoin': s['besoin'],
+            'infos': s['infos'] or '',
+            'etat': ('a_preciser' if not s['jour'] else 'passe' if s['jour'] < today
+                     else 'aujourdhui' if s['jour'] == today else 'a_venir'),
+            'enseignants': presents, 'couverture': couverture,
+            'nb_etudiants': len(etu.get(s['id'], [])), 'etudiants': etudiants,
+            'cr': _salon_cr(crs.get(s['id']), vis.get(s['id'], [])),
+            'fichiers': [dict(f) for f in fic.get(s['id'], [])],
+            'inscrit': bool(inscrit), 'mon_creneau': inscrit['creneau'] if inscrit else None,
+            'peut_cr': gestion or bool(inscrit and modif),
+        })
+    salons.sort(key=lambda x: (x['jour'] is None, x['jour'] or '', _salon_cle(x['jour_info']),
+                               _salon_cle(x['nom'])))
+    out = {
+        'annee': annee, 'aujourdhui': today, 'salons': salons,
+        'droits': {'gestion': gestion, 'modifier': modif, 'voit_etudiants': voit,
+                   'inscription': bool(modif and moi and _salon_titulaire(moi)),
+                   'moi': {'id': moi['id'], 'nom': moi['name'], 'titulaire': _salon_titulaire(moi)}
+                          if moi else None},
+        'types': [{'value': k, 'label': l} for k, l in _SALON_TYPES],
+        'creneaux': [{'value': k, 'label': l} for k, l in _SALON_CRENEAUX],
+        'publics': [{'value': k, 'label': l, 'classes': [c for c, _a in cl]} for k, l, cl in _SALON_PUBLICS],
+    }
+    if gestion:
+        # Les titulaires de l'année : eux seuls tiennent les stands
+        out['enseignants'] = [{'id': t['id'], 'nom': t['name'], 'vacataire': False}
+                              for t in sorted(teachers.values(), key=lambda t: _salon_cle(t['name']))
+                              if _salon_titulaire(t)]
+    return out
+
+@app.route('/api/salons', methods=['GET'])
+def get_salons():
+    err = _salons_lecture()
+    if err:
+        return err
+    return jsonify(_salons_payload(get_db(), get_current_year() or ''))
+
+@app.route('/api/salons', methods=['POST'])
+def create_salon():
+    """Nouveau salon de l'année consultée (responsable des salons, admin)."""
+    if not _salons_gestion():
+        return error_response('Réservé au responsable des salons', 403)
+    annee = get_current_year() or ''
+    if not _is_year(annee):
+        return error_response('Année universitaire inconnue', 400)
+    vals, err = _salon_valeurs(request.get_json() or {})
+    if err:
+        return error_response(err)
+    db = get_db()
+    cur = db.execute('''INSERT INTO salons (annee, nom, type, lieu, jour, jour_info, duree,
+                                            horaires, besoin, infos)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                     (annee, vals['nom'], vals['type'], vals.get('lieu'), vals.get('jour'),
+                      vals.get('jour_info'), vals['duree'], vals.get('horaires'),
+                      vals.get('besoin'), vals.get('infos')))
+    db.commit()
+    out = _salons_payload(db, annee)
+    out['cree'] = cur.lastrowid
+    return jsonify(out), 201
+
+@app.route('/api/salons/<int:sid>', methods=['PUT'])
+def update_salon(sid):
+    """Modifie un salon (responsable des salons, admin). Passé d'une journée à une
+    demi-journée, ses présents prennent ce créneau."""
+    if not _salons_gestion():
+        return error_response('Réservé au responsable des salons', 403)
+    db = get_db()
+    row = _salon_row(db, sid)
+    if not row:
+        return error_response('Salon introuvable', 404)
+    vals, err = _salon_valeurs(request.get_json() or {}, row)
+    if err:
+        return error_response(err)
+    db.execute('''UPDATE salons SET nom=?, type=?, lieu=?, jour=?, jour_info=?, duree=?,
+                                   horaires=?, besoin=?, infos=?, updated_at=CURRENT_TIMESTAMP
+                  WHERE id=?''',
+               (vals['nom'], vals['type'], vals.get('lieu'), vals.get('jour'), vals.get('jour_info'),
+                vals['duree'], vals.get('horaires'), vals.get('besoin'), vals.get('infos'), sid))
+    if vals['duree'] != 'journee':
+        for table in ('salon_enseignants', 'salon_etudiants'):
+            db.execute(f'UPDATE {table} SET creneau=? WHERE salon_id=?', (vals['duree'], sid))
+    db.commit()
+    return jsonify(_salons_payload(db, row['annee']))
+
+@app.route('/api/salons/<int:sid>', methods=['DELETE'])
+def delete_salon(sid):
+    """Supprime un salon, ses présents, son compte rendu et ses pièces jointes."""
+    if not _salons_gestion():
+        return error_response('Réservé au responsable des salons', 403)
+    db = get_db()
+    row = _salon_row(db, sid)
+    if not row:
+        return error_response('Salon introuvable', 404)
+    db.execute('DELETE FROM salons WHERE id=?', (sid,))   # le reste suit (ON DELETE CASCADE)
+    db.commit()
+    _audit('SALON_DELETE', ip=_client_ip(), user=session.get('user'), salon=row['nom'],
+           jour=row['jour'] or '-')
+    return jsonify(_salons_payload(db, row['annee']))
+
+@app.route('/api/salons/<int:sid>/enseignants', methods=['POST'])
+def salon_add_enseignant(sid):
+    """Inscrit un enseignant à un salon — body {teacher_id, creneau} ; déjà inscrit,
+    son créneau change. Titulaires seulement. Sans teacher_id (ou avec le sien),
+    l'enseignant s'inscrit lui-même ; inscrire quelqu'un d'autre : responsable des
+    salons, admin."""
+    db = get_db()
+    row = _salon_row(db, sid)
+    if not row:
+        return error_response('Salon introuvable', 404)
+    data = request.get_json() or {}
+    moi = _my_teacher_row(db)
+    try:
+        tid = int(data['teacher_id']) if data.get('teacher_id') else (moi['id'] if moi else None)
+    except (TypeError, ValueError):
+        return error_response('Enseignant invalide')
+    if not tid:
+        return error_response('Enseignant requis')
+    soi = bool(moi and moi['id'] == tid)
+    if not _salons_gestion():
+        if not soi:
+            return error_response('Seul le responsable des salons inscrit un autre enseignant', 403)
+    t = db.execute('SELECT id, status FROM teachers WHERE id=?', (tid,)).fetchone()
+    if not t:
+        return error_response('Enseignant introuvable', 404)
+    if not _salon_titulaire(t):
+        return error_response('Les salons sont réservés aux enseignants titulaires', 403)
+    db.execute('''INSERT INTO salon_enseignants (salon_id, teacher_id, creneau, inscrit_par)
+                  VALUES (?, ?, ?, ?)
+                  ON CONFLICT (salon_id, teacher_id) DO UPDATE SET creneau = excluded.creneau''',
+               (sid, tid, _salon_creneau(row, data.get('creneau')), session.get('user')))
+    db.commit()
+    return jsonify(_salons_payload(db, row['annee']))
+
+@app.route('/api/salons/<int:sid>/enseignants/<int:tid>', methods=['DELETE'])
+def salon_remove_enseignant(sid, tid):
+    """Désinscrit un enseignant : lui-même, ou le responsable des salons / l'admin."""
+    db = get_db()
+    row = _salon_row(db, sid)
+    if not row:
+        return error_response('Salon introuvable', 404)
+    moi = _my_teacher_row(db)
+    if not (_salons_gestion() or (moi and moi['id'] == tid)):
+        return error_response('Seul le responsable des salons désinscrit un autre enseignant', 403)
+    db.execute('DELETE FROM salon_enseignants WHERE salon_id=? AND teacher_id=?', (sid, tid))
+    db.commit()
+    return jsonify(_salons_payload(db, row['annee']))
+
+@app.route('/api/salons/etudiants', methods=['GET'])
+def salons_etudiants():
+    """Étudiants inscrits l'année consultée : la liste où le responsable des salons
+    choisit les présents."""
+    if not _salons_gestion():
+        return error_response('Réservé au responsable des salons', 403)
+    annee = get_current_year() or ''
+    liste = sorted(_salons_inscrits(get_promotions_db(), annee).values(),
+                   key=lambda e: (_salon_cle(e['nom']), _salon_cle(e['prenom'])))
+    return jsonify({'annee': annee, 'etudiants': liste})
+
+@app.route('/api/salons/<int:sid>/etudiants', methods=['POST'])
+def salon_add_etudiant(sid):
+    """Ajoute un étudiant présent — body {person_id, creneau}, parmi les inscrits de
+    l'année ; déjà présent, son créneau change (responsable des salons, admin)."""
+    if not _salons_gestion():
+        return error_response('Réservé au responsable des salons', 403)
+    db = get_db()
+    row = _salon_row(db, sid)
+    if not row:
+        return error_response('Salon introuvable', 404)
+    data = request.get_json() or {}
+    try:
+        pid = int(data.get('person_id'))
+    except (TypeError, ValueError):
+        return error_response('Étudiant invalide')
+    e = _salons_inscrits(get_promotions_db(), row['annee']).get(pid)
+    if not e:
+        return error_response(f"Étudiant non inscrit en {row['annee']}", 400)
+    db.execute('''INSERT INTO salon_etudiants (salon_id, person_id, promotion_id, annee_etude,
+                                               formation, libelle, creneau)
+                  VALUES (?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT (salon_id, person_id) DO UPDATE SET creneau = excluded.creneau''',
+               (sid, pid, e['promotion_id'], e['annee_etude'], e['formation'],
+                f"{e['nom']} {e['prenom']}".strip(), _salon_creneau(row, data.get('creneau'))))
+    db.commit()
+    return jsonify(_salons_payload(db, row['annee']))
+
+@app.route('/api/salons/<int:sid>/etudiants/<int:pid>', methods=['DELETE'])
+def salon_remove_etudiant(sid, pid):
+    if not _salons_gestion():
+        return error_response('Réservé au responsable des salons', 403)
+    db = get_db()
+    row = _salon_row(db, sid)
+    if not row:
+        return error_response('Salon introuvable', 404)
+    db.execute('DELETE FROM salon_etudiants WHERE salon_id=? AND person_id=?', (sid, pid))
+    db.commit()
+    return jsonify(_salons_payload(db, row['annee']))
+
+@app.route('/api/salons/<int:sid>/compte-rendu', methods=['PUT'])
+def salon_compte_rendu(sid):
+    """Compte rendu d'un salon — body {visiteurs, texte, lignes: [{niveau, classe,
+    precision, nombre}]} : le nombre de visiteurs, le public rencontré (formation en
+    cours, classe, précision libre) et le bilan. Responsable des salons, admin, ou
+    enseignant inscrit au salon. Un compte rendu vidé est supprimé."""
+    db = get_db()
+    row = _salon_row(db, sid)
+    if not row:
+        return error_response('Salon introuvable', 404)
+    if not _salon_peut_cr(db, sid, _my_teacher_row(db)):
+        return error_response('Réservé au responsable des salons et aux enseignants inscrits au salon', 403)
+    data = request.get_json() or {}
+    vis = data.get('visiteurs')
+    if vis in (None, ''):
+        vis = None
+    else:
+        try:
+            vis = int(vis)
+        except (TypeError, ValueError):
+            return error_response('Nombre de visiteurs invalide')
+        if not 0 <= vis <= 100000:
+            return error_response('Nombre de visiteurs invalide')
+    texte = str(data.get('texte') or '').strip()[:5000] or None
+    publics = {k: {c for c, _a in cl} for k, _l, cl in _SALON_PUBLICS}
+    lignes = []
+    for l in data.get('lignes') or []:
+        if not isinstance(l, dict):
+            return error_response('Public rencontré invalide')
+        niveau = l.get('niveau')
+        classe = str(l.get('classe') or '').strip() or None
+        if niveau not in publics or (classe and classe not in publics[niveau]):
+            return error_response('Formation en cours ou classe inconnue')
+        if l.get('nombre') in (None, ''):
+            continue                          # ligne laissée vide à l'écran
+        try:
+            n = int(l.get('nombre'))
+        except (TypeError, ValueError):
+            return error_response('Nombre de visiteurs invalide')
+        if n == 0:
+            continue
+        if not 0 < n <= 100000:
+            return error_response('Nombre de visiteurs invalide')
+        lignes.append((niveau, classe, str(l.get('precision') or '').strip()[:80] or None, n))
+    db.execute('DELETE FROM salon_visiteurs WHERE salon_id=?', (sid,))
+    if vis is None and not texte and not lignes:
+        db.execute('DELETE FROM salon_comptes_rendus WHERE salon_id=?', (sid,))
+    else:
+        db.execute('''INSERT INTO salon_comptes_rendus (salon_id, visiteurs, texte, auteur, updated_at)
+                      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                      ON CONFLICT (salon_id) DO UPDATE SET visiteurs = excluded.visiteurs,
+                          texte = excluded.texte, auteur = excluded.auteur,
+                          updated_at = CURRENT_TIMESTAMP''',
+                   (sid, vis, texte, session.get('user')))
+        db.executemany('''INSERT INTO salon_visiteurs (salon_id, niveau, classe, precision, nombre)
+                          VALUES (?, ?, ?, ?, ?)''', [(sid, *l) for l in lignes])
+    db.commit()
+    return jsonify(_salons_payload(db, row['annee']))
+
+@app.route('/api/salons/<int:sid>/fichiers', methods=['POST'])
+def salon_add_fichier(sid):
+    """Joint un fichier au compte rendu (photo, compte rendu rédigé, liste
+    d'émargement…) : mêmes droits que le compte rendu."""
+    db = get_db()
+    row = _salon_row(db, sid)
+    if not row:
+        return error_response('Salon introuvable', 404)
+    if not _salon_peut_cr(db, sid, _my_teacher_row(db)):
+        return error_response('Réservé au responsable des salons et aux enseignants inscrits au salon', 403)
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return error_response('Aucun fichier reçu', 400)
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in _SALON_FICHIER_EXT:
+        return error_response('Type de fichier non autorisé', 400)
+    if db.execute('SELECT COUNT(*) FROM salon_fichiers WHERE salon_id=?', (sid,)).fetchone()[0] >= _SALON_FICHIERS_MAX:
+        return error_response(f'{_SALON_FICHIERS_MAX} pièces jointes au plus par salon', 400)
+    data = f.read(_SALON_FICHIER_MAX + 1)
+    if len(data) > _SALON_FICHIER_MAX:
+        return error_response('Fichier trop volumineux (5 Mo au plus)', 400)
+    if not data:
+        return error_response('Fichier vide', 400)
+    db.execute('''INSERT INTO salon_fichiers (salon_id, nom, mime, taille, data, auteur)
+                  VALUES (?, ?, ?, ?, ?, ?)''',
+               (sid, os.path.basename(f.filename)[:150], f.mimetype or 'application/octet-stream',
+                len(data), sqlite3.Binary(data), session.get('user')))
+    db.commit()
+    return jsonify(_salons_payload(db, row['annee'])), 201
+
+@app.route('/api/salons/<int:sid>/fichiers/<int:fid>', methods=['GET'])
+def salon_get_fichier(sid, fid):
+    err = _salons_lecture()
+    if err:
+        return err
+    db = get_db()
+    if not _salon_row(db, sid):
+        return error_response('Salon introuvable', 404)
+    r = db.execute('SELECT nom, mime, data FROM salon_fichiers WHERE id=? AND salon_id=?',
+                   (fid, sid)).fetchone()
+    if not r:
+        return error_response('Fichier introuvable', 404)
+    # Toujours en téléchargement : un fichier déposé ne s'exécute jamais dans la page
+    return send_file(io.BytesIO(r['data']), mimetype=r['mime'] or 'application/octet-stream',
+                     as_attachment=True, download_name=r['nom'])
+
+@app.route('/api/salons/<int:sid>/fichiers/<int:fid>', methods=['DELETE'])
+def salon_delete_fichier(sid, fid):
+    db = get_db()
+    row = _salon_row(db, sid)
+    if not row:
+        return error_response('Salon introuvable', 404)
+    if not _salon_peut_cr(db, sid, _my_teacher_row(db)):
+        return error_response('Réservé au responsable des salons et aux enseignants inscrits au salon', 403)
+    db.execute('DELETE FROM salon_fichiers WHERE id=? AND salon_id=?', (fid, sid))
+    db.commit()
+    return jsonify(_salons_payload(db, row['annee']))
+
+def _salons_mesures(db, annee):
+    """Ce qu'on compte d'une année de salons, sans nommer personne : par salon,
+    visiteurs (annoncés, sinon somme du public détaillé), enseignants et demi-journées,
+    étudiants ; et le public rencontré, ligne par ligne."""
+    salons = [dict(r) for r in db.execute('SELECT * FROM salons WHERE annee=?', (annee,))]
+    ens = _salons_lignes(db, annee, 'salon_enseignants', 'teacher_id, creneau')
+    etu = _salons_lignes(db, annee, 'salon_etudiants', 'person_id, annee_etude, formation')
+    vis = _salons_lignes(db, annee, 'salon_visiteurs', 'niveau, classe, precision, nombre')
+    crs = {r['salon_id']: r for r in db.execute(
+        '''SELECT salon_id, visiteurs FROM salon_comptes_rendus
+           WHERE salon_id IN (SELECT id FROM salons WHERE annee=?)''', (annee,))}
+    for s in salons:
+        lignes = vis.get(s['id'], [])
+        cr = crs.get(s['id'])
+        s['a_cr'] = bool(cr or lignes)
+        s['visiteurs'] = (cr['visiteurs'] if cr and cr['visiteurs'] is not None
+                          else sum(l['nombre'] for l in lignes)) if s['a_cr'] else None
+        s['ens'] = ens.get(s['id'], [])
+        s['etu'] = etu.get(s['id'], [])
+        s['lignes'] = lignes
+        s['demi'] = sum(_SALON_DEMI.get(r['creneau'], 2) for r in s['ens'])
+    return salons
+
+def _salons_bilan_annee(db, annee, today, noms):
+    """Bilan détaillé d'une année. `noms` : la session voit les noms des étudiants."""
+    salons = _salons_mesures(db, annee)
+    teachers = {r['id']: r['name'] for r in db.execute('SELECT id, name FROM teachers')}
+    passes = [s for s in salons if s['jour'] and s['jour'] < today]
+    lignes = [l for s in salons for l in s['lignes']]
+    annee_de = {c: a for _k, _l, cl in _SALON_PUBLICS for c, a in cl}
+    niveaux = {k: l for k, l, _c in _SALON_PUBLICS}
+
+    def somme(cle):
+        c = {}
+        for l in lignes:
+            k = cle(l)
+            c[k] = c.get(k, 0) + l['nombre']
+        return c
+    par_niveau = somme(lambda l: l['niveau'])
+    par_annee = somme(lambda l: annee_de.get(l['classe'] or '', 'Non précisée'))
+    croise = []
+    for k, lib, cl in _SALON_PUBLICS:
+        lk = [l for l in lignes if l['niveau'] == k]
+        if lk:
+            parc = {}
+            for l in lk:
+                parc[l['classe'] or 'Non précisée'] = parc.get(l['classe'] or 'Non précisée', 0) + l['nombre']
+            ordre = [c for c, _a in cl] + ['Non précisée']
+            croise.append({'niveau': lib, 'total': sum(parc.values()),
+                           'classes': [[c, parc[c]] for c in ordre if c in parc]})
+    precis = {}
+    for l in lignes:
+        if l['precision']:
+            p = precis.setdefault(_salon_cle(l['precision']), {'libelle': l['precision'], 'n': 0})
+            p['n'] += l['nombre']
+    par_ens = {}
+    for s in salons:
+        for r in s['ens']:
+            t = par_ens.setdefault(r['teacher_id'], {'nom': teachers.get(r['teacher_id'], '?'),
+                                                     'salons': 0, 'demi': 0})
+            t['salons'] += 1
+            t['demi'] += _SALON_DEMI.get(r['creneau'], 2)
+    etu_annees, par_etu = {}, {}
+    for s in salons:
+        for r in s['etu']:
+            par_etu[r['person_id']] = par_etu.get(r['person_id'], 0) + 1
+    vus = set()
+    for s in salons:
+        for r in s['etu']:
+            if r['person_id'] in vus:
+                continue
+            vus.add(r['person_id'])
+            k = f"BUT{r['annee_etude'] or '?'} {r['formation'] or ''}".strip()
+            etu_annees[k] = etu_annees.get(k, 0) + 1
+    etudiants = None
+    if noms and par_etu:
+        reg = {}
+        pdb = get_promotions_db()
+        ids = sorted(par_etu)
+        for i in range(0, len(ids), 500):
+            lot = ids[i:i + 500]
+            for r in pdb.execute('SELECT id, nom, prenom FROM students WHERE id IN (%s)'
+                                 % ','.join('?' * len(lot)), lot):
+                reg[r['id']] = r
+        info = {}
+        for s in salons:
+            for r in s['etu']:
+                info[r['person_id']] = r
+        libelles = {r['person_id']: r['libelle'] for r in db.execute(
+            '''SELECT person_id, libelle FROM salon_etudiants
+               WHERE salon_id IN (SELECT id FROM salons WHERE annee=?)''', (annee,))}
+        etudiants = sorted(({'person_id': p, 'salons': n,
+                             'nom': reg[p]['nom'] if p in reg else (libelles.get(p) or '?'),
+                             'prenom': reg[p]['prenom'] if p in reg else '',
+                             'classe': f"BUT{info[p]['annee_etude'] or '?'} {info[p]['formation'] or ''}".strip()}
+                            for p, n in par_etu.items()),
+                           key=lambda e: (-e['salons'], _salon_cle(e['nom']), _salon_cle(e['prenom'])))
+    par_type = {}
+    for s in salons:
+        t = par_type.setdefault(s['type'], {'salons': 0, 'visiteurs': 0})
+        t['salons'] += 1
+        t['visiteurs'] += s['visiteurs'] or 0
+    return {
+        'salons': len(salons), 'passes': len(passes),
+        'a_venir': sum(1 for s in salons if s['jour'] and s['jour'] >= today),
+        'a_preciser': sum(1 for s in salons if not s['jour']),
+        'comptes_rendus': sum(1 for s in salons if s['a_cr']),
+        'cr_manquants': [{'id': s['id'], 'nom': s['nom'], 'jour': s['jour']}
+                         for s in sorted(passes, key=lambda s: s['jour']) if not s['a_cr']],
+        'visiteurs': sum(s['visiteurs'] or 0 for s in salons),
+        'public_detaille': sum(l['nombre'] for l in lignes),
+        'enseignants': len(par_ens), 'presences_enseignants': sum(len(s['ens']) for s in salons),
+        'demi_journees': sum(s['demi'] for s in salons),
+        'etudiants': len(par_etu), 'presences_etudiants': sum(len(s['etu']) for s in salons),
+        'par_type': [[_salon_libelle(_SALON_TYPES, k), v['salons'], v['visiteurs']]
+                     for k, v in sorted(par_type.items(), key=lambda kv: -kv[1]['salons'])],
+        'par_niveau': [[niveaux[k], par_niveau[k]] for k, _l, _c in _SALON_PUBLICS if k in par_niveau],
+        'par_annee': [[a, par_annee[a]] for a in _SALON_ANNEES + ('Non précisée',) if a in par_annee],
+        'croise': croise,
+        'par_precision': [[p['libelle'], p['n']] for p in
+                          sorted(precis.values(), key=lambda p: (-p['n'], _salon_cle(p['libelle'])))][:20],
+        'par_salon': [{'id': s['id'], 'nom': s['nom'], 'jour': s['jour'], 'jour_info': s['jour_info'] or '',
+                       'type': _salon_libelle(_SALON_TYPES, s['type']), 'lieu': s['lieu'] or '',
+                       'visiteurs': s['visiteurs'], 'enseignants': len(s['ens']), 'demi': s['demi'],
+                       'etudiants': len(s['etu'])}
+                      for s in sorted(salons, key=lambda s: (s['jour'] is None, s['jour'] or '',
+                                                             _salon_cle(s['nom'])))],
+        'par_enseignant': sorted(par_ens.values(),
+                                 key=lambda t: (-t['demi'], -t['salons'], _salon_cle(t['nom']))),
+        'etudiants_par_annee': sorted(etu_annees.items()),
+        'par_etudiant': etudiants,
+    }
+
+def _salons_resume(db, annee, today):
+    """Une ligne de l'historique : l'année en chiffres, et ses salons par nom (tenu :
+    le salon a eu lieu — sans compte rendu, il n'en est pas moins tenu)."""
+    salons = _salons_mesures(db, annee)
+    if not salons:
+        return None
+    niv = {}
+    for s in salons:
+        for l in s['lignes']:
+            niv[l['niveau']] = niv.get(l['niveau'], 0) + l['nombre']
+    return {'annee': annee, 'salons': len(salons),
+            'comptes_rendus': sum(1 for s in salons if s['a_cr']),
+            'visiteurs': sum(s['visiteurs'] or 0 for s in salons),
+            'enseignants': len({r['teacher_id'] for s in salons for r in s['ens']}),
+            'demi_journees': sum(s['demi'] for s in salons),
+            'etudiants': len({r['person_id'] for s in salons for r in s['etu']}),
+            'par_niveau': [[k, niv[k]] for k, _l, _c in _SALON_PUBLICS if k in niv],
+            'par_salon': [{'cle': _salon_cle(s['nom']), 'nom': s['nom'], 'visiteurs': s['visiteurs'],
+                           'tenu': bool(s['jour'] and s['jour'] < today)}
+                          for s in salons]}
+
+@app.route('/api/salons/bilan', methods=['GET'])
+def salons_bilan():
+    """Bilan des salons : l'année consultée en détail, et toutes les années de salons
+    côte à côte (nombre, visiteurs, enseignants, étudiants, salons d'une année sur
+    l'autre). Les étudiants n'y sont nommés que pour qui lit les promotions."""
+    err = _salons_lecture()
+    if err:
+        return err
+    annee = get_current_year() or ''
+    db = get_db()
+    today = datetime.now().date().isoformat()
+    historique = []
+    for y in list_years():
+        try:
+            if y == annee:
+                r = _salons_resume(db, y, today)
+            else:
+                autre = _open_connection(db_path_for_year(y))
+                try:
+                    r = _salons_resume(autre, y, today)
+                finally:
+                    autre.close()
+        except sqlite3.Error:
+            r = None            # base d'une année pas encore migrée : rien à en dire
+        if r:
+            historique.append(r)
+    return jsonify({'annee': annee, 'aujourdhui': today,
+                    'bilan': _salons_bilan_annee(db, annee, today, _salons_voit_etudiants()),
+                    'historique': historique,
+                    'publics': [{'value': k, 'label': l} for k, l, _c in _SALON_PUBLICS]})
 
 # ======================= APPEL PAR QR CODE (Bilan global) =======================
 # Chaque enseignant indique, SOUS-MATIÈRE par sous-matière, s'il fera l'appel par
@@ -17250,10 +18115,11 @@ def create_year():
             return error_response(f"Année source {copy_from} introuvable", 404)
         os.makedirs(os.path.dirname(new_path), exist_ok=True)
         shutil.copy2(src_path, new_path)
-        # S'assurer que la copie est à jour schéma
+        # S'assurer que la copie est à jour schéma ; les salons restent à leur année
         db = sqlite3.connect(new_path)
         db.row_factory = sqlite3.Row
         _apply_migrations(db)
+        _salons_purge(db, new_year)
         db.close()
     else:
         _init_fresh_db(new_path)

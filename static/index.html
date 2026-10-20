@@ -416,6 +416,24 @@
                      font-size: .7rem; font-weight: 600; background: #ede9fe; color: #5b21b6; }
         .right-tag.admin { background: #dcfce7; color: #166534; }
         .right-tag.inactive { opacity: .55; outline: 1px dashed currentColor; outline-offset: -1px; }
+        /* Onglet Salons : présents en pastilles, mois en intercalaire, salons passés estompés */
+        .salon-chip { display: inline-block; margin: 1px 4px 1px 0; padding: 1px 7px; border-radius: 10px;
+                      font-size: .76rem; background: #eef2ff; color: #3730a3; white-space: nowrap; }
+        .salon-chip.moi { background: #4f46e5; color: #fff; font-weight: 700; }
+        .salon-chip.etu { background: #ecfdf5; color: #065f46; cursor: pointer; }
+        .salon-chip em { font-style: normal; opacity: .75; }
+        .salon-table td { vertical-align: top; }
+        .salon-table tr.salon-mois td { background: #f5f3ff; color: #4338ca; font-weight: 700; font-size: .78rem;
+                                        padding: 5px 14px; }
+        .salon-table tr.salon-passe td { background: #fafafa; }
+        .salon-table tr.salon-passe td:first-child { color: #6b7280; }
+        .salon-sub { font-size: .76rem; color: #6b7280; margin-top: 2px; }
+        .salon-modal-list td { padding: 5px 8px; font-size: .85rem; }
+        .salon-sugg { padding: 5px 10px; cursor: pointer; font-size: .85rem; border-bottom: 1px solid #f3f4f6; }
+        .salon-sugg:hover { background: #eef2ff; }
+        .salon-cr-table td { padding: 4px 6px; }
+        .salon-cr-table select, .salon-cr-table input { width: 100%; padding: 5px 6px; border: 1px solid #d1d5db;
+                                                       border-radius: 5px; font-size: .84rem; }
         /* Réservé au superadmin (compte Admin) : masqué pour les enseignants administrateurs */
         body:not(.role-superadmin) .superadmin-only { display: none !important; }
         /* Onglet masqué par le superadmin pour le profil connecté (Paramètres › Visibilité) */
@@ -621,6 +639,7 @@
     <button onclick="showPage('salles')" id="nav-salles">Salles</button>
     <button onclick="showPage('journal')" id="nav-journal" class="admin-only superadmin-only">Journal</button>
     <button onclick="showPage('parametres')" id="nav-parametres" class="admin-only">Paramètres</button>
+    <button onclick="showPage('salons')" id="nav-salons" title="Salons étudiants, forums et portes ouvertes de l'année : calendrier, inscriptions, comptes rendus">Salons</button>
     <button onclick="showPage('mon-compte')" id="nav-mon-compte" style="display:none">Mon Compte</button>
     <button onclick="showPage('aide')" id="nav-aide" title="Mode d'emploi du site : chaque écran expliqué, avec des exemples">Aide</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
@@ -1486,6 +1505,38 @@
     <div id="stats-content"><div class="empty">Chargement…</div></div>
 </div>
 
+<!-- ===== SALONS ÉTUDIANTS : calendrier, présents, comptes rendus, bilan ===== -->
+<!-- Base de l'année universitaire choisie ici (?year=) : le responsable des salons et
+     l'admin tiennent tout, un titulaire s'inscrit, un enseignant inscrit rédige le
+     compte rendu (loadSalons) -->
+<div class="page" id="page-salons">
+    <div class="toolbar">
+        <h1>Salons étudiants</h1>
+        <div class="filters">
+            <label for="salons-year">Année universitaire :</label>
+            <select id="salons-year" onchange="onSalonsYear()" style="font-weight:600"></select>
+            <span id="salons-filtres" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <input type="search" id="salons-q" oninput="renderSalons()" placeholder="Salon, lieu, enseignant…"
+                       title="Recherche sur le nom, le lieu, le type et les enseignants présents, sans tenir compte des accents"
+                       style="min-width:210px">
+                <label style="display:inline-flex;align-items:center;gap:5px;font-weight:400;cursor:pointer"
+                       title="Masquer les salons passés">
+                    <input type="checkbox" id="salons-avenir" onchange="renderSalons()" style="width:auto"> À venir</label>
+                <label id="salons-mine-box" style="display:none;align-items:center;gap:5px;font-weight:400;cursor:pointer"
+                       title="Les salons où vous êtes inscrit">
+                    <input type="checkbox" id="salons-mine" onchange="renderSalons()" style="width:auto"> Mes salons</label>
+            </span>
+            <button class="btn btn-primary btn-sm" id="salons-add-btn" style="display:none" onclick="openSalonModal()">+ Ajouter un salon</button>
+        </div>
+    </div>
+    <div class="subtabs">
+        <button type="button" id="salons-tab-calendrier" class="subtab active" onclick="showSalonsTab('calendrier')">Calendrier</button>
+        <button type="button" id="salons-tab-bilan" class="subtab" onclick="showSalonsTab('bilan')"
+                title="Visiteurs, public rencontré, mobilisation des enseignants et des étudiants, comparaison des années">Bilan</button>
+    </div>
+    <div id="salons-content"><div class="spinner">Chargement…</div></div>
+</div>
+
 <!-- ===== AIDE : mode d'emploi du site (rendu par aide.js) ===== -->
 <div class="page" id="page-aide">
     <div class="toolbar">
@@ -2035,6 +2086,105 @@
     </div>
 </div>
 
+<!-- Salon (onglet Salons) : le responsable des salons ou l'admin en règle les champs,
+     puis les présents — chaque ajout ou retrait s'enregistre aussitôt -->
+<div class="modal-backdrop" id="modal-salon">
+    <div class="modal" style="max-width:760px">
+        <h2 id="salon-modal-titre" style="margin-bottom:4px">Nouveau salon</h2>
+        <p id="salon-modal-sub" style="color:#6b7280;margin:0 0 14px;font-size:.85rem"></p>
+        <form id="form-salon" onsubmit="submitSalon(event)">
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+                <div class="form-group" style="flex:2 1 260px"><label>Nom *</label>
+                    <input id="salon-nom" required maxlength="120" placeholder="ex. Studyrama, Salon de l'Étudiant, Forum des formations…"></div>
+                <div class="form-group" style="flex:1 1 150px"><label>Type</label><select id="salon-type"></select></div>
+            </div>
+            <div class="form-group"><label>Lieu</label>
+                <input id="salon-lieu" maxlength="200" placeholder="ex. Toulon, Palais Neptune — ou le lycée et sa ville"></div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+                <div class="form-group" style="flex:1 1 150px"><label>Date</label><input type="date" id="salon-jour"></div>
+                <div class="form-group" style="flex:2 1 220px"><label>Précision sur la date</label>
+                    <input id="salon-jour-info" maxlength="100" placeholder="ex. fin janvier, à confirmer"
+                           title="Utile quand la date n'est pas encore connue : le salon est alors rangé en fin de calendrier"></div>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+                <div class="form-group" style="flex:1 1 150px"><label>Durée</label>
+                    <select id="salon-duree" title="Un salon d'une demi-journée n'a qu'un créneau ; une journée se découpe en matin et après-midi"></select></div>
+                <div class="form-group" style="flex:1 1 150px"><label>Horaires</label>
+                    <input id="salon-horaires" maxlength="100" placeholder="ex. 9 h – 17 h"></div>
+                <div class="form-group" style="flex:1 1 150px"><label>Enseignants souhaités</label>
+                    <input type="number" id="salon-besoin" min="0" max="50" step="1" placeholder="par créneau"
+                           title="Nombre d'enseignants voulus sur le stand, par créneau (matin, après-midi) : le calendrier dit s'il en manque"></div>
+            </div>
+            <div class="form-group"><label>Infos pratiques</label>
+                <textarea id="salon-infos" rows="3" maxlength="2000" placeholder="Stand, contact de l'organisateur, matériel à apporter, covoiturage…"
+                          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font:inherit;resize:vertical"></textarea></div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-danger" id="salon-suppr-btn" style="margin-right:auto;display:none" onclick="deleteSalon()">Supprimer le salon</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-salon')">Fermer</button>
+                <button type="submit" class="btn btn-primary">Enregistrer</button>
+            </div>
+        </form>
+        <div id="salon-presents" style="margin-top:6px"></div>
+    </div>
+</div>
+
+<!-- Inscription d'un enseignant à un salon : créneau, désinscription -->
+<div class="modal-backdrop" id="modal-salon-moi">
+    <div class="modal" style="max-width:440px">
+        <h2 id="salon-moi-titre" style="margin-bottom:4px">M'inscrire</h2>
+        <p id="salon-moi-sub" style="color:#6b7280;margin:0 0 14px;font-size:.85rem"></p>
+        <div style="font-size:.85rem;font-weight:600;margin-bottom:6px">Créneau</div>
+        <div id="salon-moi-creneaux" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-danger" id="salon-moi-retrait" style="margin-right:auto" onclick="salonMeDesinscrire()">Me désinscrire</button>
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-salon-moi')">Annuler</button>
+        </div>
+    </div>
+</div>
+
+<!-- Compte rendu d'un salon : visiteurs, public rencontré, bilan, pièces jointes.
+     Modifiable par le responsable des salons, l'admin et les enseignants inscrits -->
+<div class="modal-backdrop" id="modal-salon-cr">
+    <div class="modal" style="max-width:860px">
+        <h2 id="salon-cr-titre" style="margin-bottom:4px">Compte rendu</h2>
+        <p id="salon-cr-sub" style="color:#6b7280;margin:0 0 14px;font-size:.85rem"></p>
+        <form id="form-salon-cr" onsubmit="submitSalonCr(event)">
+            <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">
+                <div class="form-group" style="flex:0 0 220px"><label>Nombre de visiteurs</label>
+                    <input type="number" id="salon-cr-visiteurs" min="0" step="1" placeholder="venus au stand" oninput="salonCrSomme()"
+                           title="Toutes les personnes rencontrées. Laissé vide : la somme du public détaillé ci-dessous"></div>
+                <div id="salon-cr-somme" style="flex:1 1 240px;font-size:.82rem;color:#6b7280;padding-bottom:16px"></div>
+            </div>
+            <div class="section-title">Public rencontré</div>
+            <p style="font-size:.78rem;color:#6b7280;margin:0 0 6px">Une ligne par groupe de visiteurs : leur formation en cours,
+                leur classe, une précision si besoin (spécialité, filière, établissement) et leur nombre.</p>
+            <div style="overflow-x:auto">
+            <table class="salon-cr-table" style="box-shadow:none">
+                <thead><tr><th style="width:28%">Formation en cours</th><th style="width:20%">Classe</th>
+                    <th>Spécialité / précision</th><th style="width:90px">Nombre</th><th style="width:40px"></th></tr></thead>
+                <tbody id="salon-cr-lignes"></tbody>
+            </table>
+            </div>
+            <datalist id="salon-cr-precisions">
+                <option value="Générale"><option value="STI2D"><option value="STL"><option value="STMG">
+                <option value="Bac pro MSPC"><option value="Bac pro MELEC"><option value="Bac pro MEI">
+                <option value="BTS"><option value="BUT"><option value="Licence"><option value="CPGE"><option value="PASS / LAS">
+            </datalist>
+            <button type="button" class="btn btn-secondary btn-sm" id="salon-cr-ajout" style="margin-top:6px" onclick="salonCrAjouterLigne()">+ Ajouter une ligne</button>
+            <div class="form-group" style="margin-top:14px"><label>Bilan</label>
+                <textarea id="salon-cr-texte" rows="5" maxlength="5000"
+                          placeholder="Fréquentation, questions posées, contacts pris, intérêt pour l'alternance, salon à refaire ou non l'an prochain…"
+                          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font:inherit;resize:vertical"></textarea></div>
+            <div class="section-title">Pièces jointes</div>
+            <div id="salon-cr-fichiers"></div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-salon-cr')">Fermer</button>
+                <button type="submit" class="btn btn-primary" id="salon-cr-save">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <div class="modal-backdrop" id="modal-teacher">
     <div class="modal">
         <h2 id="modal-teacher-title">Ajouter un enseignant</h2>
@@ -2098,15 +2248,18 @@
                         <input type="checkbox" class="teacher-resp" value="alt" onchange="teacherRespToggle(this)" style="width:auto"> Formation ALT</label>
                     <label style="display:flex;align-items:center;gap:6px;font-weight:400">
                         <input type="checkbox" class="teacher-resp" value="stage" onchange="teacherRespToggle(this)" style="width:auto"> Stages</label>
+                    <label style="display:flex;align-items:center;gap:6px;font-weight:400">
+                        <input type="checkbox" class="teacher-resp" value="salon" onchange="teacherRespToggle(this)" style="width:auto"> Salons</label>
                 </div>
                 <div style="font-size:.78rem;color:#6b7280;margin-top:4px">
                     Ajoute à sa session normale (connexion avec mot de passe) les droits de ces
                     domaines, en plus de ce que fait tout enseignant — FTP : EDT, matières,
                     services enseignant, groupes, effectifs, jury
                     et devenir (FTP et ALT) ; ALT : tuteurs des alternants, jury et devenir ;
-                    Stages : tuteurs des stages FTP. Cumulables. Détail réglable dans Paramètres ›
-                    Accès aux onglets. Mêmes conditions que les droits d'administration (actives
-                    seulement avec le mot de passe).
+                    Stages : tuteurs des stages FTP ; Salons : calendrier des salons étudiants,
+                    présents (enseignants, étudiants) et comptes rendus. Cumulables. Détail réglable
+                    dans Paramètres › Accès aux onglets. Mêmes conditions que les droits
+                    d'administration (actives seulement avec le mot de passe).
                 </div>
             </div>
             <div class="form-actions">
@@ -2345,11 +2498,13 @@ async function api(endpoint, opts = {}) {
     // (lorsque le superadmin a ouvert des droits de modification, le serveur tranche seul)
     // Exception aussi : le journal de suivi d'un étudiant (commentaires, signalements),
     // que l'enseignant écrit par défaut — le serveur vérifie auteur et droits.
+    // Et l'onglet Salons : un titulaire s'y inscrit, un inscrit rédige le compte rendu.
     if (state.role === 'teacher' && method !== 'GET' && method !== 'HEAD'
             && !(state.tabs && state.tabs.editExtra.size)
             && endpoint !== '/years/session' && endpoint !== '/session-mode'
             && !endpoint.startsWith('/my-account')
             && !endpoint.startsWith('/qr-attendance')
+            && !endpoint.startsWith('/salons/')
             && !/\/saisie\/S[1-6]\//.test(endpoint)
             && !/^\/promotions\/\d+\/tuteurs\//.test(endpoint)
             && !/^\/students\/\d+\/suivi(\/\d+)?$/.test(endpoint)) {
@@ -2522,8 +2677,8 @@ async function submitPwdInit() {
     }
 }
 
-// Responsabilités de formation (ajoutées à la session normale) : libellés courts
-const RESP_LABELS = { ftp: 'FTP', alt: 'ALT', stage: 'stages' };
+// Responsabilités (ajoutées à la session normale) : libellés courts
+const RESP_LABELS = { ftp: 'FTP', alt: 'ALT', stage: 'stages', salon: 'salons' };
 function respLabel(list) { return (list || []).map(r => RESP_LABELS[r] || r).join(' + '); }
 // Sessions d'un enseignant administrateur : libellé complet (écran de connexion,
 // liste de la barre) et court (« Passer en … »)
@@ -2590,8 +2745,9 @@ function applyRole(me) {
             : (teacher ? teacher + ' · admin' : 'Admin');
     }
     // Enseignant : onglets Service enseignant (Bilan Global / Calendaire /
-    // Contraintes), Programme (consultation), Statistiques (agrégées) et Mon Compte.
-    const teacherTabs = ['nav-service', 'nav-programme', 'nav-statistiques', 'nav-mon-compte', 'nav-aide'];
+    // Contraintes), Programme (consultation), Statistiques (agrégées), Salons et Mon Compte.
+    const teacherTabs = ['nav-service', 'nav-programme', 'nav-statistiques', 'nav-salons',
+                         'nav-mon-compte', 'nav-aide'];
     // Connexion avec mot de passe : Promotions en lecture seule (Effectifs/Notes/Jury)
     if (role === 'teacher' && state.promoAccess) teacherTabs.push('nav-saisie', 'nav-promotions', 'nav-etudiants',
                                                                   'nav-stages', 'nav-alternance');
@@ -2699,7 +2855,7 @@ function _visiblePage(name) {
         return name;
     }
     const order = ['service', 'programme', 'statistiques', 'mon-compte', 'saisie', 'promotions',
-                   'etudiants', 'stages', 'alternance', 'salles', 'enseignants', 'parametres', 'aide'];
+                   'etudiants', 'stages', 'alternance', 'salles', 'enseignants', 'parametres', 'salons', 'aide'];
     for (const p of order) {
         const b = document.getElementById('nav-' + p);
         if (!b || b.style.display === 'none' || tabHidden('nav:' + p)) continue;
@@ -2717,8 +2873,8 @@ function _visiblePage(name) {
 let _tabAccess = null;   // {tree, profiles, conf: {profil: {view: {clé: bool}, edit: {…}}}}
 let _tabAccessNodes = {};
 const TAB_PROFILE_LABELS = { admin: 'Admin', resp_ftp: 'Resp. FTP', resp_alt: 'Resp. ALT',
-                             resp_stage: 'Resp. stages', teacher_pwd: 'Enseignant avec mdp',
-                             teacher: 'Enseignant sans mdp' };
+                             resp_stage: 'Resp. stages', resp_salon: 'Resp. salons',
+                             teacher_pwd: 'Enseignant avec mdp', teacher: 'Enseignant sans mdp' };
 async function loadTabVisibility() {
     const el = document.getElementById('tabvis-table');
     try {
@@ -3129,6 +3285,7 @@ async function loadPage(name, forceReload) {
         }
         else if (name === 'etudiants') { await loadEtudiants(); }
         else if (name === 'stages' || name === 'alternance') { await loadSuivi(name); }
+        else if (name === 'salons') { await loadSalons(); }
         else if (name === 'statistiques') {
             if (tabHidden('st:' + _statsTab))
                 _statsTab = _firstVisibleTab('st:', ['apercu', 'etudiants', 'recrutement', 'parcours',
@@ -5903,6 +6060,696 @@ function renderSuiviEntreprises(kind) {
                 t.tel ? ` · ${esc(t.tel)}` : ''}</div>`).join('')}</td>
         </tr>`).join('')}
         </tbody></table></div>`;
+}
+
+// ===== SALONS ÉTUDIANTS =====
+// Salons, forums et portes ouvertes d'une année universitaire, rangés dans la base de
+// l'année (sélecteur propre, passé en ?year=). Le responsable des salons et l'admin
+// tiennent le calendrier, les présents et les comptes rendus ; un titulaire s'inscrit
+// lui-même ; un enseignant inscrit rédige le compte rendu. Le serveur dit ce que la
+// session peut faire (droits, peut_cr) : l'écran ne rejoue pas les règles.
+const _salons = { data: null, bilan: null, tab: 'calendrier', year: '', inscrits: null,
+                  edit: null, moi: null, cr: null };
+
+// Suffixe ?year=/&year= des appels de l'onglet
+function _salonsQ(sep = '?') {
+    return _salons.year ? sep + 'year=' + encodeURIComponent(_salons.year) : '';
+}
+function _salonById(id) { return ((_salons.data || {}).salons || []).find(s => s.id === id) || null; }
+function _salonCreneau(c) {
+    return (((_salons.data || {}).creneaux || []).find(x => x.value === c) || {}).label || c || '';
+}
+function _salonPluriel(n, mot, pluriel) { return n + ' ' + (n > 1 ? (pluriel || mot + 's') : mot); }
+// « sam. 7 nov. 2026 » (ou le format demandé)
+function _salonDate(iso, opts) {
+    if (!iso) return '';
+    return new Date(iso + 'T00:00:00').toLocaleDateString('fr-FR',
+        opts || { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
+// Salon tenu (ou qui se tient aujourd'hui) : son compte rendu peut s'écrire
+function _salonTenu(s) { return s.etat === 'passe' || s.etat === 'aujourdhui'; }
+// Date dans l'année universitaire affichée (août à juillet) : repère les fautes de frappe
+function _salonDansAnnee(jour, annee) {
+    const y = parseInt(String(annee).slice(0, 4));
+    return !y || (jour >= `${y}-08-01` && jour <= `${y + 1}-07-31`);
+}
+
+async function loadSalons() {
+    const el = document.getElementById('salons-content');
+    if (!_salons.data) el.innerHTML = '<div class="spinner">Chargement…</div>';
+    try {
+        const [years, data] = await Promise.all([api('/years'), api('/salons' + _salonsQ())]);
+        _salons.data = data;
+        _salons.year = data.annee;
+        _salons.bilan = null;              // recalculé à l'affichage du Bilan
+        const sel = document.getElementById('salons-year');
+        const list = years.years.includes(data.annee) ? years.years : [...years.years, data.annee];
+        sel.innerHTML = list.map(y => `<option value="${esc(y)}"${y === data.annee ? ' selected' : ''}>${esc(y)}</option>`).join('');
+        renderSalons();
+    } catch (e) {
+        el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
+    }
+}
+
+function onSalonsYear() {
+    _salons.year = document.getElementById('salons-year').value;
+    _salons.data = null;
+    _salons.bilan = null;
+    _salons.inscrits = null;
+    loadSalons();
+}
+
+function showSalonsTab(tab) {
+    _salons.tab = tab;
+    renderSalons();
+}
+
+// Réponse d'une écriture : l'onglet entier, à jour
+function _salonsMaj(data) {
+    _salons.data = data;
+    _salons.bilan = null;
+    renderSalons();
+}
+
+function renderSalons() {
+    const d = _salons.data, cal = _salons.tab === 'calendrier';
+    ['calendrier', 'bilan'].forEach(t =>
+        document.getElementById('salons-tab-' + t).classList.toggle('active', t === _salons.tab));
+    document.getElementById('salons-filtres').style.display = cal ? 'flex' : 'none';
+    document.getElementById('salons-add-btn').style.display = cal && d && d.droits.gestion ? '' : 'none';
+    document.getElementById('salons-mine-box').style.display = d && d.droits.moi ? 'inline-flex' : 'none';
+    if (!d) return;
+    if (cal) renderSalonsCalendrier();
+    else renderSalonsBilan();
+}
+
+// Couverture du stand face aux enseignants souhaités, créneau par créneau
+// (s.couverture : [[créneau, enseignants], …] dans l'ordre de la journée)
+function _salonBesoin(s) {
+    if (!s.besoin) return '';
+    const parts = s.couverture;
+    const manque = parts.some(([, n]) => n < s.besoin);
+    const txt = parts.length > 1
+        ? parts.map(([c, n]) => `${esc(_salonCreneau(c).toLowerCase())} ${n}/${s.besoin}`).join(' · ')
+        : `${parts[0][1]}/${s.besoin}`;
+    return `<div class="salon-sub" style="color:${manque ? '#b45309' : '#15803d'}"
+        title="Enseignants inscrits / souhaités${parts.length > 1 ? ', par créneau (une journée compte dans les deux)' : ''}">${
+        manque ? '⚠' : '✓'} enseignants ${txt}</div>`;
+}
+
+// Compte rendu : à écrire dès le jour du salon ; avant, seules d'éventuelles pièces
+// jointes (déposées depuis la fiche du salon) s'ouvrent ici
+function _salonCrCellule(s) {
+    const pj = s.fichiers.length ? ' · 📎 ' + s.fichiers.length : '';
+    if (s.cr) return `<button type="button" class="btn btn-secondary btn-sm" onclick="openSalonCr(${s.id})"
+        title="${s.peut_cr ? 'Voir ou modifier le compte rendu' : 'Lire le compte rendu'}">👥 ${
+        _salonPluriel(s.cr.total, 'visiteur')}${pj}</button>`;
+    if (s.peut_cr && _salonTenu(s)) return `<button type="button" class="btn btn-primary btn-sm"
+        onclick="openSalonCr(${s.id})" title="Visiteurs, public rencontré, bilan, pièces jointes">Rédiger${pj}</button>`;
+    if (s.fichiers.length) return `<button type="button" class="btn btn-secondary btn-sm"
+        onclick="openSalonCr(${s.id})" title="Pièces jointes">📎 ${s.fichiers.length}</button>`;
+    return s.etat === 'passe' ? '<span style="color:#b45309;font-size:.8rem">à rédiger</span>'
+                              : '<span style="color:#9ca3af">—</span>';
+}
+
+function _salonActions(s, dr) {
+    const b = [];
+    if (dr.moi && dr.modifier && s.inscrit)
+        b.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="openSalonMoi(${s.id})"
+            title="Changer de créneau ou vous désinscrire">✓ Inscrit${s.duree === 'journee' && s.mon_creneau !== 'journee'
+            ? ' · ' + esc(_salonCreneau(s.mon_creneau).toLowerCase()) : ''}</button>`);
+    else if (dr.inscription)
+        b.push(`<button type="button" class="btn btn-primary btn-sm" onclick="salonInscrire(${s.id})">M'inscrire</button>`);
+    if (dr.gestion)
+        b.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="openSalonModal(${s.id})"
+            title="Date, lieu, enseignants et étudiants présents">Modifier</button>`);
+    return b.join(' ');
+}
+
+function _salonLigne(s, d, avecActions) {
+    const journee = s.duree === 'journee';
+    const sous = [s.jour_info, s.horaires, journee ? '' : _salonCreneau(s.duree)].filter(Boolean);
+    const ens = s.enseignants.length ? s.enseignants.map(p => `<span class="salon-chip${p.moi ? ' moi' : ''}"
+            title="${esc(p.nom)}${p.vacataire ? ' (vacataire)' : ''} — ${esc(_salonCreneau(p.creneau))}${
+            p.inscrit_par && p.inscrit_par.toLowerCase() !== p.nom.toLowerCase() ? ' · inscrit par ' + esc(p.inscrit_par) : ''}">${
+            esc(p.nom)}${p.vacataire ? ' <em>vac.</em>' : ''}${journee && p.creneau !== 'journee'
+            ? ` <em>${esc(_salonCreneau(p.creneau).toLowerCase())}</em>` : ''}</span>`).join('')
+        : '<span style="color:#9ca3af">—</span>';
+    const etu = !s.nb_etudiants ? '<span style="color:#9ca3af">—</span>'
+        : !s.etudiants ? `<span style="white-space:nowrap">${_salonPluriel(s.nb_etudiants, 'étudiant')}</span>`
+        : s.etudiants.map(e => `<span class="salon-chip etu"${e.inconnu ? '' : ` onclick="openStudentCard(${e.person_id})"`}
+              title="${esc([e.annee_etude ? 'BUT' + e.annee_etude : '', e.formation, e.promotion].filter(Boolean).join(' · '))}${
+              journee && e.creneau !== 'journee' ? ' — ' + esc(_salonCreneau(e.creneau)) : ''}${
+              e.inconnu ? ' — fiche retirée du registre' : ' — fiche de l\'étudiant'}">${esc(e.nom || e.libelle)} ${esc(e.prenom || '')}${
+              journee && e.creneau !== 'journee' ? ` <em>${esc(_salonCreneau(e.creneau).toLowerCase())}</em>` : ''}</span>`).join('');
+    const infos = s.infos ? `<div class="salon-sub" title="${esc(s.infos)}">ℹ ${esc(s.infos.length > 90 ? s.infos.slice(0, 90) + '…' : s.infos)}</div>` : '';
+    return `<tr class="${s.etat === 'passe' ? 'salon-passe' : ''}">
+        <td style="white-space:nowrap">${s.jour ? `<strong>${esc(_salonDate(s.jour, { weekday: 'short', day: 'numeric', month: 'short' }))}</strong>`
+            : '<span style="color:#b45309;font-weight:600">À préciser</span>'}${
+            s.etat === 'aujourdhui' ? ' <span class="st-pill" style="background:#dcfce7;color:#166534">aujourd\'hui</span>' : ''}${
+            sous.length ? `<div class="salon-sub">${sous.map(esc).join(' · ')}</div>` : ''}</td>
+        <td><strong>${esc(s.nom)}</strong> <span class="st-pill" style="background:#f3f4f6;color:#4b5563">${esc(s.type_label)}</span>${_salonBesoin(s)}</td>
+        <td style="font-size:.85rem">${esc(s.lieu) || '<span style="color:#9ca3af">—</span>'}${infos}</td>
+        <td>${ens}</td>
+        <td>${etu}</td>
+        <td style="white-space:nowrap">${_salonCrCellule(s)}</td>
+        ${avecActions ? `<td style="white-space:nowrap;text-align:right">${_salonActions(s, d.droits)}</td>` : ''}
+    </tr>`;
+}
+
+function renderSalonsCalendrier() {
+    const d = _salons.data, dr = d.droits;
+    const el = document.getElementById('salons-content');
+    const mots = _sansAccent((document.getElementById('salons-q') || {}).value || '').trim().split(/\s+/).filter(Boolean);
+    const avenir = !!(document.getElementById('salons-avenir') || {}).checked;
+    const mine = !!dr.moi && !!(document.getElementById('salons-mine') || {}).checked;
+    const match = s => mots.every(m => _sansAccent([s.nom, s.lieu, s.type_label, s.jour_info, s.horaires,
+        ...s.enseignants.map(p => p.nom)].join(' ')).includes(m));
+    const list = d.salons.filter(s => match(s) && (!avenir || s.etat !== 'passe') && (!mine || s.inscrit));
+    const nb = k => d.salons.filter(s => s.etat === k).length;
+    const aRediger = d.salons.filter(s => s.etat === 'passe' && !s.cr).length;
+    const resume = [_salonPluriel(d.salons.length, 'salon'), `${nb('a_venir') + nb('aujourdhui')} à venir`,
+        nb('a_preciser') ? `${nb('a_preciser')} à dater` : '',
+        aRediger ? `${_salonPluriel(aRediger, 'compte rendu', 'comptes rendus')} à rédiger` : '',
+        dr.moi ? `vous êtes inscrit à ${_salonPluriel(d.salons.filter(s => s.inscrit).length, 'salon')}` : '']
+        .filter(Boolean).join(' · ');
+    // Ce que la session peut faire ici, dit une fois en tête
+    const role = dr.gestion ? ''
+        : dr.inscription ? "Inscrivez-vous aux salons où vous tiendrez le stand ; inscrit, vous en rédigez le compte rendu."
+        : dr.moi && !dr.moi.titulaire && dr.modifier
+            ? 'Les salons sont tenus par les enseignants titulaires : consultation.'
+        : 'Consultation.';
+    const avecActions = dr.gestion || dr.inscription || (dr.modifier && d.salons.some(s => s.inscrit));
+    let rows = '', mois = null;
+    list.forEach(s => {
+        const m = s.jour ? s.jour.slice(0, 7) : '—';
+        if (m !== mois) {
+            mois = m;
+            const lib = s.jour ? _salonDate(s.jour, { month: 'long', year: 'numeric' }) : 'date à préciser';
+            rows += `<tr class="salon-mois"><td colspan="${avecActions ? 7 : 6}">${esc(lib.charAt(0).toUpperCase() + lib.slice(1))}</td></tr>`;
+        }
+        rows += _salonLigne(s, d, avecActions);
+    });
+    el.innerHTML = `<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px;font-size:.85rem;color:#6b7280">
+            <span>${esc(resume)}</span>${role ? `<span>${esc(role)}</span>` : ''}</div>
+        ${!d.salons.length ? `<div class="empty">Aucun salon pour l'année ${esc(d.annee)}.${dr.gestion
+            ? ' Ajoutez le premier avec « + Ajouter un salon ».' : ''}</div>`
+        : !list.length ? '<div class="empty">Aucun salon pour ce filtre.</div>'
+        : `<div style="overflow-x:auto"><table class="salon-table">
+            <thead><tr><th style="width:120px">Date</th><th style="min-width:190px">Salon</th><th style="min-width:150px">Lieu</th><th>Enseignants</th>
+                <th>Étudiants</th><th title="Visiteurs du compte rendu, pièces jointes">Compte rendu</th>${avecActions ? '<th></th>' : ''}</tr></thead>
+            <tbody>${rows}</tbody></table></div>`}`;
+}
+
+// ----- Fiche d'un salon (responsable des salons, admin) -----
+function openSalonModal(id) {
+    const d = _salons.data;
+    if (!d || !d.droits.gestion) return;
+    const s = id ? _salonById(id) : null;
+    _salons.edit = s ? s.id : null;
+    document.getElementById('salon-modal-titre').textContent = s ? s.nom : 'Nouveau salon';
+    document.getElementById('salon-modal-sub').textContent = `Année universitaire ${d.annee}`
+        + (s ? '' : ' — enregistrez le salon, puis inscrivez les présents');
+    const opts = (list, cur) => list.map(o => `<option value="${esc(o.value)}"${o.value === cur ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
+    document.getElementById('salon-type').innerHTML = opts(d.types, s ? s.type : 'salon');
+    document.getElementById('salon-duree').innerHTML = opts(d.creneaux, s ? s.duree : 'journee');
+    [['salon-nom', 'nom'], ['salon-lieu', 'lieu'], ['salon-jour', 'jour'], ['salon-jour-info', 'jour_info'],
+     ['salon-horaires', 'horaires'], ['salon-besoin', 'besoin'], ['salon-infos', 'infos']].forEach(([el, k]) => {
+        document.getElementById(el).value = s && s[k] != null ? s[k] : '';
+    });
+    document.getElementById('salon-suppr-btn').style.display = s ? '' : 'none';
+    renderSalonPresents();
+    openModal('modal-salon');
+    if (s && !_salons.inscrits) _salonsChargerInscrits();
+}
+
+async function submitSalon(ev) {
+    ev.preventDefault();
+    const d = _salons.data, id = _salons.edit, s = id ? _salonById(id) : null;
+    const v = el => document.getElementById(el).value;
+    const body = { nom: v('salon-nom').trim(), type: v('salon-type'), lieu: v('salon-lieu'), jour: v('salon-jour'),
+                   jour_info: v('salon-jour-info'), duree: v('salon-duree'), horaires: v('salon-horaires'),
+                   besoin: v('salon-besoin'), infos: v('salon-infos') };
+    if (body.jour && !_salonDansAnnee(body.jour, d.annee)
+            && !confirm(`Le ${_salonDate(body.jour)} n'est pas dans l'année universitaire ${d.annee}. Enregistrer quand même ?`)) return;
+    if (s && s.duree === 'journee' && body.duree !== 'journee' && (s.enseignants.length || s.nb_etudiants)
+            && !confirm(`Passer ce salon à une demi-journée (${_salonCreneau(body.duree).toLowerCase()}) : tous ses présents prendront ce créneau. Continuer ?`)) return;
+    try {
+        const r = await api(id ? `/salons/${id}${_salonsQ()}` : '/salons' + _salonsQ(),
+                            { method: id ? 'PUT' : 'POST', body: JSON.stringify(body) });
+        _salonsMaj(r);
+        if (id) {
+            closeModal('modal-salon');
+            toast('Salon enregistré');
+        } else {
+            openSalonModal(r.cree);        // la fiche reste ouverte : place aux présents
+            toast('Salon ajouté — inscrivez maintenant les présents');
+        }
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function deleteSalon() {
+    const s = _salonById(_salons.edit);
+    if (!s) return;
+    const avec = [s.enseignants.length ? _salonPluriel(s.enseignants.length, 'enseignant') : '',
+                  s.nb_etudiants ? _salonPluriel(s.nb_etudiants, 'étudiant') : '',
+                  s.cr ? 'son compte rendu' : '',
+                  s.fichiers.length ? _salonPluriel(s.fichiers.length, 'pièce jointe', 'pièces jointes') : ''].filter(Boolean);
+    if (!confirm(`Supprimer le salon « ${s.nom} »${avec.length ? ', avec ' + avec.join(', ') : ''} ?\nLa suppression est définitive.`)) return;
+    try {
+        _salonsMaj(await api(`/salons/${s.id}${_salonsQ()}`, { method: 'DELETE' }));
+        closeModal('modal-salon');
+        toast('Salon supprimé');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// Présents du salon ouvert : chaque ajout, retrait ou créneau s'enregistre aussitôt
+function renderSalonPresents() {
+    const box = document.getElementById('salon-presents');
+    const d = _salons.data, s = _salonById(_salons.edit);
+    if (!s) {
+        box.innerHTML = '<div class="st-note-warn" style="margin:8px 0 0">Enregistrez le salon pour y inscrire les enseignants et les étudiants présents.</div>';
+        return;
+    }
+    const journee = s.duree === 'journee';
+    const st = 'padding:4px 6px;border:1px solid #d1d5db;border-radius:5px;font-size:.82rem';
+    const crSel = (cur, attrs) => journee
+        ? `<select ${attrs} style="${st}">${d.creneaux.map(c => `<option value="${c.value}"${c.value === cur ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</select>`
+        : `<span style="color:#6b7280;font-size:.82rem">${esc(_salonCreneau(s.duree))}</span>`;
+    const suppr = js => `<button type="button" class="btn btn-secondary btn-sm" title="Retirer" onclick="${js}">✕</button>`;
+    const ens = s.enseignants.map(p => `<tr><td><strong>${esc(p.nom)}</strong>${p.vacataire
+            ? ' <span class="st-pill" style="background:#f3f4f6;color:#6b7280">vac.</span>' : ''}</td>
+        <td>${crSel(p.creneau, `onchange="salonSetEnseignant(${p.teacher_id}, this.value)"`)}</td>
+        <td style="text-align:right">${suppr(`salonRetirerEnseignant(${p.teacher_id})`)}</td></tr>`).join('');
+    // Titulaires de l'année pas encore inscrits (le serveur ne propose qu'eux)
+    const libres = (d.enseignants || []).filter(t => !s.enseignants.some(p => p.teacher_id === t.id));
+    const etu = (s.etudiants || []).map(e => `<tr><td><strong>${esc(e.nom || e.libelle)}</strong> ${esc(e.prenom || '')}</td>
+        <td style="color:#6b7280;font-size:.8rem">${esc([e.annee_etude ? 'BUT' + e.annee_etude : '', e.formation, e.promotion].filter(Boolean).join(' · '))}</td>
+        <td>${crSel(e.creneau, `onchange="salonSetEtudiant(${e.person_id}, this.value)"`)}</td>
+        <td style="text-align:right">${suppr(`salonRetirerEtudiant(${e.person_id})`)}</td></tr>`).join('');
+    const besoin = _salonBesoin(s);
+    box.innerHTML = `
+        <div class="section-title">Enseignants présents</div>${besoin}
+        ${ens ? `<table class="salon-modal-list" style="box-shadow:none"><tbody>${ens}</tbody></table>`
+              : '<div style="color:#9ca3af;font-size:.85rem;margin:4px 0">Aucun enseignant inscrit.</div>'}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:8px 0 4px">
+            <select id="salon-ens-ajout" style="${st};min-width:220px"><option value="">— ajouter un enseignant —</option>${
+                libres.map(t => `<option value="${t.id}">${esc(t.nom)}</option>`).join('')}</select>
+            ${journee ? crSel('journee', 'id="salon-ens-creneau"') : ''}
+            <button type="button" class="btn btn-primary btn-sm" onclick="salonAjouterEnseignant()">Ajouter</button>
+        </div>
+        <div class="section-title">Étudiants présents <span style="font-weight:400;color:#6b7280">${
+            s.nb_etudiants ? '· ' + s.nb_etudiants : ''}</span></div>
+        ${etu ? `<table class="salon-modal-list" style="box-shadow:none"><tbody>${etu}</tbody></table>`
+              : '<div style="color:#9ca3af;font-size:.85rem;margin:4px 0">Aucun étudiant présent.</div>'}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:8px 0 0">
+            <input type="search" id="salon-etu-q" oninput="salonEtuSuggestions()" autocomplete="off"
+                   placeholder="Ajouter un étudiant inscrit en ${esc(d.annee)} : nom, prénom, BUT2…"
+                   style="flex:1 1 260px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+            ${journee ? crSel('journee', 'id="salon-etu-creneau" title="Créneau de l\'étudiant ajouté"') : ''}
+        </div>
+        <div id="salon-etu-sugg"></div>
+        <p style="font-size:.76rem;color:#6b7280;margin:8px 0 0">Les présents s'enregistrent dès qu'on les ajoute ou les retire ;
+            ${journee ? 'une présence à la journée compte pour le matin et l\'après-midi.' : 'le salon n\'a qu\'un créneau.'}</p>
+        <div class="section-title">Compte rendu</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:.82rem;color:#6b7280">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="salonVersCr()">${s.cr ? 'Voir le compte rendu' : 'Compte rendu et pièces jointes'}</button>
+            ${s.cr ? esc(_salonPluriel(s.cr.total, 'visiteur')) : _salonTenu(s) ? 'à rédiger' : 'à écrire après le salon ; on peut déjà y joindre un programme, un plan d\'accès…'}
+            ${s.fichiers.length ? ' · 📎 ' + s.fichiers.length : ''}</div>`;
+    salonEtuSuggestions();
+}
+
+// De la fiche du salon à son compte rendu (une fenêtre à la fois)
+function salonVersCr() {
+    const id = _salons.edit;
+    closeModal('modal-salon');
+    openSalonCr(id);
+}
+
+async function _salonsChargerInscrits() {
+    try {
+        _salons.inscrits = (await api('/salons/etudiants' + _salonsQ())).etudiants || [];
+    } catch (e) {
+        _salons.inscrits = [];
+        toast('Liste des inscrits indisponible : ' + e.message, 'error');
+    }
+    salonEtuSuggestions();
+}
+
+// Inscrits de l'année correspondant à la recherche, sauf ceux déjà présents
+function salonEtuSuggestions() {
+    const box = document.getElementById('salon-etu-sugg'), inp = document.getElementById('salon-etu-q');
+    const s = _salonById(_salons.edit);
+    if (!box || !inp || !s) return;
+    const mots = _sansAccent(inp.value).trim().split(/\s+/).filter(Boolean);
+    if (!mots.length) { box.innerHTML = ''; return; }
+    if (!_salons.inscrits) { box.innerHTML = '<div class="salon-sub" style="padding:4px 0">Chargement des inscrits…</div>'; return; }
+    const deja = new Set((s.etudiants || []).map(e => e.person_id));
+    const lib = e => `BUT${e.annee_etude} ${e.formation}`;
+    const found = _salons.inscrits.filter(e => !deja.has(e.person_id)
+        && mots.every(m => _sansAccent([e.nom, e.prenom, e.numero, lib(e), e.promotion].join(' ')).includes(m)));
+    box.innerHTML = found.length
+        ? `<div style="border:1px solid #e5e7eb;border-radius:6px;margin-top:4px;max-height:230px;overflow:auto">${
+            found.slice(0, 12).map(e => `<div class="salon-sugg" onclick="salonAjouterEtudiant(${e.person_id})" title="Ajouter aux présents">
+                <strong>${esc(e.nom)}</strong> ${esc(e.prenom)} <span style="color:#6b7280;font-size:.78rem">· ${esc(lib(e))} · ${
+                esc(e.promotion)}${e.statut && e.statut !== 'Actif' ? ' · ' + esc(e.statut) : ''}</span></div>`).join('')}${
+            found.length > 12 ? `<div class="salon-sub" style="padding:4px 10px">… et ${found.length - 12} autres : précisez la recherche</div>` : ''}</div>`
+        : `<div class="salon-sub" style="padding:4px 0">Aucun inscrit de ${esc(_salons.data.annee)} ne correspond${deja.size ? ' (hors présents)' : ''}.</div>`;
+}
+
+// Écriture d'un présent, puis la fiche redessinée — la recherche en cours est gardée
+// pour enchaîner plusieurs ajouts
+async function _salonPresent(chemin, opts, msg) {
+    const q = (document.getElementById('salon-etu-q') || {}).value || '';
+    try {
+        _salonsMaj(await api(`/salons/${_salons.edit}/${chemin}${_salonsQ()}`, opts));
+        renderSalonPresents();
+        const inp = document.getElementById('salon-etu-q');
+        if (inp && q) { inp.value = q; salonEtuSuggestions(); inp.focus(); }
+        toast(msg);
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+function salonAjouterEnseignant() {
+    const tid = parseInt(document.getElementById('salon-ens-ajout').value) || 0;
+    if (!tid) { toast('Choisissez un enseignant', 'error'); return; }
+    const creneau = (document.getElementById('salon-ens-creneau') || {}).value || 'journee';
+    _salonPresent('enseignants', { method: 'POST', body: JSON.stringify({ teacher_id: tid, creneau }) }, 'Enseignant inscrit');
+}
+function salonSetEnseignant(tid, creneau) {
+    _salonPresent('enseignants', { method: 'POST', body: JSON.stringify({ teacher_id: tid, creneau }) }, 'Créneau enregistré');
+}
+function salonRetirerEnseignant(tid) {
+    _salonPresent('enseignants/' + tid, { method: 'DELETE' }, 'Enseignant retiré');
+}
+function salonAjouterEtudiant(pid) {
+    const creneau = (document.getElementById('salon-etu-creneau') || {}).value || 'journee';
+    _salonPresent('etudiants', { method: 'POST', body: JSON.stringify({ person_id: pid, creneau }) }, 'Étudiant ajouté');
+}
+function salonSetEtudiant(pid, creneau) {
+    _salonPresent('etudiants', { method: 'POST', body: JSON.stringify({ person_id: pid, creneau }) }, 'Créneau enregistré');
+}
+function salonRetirerEtudiant(pid) {
+    _salonPresent('etudiants/' + pid, { method: 'DELETE' }, 'Étudiant retiré');
+}
+
+// ----- Inscription d'un enseignant (titulaire) -----
+function salonInscrire(id) {
+    const s = _salonById(id);
+    if (!s) return;
+    if (s.duree !== 'journee') _salonInscription(id, s.duree);     // un seul créneau possible
+    else openSalonMoi(id);
+}
+function openSalonMoi(id) {
+    const s = _salonById(id), d = _salons.data;
+    if (!s) return;
+    _salons.moi = id;
+    document.getElementById('salon-moi-titre').textContent = s.inscrit ? 'Mon inscription' : "M'inscrire";
+    document.getElementById('salon-moi-sub').innerHTML = esc([s.nom, s.jour ? _salonDate(s.jour) : 'date à préciser',
+        s.horaires, s.lieu].filter(Boolean).join(' — '))
+        + `<div class="salon-sub" style="margin-top:6px">${s.enseignants.filter(p => !p.moi).length
+            ? 'Déjà inscrits : ' + s.enseignants.filter(p => !p.moi).map(p => `${esc(p.nom)} (${esc(_salonCreneau(p.creneau).toLowerCase())})`).join(', ')
+            : 'Personne d\'autre n\'est encore inscrit.'}</div>${_salonBesoin(s)}`;
+    const choix = s.duree === 'journee' ? d.creneaux : d.creneaux.filter(c => c.value === s.duree);
+    document.getElementById('salon-moi-creneaux').innerHTML = choix.map(c => `<button type="button"
+        class="btn ${s.mon_creneau === c.value ? 'btn-primary' : 'btn-secondary'}"
+        onclick="_salonInscription(${s.id}, '${c.value}')">${esc(c.label)}${s.mon_creneau === c.value ? ' ✓' : ''}</button>`).join('');
+    document.getElementById('salon-moi-retrait').style.display = s.inscrit ? '' : 'none';
+    openModal('modal-salon-moi');
+}
+async function _salonInscription(id, creneau) {
+    const s = _salonById(id);
+    try {
+        _salonsMaj(await api(`/salons/${id}/enseignants${_salonsQ()}`, { method: 'POST', body: JSON.stringify({ creneau }) }));
+        closeModal('modal-salon-moi');
+        toast(s && s.inscrit ? 'Créneau enregistré' : 'Inscription enregistrée');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+async function salonMeDesinscrire() {
+    const s = _salonById(_salons.moi), me = _salons.data && _salons.data.droits.moi;
+    if (!s || !me || !confirm(`Vous désinscrire du salon « ${s.nom} » ?`)) return;
+    try {
+        _salonsMaj(await api(`/salons/${s.id}/enseignants/${me.id}${_salonsQ()}`, { method: 'DELETE' }));
+        closeModal('modal-salon-moi');
+        toast('Désinscription enregistrée');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// ----- Compte rendu : visiteurs, public rencontré, bilan, pièces jointes -----
+function openSalonCr(id) {
+    const s = _salonById(id);
+    if (!s) return;
+    _salons.cr = id;
+    const ro = !s.peut_cr;
+    document.getElementById('salon-cr-titre').textContent = 'Compte rendu — ' + s.nom;
+    document.getElementById('salon-cr-sub').textContent = [s.jour ? _salonDate(s.jour) : 'date à préciser', s.lieu,
+        s.enseignants.length ? 'enseignants : ' + s.enseignants.map(p => p.nom).join(', ') : '',
+        s.cr && s.cr.auteur ? `rédigé par ${s.cr.auteur}${s.cr.updated_at ? ', le ' + _salonDate(s.cr.updated_at.slice(0, 10), { day: 'numeric', month: 'short', year: 'numeric' }) : ''}` : '',
+        ro ? 'lecture seule' : ''].filter(Boolean).join(' — ');
+    document.getElementById('salon-cr-visiteurs').value = s.cr && s.cr.visiteurs != null ? s.cr.visiteurs : '';
+    document.getElementById('salon-cr-texte').value = s.cr ? s.cr.texte : '';
+    document.getElementById('salon-cr-lignes').innerHTML = '';
+    const lignes = s.cr && s.cr.lignes.length ? s.cr.lignes : (ro ? [] : [{ niveau: 'lycee_gt' }]);
+    lignes.forEach(l => salonCrAjouterLigne(l, ro));
+    if (ro && !lignes.length) document.getElementById('salon-cr-lignes').innerHTML =
+        '<tr><td colspan="5" style="color:#9ca3af;font-size:.85rem">Public non détaillé.</td></tr>';
+    document.querySelectorAll('#form-salon-cr input, #form-salon-cr select, #form-salon-cr textarea')
+        .forEach(i => { i.disabled = ro; });
+    document.getElementById('salon-cr-save').style.display = ro ? 'none' : '';
+    document.getElementById('salon-cr-ajout').style.display = ro ? 'none' : '';
+    salonCrSomme();
+    renderSalonCrFichiers();
+    openModal('modal-salon-cr');
+}
+
+function salonCrAjouterLigne(l, ro) {
+    const d = _salons.data;
+    l = l || {};
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><select class="cr-niveau" onchange="salonCrClasses(this)">${d.publics.map(p =>
+            `<option value="${p.value}"${p.value === l.niveau ? ' selected' : ''}>${esc(p.label)}</option>`).join('')}</select></td>
+        <td><select class="cr-classe"></select></td>
+        <td><input class="cr-precision" list="salon-cr-precisions" maxlength="80" value="${esc(l.precision || '')}"
+                   placeholder="ex. STI2D, bac pro MSPC, lycée…"></td>
+        <td><input class="cr-nombre" type="number" min="0" step="1" value="${l.nombre == null ? '' : esc(l.nombre)}" oninput="salonCrSomme()"></td>
+        <td>${ro ? '' : `<button type="button" class="btn btn-secondary btn-sm" title="Retirer la ligne"
+                onclick="this.closest('tr').remove(); salonCrSomme()">✕</button>`}</td>`;
+    document.getElementById('salon-cr-lignes').appendChild(tr);
+    salonCrClasses(tr.querySelector('.cr-niveau'), l.classe || '');
+}
+
+// Classes proposées selon la formation en cours (celle déjà choisie reste si elle existe)
+function salonCrClasses(sel, cur) {
+    const p = _salons.data.publics.find(x => x.value === sel.value);
+    const cl = sel.closest('tr').querySelector('.cr-classe');
+    const garde = cur !== undefined ? cur : cl.value;
+    cl.innerHTML = '<option value="">— non précisée —</option>' + (p ? p.classes : []).map(c =>
+        `<option value="${esc(c)}"${c === garde ? ' selected' : ''}>${esc(c)}</option>`).join('');
+}
+
+function salonCrSomme() {
+    const somme = [...document.querySelectorAll('#salon-cr-lignes .cr-nombre')].reduce((a, i) => a + (parseInt(i.value) || 0), 0);
+    const vis = parseInt(document.getElementById('salon-cr-visiteurs').value);
+    const ecart = isNaN(vis) || vis === somme ? ''
+        : vis > somme ? ` — ${vis - somme} sans détail`
+        : ` — <span style="color:#b91c1c">plus que les ${vis} visiteurs annoncés</span>`;
+    document.getElementById('salon-cr-somme').innerHTML = somme
+        ? `Public détaillé : <strong>${somme}</strong> visiteur${somme > 1 ? 's' : ''}${ecart}.`
+        : 'Public détaillé : aucun.';
+}
+
+async function submitSalonCr(ev) {
+    ev.preventDefault();
+    const s = _salonById(_salons.cr);
+    if (!s) return;
+    const lignes = [...document.querySelectorAll('#salon-cr-lignes tr')].filter(tr => tr.querySelector('.cr-niveau'))
+        .map(tr => ({ niveau: tr.querySelector('.cr-niveau').value, classe: tr.querySelector('.cr-classe').value,
+                      precision: tr.querySelector('.cr-precision').value.trim(), nombre: tr.querySelector('.cr-nombre').value }))
+        .filter(l => parseInt(l.nombre) > 0);
+    const body = { visiteurs: document.getElementById('salon-cr-visiteurs').value,
+                   texte: document.getElementById('salon-cr-texte').value, lignes };
+    try {
+        _salonsMaj(await api(`/salons/${s.id}/compte-rendu${_salonsQ()}`, { method: 'PUT', body: JSON.stringify(body) }));
+        closeModal('modal-salon-cr');
+        toast('Compte rendu enregistré');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+function renderSalonCrFichiers() {
+    const s = _salonById(_salons.cr), box = document.getElementById('salon-cr-fichiers');
+    if (!s) return;
+    const taille = n => n >= 1048576 ? (n / 1048576).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' Mo'
+                                     : Math.max(1, Math.round(n / 1024)) + ' Ko';
+    const list = s.fichiers.map(f => `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:.85rem">
+            <a href="/api/salons/${s.id}/fichiers/${f.id}${_salonsQ()}" title="Télécharger">📎 ${esc(f.nom)}</a>
+            <span style="color:#9ca3af;font-size:.76rem">${taille(f.taille || 0)}${f.auteur ? ' · ' + esc(f.auteur) : ''}</span>
+            ${s.peut_cr ? `<button type="button" class="btn btn-secondary btn-sm" title="Supprimer la pièce jointe"
+                onclick="salonCrSupprFichier(${f.id})">🗑</button>` : ''}</div>`).join('');
+    box.innerHTML = (list || '<div style="color:#9ca3af;font-size:.85rem">Aucune pièce jointe.</div>')
+        + (s.peut_cr ? `<div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input type="file" id="salon-cr-file" style="display:none" onchange="salonCrJoindre(this)"
+                   accept=".pdf,.doc,.docx,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.ppt,.pptx,.odp,.png,.jpg,.jpeg,.webp">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('salon-cr-file').click()">📎 Joindre un fichier</button>
+            <span class="salon-sub" style="margin:0">compte rendu rédigé, photos, liste d'émargement… — 5 Mo au plus, enregistré aussitôt</span></div>` : '');
+}
+
+async function salonCrJoindre(input) {
+    const f = input.files && input.files[0], s = _salonById(_salons.cr);
+    input.value = '';
+    if (!f || !s) return;
+    if (f.size > 5 * 1024 * 1024) { toast('Fichier trop volumineux (5 Mo au plus)', 'error'); return; }
+    const fd = new FormData();
+    fd.append('file', f);
+    try {
+        const r = await fetch(`/api/salons/${s.id}/fichiers${_salonsQ()}`, { method: 'POST', body: fd });
+        if (!r.ok) {
+            let msg = 'Échec de l\'envoi';
+            try { msg = JSON.parse(await r.text()).error || msg; } catch (_) { /* garde le défaut */ }
+            throw new Error(msg);
+        }
+        _salonsMaj(await r.json());
+        renderSalonCrFichiers();
+        toast('Pièce jointe ajoutée');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function salonCrSupprFichier(fid) {
+    const s = _salonById(_salons.cr), f = s && s.fichiers.find(x => x.id === fid);
+    if (!f || !confirm(`Supprimer la pièce jointe « ${f.nom} » ?`)) return;
+    try {
+        _salonsMaj(await api(`/salons/${s.id}/fichiers/${fid}${_salonsQ()}`, { method: 'DELETE' }));
+        renderSalonCrFichiers();
+        toast('Pièce jointe supprimée');
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// ----- Bilan : l'année en chiffres, public rencontré, mobilisation, années -----
+async function loadSalonsBilan() {
+    const el = document.getElementById('salons-content');
+    el.innerHTML = '<div class="spinner">Calcul du bilan…</div>';
+    try {
+        _salons.bilan = await api('/salons/bilan' + _salonsQ());
+    } catch (e) {
+        el.innerHTML = '<div class="empty">Bilan indisponible : ' + esc(e.message) + '</div>';
+        return;
+    }
+    if (_salons.tab === 'bilan') renderSalonsBilan();
+}
+
+function renderSalonsBilan() {
+    const B = _salons.bilan;
+    if (!B) { loadSalonsBilan(); return; }
+    const el = document.getElementById('salons-content');
+    const b = B.bilan, H = B.historique || [], C = ST_COLORS[0];
+    if (!b.salons && !H.length) {
+        el.innerHTML = `<div class="empty">Aucun salon enregistré pour ${esc(B.annee)} : le bilan se remplira avec le calendrier et les comptes rendus.</div>`;
+        return;
+    }
+    const pl = (n, mot, p) => stNum(n) + ' ' + (n > 1 ? (p || mot + 's') : mot);
+    const kpis = [
+        stKpi('Salons', stNum(b.salons), [b.passes ? `${b.passes} tenu${b.passes > 1 ? 's' : ''}` : '',
+            b.a_venir ? `${b.a_venir} à venir` : '', b.a_preciser ? `${b.a_preciser} à dater` : ''].filter(Boolean).join(' · ')),
+        stKpi('Visiteurs', stNum(b.visiteurs), b.comptes_rendus
+            ? 'sur ' + pl(b.comptes_rendus, 'compte rendu', 'comptes rendus') : 'aucun compte rendu', '#0ea5e9'),
+        stKpi('Visiteurs par salon', b.comptes_rendus ? stNum(b.visiteurs / b.comptes_rendus) : '—',
+            'moyenne des salons avec compte rendu', '#10b981'),
+        stKpi('Enseignants mobilisés', stNum(b.enseignants), pl(b.demi_journees, 'demi-journée') + ' de stand', '#8b5cf6'),
+        stKpi('Étudiants mobilisés', stNum(b.etudiants), pl(b.presences_etudiants, 'présence'), '#f59e0b'),
+        stKpi('Comptes rendus', stNum(b.comptes_rendus), b.cr_manquants.length
+            ? `⚠ ${b.cr_manquants.length} à rédiger (salons tenus)` : (b.passes ? '✓ aucun en retard' : ''),
+            b.cr_manquants.length ? '#ef4444' : '#15803d'),
+    ].join('');
+    const manquants = b.cr_manquants.length ? `<div class="st-note-warn">Compte rendu à rédiger : ${b.cr_manquants.map(s =>
+        `<a href="#" onclick="openSalonCr(${s.id});return false">${esc(s.nom)}</a> (${esc(_salonDate(s.jour, { day: 'numeric', month: 'short' }))})`).join(', ')}.</div>` : '';
+    // Public rencontré : barres d'une seule série, tableau détaillé à côté
+    let croise = '';
+    b.croise.forEach(n => n.classes.forEach(([c, v], i) => {
+        croise += `<tr><td>${i ? '' : esc(n.niveau) + ` <span style="font-weight:400;color:#9ca3af">${stNum(n.total)}</span>`}</td>
+            <td style="text-align:left">${esc(c)}</td><td>${stNum(v)}</td></tr>`;
+    }));
+    const publicSec = b.public_detaille ? `<div class="st-sec"><h2>Public rencontré <small>${b.public_detaille < b.visiteurs
+            ? `détaillé pour ${stNum(b.public_detaille)} des ${stNum(b.visiteurs)} visiteurs` : 'd\'après les comptes rendus'}</small></h2>
+        <div class="st-grid">
+            ${stCard('Formation en cours', stBars(b.par_niveau, { color: C }))}
+            ${stCard('Année de formation', stBars(b.par_annee, { color: C }), 'les voies du lycée ensemble')}
+            ${b.par_precision.length ? stCard('Spécialités et précisions', stBars(b.par_precision, { color: C })) : ''}
+        </div>
+        <div class="st-grid wide" style="margin-top:14px">
+            ${stCard('Détail par classe', `<table class="st-tbl"><thead><tr><th>Formation en cours</th><th style="text-align:left">Classe</th>
+                <th>Visiteurs</th></tr></thead><tbody>${croise}</tbody></table>`)}
+        </div></div>`
+        : `<div class="st-sec"><h2>Public rencontré</h2><div class="st-none">Pas encore de public détaillé : il se renseigne dans le
+            compte rendu de chaque salon (formation en cours, classe, nombre de visiteurs).</div></div>`;
+    const parSalon = b.par_salon.length ? `<table class="st-tbl"><thead><tr><th>Salon</th><th>Date</th><th>Visiteurs</th>
+            <th>Enseignants</th><th title="Demi-journées de stand tenues par les enseignants">Demi-journées</th><th>Étudiants</th>
+            <th title="Visiteurs rencontrés par demi-journée d'enseignant">Visiteurs / demi-j.</th></tr></thead><tbody>${
+        b.par_salon.map(s => `<tr><td>${esc(s.nom)}<div style="font-weight:400;color:#9ca3af">${esc([s.type, s.lieu].filter(Boolean).join(' · '))}</div></td>
+            <td>${s.jour ? esc(_salonDate(s.jour, { day: 'numeric', month: 'short', year: 'numeric' })) : esc(s.jour_info || 'à préciser')}</td>
+            <td>${s.visiteurs == null ? '<span style="color:#9ca3af">—</span>' : stNum(s.visiteurs)}</td>
+            <td>${stNum(s.enseignants)}</td><td>${stNum(s.demi)}</td><td>${stNum(s.etudiants)}</td>
+            <td>${s.visiteurs != null && s.demi ? stNum(s.visiteurs / s.demi, 1) : '—'}</td></tr>`).join('')}</tbody></table>` : '';
+    const ens = b.par_enseignant.length ? `<table class="st-tbl"><thead><tr><th>Enseignant</th><th>Salons</th><th>Demi-journées</th></tr></thead><tbody>${
+        b.par_enseignant.map(t => `<tr><td>${esc(t.nom)}</td><td>${stNum(t.salons)}</td><td>${stNum(t.demi)}</td></tr>`).join('')}</tbody></table>`
+        : '<div class="st-none">Aucun enseignant inscrit</div>';
+    const etuNoms = b.par_etudiant && b.par_etudiant.length ? stCard('Étudiants présents', `<table class="st-tbl"><thead><tr><th>Étudiant</th>
+            <th>Année</th><th>Salons</th></tr></thead><tbody>${b.par_etudiant.map(e => `<tr><td><span style="cursor:pointer;color:#1d4ed8"
+            onclick="openStudentCard(${e.person_id})" title="Fiche de l'étudiant">${esc(e.nom)} ${esc(e.prenom)}</span></td>
+            <td>${esc(e.classe)}</td><td>${stNum(e.salons)}</td></tr>`).join('')}</tbody></table>`) : '';
+    // D'une année sur l'autre : à partir de deux années de salons
+    let annees = '';
+    if (H.length > 1) {
+        const court = y => y.slice(2, 4) + '-' + y.slice(7, 9);
+        const pub = Object.fromEntries((B.publics || []).map(p => [p.value, p.label]));
+        const niveaux = (B.publics || []).map(p => p.value).filter(k => H.some(h => h.par_niveau.some(([c]) => c === k)));
+        // Un même salon (même nom, sans casse ni accents) d'une année à l'autre ; deux
+        // jours d'un même salon s'additionnent. Sans visiteurs : tenu sans compte rendu,
+        // ou pas encore tenu.
+        const parNom = {};
+        H.forEach(h => h.par_salon.forEach(s => {
+            const e = parNom[s.cle] || (parNom[s.cle] = { nom: s.nom, ans: {} });
+            e.nom = s.nom;                       // le libellé le plus récent
+            const a = e.ans[h.annee] || (e.ans[h.annee] = { v: null, tenu: false });
+            if (s.visiteurs != null) a.v = (a.v || 0) + s.visiteurs;
+            a.tenu = a.tenu || s.tenu;
+        }));
+        const suivis = Object.values(parNom).filter(e => Object.keys(e.ans).length > 1)
+            .sort((a, b) => Object.keys(b.ans).length - Object.keys(a.ans).length || a.nom.localeCompare(b.nom));
+        const cell = (e, y) => {
+            const a = e.ans[y];
+            return !a ? '<span style="color:#d1d5db">—</span>' : a.v != null ? stNum(a.v)
+                : a.tenu ? '<span style="color:#9ca3af" title="Tenu, sans compte rendu">✓</span>'
+                : '<span style="color:#9ca3af;font-weight:400" title="Pas encore tenu">prévu</span>';
+        };
+        annees = `<div class="st-sec"><h2>D'une année sur l'autre</h2><div class="st-grid wide">
+            ${stCard('Visiteurs par année', stColumns(H.map(h => [court(h.annee), h.visiteurs]), { color: C }))}
+            ${stCard('Années de salons', `<table class="st-tbl"><thead><tr><th>Année</th><th>Salons</th><th>Comptes rendus</th>
+                <th>Visiteurs</th><th>Enseignants</th><th>Demi-journées</th><th>Étudiants</th></tr></thead><tbody>${
+                H.map(h => `<tr${h.annee === B.annee ? ' style="background:#eef2ff"' : ''}><td>${esc(h.annee)}</td><td>${stNum(h.salons)}</td>
+                    <td>${stNum(h.comptes_rendus)}</td><td>${stNum(h.visiteurs)}</td><td>${stNum(h.enseignants)}</td>
+                    <td>${stNum(h.demi_journees)}</td><td>${stNum(h.etudiants)}</td></tr>`).join('')}</tbody></table>`)}
+            ${niveaux.length ? stCard('Public rencontré, année par année', `<table class="st-tbl"><thead><tr><th>Formation en cours</th>${
+                H.map(h => `<th>${esc(court(h.annee))}</th>`).join('')}</tr></thead><tbody>${niveaux.map(k => `<tr><td>${esc(pub[k] || k)}</td>${
+                H.map(h => `<td>${stNum((h.par_niveau.find(([c]) => c === k) || [, 0])[1])}</td>`).join('')}</tr>`).join('')}</tbody></table>`) : ''}
+            ${suivis.length ? stCard('Salons tenus plusieurs années', `<table class="st-tbl"><thead><tr><th>Salon</th>${
+                H.map(h => `<th>${esc(court(h.annee))}</th>`).join('')}</tr></thead><tbody>${suivis.map(e => `<tr><td>${esc(e.nom)}</td>${
+                H.map(h => `<td>${cell(e, h.annee)}</td>`).join('')}</tr>`).join('')}</tbody></table>`,
+                'visiteurs ; ✓ = tenu sans compte rendu ; prévu = pas encore tenu') : ''}
+        </div></div>`;
+    }
+    el.innerHTML = `<div class="st-kpis">${kpis}</div>${manquants}
+        ${publicSec}
+        ${b.salons ? `<div class="st-sec"><h2>Les salons de ${esc(B.annee)}</h2>
+            ${stCard('Par salon', parSalon)}
+            ${b.par_type.length > 1 ? `<div class="st-grid wide" style="margin-top:14px">${stCard('Visiteurs par type d\'événement',
+                stBars(b.par_type.map(([l, n, v]) => [l, v, n]), { color: C }), 'n = nombre d\'événements')}</div>` : ''}
+        </div>
+        <div class="st-sec"><h2>Mobilisation</h2><div class="st-grid">
+            ${stCard('Enseignants', ens, 'une journée = 2 demi-journées')}
+            ${stCard('Étudiants par année', b.etudiants_par_annee.length ? stBars(b.etudiants_par_annee, { color: C })
+                : '<div class="st-none">Aucun étudiant présent</div>', 'chacun compté une fois')}
+            ${etuNoms}
+        </div></div>` : ''}
+        ${annees || (H.length === 1 ? `<div class="st-sec"><h2>D'une année sur l'autre</h2><div class="st-none">La comparaison
+            apparaîtra dès qu'une deuxième année aura ses salons.</div></div>` : '')}`;
 }
 
 async function reportEffectifYear() {

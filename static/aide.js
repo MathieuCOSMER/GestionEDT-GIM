@@ -83,6 +83,8 @@ const AIDE_RUBRIQUES = [
       intro: "Le programme national : matières, compétences (UE), coefficients, volumes horaires et contenus." },
     { id: 'stats', titre: 'Statistiques',
       intro: "Le tableau de bord du département : étudiants, recrutement, parcours, résultats et enseignement." },
+    { id: 'salons', titre: 'Salons étudiants',
+      intro: "Les salons, forums et portes ouvertes de l'année : le calendrier, l'inscription des enseignants, les étudiants présents, les comptes rendus et leur bilan." },
     { id: 'admin', titre: 'Administration',
       intro: "Les enseignants et leurs accès, les salles, les paramètres du site, les sauvegardes et le journal, et l'onglet Mon Compte." },
     { id: 'exemples', titre: 'Pas à pas',
@@ -120,12 +122,15 @@ function _aideOngletOuvert(key) {
 // écran s'atteint par deux onglets selon le profil (Saisie Notes)
 function _aideCles(s) { return !s.onglet ? [] : [].concat(s.onglet); }
 // Section utile à la session : un de ses écrans est ouvert ; pour une section qui
-// décrit une tâche (pour: 'modifier'), la session peut y enregistrer ; pour une
-// tâche du compte Admin (pour: 'superadmin'), c'est lui qui est connecté.
+// décrit une tâche (pour: 'modifier'), la session peut y enregistrer ; pour une tâche
+// d'administration de l'écran (pour: 'gerer' — au-delà de ce qu'un enseignant y fait
+// pour lui-même), elle y agit en administrateur ; pour une tâche du compte Admin
+// (pour: 'superadmin'), c'est lui qui est connecté.
 function _aideOuvert(s) {
     if (s.pour === 'superadmin' && !state.superadmin) return false;
     const ks = _aideCles(s);
-    return !ks.length || ks.some(k => _aideOngletOuvert(k) && (s.pour !== 'modifier' || canEditTab(k)));
+    return !ks.length || ks.some(k => _aideOngletOuvert(k) && (s.pour !== 'modifier' || canEditTab(k))
+                                      && (s.pour !== 'gerer' || adminPower(k)));
 }
 // Écran à ouvrir : `cible` suit l'ordre de `onglet` — le premier ouvert à la session
 function _aideCible(s) {
@@ -424,6 +429,8 @@ function aideOuvrir(cible) {
         _statsTab = sous;
     } else if ((page === 'stages' || page === 'alternance') && sous) {
         _suiviState(page).tab = sous;
+    } else if (page === 'salons' && sous) {
+        _salons.tab = sous;
     } else if (page === 'etudiants') {
         _etuSelected = null;
         _studentCard = null;
@@ -464,6 +471,7 @@ function aideContexte() {
     else if (key === 'nav:statistiques') id = 'stats-' + _statsTab;
     else if (key === 'nav:stages' || key === 'nav:alternance')
         id = _suiviState(key.slice(4)).tab === 'stats' ? 'suivi-stats' : 'suivi-fiches';
+    else if (key === 'nav:salons') id = _salons.tab === 'bilan' ? 'salons-bilan' : 'salons-vue';
     if (!_aide.sections) _aide.sections = _aideConstruire();
     if (!id || !_aide.sections.some(s => s.id === id)) id = 'bienvenue';
     aideAller(id);
@@ -471,12 +479,13 @@ function aideContexte() {
 
 // ---- Contenu ----
 // Une section : { id, rub, titre, chemin, onglet (clé d'accès, cf. _TAB_TREE),
-// pour ('modifier' : tâche réservée à qui peut y enregistrer), cible (écran à
-// ouvrir), mots (synonymes pour la recherche), html (texte, ou fonction quand il
-// dépend de la session) }.
+// pour ('modifier' : tâche réservée à qui peut y enregistrer ; 'gerer' : à qui y agit
+// en administrateur), cible (écran à ouvrir), mots (synonymes pour la recherche),
+// html (texte, ou fonction quand il dépend de la session) }.
 function _aideConstruire() {
     return [].concat(_aideDemarrer(), _aideService(), _aidePromotions(), _aideEtudiants(), _aideSuivi(),
-                     _aideProgramme(), _aideStats(), _aideAdmin(), _aideExemples(), _aideFaq(), _aideGlossaire());
+                     _aideProgramme(), _aideStats(), _aideSalons(), _aideAdmin(), _aideExemples(), _aideFaq(),
+                     _aideGlossaire());
 }
 
 // Les onglets que la session voit dans la barre, avec leur libellé
@@ -494,7 +503,7 @@ function _aideQuiSuisJe() {
         return 'en <b>session admin</b> (enseignant administrateur) : vous avez les droits d\'administration, sauf ceux réservés au superadmin.';
     if (state.promoAccess)
         return 'comme <b>enseignant, avec votre mot de passe</b> : vous consultez les promotions et saisissez vos notes.';
-    return 'comme <b>enseignant, sans mot de passe</b> : l\'accès est réduit au service, au programme et aux statistiques.';
+    return 'comme <b>enseignant, sans mot de passe</b> : l\'accès est réduit au service, au programme, aux statistiques et aux salons.';
 }
 // Tableau des accès : les onglets que la session voit (tous pour le superadmin), avec,
 // pour chacun, ce que chaque profil peut y faire
@@ -538,6 +547,7 @@ function _aideDemarrer() {
                 _aSi(['nav:stages', 'nav:alternance'], 'le suivi des stages et de l\'alternance'),
                 _aSi('nav:programme', 'le programme national'),
                 _aSi('nav:statistiques', 'les statistiques du département'),
+                _aSi('nav:salons', 'les salons étudiants'),
             ].filter(Boolean);
             return dom.length ? ` ; pour vous : ${dom.slice(0, -1).join(', ')}${dom.length > 1 ? ' et ' : ''}${dom[dom.length - 1]}` : '';
         })()}.</p>
@@ -566,6 +576,7 @@ function _aideDemarrer() {
              `Les listes de référence de l'année. ${_aLien('enseignants', 'En savoir plus')}`],
             [['nav:journal', 'nav:parametres'], _aSi('nav:journal', _aUi('Journal')) + ' ' + _aSi('nav:parametres', _aUi('Paramètres')),
              `Sauvegardes et réglages du site. ${_aLien('parametres', 'En savoir plus')}`],
+            ['nav:salons', _aUi('Salons'), `Les salons étudiants, forums et portes ouvertes de l'année : qui tient le stand, le compte rendu, le bilan. ${_aLien('salons-vue', 'En savoir plus')}`],
             ['nav:mon-compte', _aUi('Mon Compte'), `Vos coordonnées et vos heures hors GIM. ${_aLien('mon-compte', 'En savoir plus')}`],
         ])}</tbody></table>
         ${_aTip(`le bouton rond ${_aUi('?')} en bas à droite de chaque écran ouvre directement l'aide de cet écran.
@@ -581,7 +592,7 @@ function _aideDemarrer() {
         <h3>Avec ou sans mot de passe ?</h3>
         <p>Pour un enseignant, le mot de passe est <b>facultatif</b>, mais il change ce que l'on peut faire :</p>
         <table><thead><tr><th>Connexion</th><th>Ce qui est ouvert</th></tr></thead><tbody>
-            <tr><td>Nom seul, sans mot de passe</td><td>${_aUi('Service')} (son bilan, la répartition, ses contraintes), ${_aUi('Programme')} en consultation, ${_aUi('Statistiques')}, ${_aUi('Mon Compte')}. Comme n'importe qui peut taper un nom, cette connexion ne reçoit <b>jamais</b> de droit de modification supplémentaire.</td></tr>
+            <tr><td>Nom seul, sans mot de passe</td><td>${_aUi('Service')} (son bilan, la répartition, ses contraintes), ${_aUi('Programme')} en consultation, ${_aUi('Statistiques')}, ${_aUi('Salons')} (s'y inscrire), ${_aUi('Mon Compte')}. Comme n'importe qui peut taper un nom, cette connexion ne reçoit <b>jamais</b> de droit de modification supplémentaire.</td></tr>
             <tr><td>Nom + mot de passe</td><td>${state.role === 'teacher' && !state.promoAccess
                 ? `Des onglets en plus, selon les droits que l'administration vous ouvre — et l'aide qui va avec, qui n'apparaît qu'une fois connecté avec votre mot de passe.`
                 : `En plus : ${_aUi('Saisie Notes')}, ${_aUi('Promotions')}, ${_aUi('Étudiants')}, ${_aUi('Stages')} et ${_aUi('Alternance')}, selon les droits ouverts au profil.`}
@@ -609,12 +620,12 @@ function _aideDemarrer() {
         ${state.role === 'admin' ? `<dl>
             <dt>Superadmin</dt><dd>Le compte <b>Admin</b>. Tous les droits, y compris ceux qui touchent au site entier : droits des enseignants, mots de passe, restauration, journal, années, coefficients HETD, suppression de promotions et de programmes, réglage des accès.</dd>
             <dt>Admin</dt><dd>Un enseignant à qui le superadmin a donné les <b>droits d'administration</b>. Il fait tout le travail courant, sauf ce qui est réservé au superadmin.</dd>
-            <dt>Responsables</dt><dd>Un enseignant chargé d'un domaine : <b>Resp. FTP</b> (emploi du temps, matières, services, groupes, effectifs, jury et devenir), <b>Resp. ALT</b> (tuteurs des alternants, jury et devenir), <b>Resp. stages</b> (tuteurs des stages FTP). Ces droits s'ajoutent à ceux de l'enseignant, dans sa session normale ; ils se cumulent.</dd>
-            <dt>Enseignant avec mdp</dt><dd>Connecté avec son mot de passe : consulte les promotions, saisit ses notes, suit ses stagiaires et alternants.</dd>
-            <dt>Enseignant sans mdp</dt><dd>Connecté par son seul nom : service, programme, statistiques, son compte.</dd>
+            <dt>Responsables</dt><dd>Un enseignant chargé d'un domaine : <b>Resp. FTP</b> (emploi du temps, matières, services, groupes, effectifs, jury et devenir), <b>Resp. ALT</b> (tuteurs des alternants, jury et devenir), <b>Resp. stages</b> (tuteurs des stages FTP), <b>Resp. salons</b> (calendrier des salons étudiants, présents et comptes rendus). Ces droits s'ajoutent à ceux de l'enseignant, dans sa session normale ; ils se cumulent.</dd>
+            <dt>Enseignant avec mdp</dt><dd>Connecté avec son mot de passe : consulte les promotions, saisit ses notes, suit ses stagiaires et alternants, s'inscrit aux salons.</dd>
+            <dt>Enseignant sans mdp</dt><dd>Connecté par son seul nom : service, programme, statistiques, salons, son compte.</dd>
         </dl>` : `<dl>
             <dt>Enseignant avec mot de passe</dt><dd>Connecté avec son mot de passe${state.promoAccess ? ' — c\'est votre session' : ''}.</dd>
-            <dt>Enseignant sans mot de passe</dt><dd>Connecté par son seul nom${state.promoAccess ? '' : ' — c\'est votre session'} : service, programme, statistiques, son compte.</dd>
+            <dt>Enseignant sans mot de passe</dt><dd>Connecté par son seul nom${state.promoAccess ? '' : ' — c\'est votre session'} : service, programme, statistiques, salons, son compte.</dd>
             <dt>Administration, responsables</dt><dd>Des enseignants reçoivent aussi des droits d'administration ou des responsabilités ; ils les retrouvent en se connectant avec leur mot de passe.</dd>
         </dl>`}
         <h3>Choisir et changer de session</h3>
@@ -643,6 +654,7 @@ function _aideDemarrer() {
             ${_aSi('nav:promotions', `<tr><td><b>Année de la cohorte</b></td><td>${_aOng('Promotions')}</td><td>Une promotion vit trois ans : on choisit son année d'étude (1, 2 ou 3), affichée avec l'année universitaire correspondante.
                 Au choix d'une promotion, c'est son année en cours qui s'ouvre ; pour une promotion terminée, sa dernière année (3) ; dans les Bulletins, le semestre en cours.</td></tr>`)}
             ${_aSi(['nav:stages', 'nav:alternance'], `<tr><td><b>Année universitaire</b></td><td>${_aSi('nav:stages', _aOng('Stages'))} ${_aSi('nav:alternance', _aOng('Alternance'))}</td><td>Les fiches de suivi d'une année.</td></tr>`)}
+            ${_aSi('nav:salons', `<tr><td><b>Année universitaire</b></td><td>${_aOng('Salons')}</td><td>Les salons d'une année, et leur bilan : on y prépare l'année suivante ou on relit une année passée.</td></tr>`)}
         </tbody></table>
         ${_aSi(['nav:service', 'nav:promotions'], _aEx('en 2026-2027', `
             ${_aSi('nav:promotions', `<p>La promotion <b>26-29</b> est en 1<sup>re</sup> année (BUT1), <b>25-28</b> en BUT2, <b>24-27</b> en BUT3.
@@ -1616,6 +1628,92 @@ function _aideStats() {
     ];
 }
 
+function _aideSalons() {
+    const R = 'salons';
+    return [
+    { id: 'salons-vue', rub: R, titre: 'Le calendrier des salons', chemin: 'Salons › Calendrier',
+      onglet: 'nav:salons', cible: 'salons/calendrier',
+      mots: 'salon salons étudiants forum lycée portes ouvertes jpo calendrier inscription inscrire désinscrire créneau matin après-midi journée titulaire stand date à préciser',
+      html: () => `
+        <p>L'onglet ${_aOng('Salons')} réunit les <b>salons étudiants</b>, les <b>forums</b> des lycées et les <b>portes ouvertes</b> d'une
+        ${_aUi('Année universitaire')} — chaque année a les siens. Ils sont rangés par date, mois par mois ; ceux dont la date n'est pas encore
+        connue viennent à la fin (« Date à préciser »), avec leur précision (« fin janvier »).</p>
+        <p>Chaque ligne donne la date, les horaires et la durée (journée, matin ou après-midi), le <b>nom</b> du salon et son type, le <b>lieu</b>
+        et les infos pratiques, les <b>enseignants</b> qui tiennent le stand, les <b>étudiants</b> présents${state.promoAccess ? ''
+            : ' (leur nombre seulement : leurs noms sont réservés aux connexions avec mot de passe)'} et le <b>compte rendu</b>. Votre nom est
+        surligné. Quand un nombre d'enseignants souhaités est fixé, une mention dit, créneau par créneau, s'il en manque (⚠) ou si le stand
+        est complet (✓) ; une présence à la journée compte le matin et l'après-midi.</p>
+        <h3>S'inscrire</h3>
+        <p>Chaque <b>enseignant titulaire</b> s'inscrit lui-même${_aSiModif('nav:salons', ` : ${_aUi('M\'inscrire')} sur la ligne du salon, puis, pour
+        un salon d'une journée, le créneau — ${_aUi('Journée')}, ${_aUi('Matin')} ou ${_aUi('Après-midi')}. Inscrit, le bouton ${_aUi('✓ Inscrit')}
+        change le créneau ou vous désinscrit`)}. Plusieurs enseignants s'inscrivent sur un même salon. Les salons sont tenus par les
+        <b>titulaires</b> seulement : un vacataire les consulte. Inscrit, on rédige le ${_aLien('salons-cr', 'compte rendu')} du salon.</p>
+        <h3>Filtres</h3>
+        <p>La recherche (salon, lieu, type, enseignant — sans tenir compte des accents), ${_aUi('À venir')} (masque les salons passés) et
+        ${_aUi('Mes salons')} (ceux où vous êtes inscrit). En tête : le nombre de salons, ceux à venir et à dater, et les comptes rendus à rédiger.</p>
+        ${_aEx('une ligne du calendrier', `« sam. 14 nov. — Salon des études supérieures (Salon) — ⚠ enseignants matin 2/2 · après-midi 1/2 » :
+            le stand est tenu toute la journée, avec deux enseignants souhaités par créneau ; le matin est couvert, il en manque un l'après-midi.
+            DUPONT, inscrit l'après-midi seulement, apparaît « DUPONT <i>après-midi</i> ».`)}
+        ${_aTip(`l'année affichée se change dans la liste en haut de l'écran : on y prépare les salons de l'année suivante, ou on relit ceux d'une année passée.`)}` },
+
+    { id: 'salons-gerer', rub: R, titre: 'Organiser les salons', chemin: 'Salons › + Ajouter un salon / Modifier',
+      onglet: 'nav:salons', pour: 'gerer', cible: 'salons/calendrier',
+      mots: 'ajouter salon modifier supprimer date lieu nom type durée horaires enseignants souhaités infos pratiques présents étudiants inscrire responsable vacataire',
+      html: `
+        <p>Le <b>responsable des salons</b> (responsabilité « Salons » de sa fiche enseignant) et l'administration tiennent le calendrier.</p>
+        <h3>Ajouter un salon</h3>
+        ${_aSteps([
+            `${_aUi('+ Ajouter un salon')} : le <b>nom</b>, le <b>type</b> (salon, forum / lycée, portes ouvertes, autre) et le <b>lieu</b> ;`,
+            `la <b>date</b> — ou, quand elle n'est pas encore connue, une <b>précision</b> (« fin janvier », « à confirmer ») : le salon se range alors en fin de calendrier ;`,
+            `la <b>durée</b> (journée, matin ou après-midi), les <b>horaires</b>, le nombre d'<b>enseignants souhaités</b> par créneau, les <b>infos pratiques</b> (stand, contact de l'organisateur, matériel) ;`,
+            `${_aUi('Enregistrer')} : la fiche reste ouverte pour inscrire les présents.`])}
+        <h3>Les présents</h3>
+        <ul>
+            <li><b>Enseignants</b> : la liste ${_aUi('— ajouter un enseignant —')} propose les enseignants <b>titulaires</b> de l'année, avec leur créneau.</li>
+            <li><b>Étudiants</b> : la recherche ne propose que les <b>inscrits de l'année</b> — l'effectif de l'année que suit chaque cohorte (BUT1, BUT2, BUT3), césures exclues.
+                Tapez un nom, un prénom ou « BUT2 », puis cliquez sur l'étudiant ; la recherche reste en place pour en ajouter d'autres.</li>
+            <li>Chaque ajout, retrait ou changement de créneau s'enregistre <b>aussitôt</b>.</li>
+        </ul>
+        ${_aWarn(`passer un salon d'une journée à une demi-journée donne ce créneau à tous ses présents. ${_aUi('Supprimer le salon')} efface aussi ses présents,
+            son compte rendu et ses pièces jointes, sans retour.`)}
+        ${_aTip(`une date hors de l'année universitaire affichée est signalée avant l'enregistrement : c'est souvent une faute de frappe (2026 au lieu de 2027).`)}` },
+
+    { id: 'salons-cr', rub: R, titre: "Le compte rendu d'un salon", chemin: 'Salons › Compte rendu',
+      onglet: 'nav:salons', cible: 'salons/calendrier',
+      mots: 'compte rendu visiteurs public rencontré formation en cours collège lycée général technologique professionnel seconde première terminale études supérieures parents bilan pièce jointe fichier photo',
+      html: `
+        <p>Une fois le salon tenu, son compte rendu dit qui est venu. Il s'ouvre par la colonne ${_aUi('Compte rendu')} : ${_aUi('Rédiger')}, ou le nombre
+        de visiteurs quand il existe (« 👥 45 visiteurs »).</p>
+        <ul>
+            <li><b>Nombre de visiteurs</b> : toutes les personnes venues au stand. Laissé vide, c'est la somme du public détaillé qui compte.</li>
+            <li><b>Public rencontré</b> : une ligne par groupe de visiteurs — leur <b>formation en cours</b> (collège, lycée général et techno,
+                lycée professionnel, études supérieures, autre public), leur <b>classe</b> (3e, 2nde, 1re techno, Tle pro, Bac+1, parent…),
+                une <b>précision</b> libre (spécialité, filière, établissement) et leur <b>nombre</b>. L'écart avec le nombre de visiteurs est affiché.</li>
+            <li><b>Bilan</b> : texte libre — fréquentation, questions posées, contacts, salon à refaire ou non l'an prochain.</li>
+            <li><b>Pièces jointes</b> : compte rendu rédigé, photos, liste d'émargement… (5 Mo au plus par fichier, 10 par salon), enregistrées aussitôt.</li>
+        </ul>
+        <p>Le rédigent le responsable des salons, l'administration et <b>les enseignants inscrits au salon</b> ; les autres le lisent.</p>
+        ${_aEx('un compte rendu (chiffres fictifs)', `45 visiteurs, dont : lycée général et techno, Tle techno, « STI2D » : 18 ;
+            lycée professionnel, Tle pro, « bac pro MSPC » : 9 ; lycée général et techno, Tle générale : 8 ; autre public, parent / famille : 10.
+            Le bilan compte alors 35 visiteurs en Terminale, toutes voies confondues.`)}` },
+
+    { id: 'salons-bilan', rub: R, titre: 'Le bilan des salons', chemin: 'Salons › Bilan',
+      onglet: 'nav:salons', cible: 'salons/bilan',
+      mots: 'bilan statistiques visiteurs public demi-journées mobilisation enseignants étudiants comparaison années évolution rendement',
+      html: () => `
+        <p>Le sous-onglet ${_aUi('Bilan')} fait les comptes de l'année affichée :</p>
+        <ul>
+            <li>les <b>chiffres clés</b> : salons (tenus, à venir, à dater), visiteurs et visiteurs par salon, enseignants mobilisés et
+                <b>demi-journées</b> de stand (une journée en compte deux), étudiants mobilisés, comptes rendus — et ceux qui restent à rédiger ;</li>
+            <li>le <b>public rencontré</b> : par formation en cours, par année de formation (les terminales des trois voies ensemble), par spécialité, et le détail par classe ;</li>
+            <li>les <b>salons un par un</b> : visiteurs, enseignants, demi-journées, étudiants, et les <b>visiteurs par demi-journée</b> d'enseignant, pour comparer ce que rapporte chaque salon ;</li>
+            <li>la <b>mobilisation</b> : salons et demi-journées de chaque enseignant, étudiants par année${state.promoAccess ? ', et les étudiants présents nommément' : ''} ;</li>
+            <li><b>d'une année sur l'autre</b>, dès deux années de salons : visiteurs, présents et public de chaque année, et les salons tenus plusieurs années (même nom).</li>
+        </ul>
+        ${_aTip(`les chiffres ne valent que ce que valent les comptes rendus : un salon tenu sans compte rendu compte dans les présents, pas dans les visiteurs.`)}` },
+    ];
+}
+
 function _aideAdmin() {
     const R = 'admin';
     return [
@@ -1641,7 +1739,7 @@ function _aideAdmin() {
             <tr><td>${_aUi('Réinitialiser le mot de passe')}</td><td>Supprime le mot de passe actuel : le bouton « Initialiser mon mot de passe » réapparaît (mot de passe oublié).</td></tr>
             <tr><td>${_aUi('Révoquer l\'accès')}</td><td>Supprime le mot de passe et interdit d'en recréer un : retour à la connexion par le nom seul.</td></tr>
             <tr><td><b>Droits d'administration</b></td><td>Fait de l'enseignant un <b>admin</b> : tout le travail courant, sauf les droits réservés au superadmin (droits, mots de passe, restauration, journal, années, HETD, suppression de promotions et de programmes).</td></tr>
-            <tr><td><b>Responsabilités</b></td><td><b>Formation FTP</b>, <b>Formation ALT</b>, <b>Stages</b> : ajoutent à sa session normale les droits de ces domaines (${_aLien('sessions', 'détail')}). Cumulables.</td></tr>
+            <tr><td><b>Responsabilités</b></td><td><b>Formation FTP</b>, <b>Formation ALT</b>, <b>Stages</b>, <b>Salons</b> : ajoutent à sa session normale les droits de ces domaines (${_aLien('sessions', 'détail')}). Cumulables.</td></tr>
         </tbody></table>
         ${_aWarn(`droits d'administration et responsabilités ne s'appliquent qu'aux connexions faites <b>avec le mot de passe</b> que l'enseignant a lui-même défini :
             ils peuvent être accordés avant, mais restent « inactifs » (étiquette en pointillé dans la liste). Réinitialiser ou révoquer le mot de passe les suspend sans les retirer.`)}
@@ -1663,7 +1761,7 @@ function _aideAdmin() {
         <p>Une heure de chaque type multipliée par son coefficient, pour le ${_aLien('bilan', 'Bilan Global')} et la colonne Heures des matières.
         Valeurs usuelles : CM 1,5 · TD 1 · TP 0,667 (2/3) · PT 1.</p>
         <h3>Accès aux onglets</h3>
-        <p>Un tableau : les onglets en lignes, les profils en colonnes (Admin, Resp. FTP, Resp. ALT, Resp. stages, Enseignant avec mdp, Enseignant sans mdp),
+        <p>Un tableau : les onglets en lignes, les profils en colonnes (Admin, Resp. FTP, Resp. ALT, Resp. stages, Resp. salons, Enseignant avec mdp, Enseignant sans mdp),
         avec pour chacun <b>Voir</b> (l'onglet s'affiche) et <b>Modif.</b> (on peut y enregistrer — contrôlé par le serveur).</p>
         <ul>
             <li>Fond jaune : fermé par défaut à ce profil ; « — » : sans objet.</li>
@@ -1680,15 +1778,15 @@ function _aideAdmin() {
       html: () => `
         <h3>La sauvegarde complète (.zip)</h3>
         <p>${_aOng('Paramètres')} → ${_aUi('⤓ Télécharger la sauvegarde')} : <b>toutes</b> les données du site en un fichier — bases de toutes les années
-        (enseignants, matières, salles, emplois du temps), promotions et effectifs (étudiants, notes, jury, tuteurs, photos), programmes, fichiers de notes
-        et de contraintes, réglages et coefficients. Conservez-la <b>hors du serveur</b>.</p>
+        (enseignants, matières, salles, emplois du temps, salons étudiants et leurs pièces jointes), promotions et effectifs (étudiants, notes, jury, tuteurs,
+        photos), programmes, fichiers de notes et de contraintes, réglages et coefficients. Conservez-la <b>hors du serveur</b>.</p>
         ${_aSuper(`<p>${_aUi('⤒ Restaurer depuis un fichier…')} <b>écrase</b> les données actuelles par celles du fichier ; une copie de l'existant
         (« avant-import ») est mise de côté sur le serveur juste avant. La sauvegarde porte un inventaire de son contenu : après restauration, le site
         recompte ce qu'il a en base et signale tout écart.</p>`)}
         <h3>Les sauvegardes automatiques</h3>
         <p>Chaque jour, la base de chaque année modifiée est copiée automatiquement (les 5 plus récentes de chaque année sont gardées).${_aSuper(` ${_aOng('Journal')} les liste, avec
         ${_aUi('Créer une sauvegarde maintenant')}, ${_aUi('Restaurer')} et ${_aUi('Supprimer')}.`)}</p>
-        ${_aWarn(`ces copies quotidiennes ne contiennent que la base <b>d'une année</b> (enseignants, matières, salles, emploi du temps) : les promotions,
+        ${_aWarn(`ces copies quotidiennes ne contiennent que la base <b>d'une année</b> (enseignants, matières, salles, emploi du temps, salons) : les promotions,
             les notes et les photos ne sont que dans la sauvegarde complète. Téléchargez-la régulièrement, et toujours avant une opération lourde
             (restauration, changement d'année, import massif).`)}` },
 
@@ -1818,13 +1916,26 @@ function _aideExemples() {
             _aSi('svc:contraintes', `Pour l'an prochain : liste ${_aUi('Année')} du Service → année suivante, puis ${_aOng('Contraintes Enseignant')} : texte et/ou fichier.`),
             `Une erreur dans votre service ? Signalez-la à l'administration ou au responsable FTP.`])}` },
 
+    { id: 'ex-salon', rub: R, titre: "Organiser un salon, du calendrier au compte rendu", onglet: 'nav:salons', pour: 'gerer',
+      mots: 'salon organiser préparer forum portes ouvertes stand inscrire enseignants étudiants compte rendu visiteurs',
+      html: `
+        ${_aSteps([
+            `<b>Le calendrier</b> — ${_aOng('Salons')}, l'année universitaire, ${_aUi('+ Ajouter un salon')} : nom, type, lieu, date (ou « à préciser »), durée,
+             horaires et enseignants souhaités par créneau. ${_aLien('salons-gerer', 'Détail')}`,
+            `<b>Les enseignants</b> — les titulaires s'inscrivent eux-mêmes ; la mention ⚠ du calendrier dit où il en manque. Complétez depuis la fiche
+             du salon (${_aUi('Modifier')}), parmi les titulaires.`,
+            `<b>Les étudiants</b> — dans la même fiche, cherchez-les parmi les inscrits de l'année et ajoutez-les, avec leur créneau.`,
+            `<b>Le compte rendu</b> — après le salon, ${_aUi('Rédiger')} (vous, ou un enseignant inscrit) : nombre de visiteurs, public rencontré, bilan,
+             pièces jointes. ${_aLien('salons-cr', 'Détail')}`,
+            `<b>Le bilan</b> — sous-onglet ${_aUi('Bilan')} : visiteurs, public, mobilisation, comptes rendus en retard, et la comparaison des années. ${_aLien('salons-bilan', 'Détail')}`])}` },
+
     { id: 'ex-acces', rub: R, titre: "Ouvrir l'accès d'un enseignant", onglet: 'nav:enseignants', pour: 'superadmin',
       mots: 'ouvrir accès enseignant mot de passe droits responsable admin',
       html: `
         ${_aSteps([
             `${_aOng('Enseignant')} → ${_aUi('Éditer')} sur sa ligne → ${_aUi('Autoriser la création du mot de passe')}.`,
             `Prévenez-le : sur l'écran de connexion, il tape son nom de famille, clique ${_aUi('Initialiser mon mot de passe')} et choisit son mot de passe.`,
-            `S'il a des responsabilités, cochez-les (Formation FTP, Formation ALT, Stages) ; s'il administre, cochez <b>Droits d'administration</b>.`,
+            `S'il a des responsabilités, cochez-les (Formation FTP, Formation ALT, Stages, Salons) ; s'il administre, cochez <b>Droits d'administration</b>.`,
             `À sa prochaine connexion avec mot de passe, il choisit sa session (admin ou normale).`,
             `Pour affiner ce que chaque profil voit et modifie : ${_aOng('Paramètres › Accès aux onglets')}.`])}
         ${_aLien('enseignants-acces', 'Détail des accès')}` },
@@ -1923,6 +2034,10 @@ function _aideFaq() {
     q('photo', 'Une photo manque ou ne correspond pas', 'photo absente fausse mauvaise trombinoscope changer',
         `<p>Sur la fiche de l'étudiant : ${_aUi('Changer')} (ou ${_aUi('Ajouter')}) avec la bonne image, ou ${_aUi('✕')} pour la retirer. Lors d'un import de trombinoscope, vérifiez les lignes
         sur fond jaune avant d'associer : c'est là que se glissent les erreurs. ${_aLien('etu-trombi-import', 'Import des photos')}</p>`, 'etu:liste', 'modifier'),
+    q('salon-inscription', "Je ne peux pas m'inscrire à un salon", 'salon inscription impossible bouton absent vacataire titulaire',
+        `<p>Les salons sont réservés aux <b>enseignants titulaires</b> de l'année affichée : un vacataire les consulte sans s'y inscrire.
+        Titulaire absent de la liste des enseignants de cette année (ou noté vacataire) : demandez à l'administration de corriger votre fiche.
+        Vérifiez aussi l'${_aUi('Année universitaire')} choisie en haut de l'onglet. ${_aLien('salons-vue', 'Le calendrier des salons')}</p>`, 'nav:salons'),
     q('hors-gim', 'Qui voit mes heures hors GIM ?', 'heures hors gim confidentialité privé public',
         `<p>Une ligne <b>privée</b> : vous seul. Une ligne <b>publique</b> : vous et l'administration — jamais les autres enseignants. ${_aLien('mon-compte', 'Mon Compte')}</p>`,
         'nav:mon-compte'),
@@ -1998,6 +2113,12 @@ function _aideGlossaire() {
         ['Entrant', 'Étudiant entré directement en année 2 ou 3.'],
         ['Tuteur universitaire', 'L\'enseignant qui suit un stagiaire ou un alternant.'],
         ['Tuteur entreprise', 'Le correspondant de l\'étudiant dans l\'entreprise.'],
+    ]),
+    g('salons', 'Salons étudiants', [
+        ['Salon, forum, portes ouvertes', 'Les événements où le département présente le BUT : salons d\'orientation, forums des lycées, journées portes ouvertes (JPO) de l\'IUT.'],
+        ['Demi-journée', 'Un matin ou un après-midi de stand ; une présence à la journée en compte deux.'],
+        ['Formation en cours', 'Ce que fait un visiteur aujourd\'hui (collège, lycée de telle voie, études supérieures…), relevé dans le compte rendu.'],
+        ['PsyEN', 'Psychologue de l\'Éducation nationale, chargé de l\'orientation dans les collèges et les lycées.'],
     ]),
     g('outils', 'Outils et fichiers', [
         ['Apogée', 'Le logiciel de scolarité : n° Apogée de l\'étudiant, exports d\'effectif et de notes.'],
