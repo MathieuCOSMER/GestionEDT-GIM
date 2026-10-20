@@ -2222,6 +2222,15 @@ def _apply_migrations(db):
             FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE SET NULL
         )
     ''')
+    # SAÉ réalisée EN ENTREPRISE par les alternants (clé matière = _mat_base_key,
+    # toutes ses sous-matières) : aucune heure côté ALT, pas de saisie enseignante
+    # sur la face ALT — la note des alternants est posée dans Bulletins par le
+    # responsable ALT (cf. save_entreprise_notes).
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS matiere_alt_entreprise (
+            matiere_key TEXT PRIMARY KEY
+        )
+    ''')
     # Auto-migration depuis semester_special_weeks (données legacy)
     db.execute('''
         INSERT OR IGNORE INTO special_calendar (week_number, week_type)
@@ -3337,6 +3346,9 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     (r'^/api/promotions/\d+/groupes/', ['promo:groupes'], ''),
     (r'^/api/promotions/\d+/jury/', ['promo:jury'], ''),
     (r'^/api/promotions/\d+/(red-ue|red/|devenir/|cesure/)', ['promo:devenir'], ''),
+    # Notes des alternants aux SAÉ réalisées en entreprise : responsable ALT
+    # (administration de l'onglet Alternance) ou administration de Bulletins
+    (r'^/api/promotions/\d+/notes/S[1-6]/entreprise$', ['promo:notes', 'nav:alternance'], 'strict'),
     (r'^/api/promotions/\d+/notes/', ['promo:notes'], ''),
     (r'^/api/notes/import/sheets$', ['promo:notes'], ''),
     (r'^/api/promotions/\d+/(effectif/|students)', ['promo:effectif'], ''),
@@ -11212,6 +11224,11 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
             'note_sources': note_sources, 'computed': computed,
             # {sid_matière: [sous-matières manquantes]} : moyenne de saisie incomplète
             'partial': partial,
+            # SAÉ réalisées en entreprise par les alternants (onglet Matières) : leur
+            # note ALT se pose ici, aussi par le responsable ALT (entreprise_edit)
+            'alt_entreprise': sorted(_promo_alt_entreprise(pdb, pid, semester)
+                                     & {c.get('code') for c in components}),
+            'entreprise_edit': _entreprise_notes_right(),
             # Mobilité sortante : {sid: établissement} pour CE semestre — UE validées
             # par équivalence, aucune note de matière à saisir
             'mobility': {str(k): v.get(semester, '') for k, v in
@@ -11272,32 +11289,78 @@ def save_promotion_notes(pid, semester):
         if srcs[faces.get(sid, 'FTP')].get(code) == 'saisie':
             locked += 1
             continue
-        note = m.get('note')
-        if note in (None, ''):
-            pdb.execute('''DELETE FROM student_marks WHERE promotion_id=? AND semester=?
-                           AND student_id=? AND matiere_code=?''', (pid, semester, sid, code))
-            continue
-        if isinstance(note, str) and note.strip().upper() in _MARK_MENTIONS:
-            # ABI : absence injustifiée, comptée 0. N : matière neutralisée —
-            # aucune note, donc hors moyenne comme une case vide ; la mention
-            # reste affichée pour dire POURQUOI la case est vide.
-            mention = note.strip().upper()
-            note_num = 0.0 if mention == 'ABI' else None
-        else:
-            try:
-                note_num, mention = float(note), None
-            except (TypeError, ValueError):
-                continue
-        pdb.execute('''INSERT INTO student_marks(promotion_id, semester, student_id, matiere_code, note, mention, source)
-                       VALUES(?,?,?,?,?,?,'manuel')
-                       ON CONFLICT(promotion_id, semester, student_id, matiere_code)
-                       DO UPDATE SET note=excluded.note, mention=excluded.mention, source='manuel' ''',
-                    (pid, semester, sid, code, note_num, mention))
+        _store_manual_mark(pdb, pid, semester, sid, code, m.get('note'))
     pdb.commit()
     _reconcile_red_transfers(pdb, pid)   # une note peut faire passer un RED en ADM/AJAC → nettoyage
     formation = (request.args.get('formation') or '').strip().upper() or None
     payload = _promo_notes_payload(pdb, pid, semester, formation)
     payload['readonly_skipped'] = locked
+    return jsonify(payload)
+
+def _store_manual_mark(pdb, pid, semester, sid, code, note):
+    """Enregistre (ou efface, valeur vide) une note matière posée à la main dans
+    Bulletins. Valeur illisible : rien n'est écrit."""
+    if note in (None, ''):
+        pdb.execute('''DELETE FROM student_marks WHERE promotion_id=? AND semester=?
+                       AND student_id=? AND matiere_code=?''', (pid, semester, sid, code))
+        return
+    if isinstance(note, str) and note.strip().upper() in _MARK_MENTIONS:
+        # ABI : absence injustifiée, comptée 0. N : matière neutralisée —
+        # aucune note, donc hors moyenne comme une case vide ; la mention
+        # reste affichée pour dire POURQUOI la case est vide.
+        mention = note.strip().upper()
+        note_num = 0.0 if mention == 'ABI' else None
+    else:
+        try:
+            note_num, mention = float(note), None
+        except (TypeError, ValueError):
+            return
+    pdb.execute('''INSERT INTO student_marks(promotion_id, semester, student_id, matiere_code, note, mention, source)
+                   VALUES(?,?,?,?,?,?,'manuel')
+                   ON CONFLICT(promotion_id, semester, student_id, matiere_code)
+                   DO UPDATE SET note=excluded.note, mention=excluded.mention, source='manuel' ''',
+                (pid, semester, sid, code, note_num, mention))
+
+@app.route('/api/promotions/<int:pid>/notes/<semester>/entreprise', methods=['PUT'])
+def save_entreprise_notes(pid, semester):
+    """Notes des alternants aux SAÉ réalisées en entreprise (onglet Matières) :
+    posées dans Bulletins par le responsable ALT, sans droit sur le reste de la
+    grille. Body {marks: [{student_id, matiere_code, note}]} ; seuls les
+    alternants du semestre et les matières marquées « en entreprise » sont pris.
+    Même règle d'origine que partout : une matière dont la note est calculée
+    depuis la Saisie Notes (sous-notes saisies) ne se modifie pas ici."""
+    if not _entreprise_notes_right():
+        return error_response('Réservé au responsable ALT et à l\'administration', 403)
+    if semester not in _PROMO_SEMESTERS:
+        return error_response('Semestre invalide', 400)
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    codes = _promo_alt_entreprise(pdb, pid, semester)
+    if not codes:
+        return error_response('Aucune SAÉ réalisée en entreprise pour ce semestre', 400)
+    roster, _ = _semester_roster(pdb, pid, semester)
+    alternants = {r['id'] for r in roster if _face(r['formation']) == 'ALT'}
+    # Note calculée depuis la Saisie Notes (sous-notes saisies) : pas modifiable ici
+    srcs = _matiere_sources(pdb, pid, semester, 'ALT')
+    written = refused = 0
+    for m in (request.get_json() or {}).get('marks') or []:
+        try:
+            sid = int(m.get('student_id'))
+        except (TypeError, ValueError):
+            continue
+        code = (m.get('matiere_code') or '').strip()
+        if sid not in alternants or code not in codes or srcs.get(code) == 'saisie':
+            refused += 1
+            continue
+        _store_manual_mark(pdb, pid, semester, sid, code, m.get('note'))
+        written += 1
+    pdb.commit()
+    _reconcile_red_transfers(pdb, pid)   # une note peut faire passer un RED en ADM/AJAC → nettoyage
+    _audit('NOTES_ENTREPRISE_SAVE', ip=_client_ip(), user=session.get('user'),
+           promo=pid, semester=semester, notes=written, refused=refused)
+    payload = _promo_notes_payload(pdb, pid, semester, 'ALT')
+    payload['readonly_skipped'] = refused
     return jsonify(payload)
 
 @app.route('/api/promotions/<int:pid>/notes/<semester>/ue-vaq', methods=['PUT'])
@@ -11396,6 +11459,43 @@ def _promo_semester_year(pdb, pid, semester):
     y = p['start_year'] + (int(semester[1:]) + 1) // 2 - 1
     return f'{y}-{y + 1}'
 
+def _alt_entreprise_keys(ydb):
+    """Matières (clés _mat_base_key) dont la SAÉ est réalisée en entreprise par
+    les alternants, dans une base année."""
+    try:
+        return {r['matiere_key'] for r in ydb.execute('SELECT matiere_key FROM matiere_alt_entreprise')}
+    except sqlite3.OperationalError:
+        return set()   # base pas encore migrée
+
+def _promo_alt_entreprise(pdb, pid, semester):
+    """Matières du semestre d'une promotion réalisées en entreprise par les
+    alternants, lues dans la base de l'année où ce semestre a lieu. Mis en cache
+    pour la requête : la grille Bulletins le demande plusieurs fois."""
+    try:
+        cache = g.setdefault('_alt_entreprise', {})
+    except RuntimeError:
+        cache = {}     # hors requête (recalcul au démarrage)
+    if (pid, semester) not in cache:
+        year_label = _promo_semester_year(pdb, pid, semester)
+        path = db_path_for_year(year_label) if year_label else None
+        keys = set()
+        if path and os.path.isfile(path):
+            ydb = _open_connection(path)
+            try:
+                keys = _alt_entreprise_keys(ydb)
+            finally:
+                ydb.close()
+        cache[(pid, semester)] = keys
+    return cache[(pid, semester)]
+
+def _entreprise_notes_right():
+    """Peut poser dans Bulletins la note des alternants aux SAÉ réalisées en
+    entreprise : qui administre Bulletins, ou l'onglet Alternance (responsable
+    ALT, admin). Le droit « modifier » par défaut de l'enseignant sur Alternance
+    (ses seuls suivis) n'y suffit pas."""
+    tabs = _session_tabs()
+    return tabs is None or bool({'promo:notes', 'nav:alternance'} & tabs['power'])
+
 def _saisie_groups(ydb, semester, formation):
     """Sous-matières (courses) d'un semestre de la base année, groupées par
     matière (_mat_base_key). Pour chaque sous-matière : enseignants actifs de
@@ -11422,7 +11522,15 @@ def _saisie_groups(ydb, semester, formation):
             c['teachers'].add(r['name'])
     groups = {}
     for c in subs.values():
+        c['entreprise'] = False
         groups.setdefault(_mat_base_key(c['code']), []).append(c)
+    # SAÉ réalisée en entreprise par les alternants : aucune séance ALT, mais ses
+    # sous-matières comptent bien sur la face ALT — leurs notes y sont saisies par
+    # le responsable ALT ou l'administration (cf. _saisie_payload)
+    if formation == 'ALT':
+        for key in _alt_entreprise_keys(ydb):
+            for c in groups.get(key, []):
+                c['on_face'] = c['entreprise'] = True
     return groups
 
 def _saisie_counted(c, weight):
@@ -11456,6 +11564,9 @@ def _saisie_payload(pdb, pid, semester, formation, teacher_name=None):
         '''SELECT code, weight, definitive FROM submatiere_meta
            WHERE promotion_id=? AND semester=? AND formation=?''', (pid, semester, formation))}
     tkey = (teacher_name or '').strip().lower()
+    # SAÉ réalisées en entreprise par les alternants : le responsable ALT en saisit
+    # les notes (et en fixe les pondérations) comme s'il en était l'enseignant
+    resp_ent = teacher_name is not None and _entreprise_notes_right()
     out_groups = []
     for key in sorted(groups_raw):
         compo = comp_by_code.get(key)
@@ -11463,12 +11574,14 @@ def _saisie_payload(pdb, pid, semester, formation, teacher_name=None):
             continue   # matière hors référence (Bonus, Aide à la réussite…) : pas de note
         r = (refs.get(key) or {}).get(formation) or {}
         referent = r.get('name')
-        is_ref = bool(tkey) and bool(referent) and referent.strip().lower() == tkey
+        entreprise = any(c['entreprise'] for c in groups_raw[key])
+        ent_mine = entreprise and resp_ent
+        is_ref = ent_mine or (bool(tkey) and bool(referent) and referent.strip().lower() == tkey)
         mine, subs = False, []
         for c in sorted(groups_raw[key], key=lambda x: x['code']):
             m = meta.get(c['code'])
             w = m['weight'] if (m and m['weight'] is not None) else 1.0
-            teaches = bool(tkey) and any(t.strip().lower() == tkey for t in c['teachers'])
+            teaches = ent_mine or (bool(tkey) and any(t.strip().lower() == tkey for t in c['teachers']))
             mine = mine or teaches
             subs.append({'code': c['code'], 'name': c['name'],
                          'teachers': sorted(c['teachers']),
@@ -11483,6 +11596,8 @@ def _saisie_payload(pdb, pid, semester, formation, teacher_name=None):
         out_groups.append({'key': key,
                            'label': compo.get('short_label') or compo.get('label') or key,
                            'referent': referent,
+                           # SAÉ réalisée en entreprise (face ALT) : notes du responsable ALT
+                           'entreprise': entreprise,
                            # 'saisie' = la moyenne alimente Bulletins ; 'import' =
                            # la note matière vient d'un import / d'une saisie admin
                            'source': srcs.get(key, 'import'),
@@ -13656,6 +13771,21 @@ def _matiere_referents(db):
         out.setdefault(key, {})[face] = ref
     return out
 
+def _set_alt_entreprise(db, code, course_type, data):
+    """Marque (ou démarque) la matière de la sous-matière `code` comme SAÉ
+    réalisée en entreprise par les alternants — seulement si `data` porte
+    `alt_entreprise` et que la sous-matière est une SAÉ : enregistrer une
+    ressource ne touche jamais au marqueur de sa matière."""
+    if 'alt_entreprise' not in data or str(course_type or '').upper() != 'SAE':
+        return
+    key = _mat_base_key(code)
+    if not key:
+        return
+    if data.get('alt_entreprise'):
+        db.execute('INSERT OR IGNORE INTO matiere_alt_entreprise (matiere_key) VALUES (?)', (key,))
+    else:
+        db.execute('DELETE FROM matiere_alt_entreprise WHERE matiere_key = ?', (key,))
+
 @app.route('/api/matiere-referents', methods=['PUT'])
 def set_matiere_referent():
     """Choix admin du référent d'une face (FTP/ALT) d'une matière — prioritaire
@@ -13802,6 +13932,7 @@ def get_courses():
         # Résolution dynamique des semaines pour les cours en "dates par défaut"
         cfg = get_year_config()
         refs = _matiere_referents(db)
+        entreprise = _alt_entreprise_keys(db)
         for c in courses:
             sw, ew = resolve_course_weeks(c, cfg)
             c['start_week'], c['end_week'] = sw, ew
@@ -13809,6 +13940,8 @@ def get_courses():
             # Référents au niveau matière : identiques pour toutes les
             # sous-matières d'un même groupe (clé _mat_base_key).
             c['referents'] = refs.get(_mat_base_key(c['code']), {})
+            # SAÉ réalisée en entreprise par les alternants (niveau matière aussi)
+            c['alt_entreprise'] = _mat_base_key(c['code']) in entreprise
         return jsonify(courses), 200
     except Exception as e:
         return error_response(f'Error fetching courses: {str(e)}', 500)
@@ -13854,8 +13987,9 @@ def create_course():
             1 if data.get('mutualized') else 0,
             'TP8' if str(data.get('tp_type', '')).upper() == 'TP8' else 'TP12',
         ))
-        db.commit()
         course_id = cursor.lastrowid
+        _set_alt_entreprise(db, data['code'], data.get('course_type', 'Ressource'), data)
+        db.commit()
 
         # Les sessions (FTP/ALT) sont créées via PUT /teaching-hours appelé juste après
 
@@ -13972,10 +14106,11 @@ def update_course(course_id):
         data = request.get_json()
         db = get_db()
         cursor = db.cursor()
-        
+
         # Check if course exists
         cursor.execute('SELECT * FROM courses WHERE id = ?', (course_id,))
-        if not cursor.fetchone():
+        current = cursor.fetchone()
+        if not current:
             return error_response('Course not found', 404)
         
         # En mode "dates par défaut", les semaines sont dynamiques → ne rien figer
@@ -14005,12 +14140,15 @@ def update_course(course_id):
                 update_fields.append(f'{field} = ?')
                 values.append(data[field])
         
-        if not update_fields:
+        if not update_fields and 'alt_entreprise' not in data:
             return error_response('No fields to update')
-        
-        values.append(course_id)
-        query = f'UPDATE courses SET {", ".join(update_fields)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-        cursor.execute(query, values)
+
+        if update_fields:
+            values.append(course_id)
+            query = f'UPDATE courses SET {", ".join(update_fields)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+            cursor.execute(query, values)
+        _set_alt_entreprise(db, data.get('code', current['code']),
+                            data.get('course_type', current['course_type']), data)
         db.commit()
         
         cursor.execute('''

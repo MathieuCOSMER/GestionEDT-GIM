@@ -2193,6 +2193,13 @@
                     Mutualisé (CM/TD communs FTP+ALT)
                 </label>
             </div>
+            <div id="course-alt-ent-row" style="display:none;margin:2px 0 4px">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:600;font-size:.85rem;color:#9a3412"
+                       title="Les alternants réalisent cette SAÉ dans leur entreprise : aucune heure à leur attribuer ; leurs notes sont saisies par le responsable ALT (Saisie Notes ou Bulletins)">
+                    <input type="checkbox" id="course-alt-entreprise" onchange="onMutualizedChange()">
+                    🏭 ALT : SAÉ réalisée en entreprise (pas d'heure côté alternants)
+                </label>
+            </div>
             <div class="section-title" style="display:flex;align-items:center;justify-content:space-between">
                 <span>Volume horaire, durée de séance et salle</span>
                 <div style="display:flex;gap:6px" id="copy-formation-btns">
@@ -2281,6 +2288,13 @@
                     <tr class="grp-row" id="alt-pt-grp-row" style="display:none"><td colspan="6" id="alt-pt-grp-cell"></td></tr>
                 </tbody>
             </table>
+            </div>
+            <div id="course-alt-ent-note" style="display:none;margin-top:10px;padding:8px 12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:.82rem;color:#9a3412">
+                🏭 <strong>ALT : SAÉ réalisée en entreprise</strong> — aucune heure à attribuer aux alternants
+                (s'applique à toute la matière et à ses sous-matières). Leurs notes sont saisies par le
+                responsable ALT ou l'administration, dans <strong>Saisie Notes</strong> ou directement dans
+                <strong>Promotions › Bulletins</strong> (sous-cohorte ALT). À l'enregistrement, les heures ALT de cette
+                sous-matière sont effacées.
             </div>
 
             <div class="form-actions" style="margin-top:20px">
@@ -4119,6 +4133,12 @@ function applyPromoReadOnly() {
         const b = document.getElementById(id);
         if (b) b.style.display = 'none';
     });
+    // Bulletins en lecture seule, sauf pour le responsable ALT : notes des alternants
+    // aux SAÉ réalisées en entreprise (colonnes 🏭 de la grille ALT)
+    if (_promoTab === 'notes' && _notesEntEdit()) {
+        document.querySelectorAll('#notes-content input.nz-ent').forEach(i => i.disabled = false);
+        document.getElementById('notes-save-btn').style.display = '';
+    }
 }
 function showPromoTab(tab) {
     initDirtyWatch();
@@ -9008,7 +9028,7 @@ function _saisieFilterBoxes() {
 // Une matière répond à la recherche par son code, son libellé, son référent, ou
 // le code / nom / enseignant d'une de ses sous-matières.
 function _saisieGroupHit(g, q) {
-    const hay = [g.key, g.label, g.referent || ''].concat(
+    const hay = [g.key, g.label, g.referent || '', g.entreprise ? 'entreprise' : ''].concat(
         g.subs.map(s => `${s.code} ${s.name} ${(s.teachers || []).join(' ')}`)).join(' ');
     return _sansAccent(hay).includes(q);
 }
@@ -9171,8 +9191,10 @@ function _saisieGridHtml(i, maxh) {
         const cls = `sg${i}_${j}`;
         const multi = g.subs.length > 1;
         h1 += `<th class="${cls}" colspan="${g.subs.length + 1}" style="background:#ede9fe;color:#4c1d95;text-align:center;font-size:.8rem;padding:4px 6px;border-left:4px solid #8b5cf6;border-bottom:2px solid #8b5cf6"
-                   title="${esc(g.label)}${g.referent ? ' — référent : ' + esc(g.referent) : ''}">${esc(g.key)}<br>
-                   <span style="font-weight:400;font-size:.7rem">${g.referent ? 'réf. ' + esc(g.referent) : '<span style="color:#b91c1c">réf. à définir</span>'}</span><br>
+                   title="${esc(g.label)}${g.entreprise ? ' — SAÉ réalisée en entreprise par les alternants : notes saisies par le responsable ALT ou l\'administration'
+                       : (g.referent ? ' — référent : ' + esc(g.referent) : '')}">${esc(g.key)}<br>
+                   <span style="font-weight:400;font-size:.7rem">${g.entreprise ? '<span style="color:#9a3412">🏭 en entreprise · resp. ALT</span>'
+                       : (g.referent ? 'réf. ' + esc(g.referent) : '<span style="color:#b91c1c">réf. à définir</span>')}</span><br>
                    <span style="font-weight:400;font-size:.68rem">${g.source === 'saisie'
                        ? '<span style="color:#166534" title="La moyenne pondérée est reportée dans la note matière (Bulletins)">→ note matière</span>'
                        : '<span style="color:#b45309" title="La note matière (Bulletins) vient d\'un import ou d\'une saisie de l\'administration : cette moyenne n\'est PAS reportée tant que l\'admin ne rebascule pas la matière">⚠ note importée</span>'}</span></th>`;
@@ -9182,7 +9204,7 @@ function _saisieGridHtml(i, maxh) {
             h2 += `<th class="${cls}" style="text-align:center;font-size:.75rem;padding:4px 2px;width:${CW}px;min-width:${CW}px${k === 0 ? ';border-left:4px solid #8b5cf6' : ''}${off ? ';opacity:.45' : ''}"
                        title="${esc(s.name)}${s.teachers.length ? ' — ' + esc(s.teachers.join(', ')) : ''}${off ? ' — exclue de la moyenne (pondération 0)' : ''}">
                    ${esc(s.code)}${s.editable ? '' : ' 🔒'}<br>
-                   <span style="font-weight:400;font-size:.68rem;color:#6b7280">${esc(s.teachers.join(', ') || '—')}</span></th>`;
+                   <span style="font-weight:400;font-size:.68rem;color:#6b7280">${esc(s.teachers.join(', ') || (g.entreprise ? 'entreprise' : '—'))}</span></th>`;
             const wInput = multi
                 ? `<input type="number" min="0" step="0.5" value="${s.weight}" data-w="${esc(i + '|' + g.key + '|' + s.code)}"
                        ${g.is_referent ? '' : 'disabled'} onchange="renderSaisieDirty(${i})"
@@ -9750,6 +9772,11 @@ function _fmtAvg(v) { return (v === null || v === undefined) ? '—' : Number(v)
 //              touche jamais — l'écart avec la moyenne calculée est signalé.
 function _noteSource(d, code) { return (d.note_sources || {})[code] || 'import'; }
 
+// SAÉ réalisées en entreprise par les alternants (onglet Matières) : colonnes de
+// la grille ALT dont la note se pose ici, y compris par le responsable ALT.
+function _notesEntCodes(d) { return (d && _notesSub === 'ALT') ? (d.alt_entreprise || []) : []; }
+function _notesEntEdit() { return !!(_notesData && _notesData.entreprise_edit && _notesEntCodes(_notesData).length); }
+
 // La note affichée diffère-t-elle de la moyenne calculée depuis la saisie ?
 // Comparaison sur la valeur comptée : deux ABI ne sont pas un écart, un ABI
 // face à une vraie moyenne en est un.
@@ -10054,6 +10081,9 @@ function renderNotesGrid() {
     const prevYears = prev.filter(g => g.kind !== 'semester');
     const prevSems = prev.filter(g => g.kind === 'semester');
     const cg = _notesGroups();
+    // SAÉ réalisées en entreprise par les alternants (grille ALT) : note posée ici,
+    // y compris par le responsable ALT (cases .nz-ent, cf. applyPromoReadOnly)
+    const ent = new Set(_notesEntCodes(d));
     // En-tête vertical (réduit la largeur des colonnes)
     // `key` (optionnel) rend la colonne cliquable pour trier ; la flèche est posée
     // hors du texte vertical, qui resterait illisible une fois pivoté.
@@ -10108,6 +10138,13 @@ function renderNotesGrid() {
             const origin = src === 'saisie'
                 ? ` — note calculée depuis la saisie enseignante (${st === 'definitif' ? 'définitive' : 'provisoire'}), non modifiable ici`
                 : (st ? ` — note importée / saisie à la main${gap ? ` ; ${gap} écart(s) avec la saisie enseignante` : ' ; une saisie enseignante existe'}` : '');
+            if (ent.has(m.code)) {
+                return vth(m.code + ' · ' + (m.short_label || matAcronym(m.label)) + ' 🏭' + (src === 'saisie' ? icon + flag : ''),
+                    _coeffKindColor(m.kind), mi === 0 ? ';border-left:4px solid #6b7280' : '',
+                    (m.apogee_code ? m.apogee_code + ' — ' : '') + m.label
+                    + ' — SAÉ réalisée en entreprise par les alternants : note saisie par le responsable ALT ou l\'administration'
+                    + (src === 'saisie' ? ', dans Saisie Notes' + origin : ', ici ou dans Saisie Notes'), '#9a3412', `mat:${m.code}`);
+            }
             return vth(m.code + ' · ' + (m.short_label || matAcronym(m.label)) + icon + flag, _coeffKindColor(m.kind), mi === 0 ? ';border-left:4px solid #6b7280' : '', (m.apogee_code ? m.apogee_code + ' — ' : '') + m.label + origin, '', `mat:${m.code}`);
         }).join('') : '') +
         `</tr>`;
@@ -10181,9 +10218,11 @@ function renderNotesGrid() {
                 ? `<div class="nz-calc" style="font-size:.7rem;font-weight:600;margin-top:1px;min-height:.85rem;color:${m.kind === 'PEN' ? '#b91c1c' : '#15803d'}">${_notesCalcText(m.kind, v)}</div>`
                 : '';
             const gapTag = gap ? `<div style="font-size:.62rem;line-height:1.1;color:#b45309">≠ ${Number(comp).toFixed(2)}</div>` : '';
-            return `<td title="${gap ? 'Saisie enseignante : ' + Number(comp).toFixed(2) + ' — note affichée conservée (matière en « note importée »)' : ''}"
-                style="padding:1px;text-align:center${gap ? ';background:#fffbeb' : ''}${bl}"><input type="text" inputmode="decimal" maxlength="5"
-                class="nz-mark" data-sid="${s.id}" data-code="${esc(m.code)}" data-kind="${esc(m.kind || '')}"
+            const isEnt = ent.has(m.code);
+            return `<td title="${gap ? 'Saisie enseignante : ' + Number(comp).toFixed(2) + ' — note affichée conservée (matière en « note importée »)'
+                    : (isEnt ? 'SAÉ réalisée en entreprise — note de l\'alternant' : '')}"
+                style="padding:1px;text-align:center${gap ? ';background:#fffbeb' : (isEnt ? ';background:#fff7ed' : '')}${bl}"><input type="text" inputmode="decimal" maxlength="5"
+                class="nz-mark${isEnt ? ' nz-ent' : ''}" data-sid="${s.id}" data-code="${esc(m.code)}" data-kind="${esc(m.kind || '')}"
                 value="${v === undefined || v === null ? '' : v}"${special ? ' oninput="onNotesSpecialInput(this)"' : ''}${isPen ? ' readonly onclick="openPenaltyEditor(this)" title="Cliquez pour saisir les heures d\'absence ou directement le malus"' : ''}
                 style="width:43px;padding:2px 1px;text-align:center;font-size:.9rem;border:1px solid #d1d5db;border-radius:4px${isPen ? ';cursor:pointer;background:#fff' : ''}">${calc}${gapTag}</td>`;
         }).join('') : '';
@@ -10191,8 +10230,17 @@ function renderNotesGrid() {
     }).join('');
     const fbox = (key, lbl, show) => show ? `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">
         <input type="checkbox" ${cg[key] ? 'checked' : ''} onchange="toggleNotesColGroup('${key}', this.checked)">${lbl}</label>` : '';
+    const entMats = mats.filter(m => ent.has(m.code));
+    const entBar = !entMats.length ? '' : `<div style="font-size:.8rem;color:#9a3412;margin-bottom:10px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:6px 12px">
+            🏭 <strong>SAÉ réalisée(s) en entreprise par les alternants :</strong>
+            ${entMats.map(m => `<strong>${esc(m.code)}</strong> ${esc(m.short_label || matAcronym(m.label))}`).join(' · ')}
+            — aucun enseignant côté ALT : la note est saisie par le responsable ALT ou l'administration, ici (colonnes 🏭)
+            ou dans <strong>Saisie Notes</strong> (la note devient alors 🧮 calculée et n'est plus modifiable ici).
+            ${(_notesEntEdit() && !editUI('promo:notes')) ? '<br>Vous pouvez saisir ces colonnes, puis <strong>Enregistrer les notes</strong> ; le reste de la grille est en lecture seule.' : ''}
+        </div>`;
     el.innerHTML = `
         ${_notesSourceBar(d, mats)}
+        ${entBar}
         <div style="font-size:.78rem;color:#374151;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:14px;align-items:center;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:6px 12px">
             <strong>Colonnes :</strong>
             ${fbox('prevYears', 'Rappel années précédentes', prevYears.length > 0)}
@@ -10887,8 +10935,10 @@ async function saveNotesMarks() {
     const pid = document.getElementById('promo-select').value;
     const sem = document.getElementById('notes-sem-select').value;
     const sub = (document.getElementById('notes-sub-select') || {}).value || 'FTP';
+    // Sans droit sur Bulletins : seules les SAÉ en entreprise (responsable ALT)
+    const entOnly = !editUI('promo:notes');
     const marks = []; let invalid = false;
-    document.querySelectorAll('#notes-content input.nz-mark').forEach(inp => {
+    document.querySelectorAll('#notes-content input.' + (entOnly ? 'nz-ent' : 'nz-mark')).forEach(inp => {
         const raw = inp.value.trim();
         const kind = inp.dataset.kind || '';
         let mark = null;
@@ -10915,7 +10965,9 @@ async function saveNotesMarks() {
         return false;
     }
     try {
-        _notesData = await api(`/promotions/${pid}/notes/${sem}?formation=${encodeURIComponent(sub)}`, { method: 'PUT', body: JSON.stringify({ marks }) });
+        const url = entOnly ? `/promotions/${pid}/notes/${sem}/entreprise`
+                            : `/promotions/${pid}/notes/${sem}?formation=${encodeURIComponent(sub)}`;
+        _notesData = await api(url, { method: 'PUT', body: JSON.stringify({ marks }) });
         renderNotesGrid();
         markZoneClean('notes-content');
         toast('Notes enregistrées');
@@ -11360,7 +11412,20 @@ function renderCourses() {
     function matiereRefTd(subs, rowspan) {
         const key = matBaseKey((subs[0] || {}).code);
         const refs = (subs[0] || {}).referents || {};
+        // SAÉ réalisée en entreprise par les alternants : pas de référent ALT, la
+        // note se pose dans Bulletins. Signale les heures ALT qui resteraient sur
+        // une sous-matière (ou une mutualisation) à retirer.
+        const entLine = () => {
+            const left = subs.filter(c => c.mutualized
+                || ['cm', 'td', 'tp', 'pt'].some(t => Number(c['alt_' + t + '_hours']) > 0)).map(c => c.code);
+            return `<div style="white-space:nowrap;margin:2px 0"><span style="font-weight:700;font-size:.66rem;color:#9a3412">ALT</span>
+                <span title="SAÉ réalisée en entreprise par les alternants : aucune heure côté ALT, notes saisies par le responsable ALT (Saisie Notes ou Bulletins)"
+                    style="display:inline-block;font-size:.7rem;font-weight:600;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:999px;padding:1px 7px">🏭 en entreprise</span></div>`
+                + (left.length ? `<div title="Ouvrez ces sous-matières pour retirer leurs heures ALT / leur mutualisation"
+                    style="font-size:.66rem;color:#b45309;white-space:normal;max-width:130px">⚠ heures ALT ou mutualisation sur ${left.map(esc).join(', ')}</div>` : '');
+        };
         const line = face => {
+            if (face === 'ALT' && (subs[0] || {}).alt_entreprise) return entLine();
             const r = refs[face];
             if (!r || !(r.options || []).length) return '';
             const tag = `<span style="font-weight:700;font-size:.66rem;color:${face === 'FTP' ? '#0369a1' : '#9a3412'}">${face}</span>`;
@@ -11663,23 +11728,40 @@ function _courseTpCommon() {
     return _semTpCommon(semId, document.getElementById('course-type').value);
 }
 
+// SAÉ réalisée en entreprise par les alternants (case visible pour une SAÉ seulement)
+function _courseAltEntreprise() {
+    return document.getElementById('course-type').value === 'SAE'
+        && document.getElementById('course-alt-entreprise').checked;
+}
+
 function onMutualizedChange() {
-    const mut = document.getElementById('course-mutualized').checked;
+    // SAÉ en entreprise côté ALT : les alternants n'ont aucune heure, rien ne peut
+    // donc être commun avec les FTP → mutualisation retirée, face ALT fermée.
+    const altEnt = _courseAltEntreprise();
+    const mutCb = document.getElementById('course-mutualized');
+    if (altEnt) mutCb.checked = false;
+    mutCb.disabled = altEnt;
+    document.getElementById('course-alt-ent-row').style.display =
+        document.getElementById('course-type').value === 'SAE' ? '' : 'none';
+    document.getElementById('course-alt-ent-note').style.display = altEnt ? '' : 'none';
+    document.getElementById('course-tab-alt').style.display = altEnt ? 'none' : '';
+    const mut = mutCb.checked;
     // TP communs : la face ALT n'a plus rien de propre (TP et PT valent pour la
     // promo entière) → panneau ALT masqué ET neutralisé, pour ne rien y saisir.
     const tpCommon = _courseTpCommon();
     // Quand mutualisé : masquer tabs/copier, afficher les deux panneaux (FTP = CM/TD mut + TP/PT FTP, ALT = TP/PT ALT)
     document.getElementById('course-tab-bar').style.display = mut ? 'none' : '';
-    document.getElementById('copy-formation-btns').style.display = mut ? 'none' : '';
+    document.getElementById('copy-formation-btns').style.display = (mut || altEnt) ? 'none' : '';
     if (mut) {
         document.getElementById('course-hours-ftp').style.display = '';
         document.getElementById('course-hours-alt').style.display = tpCommon ? 'none' : '';
     } else {
         // Remettre l'onglet FTP actif, masquer ALT
+        document.getElementById('course-hours-ftp').style.display = '';
         document.getElementById('course-hours-alt').style.display = 'none';
         document.querySelectorAll('#modal-course .tab-btn').forEach((b,i) => b.classList.toggle('active', i===0));
     }
-    setAltPanelDisabled(tpCommon);
+    setAltPanelDisabled(tpCommon || altEnt);
     updateMutualizedLabels(mut, tpCommon);
     refreshGroupTeachers();
 }
@@ -11697,7 +11779,7 @@ function onCourseSemesterChange() {
     onMutualizedChange();
     if (!semId) return;
     const sem = state.semesters.find(s => s.id === semId);
-    if (sem && (sem.code === 'S5' || sem.code === 'S6')) {
+    if (sem && (sem.code === 'S5' || sem.code === 'S6') && !_courseAltEntreprise()) {
         document.getElementById('course-mutualized').checked = true;
         onMutualizedChange();
     }
@@ -11776,6 +11858,11 @@ async function openSubMatiere(code, sem, kind) {
         (String(kind || '').toUpperCase() === 'SAE') ? 'SAE' : 'Ressource';
     const s = state.semesters.find(x => x.code === sem);
     if (s) document.getElementById('course-semester').value = s.id;
+    // Matière déjà marquée « SAÉ en entreprise » côté ALT : la sous-matière en hérite
+    const key = matBaseKey(code || '');
+    document.getElementById('course-alt-entreprise').checked = (state.courses || []).some(c =>
+        c.semester_code === sem && matBaseKey(c.code) === key && c.alt_entreprise);
+    onMutualizedChange();
     setCourseParentInfo(code, sem);
     codeInput.focus();
 }
@@ -11839,6 +11926,7 @@ async function openCourseModal(id = null) {
     document.getElementById('course-end-week').disabled = false;
     document.getElementById('course-default-weeks').checked = false;
     document.getElementById('course-mutualized').checked = false;
+    document.getElementById('course-alt-entreprise').checked = false;
     resetGroupTeachers();
     // Reset FTP tab visible
     document.getElementById('course-hours-ftp').style.display = '';
@@ -11847,8 +11935,7 @@ async function openCourseModal(id = null) {
     document.getElementById('copy-formation-btns').style.display = '';
     document.querySelectorAll('#modal-course .tab-btn').forEach((b,i) => b.classList.toggle('active', i===0));
     // Restaurer les lignes ALT CM/TD (et le panneau ALT saisissable)
-    setAltPanelDisabled(false);
-    updateMutualizedLabels(false, false);
+    onMutualizedChange();
     buildRoomSelects();
     buildRoomSelects({}, 'alt-');
     buildTeacherSelects();
@@ -11870,6 +11957,10 @@ async function openCourseModal(id = null) {
                 document.getElementById('course-default-weeks').checked = true;
                 applyDefaultWeeks();
             }
+            // Marqueur de la matière entière : coché pour toutes ses sous-matières.
+            // Une sous-matière encore mutualisée y est démutualisée (cf. onMutualizedChange) :
+            // ses CM/TD communs, chargés ci-dessous dans le panneau FTP, y restent.
+            document.getElementById('course-alt-entreprise').checked = !!c.alt_entreprise;
             const isMut = !!c.mutualized;
             document.getElementById('course-mutualized').checked = isMut;
             onMutualizedChange();
@@ -11966,6 +12057,7 @@ async function submitCourse(e) {
     const id = document.getElementById('course-id').value;
     const semId = parseInt(document.getElementById('course-semester').value) || null;
     const isMut = document.getElementById('course-mutualized').checked;
+    const altEnt = _courseAltEntreprise();
 
     // Lire les inputs du panneau FTP (CM/TD/TP/PT)
     const readPanel = (prefix) => {
@@ -12001,6 +12093,8 @@ async function submitCourse(e) {
         end_week:      useDefault ? null : (parseInt(document.getElementById('course-end-week').value) || null),
         mutualized:    isMut ? 1 : 0,
     };
+    // Marqueur de la matière : envoyé pour une SAÉ seulement (une ressource n'y touche pas)
+    if (base.course_type === 'SAE') base.alt_entreprise = altEnt ? 1 : 0;
     const btn = e.submitter || e.target.querySelector('button[type="submit"]');
     const btnText = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Enregistrement…'; }
@@ -12030,9 +12124,10 @@ async function submitCourse(e) {
             await api('/courses/' + courseId + '/teaching-hours?formation_type=1' + svcQ('&'), { method: 'PUT', body: JSON.stringify(typesAltOnly) });
         } else {
             // Classique : FTP + ALT séparés, effacer MUT
-            await api('/courses/' + courseId + '/teaching-hours?formation_type=0' + svcQ('&'), { method: 'PUT', body: JSON.stringify(panelFtp) });
-            await api('/courses/' + courseId + '/teaching-hours?formation_type=1' + svcQ('&'), { method: 'PUT', body: JSON.stringify(panelAlt) });
+            // SAÉ en entreprise côté ALT : la face ALT est vidée (aucune heure)
             const clearMut = { CM: {hours:0}, TD: {hours:0}, TP: {hours:0}, PT: {hours:0} };
+            await api('/courses/' + courseId + '/teaching-hours?formation_type=0' + svcQ('&'), { method: 'PUT', body: JSON.stringify(panelFtp) });
+            await api('/courses/' + courseId + '/teaching-hours?formation_type=1' + svcQ('&'), { method: 'PUT', body: JSON.stringify(altEnt ? clearMut : panelAlt) });
             await api('/courses/' + courseId + '/teaching-hours?formation_type=2' + svcQ('&'), { method: 'PUT', body: JSON.stringify(clearMut) });
         }
         closeModal('modal-course');

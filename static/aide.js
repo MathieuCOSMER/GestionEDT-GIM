@@ -849,6 +849,11 @@ function _aideService() {
             <li><b>Code</b>, <b>intitulé</b>, <b>type</b> (Ressource ou SAÉ), <b>type de TP</b> (TP12 = groupes de 12, TP8 = groupes de 8 : il fixe le nombre de groupes de TP) ;</li>
             <li><b>Semestre</b>, semaines de <b>début</b> et de <b>fin</b> — ou la case « dates par défaut du semestre », qui suit le calendrier ;</li>
             <li><b>Mutualisé</b> : CM et TD communs à FTP et ALT ; seuls TP et PT restent propres à chaque face ;</li>
+            <li>Pour une SAÉ, ${_aUi('🏭 ALT : SAÉ réalisée en entreprise')} : les alternants la font dans leur entreprise. Aucune heure côté ALT
+                (la face ALT est vidée et la mutualisation retirée) ; leurs notes sont saisies par le responsable ALT (ou l'administration),
+                dans la ${_aLien('promo-saisie', 'Saisie Notes')} ou directement dans les ${_aLien('promo-bulletins', 'Bulletins')}.
+                Le choix vaut pour la matière entière (toutes ses sous-matières),
+                et la colonne Référent affiche « 🏭 en entreprise » côté ALT ;</li>
             <li>Par type et par face : <b>total d'heures</b>, <b>durée de séance</b>, <b>séances par semaine</b>, <b>salle</b>, <b>enseignant</b>. Le bouton ${_aUi('👥')} confie chaque groupe à un enseignant différent (groupe vide = l'enseignant de la ligne) ;</li>
             <li>${_aUi('Copier FTP → ALT')} / ${_aUi('Copier ALT → FTP')} recopient les volumes d'une face sur l'autre.</li>
         </ul>
@@ -1100,7 +1105,7 @@ function _aidePromotions() {
 
     { id: 'promo-bulletins', rub: R, titre: 'Bulletins (notes et moyennes)', chemin: 'Promotions › Bulletins',
       onglet: 'promo:notes', cible: 'promotions/notes',
-      mots: 'bulletins notes moyennes ue semestre acquise compensée bonus pénalité assiduité absences abi neutralisée n vaq validation acquis mobilité import apogée pv export supprimer origine calculée importée écart incomplète redoublant',
+      mots: 'bulletins notes moyennes ue semestre acquise compensée bonus pénalité assiduité absences abi neutralisée n vaq validation acquis mobilité import apogée pv export supprimer origine calculée importée écart incomplète redoublant sae entreprise alternants responsable alt',
       html: () => `
         <p>Pour une sous-cohorte et un semestre : les notes de chaque matière, les moyennes d'UE du semestre et le bilan de l'année.
         C'est la grille de référence avant le jury.</p>
@@ -1117,7 +1122,11 @@ function _aidePromotions() {
         <ul>
             <li><b>🧮 calculée</b> : moyenne pondérée de la ${_aLien('promo-saisie', 'saisie des enseignants')}, refaite à chaque enregistrement — la case n'est pas modifiable ici ;</li>
             <li><b>📥 importée</b> : note importée (Apogée, PV) ou saisie à la main ici ; le recalcul n'y touche jamais ;</li>
-            <li><b>⚠</b> : écart entre la note affichée et la moyenne de la saisie.</li>
+            <li><b>⚠</b> : écart entre la note affichée et la moyenne de la saisie ;</li>
+            <li><b>🏭 en entreprise</b> (sous-cohorte ALT) : SAÉ que les alternants réalisent en entreprise (réglage de la matière dans
+                ${_aOng('Service › Matières')}). Aucun enseignant côté ALT : l'administration ou le <b>responsable ALT</b> saisit ces notes
+                dans la ${_aLien('promo-saisie', 'Saisie Notes')} (la note devient 🧮 calculée) ou ici — le responsable ALT n'y modifie que
+                ces colonnes, puis ${_aUi('💾 Enregistrer les notes')}.</li>
         </ul>
         <p>Le bandeau du haut liste les matières où une saisie enseignante existe, avec leur origine et leurs écarts${_aSiModif('promo:notes',
         " ; un clic y bascule une matière d'un mode à l'autre")}.</p>
