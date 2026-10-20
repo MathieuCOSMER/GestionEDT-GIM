@@ -315,6 +315,7 @@
         .tab-btn.active { background: #fff; color: #4f46e5; border-color: #e5e7eb; border-bottom-color: #fff; }
         .tab-btn.tab-ftp.active { color: #0369a1; }
         .tab-btn.tab-alt.active { color: #c2410c; }
+        .tab-btn.tab-mut.active { color: #6b21a8; }
 
         /* Badge formation */
         .badge-ftp { background: #dbeafe; color: #1e40af; }
@@ -2192,6 +2193,7 @@
                     <input type="checkbox" id="course-mutualized" onchange="onMutualizedChange()">
                     Mutualisé (CM/TD communs FTP+ALT)
                 </label>
+                <span id="course-mut-sem-hint" style="display:none;font-size:.78rem;color:#6b21a8">— imposé : semestre mutualisé, matière commune à toute la promo</span>
             </div>
             <div id="course-alt-ent-row" style="display:none;margin:2px 0 4px">
                 <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:600;font-size:.85rem;color:#9a3412"
@@ -2212,7 +2214,10 @@
                         onclick="switchCourseTab('ftp',this)">FTP</button>
                 <button type="button" class="tab-btn tab-alt" id="course-tab-alt"
                         onclick="switchCourseTab('alt',this)">ALT</button>
+                <button type="button" class="tab-btn tab-mut" id="course-tab-mut" style="display:none"
+                        title="Semestre mutualisé : FTP et ALT suivent la matière ensemble — une seule saisie pour toute la promo">MUT</button>
             </div>
+            <div id="course-mut-diff" style="display:none;margin:6px 0;padding:6px 10px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;font-size:.8rem;color:#92400e"></div>
             <div id="mut-label-ftp" style="display:none;font-weight:700;font-size:.82rem;color:#6b21a8;margin:6px 0 2px">CM / TD mutualisés + TP / PT FTP</div>
             <!-- FTP -->
             <div id="course-hours-ftp">
@@ -11614,23 +11619,36 @@ function _grpLabels(prefix, tl, n) {
     return out;
 }
 
+// Onglet MUT d'un semestre mutualisé : les TP restés distincts par face et les PT
+// sont enregistrés à l'identique pour FTP et ALT, chaque face avec ses groupes —
+// le panneau « par groupe » de la saisie unique présente donc les groupes des deux.
+function _grpLinkedAlt(prefix, tl) {
+    const T = tl.toUpperCase();
+    return prefix === '' && _courseMutSingle() && (T === 'PT' || (T === 'TP' && !_courseTpCommon()));
+}
+
 function renderGroupTeachers(prefix, tl) {
     const cell = document.getElementById(prefix + tl + '-grp-cell');
     if (!cell) return;
     const T = tl.toUpperCase();
     const n = _grpCount(prefix, tl);
-    const store = _courseGroupTeachers[prefix][T] || {};
     const main = document.getElementById(prefix + tl + '-teacher');
     const mainName = (main && main.value ? (main.options[main.selectedIndex] || {}).text : '') || 'aucun enseignant';
     const opts = sel => `<option value="">↳ ${esc(mainName)}</option>` +
         (state.teachers || []).map(x =>
             `<option value="${x.id}"${String(sel) === String(x.id) ? ' selected' : ''}>${esc(x.name)}</option>`).join('');
+    const grid = (pfx, labels) => {
+        const store = _courseGroupTeachers[pfx][T] || {};
+        return labels.map((lab, i) =>
+            `<label>${esc(lab)}<select onchange="setGroupTeacher('${pfx}','${tl}',${i + 1},this.value)">${opts(store[i + 1])}</select></label>`
+        ).join('');
+    };
     cell.innerHTML =
         `<div class="grp-hint">Enseignant de chaque groupe — laisser « ${esc(mainName)} » pour celui de la ligne ${T}.</div>
-         <div class="grp-grid">` +
-        _grpLabels(prefix, tl, n).map((lab, i) =>
-            `<label>${esc(lab)}<select onchange="setGroupTeacher('${prefix}','${tl}',${i + 1},this.value)">${opts(store[i + 1])}</select></label>`
-        ).join('') + '</div>';
+         <div class="grp-grid">` + (_grpLinkedAlt(prefix, tl)
+            ? grid('', _grpLabels('', tl, n).map(l => 'FTP ' + l))
+              + grid('alt-', _grpLabels('alt-', tl, _grpCount('alt-', tl)).map(l => 'ALT ' + l))
+            : grid(prefix, _grpLabels(prefix, tl, n))) + '</div>';
 }
 
 function setGroupTeacher(prefix, tl, g, val) {
@@ -11639,6 +11657,7 @@ function setGroupTeacher(prefix, tl, g, val) {
     const id = parseInt(val) || 0;
     if (id) store[g] = id; else delete store[g];
     updateGroupBtn(prefix, tl);
+    if (prefix === 'alt-') updateGroupBtn('', tl);   // groupes ALT de l'onglet MUT
 }
 
 // Bouton « groupes » : masqué si le type n'a qu'un seul groupe, mis en avant
@@ -11646,8 +11665,10 @@ function setGroupTeacher(prefix, tl, g, val) {
 function updateGroupBtn(prefix, tl) {
     const btn = document.getElementById(prefix + tl + '-grp-btn');
     if (!btn) return;
-    const n = _grpCount(prefix, tl);
-    const nb = Object.keys(_courseGroupTeachers[prefix][tl.toUpperCase()] || {}).length;
+    const linked = _grpLinkedAlt(prefix, tl);
+    const nbOf = p => Object.keys(_courseGroupTeachers[p][tl.toUpperCase()] || {}).length;
+    const n = _grpCount(prefix, tl) + (linked ? _grpCount('alt-', tl) : 0);
+    const nb = nbOf(prefix) + (linked ? nbOf('alt-') : 0);
     btn.style.display = n > 1 ? '' : 'none';
     btn.classList.toggle('on', nb > 0);
     btn.textContent = nb > 0 ? GRP_ICON + ' ' + nb : GRP_ICON;
@@ -11734,25 +11755,53 @@ function _courseAltEntreprise() {
         && document.getElementById('course-alt-entreprise').checked;
 }
 
+// Semestre mutualisé (FTP et ALT suivent le semestre ensemble) : la matière est
+// commune à toute la promo et se saisit dans un seul onglet MUT — sauf une SAÉ
+// réalisée en entreprise par les alternants, qui reste FTP seule.
+function _courseSemMut() {
+    const semId = parseInt(document.getElementById('course-semester').value) || null;
+    const s = (state.semesters || []).find(x => x.id === semId);
+    return !!(s && s.mutualized);
+}
+function _courseMutSingle() { return _courseSemMut() && !_courseAltEntreprise(); }
+
+// Écarts FTP / ALT relevés au chargement d'une matière dans l'onglet MUT (HTML)
+let _courseMutDiff = '';
+
 function onMutualizedChange() {
     // SAÉ en entreprise côté ALT : les alternants n'ont aucune heure, rien ne peut
     // donc être commun avec les FTP → mutualisation retirée, face ALT fermée.
     const altEnt = _courseAltEntreprise();
+    // Semestre mutualisé : matière forcément commune, onglet unique MUT
+    const single = _courseMutSingle();
     const mutCb = document.getElementById('course-mutualized');
     if (altEnt) mutCb.checked = false;
-    mutCb.disabled = altEnt;
+    if (single) mutCb.checked = true;
+    mutCb.disabled = altEnt || single;
+    document.getElementById('course-mut-sem-hint').style.display = single ? '' : 'none';
     document.getElementById('course-alt-ent-row').style.display =
         document.getElementById('course-type').value === 'SAE' ? '' : 'none';
     document.getElementById('course-alt-ent-note').style.display = altEnt ? '' : 'none';
-    document.getElementById('course-tab-alt').style.display = altEnt ? 'none' : '';
+    document.getElementById('course-tab-ftp').style.display = single ? 'none' : '';
+    document.getElementById('course-tab-alt').style.display = (single || altEnt) ? 'none' : '';
+    document.getElementById('course-tab-mut').style.display = single ? '' : 'none';
+    const diff = document.getElementById('course-mut-diff');
+    diff.innerHTML = _courseMutDiff;
+    diff.style.display = (single && _courseMutDiff) ? '' : 'none';
     const mut = mutCb.checked;
     // TP communs : la face ALT n'a plus rien de propre (TP et PT valent pour la
     // promo entière) → panneau ALT masqué ET neutralisé, pour ne rien y saisir.
     const tpCommon = _courseTpCommon();
-    // Quand mutualisé : masquer tabs/copier, afficher les deux panneaux (FTP = CM/TD mut + TP/PT FTP, ALT = TP/PT ALT)
-    document.getElementById('course-tab-bar').style.display = mut ? 'none' : '';
+    // Mutualisé hors semestre mutualisé : pas d'onglets, deux panneaux étiquetés
+    // (FTP = CM/TD mut + TP/PT FTP, ALT = TP/PT ALT)
+    document.getElementById('course-tab-bar').style.display = (mut && !single) ? 'none' : '';
     document.getElementById('copy-formation-btns').style.display = (mut || altEnt) ? 'none' : '';
-    if (mut) {
+    if (single) {
+        // Onglet MUT : le panneau FTP sert de saisie unique, ALT est aligné dessus
+        document.getElementById('course-hours-ftp').style.display = '';
+        document.getElementById('course-hours-alt').style.display = 'none';
+        document.querySelectorAll('#modal-course .tab-btn').forEach(b => b.classList.toggle('active', b.id === 'course-tab-mut'));
+    } else if (mut) {
         document.getElementById('course-hours-ftp').style.display = '';
         document.getElementById('course-hours-alt').style.display = tpCommon ? 'none' : '';
     } else {
@@ -11761,9 +11810,47 @@ function onMutualizedChange() {
         document.getElementById('course-hours-alt').style.display = 'none';
         document.querySelectorAll('#modal-course .tab-btn').forEach((b,i) => b.classList.toggle('active', i===0));
     }
-    setAltPanelDisabled(tpCommon || altEnt);
-    updateMutualizedLabels(mut, tpCommon);
+    setAltPanelDisabled(single || tpCommon || altEnt);
+    updateMutualizedLabels(mut && !single, tpCommon);
     refreshGroupTeachers();
+}
+
+// Onglet MUT : une seule saisie pour toute la promo. CM / TD (et TP communs) viennent
+// de la face MUT ; les TP restés distincts par face et les PT, de la face FTP (ALT à
+// défaut) — ils seront enregistrés à l'identique pour les deux faces. Une matière
+// pas encore commune est reprise depuis ses faces ; tout ce que l'enregistrement
+// va changer (faces FTP / ALT différentes, heures par face fusionnées) est signalé.
+async function _loadCourseMutSingle(id, c) {
+    const q = ft => api('/courses/' + id + '/teaching-hours?formation_type=' + ft + svcQ('&'));
+    const [thMut, thFtp, thAlt] = await Promise.all([q(2), q(0), q(1)]);
+    const tpCommon = _semTpCommon(c.semester_id, c.course_type);
+    const h = x => Number((x || {}).hours) || 0;
+    const rooms = {}, teachers = {}, diffs = [], merged = [];
+    ['CM', 'TD', 'TP', 'PT'].forEach(t => {
+        const tl = t.toLowerCase();
+        const common = t === 'CM' || t === 'TD' || (t === 'TP' && tpCommon);
+        const f = thFtp[t] || {}, a = thAlt[t] || {}, m = thMut[t] || {};
+        const info = (common && h(m)) ? m : (h(f) ? f : (h(a) ? a : (common ? m : f)));
+        if (common && (h(f) || h(a)))
+            merged.push(`${t} : ${h(m) ? h(m) + ' h communes + ' : ''}FTP ${h(f)} h / ALT ${h(a)} h`);
+        else if (!common && h(f) !== h(a))
+            diffs.push(`${t} : FTP ${h(f)} h / ALT ${h(a)} h`);
+        document.getElementById(tl + '-hours').value = info.hours || '';
+        document.getElementById(tl + '-dur').value = info.slot_duration || '1.5';
+        if (t !== 'TD') document.getElementById(tl + '-spw').value = info.sessions_per_week_max || '1';
+        rooms[t] = info.room || '';
+        teachers[t] = info.teacher_id || '';
+        _courseGroupTeachers[''][t] = _normGroupTeachers(info.group_teachers);
+        if (!common) _courseGroupTeachers['alt-'][t] = _normGroupTeachers(a.group_teachers);
+    });
+    buildRoomSelects(rooms);
+    buildTeacherSelects(teachers);
+    const li = [];
+    if (diffs.length) li.push(`Heures différentes entre FTP et ALT — ${diffs.map(esc).join(' ; ')}. `
+        + `À l'enregistrement, la valeur affichée vaudra pour les deux faces.`);
+    if (merged.length) li.push(`Heures saisies par face — ${merged.map(esc).join(' ; ')}. `
+        + `À l'enregistrement, elles deviennent un enseignement commun à la promo (valeur affichée).`);
+    _courseMutDiff = li.length ? '⚠ ' + li.join('<br>⚠ ') : '';
 }
 
 // Neutralise (ou réactive) les champs du panneau ALT : masqué = non saisissable,
@@ -11927,6 +12014,7 @@ async function openCourseModal(id = null) {
     document.getElementById('course-default-weeks').checked = false;
     document.getElementById('course-mutualized').checked = false;
     document.getElementById('course-alt-entreprise').checked = false;
+    _courseMutDiff = '';
     resetGroupTeachers();
     // Reset FTP tab visible
     document.getElementById('course-hours-ftp').style.display = '';
@@ -11965,7 +12053,13 @@ async function openCourseModal(id = null) {
             document.getElementById('course-mutualized').checked = isMut;
             onMutualizedChange();
 
-            if (isMut) {
+            if (_courseMutSingle()) {
+                // Semestre mutualisé : onglet unique MUT
+                try {
+                    await _loadCourseMutSingle(id, c);
+                    onMutualizedChange();   // affiche les écarts relevés
+                } catch(e) { console.warn('Erreur chargement heures MUT:', e); }
+            } else if (isMut) {
                 // CM/TD depuis MUT (formation_type=2), TP/PT depuis FTP (0).
                 // TP communs à la promo (semestre mutualisé, tp_separate=0) : TP depuis MUT.
                 const tpCommon = _semTpCommon(c.semester_id, c.course_type);
@@ -12107,7 +12201,20 @@ async function submitCourse(e) {
             await api('/courses/' + id + svcQ(), { method: 'PUT', body: JSON.stringify(base) });
         }
 
-        if (isMut) {
+        if (_courseMutSingle()) {
+            // Onglet MUT (semestre mutualisé) : CM / TD (+ TP communs) → MUT ; TP restés
+            // distincts par face et PT → FTP et ALT à l'identique (groupes de chaque face)
+            const tpCommon = _semTpCommon(semId, document.getElementById('course-type').value);
+            const Z = { hours: 0 };
+            const alt = t => ({ ...panelFtp[t], group_teachers: _courseGroupTeachers['alt-'][t] || {} });
+            const faces = [
+                [2, { CM: panelFtp.CM, TD: panelFtp.TD, TP: tpCommon ? panelFtp.TP : Z, PT: Z }],
+                [0, { CM: Z, TD: Z, TP: tpCommon ? Z : panelFtp.TP, PT: panelFtp.PT }],
+                [1, { CM: Z, TD: Z, TP: tpCommon ? Z : alt('TP'), PT: alt('PT') }],
+            ];
+            for (const [ft, types] of faces)
+                await api('/courses/' + courseId + '/teaching-hours?formation_type=' + ft + svcQ('&'), { method: 'PUT', body: JSON.stringify(types) });
+        } else if (isMut) {
             // TP communs à la promo (semestre mutualisé, tp_separate=0) : TP → MUT aussi
             const tpCommon = _semTpCommon(semId, document.getElementById('course-type').value);
             // CM/TD (+ TP communs) → MUT (formation_type=2)

@@ -849,6 +849,12 @@ function _aideService() {
             <li><b>Code</b>, <b>intitulé</b>, <b>type</b> (Ressource ou SAÉ), <b>type de TP</b> (TP12 = groupes de 12, TP8 = groupes de 8 : il fixe le nombre de groupes de TP) ;</li>
             <li><b>Semestre</b>, semaines de <b>début</b> et de <b>fin</b> — ou la case « dates par défaut du semestre », qui suit le calendrier ;</li>
             <li><b>Mutualisé</b> : CM et TD communs à FTP et ALT ; seuls TP et PT restent propres à chaque face ;</li>
+            <li>Dans un <b>semestre mutualisé</b> (${_aOng('Promotions › Groupes')}), toute matière est commune à la promo : la mutualisation
+                est imposée et les onglets FTP / ALT laissent place à un onglet unique <b>MUT</b>. CM et TD y sont communs (TP aussi
+                s'ils sont communs à la promo) ; les TP distincts par face et les PT sont enregistrés à l'identique pour FTP et ALT,
+                chaque face gardant ses groupes (${_aUi('👥')} les présente tous). À l'ouverture, un bandeau signale ce que
+                l'enregistrement va aligner (heures FTP et ALT différentes, heures encore saisies par face). Exception : une SAÉ
+                réalisée en entreprise par les alternants reste FTP seule ;</li>
             <li>Pour une SAÉ, ${_aUi('🏭 ALT : SAÉ réalisée en entreprise')} : les alternants la font dans leur entreprise. Aucune heure côté ALT
                 (la face ALT est vidée et la mutualisation retirée) ; leurs notes sont saisies par le responsable ALT (ou l'administration),
                 dans la ${_aLien('promo-saisie', 'Saisie Notes')} ou directement dans les ${_aLien('promo-bulletins', 'Bulletins')}.
