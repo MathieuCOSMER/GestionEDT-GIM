@@ -851,7 +851,7 @@ function _aideService() {
         <ul>
             <li>À gauche, la <b>matière générale</b> (celle du programme), puis ses <b>sous-matières</b> (R1.03 → R1.03a, R1.03b…), chacune avec ses lignes CM, TD, TP, PT.</li>
             <li>Les heures se lisent en colonnes : <b>PN</b> (volume du programme), <b>FTP</b>, <b>ALT</b> — un cours <b>mutualisé</b> (CM/TD communs) n'a qu'une case FTP+ALT. Une colonne récapitule total et HETD.</li>
-            <li>${_aUi('Référent')} : un par face (FTP / ALT) et par matière. Il est présélectionné quand un seul titulaire intervient ; sinon la case est vide (bordure rouge) et se choisit parmi les intervenants. Le référent fixe les pondérations des sous-matières dans la ${_aLien('promo-saisie', 'saisie des notes')}.</li>
+            <li>${_aUi('Référent')} : un par face (FTP / ALT) et par matière. Il est présélectionné quand un seul titulaire intervient ; sinon la case est vide (bordure rouge). La liste propose d'abord les intervenants de la face (vacataires compris), puis tous les autres titulaires : un titulaire peut être référent sans intervenir dans la matière — la case ${_aUi('saisit les notes')} lui confie alors la saisie des notes de toutes ses sous-matières (les intervenants gardent la leur). Le référent fixe les pondérations des sous-matières dans la ${_aLien('promo-saisie', 'saisie des notes')}.</li>
             <li>Filtres : semestres, formation, enseignant, salle, recherche.</li>
         </ul>
         <h3>Créer ou modifier une sous-matière</h3>

@@ -2225,10 +2225,11 @@ def _apply_migrations(db):
         db.execute("ALTER TABLE teachers ADD COLUMN contact_pref TEXT")
 
     # Enseignant référent par MATIÈRE (groupe de sous-matières, clé = code sans
-    # lettre finale, cf. _mat_base_key) et par face (FTP/ALT) — choix MANUEL de
-    # l'admin, prioritaire sur la règle automatique (titulaire unique intervenant).
+    # lettre finale, cf. _mat_base_key) et par face (FTP/ALT) — UN seul, choix
+    # MANUEL de l'admin, prioritaire sur la règle automatique (titulaire unique
+    # intervenant).
     db.execute('DROP TABLE IF EXISTS course_referents')  # 1er jet abandonné (référent par sous-matière)
-    db.execute('''
+    _ref_sql = '''
         CREATE TABLE IF NOT EXISTS matiere_referents (
             matiere_key TEXT NOT NULL,
             formation TEXT NOT NULL CHECK (formation IN ('FTP', 'ALT')),
@@ -2236,7 +2237,23 @@ def _apply_migrations(db):
             PRIMARY KEY (matiere_key, formation),
             FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE SET NULL
         )
-    ''')
+    '''
+    if any(r[1] == 'teacher_id' and r[5] for r in db.execute('PRAGMA table_info(matiere_referents)').fetchall()):
+        # Essai « plusieurs référents » (oct. 2026, abandonné) : retour à un seul
+        # référent par matière × face — le plus récemment ajouté est gardé
+        db.execute('ALTER TABLE matiere_referents RENAME TO matiere_referents_multi')
+        db.execute(_ref_sql)
+        db.execute('''INSERT INTO matiere_referents (matiere_key, formation, teacher_id)
+                      SELECT matiere_key, formation, teacher_id FROM matiere_referents_multi m
+                      WHERE rowid = (SELECT MAX(rowid) FROM matiere_referents_multi m2
+                                     WHERE m2.matiere_key = m.matiere_key
+                                       AND m2.formation = m.formation)''')
+        db.execute('DROP TABLE matiere_referents_multi')
+    db.execute(_ref_sql)
+    # « Le référent saisit les notes » : référent choisi hors des intervenants de la
+    # face, à qui l'admin confie la saisie de toutes les sous-matières (Saisie Notes)
+    if 'saisie' not in [r[1] for r in db.execute('PRAGMA table_info(matiere_referents)').fetchall()]:
+        db.execute('ALTER TABLE matiere_referents ADD COLUMN saisie INTEGER NOT NULL DEFAULT 0')
     # SAÉ réalisée EN ENTREPRISE par les alternants (clé matière = _mat_base_key,
     # toutes ses sous-matières) : aucune heure côté ALT, pas de saisie enseignante
     # sur la face ALT — la note des alternants est posée dans Bulletins par le
@@ -11700,11 +11717,14 @@ def _saisie_payload(pdb, pid, semester, formation, teacher_name=None):
         entreprise = any(c['entreprise'] for c in groups_raw[key])
         ent_mine = entreprise and resp_ent
         is_ref = ent_mine or (bool(tkey) and bool(referent) and referent.strip().lower() == tkey)
+        # Référent hors intervenants à qui l'admin a confié la saisie de la matière
+        ref_saisit = bool(r.get('saisie'))
+        ref_mine = ref_saisit and is_ref
         mine, subs = False, []
         for c in sorted(groups_raw[key], key=lambda x: x['code']):
             m = meta.get(c['code'])
             w = m['weight'] if (m and m['weight'] is not None) else 1.0
-            teaches = ent_mine or (bool(tkey) and any(t.strip().lower() == tkey for t in c['teachers']))
+            teaches = ent_mine or ref_mine or (bool(tkey) and any(t.strip().lower() == tkey for t in c['teachers']))
             mine = mine or teaches
             subs.append({'code': c['code'], 'name': c['name'],
                          'teachers': sorted(c['teachers']),
@@ -11719,6 +11739,8 @@ def _saisie_payload(pdb, pid, semester, formation, teacher_name=None):
         out_groups.append({'key': key,
                            'label': compo.get('short_label') or compo.get('label') or key,
                            'referent': referent,
+                           # le référent (hors intervenants) saisit les notes de la matière
+                           'referent_saisit': ref_saisit,
                            # SAÉ réalisée en entreprise (face ALT) : notes du responsable ALT
                            'entreprise': entreprise,
                            # 'saisie' = la moyenne alimente Bulletins ; 'import' =
@@ -14601,8 +14623,12 @@ def _matiere_referents(db):
     par face (FTP/ALT). Intervenants d'une face = enseignants des sessions
     actives de toutes les sous-matières (FTP : formation_type 0 et 2 ; ALT : 1
     et 2). Choix admin (matiere_referents) prioritaire tant que l'enseignant
-    intervient encore ; sinon un titulaire UNIQUE parmi les intervenants →
-    référent automatique ; sinon à définir."""
+    intervient encore ou est titulaire ; sinon un titulaire UNIQUE parmi les
+    intervenants → référent automatique ; sinon à définir. Liste proposée
+    (`options`) : les intervenants de la face (vacataires compris), puis tous
+    les autres titulaires de l'année (`intervient` les distingue).
+    `saisie` : le référent choisi n'intervient pas sur la face et l'admin lui a
+    confié la saisie des notes de la matière (toutes ses sous-matières)."""
     faces = {}   # (matiere_key, 'FTP'/'ALT') -> {teacher_id: {id, name, titulaire}}
     for r in db.execute('''
             SELECT c.code, cs.formation_type, t.id AS tid, t.name, t.status
@@ -14617,22 +14643,31 @@ def _matiere_referents(db):
             faces.setdefault((key, face), {})[r['tid']] = {
                 'id': r['tid'], 'name': r['name'],
                 'titulaire': (r['status'] or 'Titulaire') == 'Titulaire'}
-    manual = {(r['matiere_key'], r['formation']): r['teacher_id'] for r in
-              db.execute('SELECT matiere_key, formation, teacher_id FROM matiere_referents')}
+    manual, saisie = {}, set()
+    for r in db.execute('SELECT matiere_key, formation, teacher_id, saisie FROM matiere_referents'):
+        manual[(r['matiere_key'], r['formation'])] = r['teacher_id']
+        if r['saisie']:
+            saisie.add((r['matiere_key'], r['formation']))
+    titulaires = {r['id']: {'id': r['id'], 'name': r['name'], 'titulaire': True}
+                  for r in db.execute('SELECT id, name, status FROM teachers')
+                  if (r['status'] or 'Titulaire') == 'Titulaire'}
+    others_all = sorted(titulaires.values(), key=lambda x: x['name'])
     out = {}
     for (key, face), teachers in faces.items():
         tits = [t for t in teachers.values() if t['titulaire']]
-        chosen = teachers.get(manual.get((key, face)))
+        chosen = teachers.get(manual.get((key, face))) or titulaires.get(manual.get((key, face)))
         if chosen:
-            ref = {'teacher_id': chosen['id'], 'name': chosen['name'], 'auto': False}
+            ref = {'teacher_id': chosen['id'], 'name': chosen['name'], 'auto': False,
+                   'saisie': (key, face) in saisie and chosen['id'] not in teachers}
         elif len(tits) == 1:
-            ref = {'teacher_id': tits[0]['id'], 'name': tits[0]['name'], 'auto': True}
+            ref = {'teacher_id': tits[0]['id'], 'name': tits[0]['name'], 'auto': True, 'saisie': False}
         else:
-            ref = {'teacher_id': None, 'name': None, 'auto': False}
+            ref = {'teacher_id': None, 'name': None, 'auto': False, 'saisie': False}
         ref['options'] = sorted(
-            ({'id': t['id'], 'name': t['name'], 'titulaire': t['titulaire']}
+            ({'id': t['id'], 'name': t['name'], 'titulaire': t['titulaire'], 'intervient': True}
              for t in teachers.values()),
-            key=lambda x: x['name'])
+            key=lambda x: x['name']) + [
+            dict(t, intervient=False) for t in others_all if t['id'] not in teachers]
         out.setdefault(key, {})[face] = ref
     return out
 
@@ -14654,8 +14689,10 @@ def _set_alt_entreprise(db, code, course_type, data):
 @app.route('/api/matiere-referents', methods=['PUT'])
 def set_matiere_referent():
     """Choix admin du référent d'une face (FTP/ALT) d'une matière — prioritaire
-    sur la présélection automatique. Body {matiere_key, formation, teacher_id} ;
-    teacher_id vide → efface le choix (retour à la règle automatique)."""
+    sur la présélection automatique. Body {matiere_key, formation, teacher_id,
+    saisie?} ; teacher_id vide → efface le choix (retour à la règle automatique).
+    `saisie` : le référent (hors intervenants) saisit les notes de la matière ;
+    absent, il est gardé pour le même référent et retombe à non pour un autre."""
     err = _require_admin()
     if err:
         return err
@@ -14676,20 +14713,31 @@ def set_matiere_referent():
             tid = int(tid)
         except (TypeError, ValueError):
             return error_response('teacher_id invalide')
-        fts = (0, 2) if formation == 'FTP' else (1, 2)
-        # L'enseignant doit intervenir sur cette face d'une sous-matière du groupe.
-        rows = db.execute('''SELECT DISTINCT c.code FROM course_sessions cs
-                             JOIN courses c ON c.id = cs.course_id
-                             WHERE cs.teacher_id = ? AND cs.formation_type IN (?, ?)
-                               AND (cs.nb_sessions > 0 OR cs.total_hours > 0)''',
-                          (tid, *fts)).fetchall()
-        if not any(_mat_base_key(r['code']) == key for r in rows):
-            return error_response(f"Cet enseignant n'intervient pas sur la face {formation} de cette matière")
-        db.execute('''INSERT INTO matiere_referents (matiere_key, formation, teacher_id)
-                      VALUES (?, ?, ?)
+        teacher = db.execute('SELECT status FROM teachers WHERE id = ?', (tid,)).fetchone()
+        if not teacher:
+            return error_response('Enseignant introuvable', 404)
+        # Tout titulaire de l'année peut être référent ; un vacataire, seulement
+        # s'il intervient sur cette face d'une sous-matière du groupe.
+        if (teacher['status'] or 'Titulaire') != 'Titulaire':
+            fts = (0, 2) if formation == 'FTP' else (1, 2)
+            rows = db.execute('''SELECT DISTINCT c.code FROM course_sessions cs
+                                 JOIN courses c ON c.id = cs.course_id
+                                 WHERE cs.teacher_id = ? AND cs.formation_type IN (?, ?)
+                                   AND (cs.nb_sessions > 0 OR cs.total_hours > 0)''',
+                              (tid, *fts)).fetchall()
+            if not any(_mat_base_key(r['code']) == key for r in rows):
+                return error_response(f"Ce vacataire n'intervient pas sur la face {formation} de cette matière")
+        cur = db.execute('SELECT teacher_id, saisie FROM matiere_referents WHERE matiere_key = ? AND formation = ?',
+                         (key, formation)).fetchone()
+        if 'saisie' in data:
+            flag = 1 if data.get('saisie') else 0
+        else:
+            flag = cur['saisie'] if (cur and cur['teacher_id'] == tid) else 0
+        db.execute('''INSERT INTO matiere_referents (matiere_key, formation, teacher_id, saisie)
+                      VALUES (?, ?, ?, ?)
                       ON CONFLICT (matiere_key, formation) DO UPDATE SET
-                          teacher_id = excluded.teacher_id''',
-                   (key, formation, tid))
+                          teacher_id = excluded.teacher_id, saisie = excluded.saisie''',
+                   (key, formation, tid, flag))
     db.commit()
     return jsonify({'message': 'Référent enregistré'})
 

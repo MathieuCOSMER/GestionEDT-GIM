@@ -10044,9 +10044,10 @@ function _saisieGridHtml(i, maxh) {
         const multi = g.subs.length > 1;
         h1 += `<th class="${cls}" colspan="${g.subs.length + 1}" style="background:#ede9fe;color:#4c1d95;text-align:center;font-size:.8rem;padding:4px 6px;border-left:4px solid #8b5cf6;border-bottom:2px solid #8b5cf6"
                    title="${esc(g.label)}${g.entreprise ? ' — SAÉ réalisée en entreprise par les alternants : notes saisies par le responsable ALT ou l\'administration'
-                       : (g.referent ? ' — référent : ' + esc(g.referent) : '')}">${esc(g.key)}<br>
+                       : (g.referent ? ' — référent : ' + esc(g.referent) + (g.referent_saisit ? ' (saisit les notes de la matière)' : '') : '')}">${esc(g.key)}<br>
                    <span style="font-weight:400;font-size:.7rem">${g.entreprise ? '<span style="color:#9a3412">🏭 en entreprise · resp. ALT</span>'
-                       : (g.referent ? 'réf. ' + esc(g.referent) : '<span style="color:#b91c1c">réf. à définir</span>')}</span><br>
+                       : (g.referent ? 'réf. ' + esc(g.referent) + (g.referent_saisit ? ' <span style="color:#4338ca">· saisit</span>' : '')
+                                     : '<span style="color:#b91c1c">réf. à définir</span>')}</span><br>
                    <span style="font-weight:400;font-size:.68rem">${g.source === 'saisie'
                        ? '<span style="color:#166534" title="La moyenne pondérée est reportée dans la note matière (Bulletins)">→ note matière</span>'
                        : '<span style="color:#b45309" title="La note matière (Bulletins) vient d\'un import ou d\'une saisie de l\'administration : cette moyenne n\'est PAS reportée tant que l\'admin ne rebascule pas la matière">⚠ note importée</span>'}</span></th>`;
@@ -12281,12 +12282,25 @@ function renderCourses() {
             const r = refs[face];
             if (!r || !(r.options || []).length) return '';
             const tag = `<span style="font-weight:700;font-size:.66rem;color:${face === 'FTP' ? '#0369a1' : '#9a3412'}">${face}</span>`;
-            const opts = '<option value="">— à définir —</option>' + r.options.map(o =>
-                `<option value="${o.id}"${o.id === r.teacher_id ? ' selected' : ''}>${esc(o.name)}${o.titulaire ? '' : ' (vac.)'}</option>`).join('');
+            // Intervenants de la face (vacataires compris), puis tous les autres titulaires
+            const opt = o => `<option value="${o.id}"${o.id === r.teacher_id ? ' selected' : ''}>${esc(o.name)}${o.titulaire ? '' : ' (vac.)'}</option>`;
+            const inter = r.options.filter(o => o.intervient !== false), autres = r.options.filter(o => o.intervient === false);
+            const opts = '<option value="">— à définir —</option>'
+                + (inter.length ? `<optgroup label="Intervenants">${inter.map(opt).join('')}</optgroup>` : '')
+                + (autres.length ? `<optgroup label="Autres titulaires">${autres.map(opt).join('')}</optgroup>` : '');
             const auto = r.auto ? ' <span title="Présélection automatique : seul titulaire intervenant sur la matière" style="color:#9ca3af;font-size:.68rem">auto</span>' : '';
+            // Référent qui n'intervient pas dans la matière : l'admin peut lui confier
+            // la saisie des notes de toutes les sous-matières (Saisie Notes)
+            const chosen = r.options.find(o => o.id === r.teacher_id);
+            const saisie = (r.teacher_id && !r.auto && chosen && chosen.intervient === false)
+                ? `<label title="Le référent n'intervient pas dans la matière : cochez pour qu'il en saisisse les notes (toutes les sous-matières, face ${face}) dans Saisie Notes"
+                      style="display:flex;align-items:center;gap:3px;margin:1px 0 0 24px;font-size:.66rem;color:#4338ca;cursor:pointer;white-space:nowrap">
+                      <input type="checkbox" ${r.saisie ? 'checked' : ''} style="margin:0"
+                          onchange="saveMatiereReferent('${esc(key)}', '${face}', ${r.teacher_id}, this.checked)">saisit les notes</label>`
+                : '';
             return `<div style="white-space:nowrap;margin:2px 0">${tag} <select onchange="saveMatiereReferent('${esc(key)}', '${face}', this.value)"
-                title="Référent de la matière (face ${face}) : présélectionné automatiquement si un seul titulaire intervient, modifiable parmi les intervenants"
-                style="font-size:.72rem;padding:2px 3px;border:1px solid ${r.teacher_id ? '#d1d5db' : '#fca5a5'};border-radius:4px;max-width:112px">${opts}</select>${auto}</div>`;
+                title="Référent de la matière (face ${face}) : présélectionné automatiquement si un seul titulaire intervient, à choisir parmi les intervenants ou tous les titulaires"
+                style="font-size:.72rem;padding:2px 3px;border:1px solid ${r.teacher_id ? '#d1d5db' : '#fca5a5'};border-radius:4px;max-width:112px">${opts}</select>${auto}${saisie}</div>`;
         };
         const html = (showFtpCol ? line('FTP') : '') + (showAltCol ? line('ALT') : '');
         return `<td rowspan="${rowspan}" style="font-size:.78rem;vertical-align:middle">${html || '<span style="color:#bbb">—</span>'}</td>`;
@@ -12348,7 +12362,7 @@ function renderCourses() {
             <th rowspan="2" style="width:58px">Type</th>
             <th colspan="${heuresCols}" style="text-align:center;border-bottom:1px solid #e5e7eb">Heures</th>
             <th rowspan="2" style="width:70px;text-align:center">Salle</th>
-            <th rowspan="2" style="width:135px" title="Enseignant référent de la matière (toutes sous-matières confondues), par face FTP/ALT. Présélectionné automatiquement si un seul titulaire intervient ; modifiable par l'admin parmi les intervenants.">Référent</th>
+            <th rowspan="2" style="width:135px" title="Enseignant référent de la matière (toutes sous-matières confondues), par face FTP/ALT. Présélectionné automatiquement si un seul titulaire intervient ; modifiable par l'admin parmi les intervenants ou tous les titulaires.">Référent</th>
             <th rowspan="2" style="width:84px">Actions</th>
         </tr>
         <tr>
@@ -13104,17 +13118,19 @@ async function deleteCourse(id) {
 
 // Choix admin du référent d'une face (FTP/ALT) d'une matière (groupe de
 // sous-matières) — prioritaire sur la présélection automatique ; valeur vide
-// = retour à la règle automatique (titulaire unique).
-async function saveMatiereReferent(key, face, teacherId) {
+// = retour à la règle automatique (titulaire unique). `saisie` (case « saisit
+// les notes ») : le référent, hors intervenants, saisit les notes de la matière.
+async function saveMatiereReferent(key, face, teacherId, saisie) {
+    const body = { matiere_key: key, formation: face, teacher_id: teacherId };
+    if (saisie !== undefined) body.saisie = !!saisie;
     try {
-        await api('/matiere-referents' + svcQ(), {
-            method: 'PUT',
-            body: JSON.stringify({ matiere_key: key, formation: face, teacher_id: teacherId })
-        });
+        await api('/matiere-referents' + svcQ(), { method: 'PUT', body: JSON.stringify(body) });
         state.courses = await api('/courses' + svcQ());
         renderCourses();
-        toast(teacherId ? 'Référent ' + face + ' enregistré' : 'Référent ' + face + ' réinitialisé (règle automatique)');
-    } catch(err) { toast('Erreur : ' + err.message, 'error'); }
+        toast(saisie !== undefined
+            ? (saisie ? 'Le référent ' + face + ' saisit les notes de la matière' : 'Le référent ' + face + ' ne saisit plus les notes')
+            : (teacherId ? 'Référent ' + face + ' enregistré' : 'Référent ' + face + ' réinitialisé (règle automatique)'));
+    } catch(err) { toast('Erreur : ' + err.message, 'error'); renderCourses(); }
 }
 
 // ===== RÉPARTITION HEBDOMADAIRE (modal dédié) =====
