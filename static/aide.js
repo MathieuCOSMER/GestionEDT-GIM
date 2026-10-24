@@ -782,7 +782,7 @@ function _aideService() {
         et les cases ${_aUi('Impair')} / ${_aUi('Pair')} (semaines du semestre impair ou pair).</p>
         <h3>Lire le tableau</h3>
         <ul>
-            <li>Une ligne bleue par <b>matière</b>, puis une ligne par formation (MUT, FTP, ALT) et par type ; les TP partagés en groupes portent leur numéro (gr.1, gr.2… ; ALT pour les groupes d'apprentis).</li>
+            <li>Une ligne bleue par <b>matière</b>, puis une ligne par formation (MUT, FTP, ALT) et par type. Les <b>TD</b> et les <b>TP</b> partagés en groupes ont <b>une ligne par groupe</b>, avec son numéro (gr.1, gr.2… ; ALT pour les groupes d'apprentis d'un TP mutualisé) et son enseignant : chaque groupe se place à part, deux groupes de TD peuvent donc avoir la même séance des semaines différentes.</li>
             <li>${_aUi('H. module')} : le volume à placer ; ${_aUi('Reste')} : ce qu'il reste à placer, <b>en rouge tant qu'il n'est pas à zéro</b>. Le reste compte toutes les semaines, même celles qu'un filtre masque.</li>
             <li>Les semaines <b style="color:#c2410c">orange</b> sont des semaines de vacances, de stage (FTP) ou d'entreprise (ALT), d'après le ${_aLien('promo-calendrier', 'calendrier')} de la promotion.</li>
             <li>En haut, les <b>taux horaires</b> (FTP1, ALT1… FTP3, ALT3) donnent les heures de cours d'un étudiant de chaque promo, semaine par semaine. Filtré sur un enseignant ou une salle, le tableau ajoute sa charge hebdomadaire.</li>
@@ -826,8 +826,8 @@ function _aideService() {
             <li>${_aUi('Semaine')} : la liste ne propose que les semaines où la cohorte a cours (ni vacances, ni stage, ni entreprise). La semaine en cours est présélectionnée.</li>
         </ul>
         <h3>Le tableau</h3>
-        <p>Les cours sont rangés par matière, puis sous-matière (R1.03a, R1.03b…), type d'enseignement et, pour les TP, groupe par groupe
-        (TP12_1, TP12_2, TP12_ALT…). Chaque niveau se replie ; ${_aUi('Tout replier')} / ${_aUi('Tout déplier')} agissent sur l'ensemble. Un clic sur
+        <p>Les cours sont rangés par matière, puis sous-matière (R1.03a, R1.03b…), type d'enseignement et, pour les TP et les TD à plusieurs groupes, groupe par groupe
+        (TP12_1, TP12_2, TP12_ALT, TD_1, TD_2…). Chaque niveau se replie ; ${_aUi('Tout replier')} / ${_aUi('Tout déplier')} agissent sur l'ensemble. Un clic sur
         un en-tête trie ; les listes ${_aUi('Enseignant')} et ${_aUi('Salle')} filtrent.</p>
         <h3>Suivre l'avancement</h3>
         <p>Deux cases, pour la semaine et la cohorte affichées :</p>

@@ -2489,6 +2489,36 @@ def _apply_migrations(db):
         )
     ''')
 
+    # Les TD se placent groupe par groupe dans la répartition calendaire, comme les
+    # TP (_placed_by_group). Jusque-là un TD n'avait qu'un placement, le groupe 1,
+    # valable pour chacun de ses groupes : il est recopié une fois sur les groupes
+    # 2..n, pour que la répartition reste ce qu'elle était. Le marqueur évite de
+    # recopier ensuite un groupe que l'on aurait vidé exprès.
+    if not db.execute("SELECT 1 FROM app_settings WHERE key = 'td_par_groupe'").fetchone():
+        rf = db.row_factory
+        db.row_factory = sqlite3.Row   # _load_semester_groups lit les colonnes par leur nom
+        try:
+            sg_map, mut_set, tpsep_set = _load_semester_groups(db)
+            for r in db.execute('''
+                SELECT cs.id, cs.formation_type, s.code AS semester_code
+                FROM course_sessions cs
+                JOIN courses c ON cs.course_id = c.id
+                JOIN semesters s ON c.semester_id = s.id
+                WHERE UPPER(cs.teaching_type) = 'TD'
+            ''').fetchall():
+                n = int(_group_multiplier(sg_map, mut_set, tpsep_set, r['semester_code'],
+                                          r['formation_type'], 'TD') or 1)
+                for gi in range(2, n + 1):
+                    db.execute('''
+                        INSERT OR IGNORE INTO weekly_hours
+                            (course_session_id, week_number, semester_week, hours, group_index)
+                        SELECT course_session_id, week_number, semester_week, hours, ?
+                        FROM weekly_hours WHERE course_session_id = ? AND group_index = 1
+                    ''', (gi, r['id']))
+        finally:
+            db.row_factory = rf
+        db.execute("INSERT INTO app_settings (key, value) VALUES ('td_par_groupe', 'fait')")
+
     # Semaines déjà planifiées à l'emploi du temps, par année de promotion
     # (1A / 2A / 3A) et par cohorte (FTP, ALT, ou MUT = FTP + ALT ensemble). Sert
     # de suivi d'avancement dans la répartition journalière, en deux niveaux : une
@@ -15264,8 +15294,8 @@ def update_weekly_distribution(course_id):
             if not session:
                 continue
             session_id = session['id']
-            # Groupe 1 uniquement : préserve le placement par groupe des TP
-            # (groupes 2..N édités dans la répartition calendaire).
+            # Groupe 1 uniquement : préserve le placement par groupe des TP et
+            # des TD (groupes 2..N édités dans la répartition calendaire).
             cursor.execute('DELETE FROM weekly_hours WHERE course_session_id = ? AND group_index = 1', (session_id,))
             for week_str, hours in week_data.items():
                 h = float(hours or 0)
@@ -15721,6 +15751,13 @@ def _group_teacher_list(session_teacher_id, overrides, n_groups):
     """Enseignant de chacun des groupes 1..n_groups (défaut : celui de la session)."""
     ov = overrides or {}
     return [ov.get(g, session_teacher_id) for g in range(1, max(1, n_groups) + 1)]
+
+def _placed_by_group(teaching_type):
+    """Les TP et les TD se placent groupe par groupe dans la répartition calendaire
+    (une ligne par groupe, weekly_hours.group_index) ; un CM ou un PT n'a qu'un
+    placement (groupe 1), valable pour chacun de ses groupes."""
+    tt = (teaching_type or '').upper().replace(' ', '')
+    return tt.startswith('TP') or tt == 'TD'
 
 @app.route('/api/semester-groups', methods=['GET'])
 def get_semester_groups():
@@ -16978,8 +17015,8 @@ def get_repartition():
             ''')
         raw = cursor.fetchall()
 
-        # Nb de groupes par (semestre, face, type) : les TP se scindent en une ligne
-        # par groupe dans la répartition calendaire.
+        # Nb de groupes par (semestre, face, type) : les TP et les TD se scindent en
+        # une ligne par groupe dans la répartition calendaire.
         sg_map, mut_set, tpsep_set = _load_semester_groups(db)
         # Enseignants par groupe (un TD / TP peut être partagé entre enseignants)
         gt_map = _load_group_teachers(db)
@@ -16993,8 +17030,8 @@ def get_repartition():
             if sid not in sessions:
                 tt = r['teaching_type'] or ''
                 # Nb de groupes pour ce type (CM=1, TD, TP12/TP8, PT) selon semestre/face.
-                # Sert au comptage des créneaux (répartition journalière) et, pour les TP,
-                # à scinder la session en une ligne par groupe.
+                # Sert au comptage des créneaux (répartition journalière) et, pour les TP
+                # et les TD, à scinder la session en une ligne par groupe.
                 try:
                     group_count = int(_group_multiplier(
                         sg_map, mut_set, tpsep_set, r['semester_code'],
@@ -17003,7 +17040,7 @@ def get_repartition():
                     group_count = 1
                 if group_count < 1:
                     group_count = 1
-                n_groups = group_count if tt.upper().replace(' ', '').startswith('TP') else 1
+                n_groups = group_count if _placed_by_group(tt) else 1
                 sessions[sid] = {
                     'session_id': sid,
                     'course_code': r['course_code'] or '',
@@ -17027,7 +17064,7 @@ def get_repartition():
                 g = r['group_index'] or 1
                 sessions[sid]['by_group'].setdefault(g, {})[r['week_number']] = r['hours'] or 0
 
-        # Une ligne par session (CM/TD/PT) ou une ligne par groupe (TP à plusieurs groupes)
+        # Une ligne par session (CM/PT) ou une ligne par groupe (TP et TD à plusieurs groupes)
         _BASE = ('session_id', 'course_code', 'course_name', 'semester', 'type',
                  'tp_type', 'formation', 'total_hours', 'nb_sessions', 'slot_duration',
                  'teacher', 'room', 'group_count')
@@ -17039,12 +17076,11 @@ def get_repartition():
             # Enseignant de chaque groupe (défaut : celui de la session)
             g_teachers = _group_teacher_list(s['teacher_id'], gt_map.get(sid), s['group_count'])
             if n <= 1:
-                # Fusionne tous les groupes éventuels sur une seule ligne : la
-                # ligne porte alors tous les enseignants du type (ex. TD à 2 groupes)
-                merged = {}
-                for gw in s['by_group'].values():
-                    for w, h in gw.items():
-                        merged[w] = merged.get(w, 0) + h
+                # Une seule ligne, le placement du groupe 1 : celui d'un groupe
+                # au-delà (nombre de groupes réduit depuis) n'est plus affiché,
+                # pas plus que dans les lignes par groupe ci-dessous. La ligne
+                # porte tous les enseignants du type (ex. PT à 2 groupes)
+                merged = dict(s['by_group'].get(1, {}))
                 # `teachers` : un élément PAR GROUPE (doublons compris) — c'est lui
                 # qui permet de pondérer la charge d'un enseignant par le nombre de
                 # groupes qu'il assure. `teacher` reste le libellé affiché.
@@ -17063,8 +17099,10 @@ def get_repartition():
                 sem = s['semester']
                 # Uniquement les matières réellement mutualisées (session MUT) ont des
                 # groupes d'apprentis. Les SAE (face FTP ou ALT) gardent tous leurs
-                # groupes dans LEUR cohorte — pas de dernier groupe « ALT ».
-                is_common_mut = (sem in mut_set) and (sem not in tpsep_set) and (s['formation'] == 'MUT')
+                # groupes dans LEUR cohorte — pas de dernier groupe « ALT ». Les TD
+                # n'en ont jamais : alt_groups ne compte que des groupes de TP.
+                is_common_mut = (s['type'].upper().startswith('TP') and (sem in mut_set)
+                                 and (sem not in tpsep_set) and (s['formation'] == 'MUT'))
                 k_alt = 0
                 if is_common_mut:
                     k_alt = int((sg_map.get((sem, 2)) or {}).get('ALT', 1) or 0)
@@ -17182,10 +17220,10 @@ def checks_repartition():
         cursor = db.cursor()
 
         # 1. Charge enseignants par semaine.
-        #    Un enseignant assure une séance PAR GROUPE : les heures d'un TD à
-        #    2 groupes comptent double pour qui prend les deux. Les TP ont déjà
-        #    une ligne de placement par groupe (weekly_hours.group_index) ; les
-        #    CM/TD/PT n'en ont qu'une, valable pour chacun de leurs groupes.
+        #    Un enseignant assure une séance PAR GROUPE : les heures d'un PT à
+        #    2 groupes comptent double pour qui prend les deux. Les TP et les TD
+        #    ont une ligne de placement par groupe (weekly_hours.group_index) ;
+        #    les CM/PT n'en ont qu'une, valable pour chacun de leurs groupes.
         #    Chaque groupe peut par ailleurs revenir à un autre enseignant
         #    (course_group_teachers) que celui de la session.
         sg_map, mut_set, tpsep_set = _load_semester_groups(db)
@@ -17221,17 +17259,13 @@ def checks_repartition():
                 n = 1
             g_teachers = _group_teacher_list(r['teacher_id'], gt_map.get(sid), n)
             label = f"{r['course_code']} {r['teaching_type']}"
-            if tt.startswith('TP') and n > 1:
+            if _placed_by_group(tt) and n > 1:
                 # Une ligne de placement par groupe : chaque groupe compte pour lui-même
                 contrib = [(g_teachers[g - 1] if g <= len(g_teachers) else None, wk)
                            for g, wk in groups.items()]
             else:
-                # Placement unique, rejoué à l'identique pour chacun des n groupes
-                merged = {}
-                for wk in groups.values():
-                    for w, h in wk.items():
-                        merged[w] = merged.get(w, 0) + h
-                contrib = [(tid, merged) for tid in g_teachers]
+                # Placement unique (groupe 1), rejoué à l'identique pour chacun des n groupes
+                contrib = [(tid, groups.get(1, {})) for tid in g_teachers]
             for tid, wk in contrib:
                 if not tid or tid not in t_names:
                     continue
@@ -17393,7 +17427,7 @@ def export_repartition_excel():
             if draft:
                 db.rollback()
 
-        # Nb de groupes (TP scindés en une ligne par groupe, comme à l'écran)
+        # Nb de groupes (TP et TD scindés en une ligne par groupe, comme à l'écran)
         sg_map, mut_set, tpsep_set = _load_semester_groups(db)
         gt_map = _load_group_teachers(db)
         t_names = {r['id']: r['name'] for r in db.execute('SELECT id, name FROM teachers').fetchall()}
@@ -17406,7 +17440,7 @@ def export_repartition_excel():
             if sid not in sessions:
                 tt = r['teaching_type'] or ''
                 n_groups = 1
-                if tt.upper().replace(' ', '').startswith('TP'):
+                if _placed_by_group(tt):
                     try:
                         n_groups = int(_group_multiplier(
                             sg_map, mut_set, tpsep_set, r['semester_code'],
@@ -17437,7 +17471,10 @@ def export_repartition_excel():
                 g = r['group_index'] or 1
                 sessions[sid]['by_group'].setdefault(g, {})[r['week_number']] = r['hours']
 
-        # Développe une ligne par groupe (TP à plusieurs groupes), sinon une ligne
+        # Développe une ligne par groupe (TP et TD à plusieurs groupes), sinon une
+        # ligne. `in_totals` : la ligne compte dans les totaux FTP / ALT et « Total
+        # promo » des onglets d'année — d'un TD, son seul groupe 1, comme quand il
+        # tenait sur une ligne (les TP gardent tous leurs groupes, comme avant).
         expanded = []
         for sid in order:
             s = sessions[sid]
@@ -17446,19 +17483,17 @@ def export_repartition_excel():
                                         'semester', 'year_group', 'type', 'formation',
                                         'formation_type', 'total_hours', 'teacher', 'room')}
             g_teachers = _group_teacher_list(s['teacher_id'], gt_map.get(sid), n)
+            is_tp = s['type'].upper().startswith('TP')
             if n <= 1:
-                merged = {}
-                for gw in s['by_group'].values():
-                    for w, h in gw.items():
-                        merged[w] = merged.get(w, 0) + h
                 expanded.append({**common, 'type_disp': s['type_disp'],
-                                 'group_index': 1, 'n_groups': 1, 'by_week': merged})
+                                 'group_index': 1, 'n_groups': 1, 'in_totals': True,
+                                 'by_week': dict(s['by_group'].get(1, {}))})
             else:
                 sem = s['semester']
                 # Uniquement les matières réellement mutualisées (session MUT) ont des
                 # groupes d'apprentis. Les SAE (face FTP ou ALT) gardent tous leurs
-                # groupes dans LEUR cohorte — pas de dernier groupe « ALT ».
-                is_common_mut = (sem in mut_set) and (sem not in tpsep_set) and (s['formation'] == 'MUT')
+                # groupes dans LEUR cohorte — pas de dernier groupe « ALT », ni pour un TD.
+                is_common_mut = is_tp and (sem in mut_set) and (sem not in tpsep_set) and (s['formation'] == 'MUT')
                 k_alt = 0
                 if is_common_mut:
                     k_alt = int((sg_map.get((sem, 2)) or {}).get('ALT', 1) or 0)
@@ -17474,6 +17509,7 @@ def export_repartition_excel():
                     expanded.append({**common, 'type_disp': lbl,
                                      'teacher': t_names.get(tid, common['teacher'] if tid else ''),
                                      'group_index': gi, 'n_groups': n,
+                                     'in_totals': is_tp or gi == 1,
                                      'by_week': dict(s['by_group'].get(gi, {}))})
 
         # Styles
@@ -17661,8 +17697,8 @@ def export_repartition_excel():
 
                 # Ligne « Total promo » : total d'heures de la matière par promo (MUT compté
                 # pour FTP et ALT)
-                ftp_total = sum((s['total_hours'] or 0) for s in block['mut'] + block['ftp'])
-                alt_total = sum((s['total_hours'] or 0) for s in block['mut'] + block['alt'])
+                ftp_total = sum((s['total_hours'] or 0) for s in block['mut'] + block['ftp'] if s['in_totals'])
+                alt_total = sum((s['total_hours'] or 0) for s in block['mut'] + block['alt'] if s['in_totals'])
                 for col in range(1, COL_FIRST_WEEK + nw):
                     _sc(ws.cell(row=row, column=col), fill=fill_total, border=border_all)
                 _sc(ws.cell(row=row, column=COL_FORM, value='Total promo'),
@@ -17689,8 +17725,10 @@ def export_repartition_excel():
                     for s in grp:
                         # Colonne Formation : style posé sur chaque cellule (avant fusion)
                         _sc(ws.cell(row=row, column=COL_FORM), fill=form_fill, border=border_all, alignment=align_center)
-                        # Colonne d'appoint cachée : formation par ligne (pour les SUMIF)
-                        _sc(ws.cell(row=row, column=COL_FORMKEY, value=form), font=font_data)
+                        # Colonne d'appoint cachée : formation par ligne (pour les SUMIF),
+                        # vide sur une ligne hors des totaux (groupes 2..n d'un TD)
+                        _sc(ws.cell(row=row, column=COL_FORMKEY, value=form if s['in_totals'] else None),
+                            font=font_data)
                         _sc(ws.cell(row=row, column=COL_TYPE, value=s.get('type_disp') or s['type']),
                             font=font_data, alignment=align_center, border=border_all)
                         _sc(ws.cell(row=row, column=COL_TEACH, value=s['teacher']), font=font_data, border=border_all)
@@ -18010,6 +18048,10 @@ def import_repartition_excel():
         formation_map = {'FTP': 0, 'ALT': 1, 'MUT': 2}
         imported = 0
         errors = []
+        # Libellé de la colonne Type : le type, puis « (gr.N) » ou « ALT [rang] »
+        # pour une ligne de groupe
+        type_re = re.compile(r'^(?P<type>.+?)(?:\s*\(gr\.(?P<gr>\d+)\)|\s+(?P<alt>ALT)(?:\s+(?P<rank>\d+))?)?$', re.I)
+        sg_map, mut_set, tpsep_set = _load_semester_groups(db)
 
         year_sheet_names = {'S1+S2', 'S3+S4', 'S5+S6'}
         for ws in wb.worksheets:
@@ -18084,15 +18126,23 @@ def import_repartition_excel():
                 if not current_code or not current_sem:
                     continue
 
-                teaching_type = str(type_val).strip()
+                type_str = str(type_val).strip()
                 formation_str = str(form_val).strip()
                 formation_type = formation_map.get(formation_str)
                 if formation_type is None:
                     continue
+                # Type affiché → type d'enseignement et groupe (cf. export) : « TD »,
+                # « TP12 », « TD (gr.2) », « TP8 ALT », « TP12 ALT 2 »
+                m = type_re.match(type_str)
+                if not m:
+                    continue
+                teaching_type = m.group('type').strip()
+                if re.fullmatch(r'TP\s*(12|8)', teaching_type, re.I):
+                    teaching_type = 'TP'
 
                 # Trouver la session correspondante
                 cursor.execute('''
-                    SELECT cs.id FROM course_sessions cs
+                    SELECT cs.id, c.tp_type FROM course_sessions cs
                     JOIN courses c ON cs.course_id = c.id
                     JOIN semesters s ON c.semester_id = s.id
                     WHERE c.code = ? AND s.code = ?
@@ -18101,10 +18151,29 @@ def import_repartition_excel():
 
                 row_result = cursor.fetchone()
                 if not row_result:
-                    errors.append(f"{current_code} {current_sem} {teaching_type} {formation_str}: session introuvable")
+                    errors.append(f"{current_code} {current_sem} {type_str} {formation_str}: session introuvable")
                     continue
 
                 session_id = row_result['id']
+
+                # Groupe(s) de la ligne. Sans numéro, une ligne de TD ou de TP (fichier
+                # d'avant le découpage par groupe) vaut pour tous ses groupes.
+                n = 1
+                if _placed_by_group(teaching_type):
+                    n = max(1, int(_group_multiplier(sg_map, mut_set, tpsep_set, current_sem, formation_type,
+                                                     teaching_type, row_result['tp_type']) or 1))
+                if m.group('gr'):
+                    groups = [int(m.group('gr'))]
+                elif m.group('alt'):
+                    # Apprentis d'un TP commun : ils occupent les DERNIERS groupes
+                    k_alt = max(0, min(int((sg_map.get((current_sem, 2)) or {}).get('ALT', 1) or 0), n))
+                    groups = [n - k_alt + int(m.group('rank') or 1)]
+                else:
+                    groups = list(range(1, n + 1))
+                if not all(1 <= g <= n for g in groups):
+                    errors.append(f"{current_code} {current_sem} {type_str} {formation_str}: "
+                                  f"groupe inexistant ({n} groupe{'s' if n > 1 else ''})")
+                    continue
 
                 # Importer les heures par semaine
                 for col, week_num in week_columns:
@@ -18114,17 +18183,19 @@ def import_repartition_excel():
                     except (ValueError, TypeError):
                         hours = 0
 
+                    for g in groups:
+                        if hours > 0:
+                            cursor.execute('''
+                                INSERT OR REPLACE INTO weekly_hours (course_session_id, week_number, hours, group_index)
+                                VALUES (?, ?, ?, ?)
+                            ''', (session_id, week_num, hours, g))
+                        else:
+                            cursor.execute(
+                                'DELETE FROM weekly_hours WHERE course_session_id = ? AND week_number = ? AND group_index = ?',
+                                (session_id, week_num, g)
+                            )
                     if hours > 0:
-                        cursor.execute('''
-                            INSERT OR REPLACE INTO weekly_hours (course_session_id, week_number, hours)
-                            VALUES (?, ?, ?)
-                        ''', (session_id, week_num, hours))
                         imported += 1
-                    else:
-                        cursor.execute(
-                            'DELETE FROM weekly_hours WHERE course_session_id = ? AND week_number = ?',
-                            (session_id, week_num)
-                        )
 
         db.commit()
         return jsonify({

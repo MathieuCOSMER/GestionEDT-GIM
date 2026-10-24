@@ -16019,7 +16019,7 @@ function filterRepartition() {
     if (_repartitionData) renderRepartition(_repartitionData);
 }
 
-// Enseignants d'une ligne, UN PAR GROUPE (doublons compris) : une ligne de TD à
+// Enseignants d'une ligne, UN PAR GROUPE (doublons compris) : une ligne de PT à
 // 2 groupes en contient 2. Sert au filtre et à la pondération de la charge.
 // Repli sur le libellé affiché pour les données d'avant l'ajout du champ.
 function rowTeachers(r) {
@@ -16039,7 +16039,9 @@ function typeDisp(r) {
 }
 
 // Libellé de type pour la répartition journalière : les TP portent leur numéro
-// de groupe (TP12_1, TP8_2…). Le suffixe dépend du montage du semestre :
+// de groupe (TP12_1, TP8_2…), les TD aussi dès qu'ils ont plusieurs groupes
+// (TD_1, TD_2 ; un TD à un seul groupe reste « TD »). Le suffixe dépend du
+// montage du semestre :
 //  - TP distincts par face (tp_separate) : la séance des apprentis est une
 //    session à part, portée par la face ALT → TP12_ALT, numéroté seulement
 //    s'il y a plusieurs groupes d'alternants (TP12_ALT1, TP12_ALT2) ;
@@ -16048,7 +16050,8 @@ function typeDisp(r) {
 //    derniers groupes) → TP12_1, TP12_2… et non TP12_ALT.
 function typeLabelJour(r) {
     const base = typeDisp(r);
-    if ((r.type || '').toUpperCase() !== 'TP') return base;
+    const t = (r.type || '').toUpperCase();
+    if (t !== 'TP' && !(t === 'TD' && (r.n_groups || 1) > 1)) return base;
     if ((r.formation || '').toUpperCase() === 'ALT')
         return base + '_ALT' + ((r.n_groups || 1) > 1 ? String(r.group_index || 1) : '');
     const m = (r.group_label || '').match(/(\d+)/);
@@ -16395,14 +16398,14 @@ function toggleRepJourSub(key) {
     renderRepJour();
 }
 
-// Replie / déplie les groupes d'un TP (TP12_1, TP12_ALT…)
+// Replie / déplie les groupes d'un TP ou d'un TD (TP12_1, TP12_ALT, TD_2…)
 function toggleRepJourTp(key) {
     if (_repJourTpOpen.has(key)) _repJourTpOpen.delete(key);
     else _repJourTpOpen.add(key);
     renderRepJour();
 }
 
-// Replie ou déplie tout : matières, sous-matières et groupes de TP
+// Replie ou déplie tout : matières, sous-matières et groupes de TP / TD
 function foldAllRepJour(collapse) {
     if (collapse) {
         _repJourKeys.forEach(k => _repJourCollapsed.add(k));
@@ -16486,9 +16489,10 @@ function renderRepJour() {
     const typeColors = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' };
     const formColor = { FTP: '#0369a1', ALT: '#9a3412', MUT: '#7c3aed' };
     const fmt = x => Math.round(x * 100) / 100;
-    // Nb de groupes à compter pour les créneaux : les TP sont déjà éclatés en une
-    // ligne par groupe (→ 1) ; les autres types (TD/PT, CM=1) comptent leurs groupes.
-    const groupsFor = r => (r.type || '').toUpperCase() === 'TP' ? 1 : (r.group_count || 1);
+    // Nb de groupes à compter pour les créneaux : les TP et TD à plusieurs groupes
+    // sont déjà éclatés en une ligne par groupe (→ 1) ; les autres lignes (PT,
+    // CM=1) comptent leurs groupes.
+    const groupsFor = r => (r.n_groups || 1) > 1 ? 1 : (r.group_count || 1);
     const creneaux = r => fmt((r.by_week[w] / (r.slot_duration || 1.5)) * groupsFor(r));
     const totalCreneaux = list.reduce((s, r) => s + creneaux(r), 0);
     // Heures d'une ligne : le total réellement à placer, tous groupes confondus
@@ -16501,7 +16505,7 @@ function renderRepJour() {
     // ligne est la matière entière — sous-matières comprises (R1.03a, R1.03b…
     // se rangent sous R1.03) et faces confondues (le CM mutualisé et les TP
     // dédoublés d'une même matière restent sous le même en-tête) — puis une
-    // sous-ligne de détail par sous-matière × type, et une par groupe de TP.
+    // sous-ligne de détail par sous-matière × type, et une par groupe de TP / TD.
     const groups = [];
     const byKey = {};
     list.forEach(r => {
@@ -16528,7 +16532,7 @@ function renderRepJour() {
                 `<span style="color:${formColor[f] || '#374151'};font-weight:700">${esc(f)}</span>`).join(' ')}</td>`;
     };
     // Badges des types présents dans un regroupement, dédoublonnés sur le libellé
-    // (`typeDisp` = CM/TD/TP12, `typeLabelJour` = TP12_1, TP12_ALT…).
+    // (`typeDisp` = CM/TD/TP12, `typeLabelJour` = TP12_1, TP12_ALT, TD_2…).
     const badgeList = (rows, labelFn) => {
         const seen = {};
         rows.forEach(r => { const l = labelFn(r); if (!(l in seen)) seen[l] = r; });
@@ -16608,7 +16612,7 @@ function renderRepJour() {
             const nT = new Set(sr.map(x => x.teacher || '')).size;
             // Niveau 3 : une ligne par type d'enseignement, c'est-à-dire par
             // session (le CM, le TD, le TP…). Les lignes d'une même session
-            // sont ses groupes de TP, gardés pour le niveau 4.
+            // sont ses groupes de TP ou de TD, gardés pour le niveau 4.
             const buckets = [], bIdx = {};
             sr.forEach(x => {
                 const bk = sb.key + '|' + (x.session_id != null ? 's' + x.session_id
@@ -16617,7 +16621,7 @@ function renderRepJour() {
                 bIdx[bk].rows.push(x);
             });
             buckets.forEach(b => {
-                if (b.rows.length > 1 && (b.rows[0].type || '').toUpperCase() === 'TP')
+                if (b.rows.length > 1 && (b.rows[0].n_groups || 1) > 1)
                     _repJourTpKeys.push(b.key);
             });
             const line = detailRow({
@@ -16634,16 +16638,16 @@ function renderRepJour() {
             const padType = flatSub ? 20 : 36, padGroup = flatSub ? 38 : 54;
             return (flatSub ? '' : line) + buckets.map(b => {
                 const br = b.rows, b0 = br[0];
-                // Seuls les TP se déplient : leurs groupes sont places semaine par
-                // semaine, chacun a donc son propre placement. Un TD dédoublé
-                // garde ses groupes sur la même séance — pas de sous-ligne, la
-                // mention « n gr. » suffit à expliquer le volume d'heures.
-                const multi = br.length > 1 && (b0.type || '').toUpperCase() === 'TP';
+                // Seuls les TP et les TD se déplient : leurs groupes sont placés
+                // semaine par semaine, chacun a donc son propre placement. Un PT
+                // à plusieurs groupes garde ses groupes sur la même séance — pas
+                // de sous-ligne, la mention « n gr. » explique le volume d'heures.
+                const multi = br.length > 1 && (b0.n_groups || 1) > 1;
                 const open = multi && _repJourTpOpen.has(b.key);
                 const bh = br.reduce((acc, x) => acc + heures(x), 0);
                 const bn = fmt(br.reduce((acc, x) => acc + creneaux(x), 0));
-                // Groupes couverts : une ligne par groupe pour les TP, mais un TD
-                // dédoublé tient sur une seule ligne comptant ses groupes.
+                // Groupes couverts : une ligne par groupe pour les TP et les TD,
+                // mais un PT tient sur une seule ligne comptant ses groupes.
                 const ng = br.reduce((acc, x) => acc + groupsFor(x), 0);
                 const tline = detailRow({
                     attrs: multi ? ` style="cursor:pointer" onclick="toggleRepJourTp('${esc(b.key)}')"`
@@ -16658,7 +16662,7 @@ function renderRepJour() {
                     seances: `${bn} × ${b0.slot_duration || 1.5}h`,
                 });
                 if (!open) return tline;
-                // Niveau 4 : un groupe de TP par ligne, avec son enseignant
+                // Niveau 4 : un groupe de TP ou de TD par ligne, avec son enseignant
                 return tline + br.map(x => detailRow({
                     pad: padGroup, lead: '·', name: '',
                     badge: badgeList([x], typeLabelJour), form: formCell(x.formation),
@@ -16755,7 +16759,8 @@ function populateRepartitionFilters(rows) {
 // - TP mutualisé commun (groupes apprentis présents) : côté FTP = groupes non-apprentis,
 //   côté ALT = groupes apprentis ; on prend le groupe le plus chargé de chaque côté par semaine
 //   (un étudiant n'est que dans un groupe).
-// - TP séparé (non mutualisé) : selon la formation, le groupe le plus chargé par semaine.
+// - TP séparé (non mutualisé), TD à plusieurs groupes : selon la formation, le groupe
+//   le plus chargé par semaine.
 function sessionPromoContrib(groupRows) {
     const first = groupRows[0];
     const form = first.formation;
@@ -16970,8 +16975,8 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
     function buildDataRow(r, formCls, formCell) {
         const typeKey = (r.type || '').toUpperCase();
         const grp = r.group_index || 1;
-        // TP scindé en groupes : étiquette sous le badge (gr.N, ou ALT pour les
-        // groupes d'apprentis d'un TP mutualisé — toujours les derniers groupes).
+        // TP ou TD scindé en groupes : étiquette sous le badge (gr.N, ou ALT pour
+        // les groupes d'apprentis d'un TP mutualisé — toujours les derniers groupes).
         const grpLabel = r.group_label || ('gr.' + grp);
         const grpTag = (r.n_groups > 1)
             ? `<span class="grp-tag${r.alt_group ? ' grp-tag-alt' : ''}">${esc(grpLabel)}</span>` : '';
@@ -17082,8 +17087,8 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
         </tr>`;
 
     // Ligne « heures / semaine » de l'enseignant filtré. Une séance est assurée
-    // UNE FOIS PAR GROUPE : un TD à 2 groupes tenu par le même enseignant compte
-    // double. Les TP ayant déjà une ligne par groupe, leur facteur vaut 1.
+    // UNE FOIS PAR GROUPE : un PT à 2 groupes tenu par le même enseignant compte
+    // double. Les TP et TD ayant une ligne par groupe, leur facteur vaut 1.
     // (La ligne « promo » plus haut ne multiplie pas : un étudiant ne suit qu'un groupe.)
     let teacherHeaderRow = '';
     if (teacherFilter) {
@@ -17290,7 +17295,7 @@ function onRepartitionCellClick(e) {
 // Rien n'est envoyé au serveur : c'est le rôle de saveRepDraft().
 function repApplyCell(sid, week, group, newHours) {
     if (_repartitionData) {
-        // Toutes les lignes de la session (groupes de TP) partagent le même session_id ;
+        // Toutes les lignes de la session (groupes de TP / TD) partagent le même session_id ;
         // les semestres liés (non affichés) comptent dans les taux horaires des promos
         const groupRows = (_repartitionData.allRows || _repartitionData.rows).filter(r => r.session_id === sid);
         const row = groupRows.find(r => (r.group_index || 1) === group) || groupRows[0];
