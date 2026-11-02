@@ -366,6 +366,11 @@
         .jr-badge.jr-bad { background: #fee2e2; color: #b91c1c; }
         .jr-badge.jr-write { background: #dbeafe; color: #1e40af; }
         .jr-badge.jr-info { background: #f3f4f6; color: #4b5563; }
+        /* Lignes dont l'auteur est le superadmin */
+        .jr-badge.jr-sa { background: #ede9fe; color: #6d28d9; }
+        .journal-table tr.jr-sa-row td { background: #faf5ff; }
+        .journal-table tr.jr-sa-row td:first-child { box-shadow: inset 3px 0 0 #7c3aed; }
+        .jr-scope-info { color: #6b7280; font-size: .82rem; margin-bottom: 8px; }
         .jr-bilan { background: #eff6ff; border: 1px solid #bfdbfe; border-left: 4px solid #3b82f6; border-radius: 6px;
                     padding: 10px 14px; margin-bottom: 12px; font-size: .88rem; line-height: 1.5; }
         /* Édition inline répartition */
@@ -1246,7 +1251,16 @@
     <div class="toolbar">
         <h1>Journal</h1>
         <div class="filters" id="journal-filtres" style="display:none">
-            <label>Enseignant :</label>
+            <span id="journal-scope-wrap">
+                <label>Auteur :</label>
+                <select id="journal-scope" onchange="loadJournal()"
+                        title="Sépare l'activité du superadmin (compte Admin) de celle des autres utilisateurs, sur tout l'historique conservé">
+                    <option value="">Tous</option>
+                    <option value="super">Superadmin</option>
+                    <option value="others">Autres utilisateurs</option>
+                </select>
+            </span>
+            <label style="margin-left:12px">Enseignant :</label>
             <select id="journal-user" onchange="loadJournal()"
                     title="Choisir un compte affiche tout l'historique conservé de ses actions">
                 <option value="">Tous</option>
@@ -3878,6 +3892,9 @@ let _journalTab = 'sauvegardes';
 let _journalSummary = null;
 let _journalUsersLoaded = false;
 let _journalReq = 0;
+// Comptes superadmin (noms en minuscules) et filtre Auteur de la dernière lecture
+let _journalSupers = new Set();
+let _journalScope = '';
 
 function showJournalTab(tab) {
     _journalTab = tab;
@@ -3890,21 +3907,27 @@ function showJournalTab(tab) {
     else loadJournal();
 }
 
-// Sans compte choisi : les N dernières lignes du journal. Un compte choisi : tout
-// l'historique conservé de ses actions (archives du journal comprises).
+// Sans compte choisi : les N dernières lignes du journal — avec le filtre Auteur,
+// celles du superadmin ou des autres, cherchées dans tout l'historique conservé.
+// Un compte choisi : tout l'historique conservé de ses actions (archives comprises).
 async function loadJournal() {
     if (_journalTab === 'sauvegardes') return loadBackups();
     if (!_journalUsersLoaded) loadJournalUsers();
     const el = document.getElementById('journal-content');
     const n = (document.getElementById('journal-lines') || {}).value || 200;
     const user = (document.getElementById('journal-user') || {}).value || '';
+    const scope = user ? '' : ((document.getElementById('journal-scope') || {}).value || '');
     document.getElementById('journal-lines-wrap').style.display = user ? 'none' : '';
+    document.getElementById('journal-scope-wrap').style.display = user ? 'none' : '';
     el.innerHTML = '<div class="spinner">Chargement…</div>';
     const req = ++_journalReq;      // une réponse dépassée par un autre choix est ignorée
     try {
-        const data = await api(user ? '/audit-log?user=' + encodeURIComponent(user) : '/audit-log?lines=' + n);
+        const data = await api(user ? '/audit-log?user=' + encodeURIComponent(user)
+            : '/audit-log?lines=' + n + (scope ? '&scope=' + scope : ''));
         if (req !== _journalReq) return;
         _journalLines = (data && data.lines) || [];
+        _journalSupers = new Set(((data && data.superadmins) || []).map(s => s.toLowerCase()));
+        _journalScope = scope;
         _journalSummary = user ? Object.assign({ name: user }, (data && data.summary) || {}) : null;
         renderJournal();
     } catch (e) {
@@ -3929,7 +3952,8 @@ async function loadJournalUsers() {
         const l = accounts.filter(a => a.group === g);
         return l.length ? `<optgroup label="${label}">${l.map(opt).join('')}</optgroup>` : '';
     };
-    sel.innerHTML = '<option value="">Tous</option>' + groupe('admin', 'Administration')
+    sel.innerHTML = '<option value="">Tous</option>' + groupe('superadmin', 'Superadmin')
+        + groupe('admin', 'Administration')
         + groupe('teacher', 'Enseignants') + groupe('other', 'Autres comptes vus au journal');
     sel.value = accounts.some(a => a.name === cur) ? cur : '';
     if (sel.value !== cur) loadJournal();
@@ -12137,12 +12161,19 @@ function _coeffSansCoefficient(co) {
     return /aide\s+à\s+la\s+r[ée]ussite/.test(lbl);
 }
 
-// Découpe une ligne "date | EVENT | k=v | k=v" en {ts, event, fields}
+// Découpe une ligne "date | EVENT | k=v | k=v" en {ts, event, details, who, sa}.
+// Auteur comme au serveur (_audit_author) : user=, sauf TEACHER_PWD_INIT (teacher=,
+// l'enseignant qui crée son propre mot de passe) ; sa = auteur superadmin.
 function parseJournalLine(line) {
     const parts = line.split(' | ');
     const ts = parts.shift() || '';
     const event = parts.shift() || '';
-    return { ts, event, details: parts.join('  ·  '), raw: line };
+    const f = {};
+    parts.forEach(p => { const i = p.indexOf('='); if (i > 0) f[p.slice(0, i)] = p.slice(i + 1); });
+    let who = ((event === 'TEACHER_PWD_INIT' ? f.teacher : f.user) || '').trim();
+    if (who === '-' || who === 'None') who = '';
+    return { ts, event, details: parts.join('  ·  '), raw: line, who,
+             sa: !!who && _journalSupers.has(who.toLowerCase()) };
 }
 
 function journalEventClass(ev) {
@@ -12181,7 +12212,15 @@ function renderJournal() {
     else if (typeF === 'LOGIN_FAIL') rows = rows.filter(r => r.event === 'LOGIN_FAIL' || r.event === 'LOGIN_BLOCKED');
     else if (typeF) rows = rows.filter(r => r.event === typeF);
     if (q) rows = rows.filter(r => r.raw.toLowerCase().includes(q));
-    const bilan = _journalSummary ? journalSummaryHtml(_journalSummary) : '';
+    const bilan = _journalSummary ? journalSummaryHtml(_journalSummary)
+        : _journalScope === 'super'
+            ? `<div class="jr-scope-info">Activité du <strong>superadmin</strong> (compte Admin) seule —
+                les ${_journalLines.length} entrées les plus récentes de tout l'historique conservé.</div>`
+        : _journalScope === 'others'
+            ? `<div class="jr-scope-info">Activité des <strong>autres utilisateurs</strong>, sans celle du superadmin
+                (les lignes sans auteur — blocages d'adresse IP, tâches du serveur — y figurent) —
+                les ${_journalLines.length} entrées les plus récentes de tout l'historique conservé.</div>`
+        : '';
     if (!rows.length) {
         el.innerHTML = bilan + (_journalSummary && !_journalSummary.total ? ''
             : '<div class="empty">Aucune entrée.</div>');
@@ -12190,11 +12229,14 @@ function renderJournal() {
     el.innerHTML = bilan + `<table class="journal-table"><thead><tr>
             <th style="width:170px">Date / heure</th>
             <th style="width:130px">Événement</th>
+            <th style="width:170px">Compte</th>
             <th>Détails</th>
         </tr></thead><tbody>` +
-        rows.map(r => `<tr>
+        rows.map(r => `<tr${r.sa ? ' class="jr-sa-row"' : ''}>
             <td style="white-space:nowrap;color:#6b7280">${esc(r.ts)}</td>
             <td><span class="jr-badge ${journalEventClass(r.event)}">${esc(r.event)}</span></td>
+            <td style="white-space:nowrap">${r.sa ? `<span class="jr-badge jr-sa" title="Superadmin">${esc(r.who)} · superadmin</span>`
+                : (r.who ? esc(r.who) : '<span style="color:#9ca3af">—</span>')}</td>
             <td style="font-family:ui-monospace,monospace;font-size:.8rem">${esc(r.details)}</td>
         </tr>`).join('') +
         `</tbody></table>`;

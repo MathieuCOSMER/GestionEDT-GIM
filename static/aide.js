@@ -1805,10 +1805,14 @@ function _aideAdmin() {
             <li>${_aUi('Sauvegardes')} : les copies automatiques de la base de chaque année — les <b>5 dernières</b> de chaque année sont gardées,
                 les plus anciennes sont effacées —, avec ${_aUi('Créer une sauvegarde maintenant')}, ${_aUi('Restaurer')} et ${_aUi('Supprimer')}
                 (${_aLien('sauvegardes', 'détail')}).</li>
-            <li>${_aUi('Activité')} : connexions, échecs et blocages, modifications (qui, quand, depuis quelle adresse, sur quel écran). Filtres :
-                ${_aUi('Type')} (Connexions, Échecs / blocages, Modifications), recherche (adresse IP, utilisateur, chemin…), nombre de lignes
-                (200 à 2000), ${_aUi('Rafraîchir')}.</li>
-        </ul>` },
+            <li>${_aUi('Activité')} : connexions, échecs et blocages, modifications (qui, quand, depuis quelle adresse, sur quel écran).
+                La colonne ${_aUi('Compte')} donne l'auteur ; les lignes du <b>superadmin</b> (compte Admin) sont surlignées en violet. Filtres :
+                ${_aUi('Auteur')} (Superadmin, ou Autres utilisateurs — sans le superadmin ; les blocages d'adresse IP et les tâches du serveur,
+                sans auteur, y figurent), ${_aUi('Enseignant')} (tout l'historique d'un compte), ${_aUi('Type')} (Connexions, Échecs / blocages,
+                Modifications), recherche (adresse IP, utilisateur, chemin…), nombre de lignes (200 à 2000), ${_aUi('Rafraîchir')}.</li>
+        </ul>
+        ${_aTip(`le filtre ${_aUi('Auteur')} cherche dans tout l'historique conservé (environ 6 Mo, archives comprises) : les 200 dernières lignes
+            des autres utilisateurs restent visibles même après une longue séance de travail du superadmin.`)}` },
 
     { id: 'mon-compte', rub: R, titre: 'Mon Compte', chemin: 'Mon Compte', onglet: 'nav:mon-compte', cible: 'mon-compte',
       mots: 'mon compte coordonnées email téléphone employeur préférence de contact heures hors gim hetd privé public',

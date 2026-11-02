@@ -3748,15 +3748,24 @@ def _audit_author(event, fields):
     who = (who or '').strip()
     return who.casefold() if who and who not in ('-', 'None') else None
 
+def _audit_superadmins():
+    """Comptes superadmin (le compte fixe Admin), tels qu'écrits dans AUTH_USERS."""
+    return [n for n, u in AUTH_USERS.items() if u.get('superadmin')]
+
 @app.route('/api/audit-log', methods=['GET'])
 def audit_log_view():
     """Renvoie les dernières lignes du journal d'audit (superadmin, ou profil
     auquel le superadmin a ouvert l'onglet Journal). Avec ?user=NOM : tout
     l'historique conservé des actions de ce compte (archives comprises), du plus
-    récent au plus ancien, et son bilan (connexions, modifications)."""
+    récent au plus ancien, et son bilan (connexions, modifications).
+    Avec ?scope=super|others : les N dernières lignes dont l'auteur est (super) ou
+    n'est pas (others : autres comptes, et lignes sans auteur — blocages d'IP,
+    tâches du serveur) le superadmin, cherchées dans tout l'historique conservé.
+    `superadmins` nomme les comptes superadmin pour les repérer à l'écran."""
     err = None if _tab_visible('nav:journal') else _require_superadmin()
     if err:
         return err
+    supers = _audit_superadmins()
     user = (request.args.get('user') or '').strip()
     if user:
         key = user.casefold()
@@ -3777,16 +3786,23 @@ def audit_log_view():
                 summary['writes'] += 1
                 summary['last_write'] = ts
         summary['total'] = len(mine)
-        return jsonify({'lines': mine[::-1][:5000], 'summary': summary})
+        return jsonify({'lines': mine[::-1][:5000], 'summary': summary,
+                        'superadmins': supers})
     try:
         n = max(1, min(int(request.args.get('lines', 200)), 2000))
     except (TypeError, ValueError):
         n = 200
+    scope = (request.args.get('scope') or '').strip()
+    if scope in ('super', 'others'):
+        keys, want = {s.casefold() for s in supers}, scope == 'super'
+        lines = [l for l in _audit_read_all()
+                 if (_audit_author(*_audit_parse(l)[1:]) in keys) == want]
+        return jsonify({'lines': lines[-n:][::-1], 'superadmins': supers, 'scope': scope})
     if not os.path.isfile(AUDIT_LOG_PATH):
-        return jsonify({'lines': []})
+        return jsonify({'lines': [], 'superadmins': supers})
     with open(AUDIT_LOG_PATH, encoding='utf-8') as f:
         lines = f.readlines()
-    return jsonify({'lines': [l.rstrip('\n') for l in lines[-n:]][::-1]})
+    return jsonify({'lines': [l.rstrip('\n') for l in lines[-n:]][::-1], 'superadmins': supers})
 
 @app.route('/api/audit-log/users', methods=['GET'])
 def audit_log_users():
@@ -3819,8 +3835,8 @@ def audit_log_users():
         st = stats.get(k, {})
         accounts.append({'name': name, 'group': group,
                          'count': st.get('count', 0), 'last': st.get('last')})
-    for name in AUTH_USERS:
-        add(name, 'admin')
+    for name, u in AUTH_USERS.items():
+        add(name, 'superadmin' if u.get('superadmin') else 'admin')
     for r in get_db().execute('SELECT name FROM teachers ORDER BY name COLLATE NOCASE'):
         if (r['name'] or '').strip():
             add(r['name'].strip(), 'teacher')
