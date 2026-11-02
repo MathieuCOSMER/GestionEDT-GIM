@@ -1999,6 +1999,12 @@ def _init_promotions_db():
         _apply_promotions_migrations(db)
         try:
             with app.app_context():
+                _unify_submatiere_weights(db)
+        except Exception as e:
+            db.rollback()
+            _audit('WEIGHTS_UNIFY_ERROR', error=str(e))
+        try:
+            with app.app_context():
                 _sync_matiere_marks_rule(db)
         except Exception as e:
             _audit('MARKS_RULE_SYNC_ERROR', error=str(e))
@@ -11298,7 +11304,7 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     """Construit le tableau de notes : étudiants (effectif) × matières (référence),
     notes saisies, moyennes de compétences, rappels (semestre antérieur / année précédente)
     et moyenne annuelle courante. Si `formation` (FTP/ALT) est fourni, la grille ne montre
-    que cette sous-cohorte."""
+    que cette sous-cohorte ; sinon (FTP+ALT) tous les étudiants, avec `faces`."""
     ref_all = _promo_coeffs(pdb, pid) or {}
     ref = ref_all.get(semester) or {'components': [], 'competences': []}
     competences = ref.get('competences', [])
@@ -11330,6 +11336,11 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
     # calculées depuis la saisie enseignante : quand les deux divergent, la grille
     # signale l'écart au lieu de laisser l'une écraser l'autre en silence.
     note_sources = _matiere_sources(pdb, pid, semester, formation) if formation in _SUBCOHORTS else {}
+    # Grille FTP+ALT (sans filtre) : origine et statut de saisie se décident par
+    # face — la grille applique à chaque étudiant ceux de sa sous-cohorte.
+    faces = None if formation in _SUBCOHORTS else {
+        f: {'note_sources': _matiere_sources(pdb, pid, semester, f),
+            'saisie_status': _saisie_status(pdb, pid, semester, f)} for f in _SUBCOHORTS}
     # Une moyenne incomplète (sous-matière pas encore notée) est reportée mais
     # signalée (`partial`) ; elle ne sert pas à signaler un écart avec une note
     # importée — comparer une note finale à une moyenne partielle n'a pas de sens.
@@ -11391,7 +11402,7 @@ def _promo_notes_payload(pdb, pid, semester, formation=None):
             'saisie_status': _saisie_status(pdb, pid, semester, formation),
             # 'saisie' = note calculée (lecture seule dans Bulletins) / 'import' =
             # note importée ou saisie à la main (le recalcul ne l'écrase pas)
-            'note_sources': note_sources, 'computed': computed,
+            'note_sources': note_sources, 'computed': computed, 'faces': faces,
             # {sid_matière: [sous-matières manquantes]} : moyenne de saisie incomplète
             'partial': partial,
             # SAÉ réalisées en entreprise par les alternants (onglet Matières) : leur
@@ -11529,7 +11540,10 @@ def save_entreprise_notes(pid, semester):
     _reconcile_red_transfers(pdb, pid)   # une note peut faire passer un RED en ADM/AJAC → nettoyage
     _audit('NOTES_ENTREPRISE_SAVE', ip=_client_ip(), user=session.get('user'),
            promo=pid, semester=semester, notes=written, refused=refused)
-    payload = _promo_notes_payload(pdb, pid, semester, 'ALT')
+    # Grille rendue : celle des alternants, ou FTP+ALT si c'est elle qui est affichée
+    view = (request.args.get('formation') or '').strip().upper()
+    payload = _promo_notes_payload(pdb, pid, semester,
+                                   'ALT' if not view else (view if view in _SUBCOHORTS else None))
     payload['readonly_skipped'] = refused
     return jsonify(payload)
 
@@ -11707,6 +11721,48 @@ def _saisie_counted(c, weight):
     """Une sous-matière compte dans la moyenne de la face si elle y a des
     séances (ou n'en a nulle part) et que sa pondération est > 0."""
     return (c['on_face'] or not c['any_session']) and weight > 0
+
+def _store_submatiere_weight(pdb, pid, semester, code, weight):
+    """Pondération d'une sous-matière : COMMUNE à FTP et ALT. Elle reste stockée
+    sur les deux lignes de submatiere_meta (une par face, qui portent aussi le
+    statut définitif, lui propre à chaque face) : on les écrit donc ensemble, et
+    toutes les lectures par face restent justes."""
+    for f in _SUBCOHORTS:
+        pdb.execute('''INSERT INTO submatiere_meta(promotion_id, semester, formation, code, weight, definitive)
+                       VALUES(?,?,?,?,?,0)
+                       ON CONFLICT(promotion_id, semester, formation, code)
+                       DO UPDATE SET weight=excluded.weight''',
+                    (pid, semester, f, code, weight))
+
+def _unify_submatiere_weights(pdb):
+    """Aligne les pondérations FTP et ALT d'une même sous-matière (elles ont été
+    enregistrées par face jusqu'en nov. 2026, alors qu'elles sont communes).
+    Une valeur posée l'emporte sur le défaut (pas de valeur = 1) ; deux valeurs
+    posées différentes → celle de FTP, l'écart étant tracé au journal. Les notes
+    matière calculées des matières touchées sont recalculées. Sans écart, ne
+    fait rien : appelée à chaque démarrage."""
+    by = {}
+    for r in pdb.execute('SELECT promotion_id, semester, formation, code, weight FROM submatiere_meta'):
+        by.setdefault((r['promotion_id'], r['semester'], r['code']), {})[r['formation']] = r['weight']
+    eff = lambda w: 1.0 if w is None else w
+    touched, conflicts = {}, []
+    for (pid, semester, code), w in by.items():
+        wf, wa = w.get('FTP'), w.get('ALT')
+        if eff(wf) == eff(wa):
+            continue
+        common = wf if wf is not None else wa
+        if wf is not None and wa is not None:
+            conflicts.append(f'{pid}/{semester}/{code}:FTP={wf},ALT={wa}')
+        _store_submatiere_weight(pdb, pid, semester, code, common)
+        touched.setdefault((pid, semester), set()).add(_mat_base_key(code))
+    if not touched:
+        return
+    pdb.commit()
+    for (pid, semester), keys in touched.items():
+        if pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+            _recompute_matiere_marks(pdb, pid, semester, keys)
+    _audit('WEIGHTS_UNIFY', matieres=sum(len(k) for k in touched.values()),
+           conflicts=';'.join(conflicts) or '-')
 
 def _saisie_payload(pdb, pid, semester, formation, teacher_name=None):
     """Grille de saisie : étudiants (sous-cohorte) × sous-matières groupées par
@@ -12187,11 +12243,7 @@ def save_promotion_saisie_weights(pid, semester):
             return error_response(f'Pondération invalide pour {code}')
         if w < 0:
             return error_response('Une pondération ne peut pas être négative')
-        pdb.execute('''INSERT INTO submatiere_meta(promotion_id, semester, formation, code, weight, definitive)
-                       VALUES(?,?,?,?,?,0)
-                       ON CONFLICT(promotion_id, semester, formation, code)
-                       DO UPDATE SET weight=excluded.weight''',
-                    (pid, semester, formation, code, w))
+        _store_submatiere_weight(pdb, pid, semester, code, w)
     pdb.commit()
     _recompute_matiere_marks(pdb, pid, semester, {key})
     _audit('SAISIE_WEIGHTS', ip=_client_ip(), user=session.get('user'),
@@ -12836,7 +12888,10 @@ def set_promotion_note_source(pid, semester):
         _reconcile_red_transfers(pdb, pid)
     _audit('NOTE_SOURCE', ip=_client_ip(), user=session.get('user'),
            promo=pid, semester=semester, formation=formation, matiere=code, source=source)
-    return jsonify(_promo_notes_payload(pdb, pid, semester, formation))
+    # `view` : sous-cohorte de la grille affichée (FTP+ALT : bascule d'une face,
+    # mais la grille reste mixte)
+    view = (data.get('view') or formation).strip().upper()
+    return jsonify(_promo_notes_payload(pdb, pid, semester, view if view in _SUBCOHORTS else None))
 
 # Couleur d'en-tête par type de matière (cohérent avec _coeffKindColor côté frontend)
 _NOTES_KIND_FILL = {'SAE': 'DBEAFE', 'RES': 'DCFCE7', 'PORT': 'FEF3C7',

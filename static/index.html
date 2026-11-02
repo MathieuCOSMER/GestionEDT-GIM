@@ -977,6 +977,7 @@
                     <label>Sous-cohorte :</label>
                     <select id="saisie-sub-select" onchange="guardSaisieReload()">
                         <option value="FTP">FTP</option><option value="ALT">ALT</option>
+                        <option value="MIX" title="Les deux sous-cohortes dans une seule grille, par ordre alphabétique">FTP+ALT</option>
                     </select>
                     <label style="margin-left:12px">Semestre :</label>
                     <select id="saisie-sem-select" onchange="guardSaisieReload()">
@@ -1018,6 +1019,7 @@
                 <label>Sous-cohorte :</label>
                 <select id="notes-sub-select" onchange="guardNotesReload()">
                     <option value="FTP">FTP</option><option value="ALT">ALT</option>
+                    <option value="MIX" title="Les deux sous-cohortes dans une seule grille, par ordre alphabétique">FTP+ALT</option>
                 </select>
                 <label style="margin-left:12px">Semestre :</label>
                 <select id="notes-sem-select" onchange="guardNotesReload()">
@@ -1039,6 +1041,7 @@
                 <label>Sous-cohorte :</label>
                 <select id="jury-sub-select" onchange="guardJuryReload()">
                     <option value="FTP">FTP</option><option value="ALT">ALT</option>
+                    <option value="MIX" title="Les deux sous-cohortes dans une seule grille, par ordre alphabétique">FTP+ALT</option>
                 </select>
                 <label style="margin-left:12px">Année :</label>
                 <select id="jury-year-select" onchange="guardJuryReload()">
@@ -9747,6 +9750,48 @@ async function deletePromotion() {
 // ===== NOTES (sous-onglet Promotions) — liées à l'effectif + référence coeff =====
 let _notesData = null;
 
+// ===== Grilles FTP+ALT (Saisie Notes, Bulletins, Jury) =====
+// Valeur « MIX » des sélecteurs de sous-cohorte : les deux sous-cohortes dans UNE
+// grille, par ordre alphabétique, avec une petite colonne FTP / ALT. Ce qui se
+// décide par face (origine de la note, statut de saisie, colonnes saisissables)
+// s'applique à chaque étudiant selon SA sous-cohorte.
+const SUB_MIX = 'MIX';
+const _FACE_STYLE = { FTP: 'background:#e0f2fe;color:#0369a1', ALT: 'background:#ffedd5;color:#9a3412' };
+function _faceOf(s) { return (s && s.formation === 'ALT') ? 'ALT' : 'FTP'; }   // miroir de _face (serveur)
+function _subLabel(sub) { return sub === SUB_MIX ? 'FTP+ALT' : sub; }
+function _facePill(f) {
+    return `<span style="display:inline-block;padding:0 4px;border-radius:4px;font-size:.66rem;font-weight:700;line-height:1.4;${_FACE_STYLE[f] || ''}">${esc(f)}</span>`;
+}
+// Sous-cohorte d'un étudiant d'une grille (table construite une fois par grille)
+function _sidFace(d, sid) {
+    if (!d._faceBySid) {
+        d._faceBySid = {};
+        (d.students || []).forEach(s => { d._faceBySid[s.id] = _faceOf(s); });
+    }
+    return d._faceBySid[sid];
+}
+// Colonne « FTP/ALT » : en-tête (triable si `sortFn` est donné) et case
+function _faceTh(rowspan, sortFn, st) {
+    return `<th class="nz-face" rowspan="${rowspan}"${sortFn ? ` onclick="${sortFn}('face')"` : ''}
+        title="Sous-cohorte de l'étudiant${sortFn ? ' — cliquer pour trier (FTP puis ALT, puis par nom)' : ''}"
+        style="vertical-align:bottom;text-align:center;font-size:.7rem;padding:4px 3px;white-space:nowrap${sortFn ? ';cursor:pointer' : ''}">FTP/ALT${st ? ' ' + _sortMark(st, 'face') : ''}</th>`;
+}
+function _faceTd(s) {
+    return `<td class="nz-face" title="Sous-cohorte ${_faceOf(s)}" style="text-align:center;padding:2px 3px">${_facePill(_faceOf(s))}</td>`;
+}
+// La colonne FTP/ALT reste collée à celle des noms quand la grille défile à
+// l'horizontale : sa position dépend de la largeur réelle de la colonne Étudiant.
+function _stickFaceCol(rootId) {
+    const root = document.getElementById(rootId);
+    const first = root && root.querySelector('table.nz-table thead th.nz-sticky');
+    const w = first ? first.getBoundingClientRect().width : 0;
+    if (!w) return;
+    root.querySelectorAll('table.nz-table .nz-face').forEach(c => {
+        c.classList.add('nz-sticky');
+        c.style.left = w + 'px';
+    });
+}
+
 // ===== SAISIE NOTES (notes par sous-matière, enseignants) =====
 // Chaque enseignant saisit les notes des sous-matières qu'il a en charge ; la
 // note matière (Bulletins) = moyenne pondérée (pondération fixée par le
@@ -9800,12 +9845,75 @@ async function loadSaisieGrid() {
         return;
     }
     el.innerHTML = '<div class="spinner">Chargement…</div>';
-    try { _saisieData = await api(`/promotions/${pid}/saisie/${sem}?formation=${encodeURIComponent(sub)}`); }
+    try { _saisieData = await _saisieFetch(pid, sem, sub); }
     catch (e) { toast('Erreur : ' + e.message, 'error'); saveBtn.disabled = true; return; }
     _saisieData.pid = parseInt(pid, 10);
     _saisieBlocks = [{ d: _saisieData, pid, sem, sub }];
     _saisieVis = [null];
     renderSaisieGrid();
+}
+
+// Grille d'un semestre pour une sous-cohorte — ou les deux fusionnées (FTP+ALT)
+async function _saisieFetch(pid, sem, sub) {
+    if (sub !== SUB_MIX) return api(`/promotions/${pid}/saisie/${sem}?formation=${encodeURIComponent(sub)}`);
+    const [dF, dA] = await Promise.all(['FTP', 'ALT'].map(f => api(`/promotions/${pid}/saisie/${sem}?formation=${f}`)));
+    return _saisieMerge(dF, dA);
+}
+
+// Fusion des grilles FTP et ALT d'un semestre (grille FTP+ALT) : étudiants mêlés
+// par ordre alphabétique, une colonne par sous-matière. Chaque case suit la face
+// de l'étudiant (saisissable ou non, comptée ou non) ; la pondération, commune aux
+// deux faces, n'a qu'une case ; le statut définitif reste propre à chaque face.
+// `faces` garde les deux grilles d'origine : moyennes et enregistrement se font
+// face par face, avec leurs propres groupes (`g.faces[f]`, `s.faces[f]`).
+function _saisieMerge(dF, dA) {
+    const src = { FTP: dF, ALT: dA };
+    const nom = s => ((s.nom || '') + ' ' + (s.prenom || '')).toLocaleLowerCase('fr');
+    const students = [...(dF.students || []), ...(dA.students || [])]
+        .sort((a, b) => nom(a).localeCompare(nom(b), 'fr'));
+    const byKey = {};
+    ['FTP', 'ALT'].forEach(f => (src[f].groups || []).forEach(g => {
+        const mg = byKey[g.key] || (byKey[g.key] = { key: g.key, label: g.label, faces: {}, bySub: {} });
+        mg.faces[f] = g;
+        g.subs.forEach(s => {
+            const ms = mg.bySub[s.code]
+                || (mg.bySub[s.code] = { code: s.code, name: s.name, weight: s.weight, teachers: [], faces: {} });
+            ms.faces[f] = s;
+            (s.teachers || []).forEach(t => { if (!ms.teachers.includes(t)) ms.teachers.push(t); });
+        });
+    }));
+    const groups = Object.keys(byKey).sort().map(key => {
+        const mg = byKey[key], fg = Object.values(mg.faces);
+        mg.subs = Object.keys(mg.bySub).sort().map(code => {
+            const ms = mg.bySub[code], fs = Object.values(ms.faces);
+            ms.editable = fs.some(s => s.editable);
+            ms.counted = fs.some(s => s.counted);
+            ms.teachers.sort();
+            return ms;
+        });
+        delete mg.bySub;
+        // Pour le filtre et les droits : vrai si vrai sur l'une des faces
+        mg.is_referent = fg.some(g => g.is_referent);
+        mg.entreprise = fg.some(g => g.entreprise);
+        mg.referent = [...new Set(fg.map(g => g.referent).filter(Boolean))].join(' / ');
+        return mg;
+    });
+    return { semester: dF.semester, formation: SUB_MIX, year: dF.year || dA.year,
+             available: !!(dF.available && dA.available), groups, students,
+             marks: Object.assign({}, dF.marks, dA.marks),
+             official: Object.assign({}, dF.official, dA.official), faces: src };
+}
+
+// Ligne d'en-tête d'une matière qui peut différer d'une face à l'autre (référent,
+// origine de la note) : en grille FTP+ALT, une seule ligne si les deux faces
+// disent la même chose, sinon une par face. `html` : rendu HTML (pastilles) ou
+// texte d'infobulle.
+function _saisieByFace(g, fn, html) {
+    if (!g.faces) return fn(g);
+    const parts = ['FTP', 'ALT'].filter(f => g.faces[f]).map(f => [f, fn(g.faces[f])]);
+    if (parts.length === 2 && parts[0][1] === parts[1][1]) return parts[0][1];
+    return html ? parts.map(([f, h]) => _facePill(f) + ' ' + h).join('<br>')
+                : parts.filter(p => p[1]).map(([f, t]) => f + ' : ' + t).join(' ; ');
 }
 
 // Enseignant : toutes les grilles de l'année (cohorte × semestre × sous-cohorte)
@@ -10024,7 +10132,9 @@ function renderSaisieGrid() {
     const editable = d.groups.some(g => g.subs.some(s => s.editable));
     const anyRef = d.groups.some(g => g.is_referent);
     saveBtn.disabled = !(editable || anyRef);
-    _saisieIoButtons(editable);
+    // Modèle vide et import portent sur une sous-cohorte (fichier par face)
+    const mix = d.formation === SUB_MIX;
+    _saisieIoButtons(editable && !mix, mix ? 'Modèle vide et import se font par sous-cohorte : choisissez FTP ou ALT' : '');
     el.innerHTML = _saisieGridHtml(0, 'calc(100vh - 210px)') + _saisieLegend();
 }
 
@@ -10035,54 +10145,68 @@ function renderSaisieGrid() {
 function _saisieGridHtml(i, maxh) {
     const d = _sbd(i);
     const CW = 74;
+    // Grille FTP+ALT : colonne FTP/ALT, cases selon la face de chaque étudiant
+    // (`s.faces[f]`), statut définitif par face ; la pondération reste unique.
+    const mix = d.formation === SUB_MIX;
     // Ligne 1 : matières (groupes) ; ligne 2 : sous-matières + Moy. ;
     // ligne 3 : pondérations (référent) + case « définitif » (enseignant de la colonne)
-    let h1 = '<tr><th class="nz-sticky" rowspan="3" style="min-width:165px;max-width:165px;vertical-align:bottom">Étudiant</th>';
+    let h1 = '<tr><th class="nz-sticky" rowspan="3" style="min-width:165px;max-width:165px;vertical-align:bottom">Étudiant</th>'
+        + (mix ? _faceTh(3) : '');
     let h2 = '<tr>', h3 = '<tr>';
+    const refTitle = g => g.entreprise ? 'SAÉ réalisée en entreprise par les alternants : notes saisies par le responsable ALT ou l\'administration'
+        : (g.referent ? 'référent : ' + g.referent + (g.referent_saisit ? ' (saisit les notes de la matière)' : '') : '');
+    const refHtml = g => g.entreprise ? '<span style="color:#9a3412">🏭 en entreprise · resp. ALT</span>'
+        : (g.referent ? 'réf. ' + esc(g.referent) + (g.referent_saisit ? ' <span style="color:#4338ca">· saisit</span>' : '')
+                      : '<span style="color:#b91c1c">réf. à définir</span>');
+    const srcHtml = g => g.source === 'saisie'
+        ? '<span style="color:#166534" title="La moyenne pondérée est reportée dans la note matière (Bulletins)">→ note matière</span>'
+        : '<span style="color:#b45309" title="La note matière (Bulletins) vient d\'un import ou d\'une saisie de l\'administration : cette moyenne n\'est PAS reportée tant que l\'admin ne rebascule pas la matière">⚠ note importée</span>';
     d.groups.forEach((g, j) => {
         const cls = `sg${i}_${j}`;
         const multi = g.subs.length > 1;
+        const rt = _saisieByFace(g, refTitle, false);
         h1 += `<th class="${cls}" colspan="${g.subs.length + 1}" style="background:#ede9fe;color:#4c1d95;text-align:center;font-size:.8rem;padding:4px 6px;border-left:4px solid #8b5cf6;border-bottom:2px solid #8b5cf6"
-                   title="${esc(g.label)}${g.entreprise ? ' — SAÉ réalisée en entreprise par les alternants : notes saisies par le responsable ALT ou l\'administration'
-                       : (g.referent ? ' — référent : ' + esc(g.referent) + (g.referent_saisit ? ' (saisit les notes de la matière)' : '') : '')}">${esc(g.key)}<br>
-                   <span style="font-weight:400;font-size:.7rem">${g.entreprise ? '<span style="color:#9a3412">🏭 en entreprise · resp. ALT</span>'
-                       : (g.referent ? 'réf. ' + esc(g.referent) + (g.referent_saisit ? ' <span style="color:#4338ca">· saisit</span>' : '')
-                                     : '<span style="color:#b91c1c">réf. à définir</span>')}</span><br>
-                   <span style="font-weight:400;font-size:.68rem">${g.source === 'saisie'
-                       ? '<span style="color:#166534" title="La moyenne pondérée est reportée dans la note matière (Bulletins)">→ note matière</span>'
-                       : '<span style="color:#b45309" title="La note matière (Bulletins) vient d\'un import ou d\'une saisie de l\'administration : cette moyenne n\'est PAS reportée tant que l\'admin ne rebascule pas la matière">⚠ note importée</span>'}</span></th>`;
+                   title="${esc(g.label + (rt ? ' — ' + rt : ''))}">${esc(g.key)}<br>
+                   <span style="font-weight:400;font-size:.7rem">${_saisieByFace(g, refHtml, true)}</span><br>
+                   <span style="font-weight:400;font-size:.68rem">${_saisieByFace(g, srcHtml, true)}</span></th>`;
         g.subs.forEach((s, k) => {
             const off = !s.counted;
-            const defColor = s.definitive ? '#15803d' : '#b45309';
             h2 += `<th class="${cls}" style="text-align:center;font-size:.75rem;padding:4px 2px;width:${CW}px;min-width:${CW}px${k === 0 ? ';border-left:4px solid #8b5cf6' : ''}${off ? ';opacity:.45' : ''}"
                        title="${esc(s.name)}${s.teachers.length ? ' — ' + esc(s.teachers.join(', ')) : ''}${off ? ' — exclue de la moyenne (pondération 0)' : ''}">
                    ${esc(s.code)}${s.editable ? '' : ' 🔒'}<br>
                    <span style="font-weight:400;font-size:.68rem;color:#6b7280">${esc(s.teachers.join(', ') || (g.entreprise ? 'entreprise' : '—'))}</span></th>`;
+            // Pondération : commune à FTP et ALT, une seule case quelle que soit la grille
             const wInput = multi
                 ? `<input type="number" min="0" step="0.5" value="${s.weight}" data-w="${esc(i + '|' + g.key + '|' + s.code)}"
-                       ${g.is_referent ? '' : 'disabled'} onchange="renderSaisieDirty(${i})"
-                       title="Pondération dans la moyenne de ${esc(g.key)} (0 = exclue)${g.is_referent ? '' : ' — modifiable par le référent'}"
+                       ${g.is_referent ? '' : 'disabled'} onchange="onSaisieWeight(this)"
+                       title="Pondération dans la moyenne de ${esc(g.key)}, commune à FTP et ALT (0 = exclue)${g.is_referent ? '' : ' — modifiable par le référent'}"
                        style="width:44px;font-size:.72rem;text-align:center">`
                 : '<span style="color:#9ca3af">—</span>';
+            const defs = mix
+                ? ['FTP', 'ALT'].filter(f => s.faces[f]).map(f => _saisieDefBox(i, f, s.faces[f], true)).join('<br>')
+                : _saisieDefBox(i, d.formation, s, false);
             h3 += `<th class="${cls}" style="text-align:center;padding:3px 2px;font-size:.7rem;font-weight:400${k === 0 ? ';border-left:4px solid #8b5cf6' : ''}${off ? ';opacity:.45' : ''}">
-                   ${wInput}<br>
-                   <label title="Cocher pour rendre les notes définitives (case vide = provisoires)" style="cursor:pointer;color:${defColor};white-space:nowrap">
-                       <span>${s.definitive ? '✓ définitif' : '⏳ prov.'}</span>
-                       <input type="checkbox" data-def="${esc(i + '|' + s.code)}" ${s.definitive ? 'checked' : ''} ${s.editable ? '' : 'disabled'}
-                           onchange="_saisieDefLabel(this)"></label></th>`;
+                   ${wInput}<br>${defs}</th>`;
         });
         h2 += `<th class="${cls}" style="text-align:center;font-size:.75rem;background:#f0fdf4;color:#166534;width:${CW}px" rowspan="2"
                    title="Note matière : moyenne pondérée des sous-notes dès qu'elles sont toutes saisies, sinon la note actuelle de Bulletins (📥 importée ou saisie par l'administration)">Moy.<br>${esc(g.key)}</th>`;
     });
     h1 += '</tr>'; h2 += '</tr>'; h3 += '</tr>';
     const rows = d.students.map(st => {
-        let tr = `<tr><td class="nz-sticky" style="font-size:.82rem;white-space:nowrap">${esc(st.nom)} ${esc(st.prenom)}${st.statut && st.statut !== 'Actif' ? ` <span style="font-size:.68rem;color:#9ca3af">(${esc(st.statut)})</span>` : ''}</td>`;
+        const face = _faceOf(st);
+        let tr = `<tr><td class="nz-sticky" style="font-size:.82rem;white-space:nowrap">${esc(st.nom)} ${esc(st.prenom)}${st.statut && st.statut !== 'Actif' ? ` <span style="font-size:.68rem;color:#9ca3af">(${esc(st.statut)})</span>` : ''}</td>`
+            + (mix ? _faceTd(st) : '');
         d.groups.forEach((g, j) => {
             const cls = `sg${i}_${j}`;
-            g.subs.forEach((s, k) => {
+            g.subs.forEach((ms, k) => {
+                const bl = k === 0 ? 'border-left:4px solid #ede9fe;' : '';
+                const s = mix ? ms.faces[face] : ms;   // la sous-matière vue de la face de l'étudiant
+                if (!s) {
+                    tr += `<td class="${cls}" title="${esc(ms.code)} : hors de la grille ${face}" style="${bl}text-align:center;background:#f9fafb;color:#d1d5db">·</td>`;
+                    return;
+                }
                 const v = d.marks[`${st.id}_${s.code}`];
                 const vs = v === undefined ? '' : v;
-                const bl = k === 0 ? 'border-left:4px solid #ede9fe;' : '';
                 if (s.editable) {
                     tr += `<td class="${cls}" style="${bl}padding:2px;text-align:center">
                            <input type="text" inputmode="decimal" value="${esc(String(vs))}"
@@ -10113,7 +10237,9 @@ function _saisieLegend() {
         sans aucune sous-note, elle montre la note matière actuelle de Bulletins (<span style="color:#1e40af">📥 importée</span>
         ou saisie par l'administration). La moyenne devient la note matière, <strong>sauf</strong> pour les
         matières marquées <span style="color:#b45309">⚠ note importée</span> : leur note vient d'un import
-        ou d'une saisie de l'administration et n'est pas écrasée (l'écart est signalé dans les deux onglets).</p>`;
+        ou d'une saisie de l'administration et n'est pas écrasée (l'écart est signalé dans les deux onglets).
+        Les <strong>pondérations</strong> des sous-matières sont <strong>communes à FTP et ALT</strong> ;
+        le statut provisoire / définitif reste propre à chaque sous-cohorte.</p>`;
 }
 
 // Contenu brut d'une cellule (input éditable ou note chargée), en majuscules
@@ -10159,11 +10285,19 @@ function _saisieAvgVal(i, g, sid) {
 // ET qu'elle fait foi ; sinon la note matière actuelle de Bulletins (📥) — c'est
 // ce qui remplit la colonne après un import, avant toute saisie des enseignants.
 function _saisieNoteCell(i, g, sid) {
-    const off = ((_sbd(i) || {}).official || {})[sid + '_' + g.key];
+    const d = _sbd(i) || {};
+    const GREEN = 'background:#f0fdf4;color:#166534';
+    if (g.faces) {
+        // Grille FTP+ALT : la moyenne se calcule avec la matière vue de la face
+        // de l'étudiant (sous-matières comptées, origine de la note)
+        const f = _sidFace(d, sid);
+        g = g.faces[f];
+        if (!g) return { style: GREEN, title: `Matière hors de la grille ${f}`, html: '<span style="color:#d1d5db">—</span>' };
+    }
+    const off = (d.official || {})[sid + '_' + g.key];
     const hasOff = off !== undefined && off !== null && off !== '';
     const { val: live, missing } = _saisieAvgVal(i, g, sid);
     const part = missing.length > 0 && live !== null && live !== undefined;
-    const GREEN = 'background:#f0fdf4;color:#166534';
     const BLUE = 'background:#eff6ff;color:#1e40af';
     const AMBER = 'background:#fffbeb;color:#92400e';
     const tag = txt => `<div style="font-size:.62rem;font-weight:400;color:#b45309;line-height:1.1">${txt}</div>`;
@@ -10208,11 +10342,41 @@ function updateSaisieAvg(inp) {
     _saisieSummary();
 }
 
+// Case « définitif » d'une sous-matière sur une face (le statut est propre à
+// chaque face). Grille FTP+ALT (`short`) : une case par face, précédée de sa
+// pastille, texte réduit au symbole pour tenir dans la colonne.
+function _saisieDefBox(i, face, s, short) {
+    const txt = _saisieDefText(s.definitive, short);
+    return `<label title="${short ? 'Notes ' + face + ' — c' : 'C'}ocher pour rendre les notes définitives (case vide = provisoires)"
+            style="cursor:pointer;color:${s.definitive ? '#15803d' : '#b45309'};white-space:nowrap">
+        ${short ? _facePill(face) + ' ' : ''}<span class="sd-txt"${short ? ' data-short="1"' : ''}>${txt}</span>
+        <input type="checkbox" data-def="${esc(i + '|' + face + '|' + s.code)}" ${s.definitive ? 'checked' : ''} ${s.editable ? '' : 'disabled'}
+            onchange="_saisieDefLabel(this)"></label>`;
+}
+function _saisieDefText(def, short) {
+    return short ? (def ? '✓' : '⏳') : (def ? '✓ définitif' : '⏳ prov.');
+}
+
 // Case « définitif » : l'état affiché AVANT la case suit la case tout de suite
 function _saisieDefLabel(cb) {
     const label = cb.closest('label');
+    const span = label.querySelector('.sd-txt');
     label.style.color = cb.checked ? '#15803d' : '#b45309';
-    label.querySelector('span').textContent = cb.checked ? '✓ définitif' : '⏳ prov.';
+    span.textContent = _saisieDefText(cb.checked, !!span.dataset.short);
+}
+
+// Pondération modifiée. Elle est commune à FTP et ALT : dans l'écran enseignant,
+// la grille de l'autre face du même semestre la reprend aussitôt, pour que les
+// moyennes affichées et l'enregistrement disent la même chose.
+function onSaisieWeight(inp) {
+    const [i, key, code] = inp.dataset.w.split('|');
+    const blk = _saisieBlocks[+i];
+    _saisieBlocks.forEach((b, j) => {
+        if (j === +i || !blk || String(b.pid) !== String(blk.pid) || b.sem !== blk.sem) return;
+        const twin = document.querySelector(`[data-w="${CSS.escape(j + '|' + key + '|' + code)}"]`);
+        if (twin) { twin.value = inp.value; renderSaisieDirty(j); }
+    });
+    renderSaisieDirty(+i);
 }
 
 // Un changement de pondération : rafraîchit toutes les moyennes de la grille
@@ -10242,46 +10406,57 @@ async function saveSaisie() {
     if (!_saisieBlocks.length) return;
     const btn = document.getElementById('saisie-save-btn');
     btn.disabled = true;
-    let invalid = false, touched = 0;
-    const jobs = [];   // [{i, weights: [...], columns: [...]}]
+    let invalid = false;
+    const jobs = [];   // [{i, face, weights: [...], columns: [...]}] — un envoi par grille et par face
     _saisieBlocks.forEach((blk, i) => {
         const d = blk.d;
-        // 1) Pondérations modifiées (matières dont on est référent)
-        const weights = [];
-        for (const g of d.groups) {
-            if (!g.is_referent || g.subs.length < 2) continue;
-            const w = {}; let changed = false;
-            for (const s of g.subs) {
-                w[s.code] = _saisieWeight(i, g, s);
-                if (w[s.code] !== s.weight) changed = true;
+        // Faces de la grille : la sienne, ou FTP et ALT pour une grille fusionnée —
+        // chacune s'enregistre à part, avec ses propres groupes et ses étudiants.
+        const units = d.formation === SUB_MIX
+            ? ['FTP', 'ALT'].filter(f => d.faces[f]).map(f => ({
+                face: f, groups: d.faces[f].groups || [],
+                sids: new Set((d.faces[f].students || []).map(s => String(s.id))) }))
+            : [{ face: blk.sub, groups: d.groups, sids: null }];
+        const wSent = new Set();   // pondération commune aux deux faces : un seul envoi
+        units.forEach(u => {
+            // 1) Pondérations modifiées (matières dont on est référent)
+            const weights = [];
+            for (const g of u.groups) {
+                if (!g.is_referent || g.subs.length < 2 || wSent.has(g.key)) continue;
+                const w = {}; let changed = false;
+                for (const s of g.subs) {
+                    w[s.code] = _saisieWeight(i, g, s);
+                    if (w[s.code] !== s.weight) changed = true;
+                }
+                if (changed) { weights.push({ matiere_key: g.key, weights: w }); wSent.add(g.key); }
             }
-            if (changed) weights.push({ matiere_key: g.key, weights: w });
-        }
-        // 2) Colonnes éditables : notes + statut définitif. Une valeur qui n'est
-        // ni vide, ni ABI, ni une note de 0 à 20 serait ignorée par le serveur :
-        // on la signale au lieu de la laisser disparaître au rechargement.
-        const columns = [];
-        for (const g of d.groups) {
-            for (const s of g.subs) {
-                if (!s.editable) continue;
-                const notes = {}; let changed = false;
-                document.querySelectorAll(`[data-note^="${CSS.escape(i + '|' + s.code + '|')}"]`).forEach(inp => {
-                    const raw = inp.value.trim().replace(',', '.');
-                    const n = parseFloat(raw);
-                    if (raw !== '' && raw.toUpperCase() !== 'ABI' && (isNaN(n) || n < 0 || n > 20)) {
-                        invalid = true; inp.style.borderColor = '#ef4444'; return;
-                    }
-                    inp.style.borderColor = '#d1d5db';
-                    const sid = inp.dataset.note.split('|')[2];
-                    notes[sid] = raw;
-                    if (!_saisieSameNote(raw, d.marks[`${sid}_${s.code}`])) changed = true;
-                });
-                const defCb = document.querySelector(`[data-def="${CSS.escape(i + '|' + s.code)}"]`);
-                const def = !!(defCb && defCb.checked);
-                if (changed || def !== !!s.definitive) columns.push({ code: s.code, notes, definitive: def });
+            // 2) Colonnes éditables : notes + statut définitif. Une valeur qui n'est
+            // ni vide, ni ABI, ni une note de 0 à 20 serait ignorée par le serveur :
+            // on la signale au lieu de la laisser disparaître au rechargement.
+            const columns = [];
+            for (const g of u.groups) {
+                for (const s of g.subs) {
+                    if (!s.editable) continue;
+                    const notes = {}; let changed = false;
+                    document.querySelectorAll(`[data-note^="${CSS.escape(i + '|' + s.code + '|')}"]`).forEach(inp => {
+                        const sid = inp.dataset.note.split('|')[2];
+                        if (u.sids && !u.sids.has(sid)) return;     // étudiant de l'autre face
+                        const raw = inp.value.trim().replace(',', '.');
+                        const n = parseFloat(raw);
+                        if (raw !== '' && raw.toUpperCase() !== 'ABI' && (isNaN(n) || n < 0 || n > 20)) {
+                            invalid = true; inp.style.borderColor = '#ef4444'; return;
+                        }
+                        inp.style.borderColor = '#d1d5db';
+                        notes[sid] = raw;
+                        if (!_saisieSameNote(raw, d.marks[`${sid}_${s.code}`])) changed = true;
+                    });
+                    const defCb = document.querySelector(`[data-def="${CSS.escape(i + '|' + u.face + '|' + s.code)}"]`);
+                    const def = !!(defCb && defCb.checked);
+                    if (changed || def !== !!s.definitive) columns.push({ code: s.code, notes, definitive: def });
+                }
             }
-        }
-        if (weights.length || columns.length) jobs.push({ i, weights, columns });
+            if (weights.length || columns.length) jobs.push({ i, face: u.face, weights, columns });
+        });
     });
     if (invalid) {
         toast('Notes invalides : une note de 0 à 20, ou ABI (absence injustifiée).', 'error');
@@ -10294,19 +10469,31 @@ async function saveSaisie() {
         toast('Aucune modification à enregistrer');
         return true;
     }
+    const refresh = new Set();   // grilles à relire une fois tout envoyé
     try {
         for (const job of jobs) {
             const blk = _saisieBlocks[job.i];
             const base = `/promotions/${blk.pid}/saisie/${blk.sem}`;
             for (const w of job.weights) {
-                await api(`${base}/weights`, { method: 'PUT', body: JSON.stringify({ formation: blk.sub, ...w }) });
+                await api(`${base}/weights`, { method: 'PUT', body: JSON.stringify({ formation: job.face, ...w }) });
             }
-            const fresh = job.columns.length
-                ? await api(`${base}/notes`, { method: 'PUT', body: JSON.stringify({ formation: blk.sub, columns: job.columns }) })
-                : await api(`${base}?formation=${encodeURIComponent(blk.sub)}`);
+            if (job.columns.length) {
+                await api(`${base}/notes`, { method: 'PUT', body: JSON.stringify({ formation: job.face, columns: job.columns }) });
+            }
+            refresh.add(job.i);
+            // Pondération commune à FTP et ALT : la grille de l'autre face du même
+            // semestre (écran enseignant) change elle aussi
+            if (job.weights.length) {
+                _saisieBlocks.forEach((b, j) => {
+                    if (String(b.pid) === String(blk.pid) && b.sem === blk.sem) refresh.add(j);
+                });
+            }
+        }
+        for (const j of refresh) {
+            const b = _saisieBlocks[j];
             // la réponse ne porte pas l'identité de la grille (promotion, pid) : on fusionne
-            blk.d = Object.assign({}, blk.d, fresh);
-            touched++;
+            b.d = Object.assign({}, b.d, await _saisieFetch(b.pid, b.sem, b.sub));
+            delete b.d._faceBySid;   // table étudiant → face, recalculée à la demande
         }
     } catch (e) {
         toast('Erreur : ' + e.message, 'error');
@@ -10316,14 +10503,20 @@ async function saveSaisie() {
     if (_saisieAllMode()) renderSaisieAll();
     else { _saisieData = _sbd(0); renderSaisieGrid(); }
     markZoneClean('saisie-content');
+    const touched = new Set(jobs.map(j => j.i)).size;
     toast(touched > 1 ? `${touched} grilles enregistrées` : 'Saisie enregistrée');
     return true;
 }
 
 // ----- Import de notes (modèle Excel vide + import dans la grille) -----
-function _saisieIoButtons(on) {
+// `why` : infobulle expliquant pourquoi les boutons sont inactifs ('' = la leur)
+function _saisieIoButtons(on, why) {
     ['saisie-tpl-btn', 'saisie-import-btn'].forEach(id => {
-        const b = document.getElementById(id); if (b) b.disabled = !on;
+        const b = document.getElementById(id);
+        if (!b) return;
+        if (b.dataset.title === undefined) b.dataset.title = b.title;
+        b.disabled = !on;
+        b.title = why || b.dataset.title;
     });
 }
 
@@ -10452,6 +10645,7 @@ async function loadNotesGrid() {
     const sem = document.getElementById('notes-sem-select').value;
     const sub = (document.getElementById('notes-sub-select') || {}).value || 'FTP';
     _notesSub = sub;
+    _resetFaceSort(_notesSort, sub);
     const saveBtn = document.getElementById('notes-save-btn');
     const impBtn = document.getElementById('notes-import-btn');
     const expBtn = document.getElementById('notes-export-btn');
@@ -10623,11 +10817,31 @@ function _fmtAvg(v) { return (v === null || v === undefined) ? '—' : Number(v)
 //              automatiquement, cellule en lecture seule ici ;
 //   'import' = note importée d'Apogée/PV ou saisie à la main, que le recalcul ne
 //              touche jamais — l'écart avec la moyenne calculée est signalé.
-function _noteSource(d, code) { return (d.note_sources || {})[code] || 'import'; }
+// Grille FTP+ALT : chaque face a la sienne (`d.faces`), appliquée selon la
+// sous-cohorte de l'étudiant (`face`).
+function _noteSource(d, code, face) {
+    const src = (d.faces && face) ? (d.faces[face] || {}).note_sources : d.note_sources;
+    return (src || {})[code] || 'import';
+}
+// Statut de la saisie enseignante d'une matière ('provisoire' / 'definitif'), par face
+function _saisieStatusOf(d, code, face) {
+    const st = (d.faces && face) ? (d.faces[face] || {}).saisie_status : d.saisie_status;
+    return (st || {})[code];
+}
+// Faces présentes dans la grille : la sous-cohorte choisie, ou celles des
+// étudiants d'une grille FTP+ALT
+function _notesFaces(d) {
+    if (!d.faces) return [_notesSub === 'ALT' ? 'ALT' : 'FTP'];
+    return ['FTP', 'ALT'].filter(f => (d.students || []).some(s => _faceOf(s) === f));
+}
 
 // SAÉ réalisées en entreprise par les alternants (onglet Matières) : colonnes de
-// la grille ALT dont la note se pose ici, y compris par le responsable ALT.
-function _notesEntCodes(d) { return (d && _notesSub === 'ALT') ? (d.alt_entreprise || []) : []; }
+// la grille ALT dont la note se pose ici, y compris par le responsable ALT. En
+// grille FTP+ALT, seules les cases des alternants le sont.
+function _notesEntCodes(d) {
+    return (d && (_notesSub === 'ALT' || (_notesSub === SUB_MIX && _notesFaces(d).includes('ALT'))))
+        ? (d.alt_entreprise || []) : [];
+}
 function _notesEntEdit() { return !!(_notesData && _notesData.entreprise_edit && _notesEntCodes(_notesData).length); }
 
 // La note affichée diffère-t-elle de la moyenne calculée depuis la saisie ?
@@ -10641,33 +10855,42 @@ function _markDiffers(v, comp) {
     return Math.abs(a - b) > 0.005;
 }
 
-function _notesGap(d, code) {
+// Écarts note affichée / moyenne de saisie sur une matière ; grille FTP+ALT :
+// comptés parmi les étudiants de la face `face` seulement.
+function _notesGap(d, code, face) {
     let n = 0;
     (d.students || []).forEach(s => {
+        if (d.faces && face && _faceOf(s) !== face) return;
         if (_markDiffers(d.marks[s.id + '_' + code], (d.computed || {})[s.id + '_' + code])) n++;
     });
     return n;
 }
 
 // Bandeau des matières où une saisie enseignante existe : origine actuelle,
-// écarts, et bascule d'un clic (admin).
+// écarts, et bascule d'un clic (admin). Grille FTP+ALT : une pastille par face,
+// l'origine se choisissant face par face.
 function _notesSourceBar(d, mats) {
-    const list = mats.filter(m => (d.saisie_status || {})[m.code] || _noteSource(d, m.code) === 'saisie');
+    const mix = !!d.faces;
+    const list = [];
+    _notesFaces(d).forEach(f => mats.forEach(m => {
+        if (_saisieStatusOf(d, m.code, f) || _noteSource(d, m.code, f) === 'saisie') list.push([m, f]);
+    }));
     if (!list.length) return '';
     const admin = editUI('promo:notes');
-    const chips = list.map(m => {
-        const src = _noteSource(d, m.code);
-        const gap = src === 'saisie' ? 0 : _notesGap(d, m.code);
+    const chips = list.map(([m, f]) => {
+        const src = _noteSource(d, m.code, f);
+        const gap = src === 'saisie' ? 0 : _notesGap(d, m.code, f);
         const style = src === 'saisie' ? 'background:#dcfce7;border-color:#86efac;color:#166534'
             : (gap ? 'background:#fef3c7;border-color:#fcd34d;color:#92400e'
                    : 'background:#eff6ff;border-color:#bfdbfe;color:#1e40af');
-        const txt = `${src === 'saisie' ? '🧮' : '📥'} ${esc(m.code)}${gap ? ' ⚠ ' + gap : ''}`;
+        const txt = `${src === 'saisie' ? '🧮' : '📥'} ${mix ? f + ' · ' : ''}${esc(m.code)}${gap ? ' ⚠ ' + gap : ''}`;
+        const who = esc(m.label) + (mix ? ` (${f})` : '');
         const title = src === 'saisie'
-            ? `${esc(m.label)} — note calculée depuis la saisie enseignante` + (admin ? ' (cliquer pour la rendre modifiable ici)' : '')
-            : `${esc(m.label)} — note importée / saisie à la main` + (gap ? `, ${gap} écart(s) avec la saisie enseignante` : '') + (admin ? ' (cliquer pour utiliser la saisie enseignante)' : '');
+            ? `${who} — note calculée depuis la saisie enseignante` + (admin ? ' (cliquer pour la rendre modifiable ici)' : '')
+            : `${who} — note importée / saisie à la main` + (gap ? `, ${gap} écart(s) avec la saisie enseignante` : '') + (admin ? ' (cliquer pour utiliser la saisie enseignante)' : '');
         const css = `${style};border-width:1px;border-style:solid;border-radius:999px;padding:2px 9px;font-size:.76rem;font-weight:600`;
         return admin
-            ? `<button type="button" onclick="toggleNoteSource('${esc(m.code)}','${src === 'saisie' ? 'import' : 'saisie'}')" title="${title}" style="${css};cursor:pointer">${txt}</button>`
+            ? `<button type="button" onclick="toggleNoteSource('${esc(m.code)}','${src === 'saisie' ? 'import' : 'saisie'}','${f}')" title="${title}" style="${css};cursor:pointer">${txt}</button>`
             : `<span title="${title}" style="${css}">${txt}</span>`;
     }).join('');
     return `<div style="font-size:.78rem;color:#374151;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:#faf5ff;border:1px solid #e9d5ff;border-radius:8px;padding:6px 12px">
@@ -10676,20 +10899,23 @@ function _notesSourceBar(d, mats) {
     </div>`;
 }
 
-// Bascule l'origine officielle d'une matière pour la sous-cohorte affichée.
-async function toggleNoteSource(code, src) {
+// Bascule l'origine officielle d'une matière pour une sous-cohorte (`face` :
+// celle de la pastille cliquée ; à défaut, la sous-cohorte affichée).
+async function toggleNoteSource(code, src, face) {
     const pid = document.getElementById('promo-select').value;
     const sem = document.getElementById('notes-sem-select').value;
     const sub = (document.getElementById('notes-sub-select') || {}).value || 'FTP';
+    const formation = face || sub;
+    const what = sub === SUB_MIX ? `${code} (${formation})` : code;
     const msg = src === 'saisie'
-        ? `${code} : la note deviendra la moyenne pondérée des sous-notes (onglet Saisie Notes) et sera remise à jour à chaque saisie.\n\nLes notes actuelles de cette colonne (import / saisie manuelle) seront remplacées dès qu'une sous-note est saisie (moyenne signalée incomplète tant qu'il en manque).\n\nContinuer ?`
-        : `${code} : la note redevient libre — elle ne sera plus recalculée depuis la saisie enseignante et gardera sa valeur actuelle.\n\nContinuer ?`;
+        ? `${what} : la note deviendra la moyenne pondérée des sous-notes (onglet Saisie Notes) et sera remise à jour à chaque saisie.\n\nLes notes actuelles de cette colonne (import / saisie manuelle) seront remplacées dès qu'une sous-note est saisie (moyenne signalée incomplète tant qu'il en manque).\n\nContinuer ?`
+        : `${what} : la note redevient libre — elle ne sera plus recalculée depuis la saisie enseignante et gardera sa valeur actuelle.\n\nContinuer ?`;
     if (!confirm(msg)) return;
     try {
         _notesData = await api(`/promotions/${pid}/notes/${sem}/source`,
-            { method: 'PUT', body: JSON.stringify({ formation: sub, matiere_code: code, source: src }) });
+            { method: 'PUT', body: JSON.stringify({ formation, view: sub, matiere_code: code, source: src }) });
         renderNotesGrid();
-        toast(`${code} : note ${src === 'saisie' ? 'calculée depuis la saisie enseignante' : 'importée / saisie à la main'}`);
+        toast(`${what} : note ${src === 'saisie' ? 'calculée depuis la saisie enseignante' : 'importée / saisie à la main'}`);
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
@@ -10832,11 +11058,15 @@ function _sortNum(v) {
 }
 
 // Trie une liste d'étudiants selon `st` ; `val(s)` = valeur de la colonne triée.
-// À valeurs égales (et pour la colonne « nom »), ordre alphabétique.
+// À valeurs égales (et pour la colonne « nom »), ordre alphabétique. 'face' =
+// colonne FTP/ALT d'une grille FTP+ALT : sous-cohorte, puis nom.
 function _sortStudents(students, st, val) {
     const nom = s => ((s.nom || '') + ' ' + (s.prenom || '')).toLocaleLowerCase('fr');
     return students.slice().sort((a, b) => {
-        if (st.key !== 'nom') {
+        if (st.key === 'face') {
+            const fa = _faceOf(a), fb = _faceOf(b);      // FTP d'abord, puis ALT
+            if (fa !== fb) return (fa === 'FTP' ? -1 : 1) * st.dir;
+        } else if (st.key !== 'nom') {
             const va = _sortNum(val(a)), vb = _sortNum(val(b));
             if (va === null && vb !== null) return 1;      // sans résultat : en bas
             if (vb === null && va !== null) return -1;
@@ -10852,7 +11082,13 @@ function _sortMark(st, key) { return st.key === key ? (st.dir > 0 ? '▲' : '▼
 // Même colonne : on inverse.
 function _toggleSort(st, key) {
     if (st.key === key) st.dir = -st.dir;
-    else { st.key = key; st.dir = (key === 'nom') ? 1 : -1; }
+    else { st.key = key; st.dir = (key === 'nom' || key === 'face') ? 1 : -1; }
+}
+
+// Le tri par sous-cohorte n'a de sens que dans une grille FTP+ALT : en revenant
+// à une seule sous-cohorte, retour à l'ordre alphabétique.
+function _resetFaceSort(st, sub) {
+    if (sub !== SUB_MIX && st.key === 'face') { st.key = 'nom'; st.dir = 1; }
 }
 
 // Un re-rendu repart de _notesData : sans cette récupération, les notes tapées
@@ -10937,6 +11173,9 @@ function renderNotesGrid() {
     // SAÉ réalisées en entreprise par les alternants (grille ALT) : note posée ici,
     // y compris par le responsable ALT (cases .nz-ent, cf. applyPromoReadOnly)
     const ent = new Set(_notesEntCodes(d));
+    // Grille FTP+ALT : colonne FTP/ALT, et origine des notes face par face
+    const mix = !!d.faces;
+    const faces = _notesFaces(d);
     // En-tête vertical (réduit la largeur des colonnes)
     // `key` (optionnel) rend la colonne cliquable pour trier ; la flèche est posée
     // hors du texte vertical, qui resterait illisible une fois pivoté.
@@ -10955,6 +11194,7 @@ function renderNotesGrid() {
     const wnum = ';width:42px;min-width:42px;max-width:42px';
     const groupRow = `<tr><th class="nz-sticky" rowspan="2" onclick="sortNotesBy('nom')" title="Trier par nom"
             style="min-width:155px;max-width:155px;vertical-align:bottom;font-size:.8rem;cursor:pointer">Étudiant ${_sortMark(_notesSort, 'nom')}</th>` +
+        (mix ? _faceTh(2, 'sortNotesBy', _notesSort) : '') +
         (cg.prevYears ? prevYears.map(g => gth(`Année ${g.year || ''}`, '#eef2ff', '#3730a3', 1 + g.competences.length, '#6366f1')).join('') : '') +
         (cg.bilan ? gth(`Année ${_year}`, '#dcfce7', '#166534', 2 + (d.year_competences || []).length, '#22c55e') : '') +
         (cg.prevSem ? prevSems.map(g => gth(`Semestre S${g.sem || ''}`, '#eef2ff', '#3730a3', g.competences.length, '#818cf8')).join('') : '') +
@@ -10983,22 +11223,39 @@ function renderNotesGrid() {
         (cg.notes ? mats.map((m, mi) => {
             // Origine officielle de la note : 🧮 calculée depuis la saisie enseignante
             // (lecture seule) · 📥 importée / saisie ici · ⚠ écart avec la saisie.
-            const src = _noteSource(d, m.code);
-            const st = (d.saisie_status || {})[m.code];
-            const gap = src === 'saisie' ? 0 : _notesGap(d, m.code);
-            const icon = src === 'saisie' ? ' 🧮' : (gap ? ' ⚠' : (st ? ' 📥' : ''));
-            const flag = (src === 'saisie' && st) ? (st === 'definitif' ? ' ✓' : ' ⏳') : '';
-            const origin = src === 'saisie'
-                ? ` — note calculée depuis la saisie enseignante (${st === 'definitif' ? 'définitive' : 'provisoire'}), non modifiable ici`
-                : (st ? ` — note importée / saisie à la main${gap ? ` ; ${gap} écart(s) avec la saisie enseignante` : ' ; une saisie enseignante existe'}` : '');
+            // Grille FTP+ALT : une origine par face ; repères préfixés F / A
+            // quand les deux faces ne disent pas la même chose.
+            const per = faces.map(f => {
+                const src = _noteSource(d, m.code, f);
+                const st = _saisieStatusOf(d, m.code, f);
+                const gap = src === 'saisie' ? 0 : _notesGap(d, m.code, f);
+                const icon = src === 'saisie' ? ' 🧮' : (gap ? ' ⚠' : (st ? ' 📥' : ''));
+                const flag = (src === 'saisie' && st) ? (st === 'definitif' ? ' ✓' : ' ⏳') : '';
+                const origin = src === 'saisie'
+                    ? `note calculée depuis la saisie enseignante (${st === 'definitif' ? 'définitive' : 'provisoire'}), non modifiable ici`
+                    : (st ? `note importée / saisie à la main${gap ? ` ; ${gap} écart(s) avec la saisie enseignante` : ' ; une saisie enseignante existe'}` : '');
+                return { f, src, mark: icon + flag, origin };
+            });
+            const faceMarks = list => list.filter(p => p.mark).map(p => ' ' + p.f[0] + p.mark.replace(/ /g, '')).join('');
+            const faceOrigins = list => list.filter(p => p.origin).map(p => ` — ${p.f} : ${p.origin}`).join('');
+            const same = per.every(p => p.mark === per[0].mark && p.origin === per[0].origin);
+            const mark = same ? per[0].mark : faceMarks(per);
+            const origin = same ? (per[0].origin ? ' — ' + per[0].origin : '') : faceOrigins(per);
+            const name = m.code + ' · ' + (m.short_label || matAcronym(m.label));
+            const label = (m.apogee_code ? m.apogee_code + ' — ' : '') + m.label;
+            const bl = mi === 0 ? ';border-left:4px solid #6b7280' : '';
             if (ent.has(m.code)) {
-                return vth(m.code + ' · ' + (m.short_label || matAcronym(m.label)) + ' 🏭' + (src === 'saisie' ? icon + flag : ''),
-                    _coeffKindColor(m.kind), mi === 0 ? ';border-left:4px solid #6b7280' : '',
-                    (m.apogee_code ? m.apogee_code + ' — ' : '') + m.label
-                    + ' — SAÉ réalisée en entreprise par les alternants : note saisie par le responsable ALT ou l\'administration'
-                    + (src === 'saisie' ? ', dans Saisie Notes' + origin : ', ici ou dans Saisie Notes'), '#9a3412', `mat:${m.code}`);
+                // La case 🏭 est celle des alternants ; en grille FTP+ALT, la face
+                // FTP garde ses propres repères.
+                const a = per.find(p => p.f === 'ALT') || per[0];
+                const others = per.filter(p => p.f !== 'ALT');
+                return vth(name + ' 🏭' + (a.src === 'saisie' ? a.mark : '') + faceMarks(others),
+                    _coeffKindColor(m.kind), bl,
+                    label + ' — SAÉ réalisée en entreprise par les alternants : note saisie par le responsable ALT ou l\'administration'
+                    + (a.src === 'saisie' ? ', dans Saisie Notes — ' + a.origin : ', ici ou dans Saisie Notes')
+                    + faceOrigins(others), '#9a3412', `mat:${m.code}`);
             }
-            return vth(m.code + ' · ' + (m.short_label || matAcronym(m.label)) + icon + flag, _coeffKindColor(m.kind), mi === 0 ? ';border-left:4px solid #6b7280' : '', (m.apogee_code ? m.apogee_code + ' — ' : '') + m.label + origin, '', `mat:${m.code}`);
+            return vth(name + mark, _coeffKindColor(m.kind), bl, label + origin, '', `mat:${m.code}`);
         }).join('') : '') +
         `</tr>`;
     const statutBadge = st => (st && st !== 'Actif') ? ` <span style="font-size:.68rem;color:#9ca3af">(${esc(st)})</span>` : '';
@@ -11041,6 +11298,7 @@ function renderNotesGrid() {
             const miss = (semMiss[ci] || []);
             return `<td class="nz-avg" data-sid="${s.id}" data-ci="${ci}" onclick="toggleUeVaq(${s.id}, ${ci})" title="${esc(_UE_TITLE[st] + _redSuffix(rk) + _ueMissTitle(d, avg[ci], miss, s.id) + ' — cliquez pour marquer cette UE validée par acquis (VAQ)')}" style="cursor:pointer;text-align:center;font-weight:600;font-size:.9rem;${_UE_STYLE[st]}${ci === 0 ? ';border-left:4px solid #8b5cf6' : ''}">${_fmtAvg(avg[ci])}${_redMark(rk)}${_ueMissMark(avg[ci], miss)}</td>`;
         }).join('') : '';
+        const face = _faceOf(s);                    // origine des notes : celle de SA face
         const cells = cg.notes ? mats.map((m, mi2) => {
             const v = d.marks[s.id + '_' + m.code];
             const bl = mi2 === 0 ? ';border-left:4px solid #6b7280' : '';
@@ -11051,7 +11309,7 @@ function renderNotesGrid() {
             }
             // Matière en mode « calculée » : la note vient de la saisie enseignante
             // et est refaite à chaque enregistrement — elle n'est pas éditable ici.
-            if (_noteSource(d, m.code) === 'saisie') {
+            if (_noteSource(d, m.code, face) === 'saisie') {
                 // Moyenne reportée alors qu'une sous-matière n'est pas encore notée
                 const part = (d.partial || {})[s.id + '_' + m.code];
                 if (part && v !== undefined && v !== null) {
@@ -11071,7 +11329,7 @@ function renderNotesGrid() {
                 ? `<div class="nz-calc" style="font-size:.7rem;font-weight:600;margin-top:1px;min-height:.85rem;color:${m.kind === 'PEN' ? '#b91c1c' : '#15803d'}">${_notesCalcText(m.kind, v)}</div>`
                 : '';
             const gapTag = gap ? `<div style="font-size:.62rem;line-height:1.1;color:#b45309">≠ ${Number(comp).toFixed(2)}</div>` : '';
-            const isEnt = ent.has(m.code);
+            const isEnt = ent.has(m.code) && face === 'ALT';
             return `<td title="${gap ? 'Saisie enseignante : ' + Number(comp).toFixed(2) + ' — note affichée conservée (matière en « note importée »)'
                     : (isEnt ? 'SAÉ réalisée en entreprise — note de l\'alternant' : '')}"
                 style="padding:1px;text-align:center${gap ? ';background:#fffbeb' : (isEnt ? ';background:#fff7ed' : '')}${bl}"><input type="text" inputmode="decimal" maxlength="5"
@@ -11079,7 +11337,7 @@ function renderNotesGrid() {
                 value="${v === undefined || v === null ? '' : v}"${special ? ' oninput="onNotesSpecialInput(this)"' : ''}${isPen ? ' readonly onclick="openPenaltyEditor(this)" title="Cliquez pour saisir les heures d\'absence ou directement le malus"' : ''}
                 style="width:43px;padding:2px 1px;text-align:center;font-size:.9rem;border:1px solid #d1d5db;border-radius:4px${isPen ? ';cursor:pointer;background:#fff' : ''}">${calc}${gapTag}</td>`;
         }).join('') : '';
-        return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || '')) + (mi === undefined ? '' : ' — mobilité internationale' + (mi ? ' : ' + esc(mi) : ''))}" style="max-width:155px;font-size:.78rem;padding:2px 4px"><div style="display:flex;align-items:center;gap:4px"><button onclick="deleteStudentNotes(${s.id})" title="Supprimer les notes de cet étudiant pour ce semestre" style="border:none;background:none;cursor:pointer;color:#b91c1c;font-size:.78rem;padding:0;line-height:1;flex:0 0 auto">🗑</button><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}${mi === undefined ? '' : ' <span style="font-size:.62rem;font-weight:700;color:#0e7490">MI</span>'}</span></div></td>${prevYearCells}${bilanCells}${prevSemCells}${avgCells}${cells}</tr>`;
+        return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || '')) + (mi === undefined ? '' : ' — mobilité internationale' + (mi ? ' : ' + esc(mi) : ''))}" style="max-width:155px;font-size:.78rem;padding:2px 4px"><div style="display:flex;align-items:center;gap:4px"><button onclick="deleteStudentNotes(${s.id})" title="Supprimer les notes de cet étudiant pour ce semestre" style="border:none;background:none;cursor:pointer;color:#b91c1c;font-size:.78rem;padding:0;line-height:1;flex:0 0 auto">🗑</button><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}${mi === undefined ? '' : ' <span style="font-size:.62rem;font-weight:700;color:#0e7490">MI</span>'}</span></div></td>${mix ? _faceTd(s) : ''}${prevYearCells}${bilanCells}${prevSemCells}${avgCells}${cells}</tr>`;
     }).join('');
     const fbox = (key, lbl, show) => show ? `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">
         <input type="checkbox" ${cg[key] ? 'checked' : ''} onchange="toggleNotesColGroup('${key}', this.checked)">${lbl}</label>` : '';
@@ -11125,6 +11383,7 @@ function renderNotesGrid() {
         <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px;width:90vw;margin-left:calc(50% - 45vw)">
             <table class="nz-table"><thead>${groupRow}${head}</thead><tbody>${body}</tbody></table>
         </div>`;
+    if (mix) _stickFaceCol('notes-content');
     refreshIncompleteBanner();
     applyPromoReadOnly();
 }
@@ -11305,7 +11564,7 @@ function _liveSemMissing(d, sid) {
 
 // Note matière issue d'une saisie enseignante incomplète (et affichée comme telle)
 function _notePartial(d, sid, code) {
-    return _noteSource(d, code) === 'saisie' && !!(d.partial || {})[sid + '_' + code];
+    return _noteSource(d, code, _sidFace(d, sid)) === 'saisie' && !!(d.partial || {})[sid + '_' + code];
 }
 
 // UE validées par acquis pour un étudiant, en rangs de compétence
@@ -11629,6 +11888,7 @@ async function loadJuryGrid() {
     }
     el.innerHTML = '<div class="spinner">Chargement…</div>';
     _jurySub = sub;
+    _resetFaceSort(_jurySort, sub);
     markZoneClean('jury-content');
     try { _juryData = await api(`/promotions/${pid}/jury/${year}?formation=${encodeURIComponent(sub)}`); }
     catch (e) { toast('Erreur : ' + e.message, 'error'); saveBtn.disabled = true; return; }
@@ -11648,10 +11908,12 @@ function renderJuryGrid() {
         return;
     }
     const y = d.year, sOdd = parseInt(d.semesters[0].slice(1)), sEven = parseInt(d.semesters[1].slice(1));
+    const mix = _jurySub === SUB_MIX;   // FTP+ALT : colonne FTP/ALT après le nom
     // Ligne 1 : groupes d'UE (colspan 4) ; ligne 2 : UExy / UExy / UExNy / Code
     const bl = ';border-left:3px solid #6b7280';
     const head1 = `<tr><th class="nz-sticky" rowspan="2" onclick="sortJuryBy('nom')" title="Trier par nom"
             style="min-width:170px;max-width:170px;vertical-align:bottom;font-size:.8rem;cursor:pointer">Étudiant ${_sortMark(_jurySort, 'nom')}</th>` +
+        (mix ? _faceTh(2, 'sortJuryBy', _jurySort) : '') +
         d.ues.map(u => `<th colspan="4" title="${u.terminal ? 'UE sans niveau supérieur : doit être validée pour un passage AJAC' : ''}"
             style="text-align:center;background:#ede9fe;color:#4c1d95;font-size:.66rem;padding:5px 3px${bl}">UE${u.num} · ${esc(u.name)}${u.terminal ? ' *' : ''}</th>`).join('') +
         `<th rowspan="2" onclick="sortJuryBy('gim')" title="Moyenne générale de l'année — cliquer pour trier"
@@ -11714,7 +11976,7 @@ function renderJuryGrid() {
             decCell = `<td class="jr-dec" data-sid="${s.id}" title="${dec ? _JURY_DEC_TITLE[dec] : 'Aucune note'}" style="text-align:center;padding:2px 3px${bl}">
                 <span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:.62rem;font-weight:700;${dec ? _JURY_DEC_STYLE[dec] : 'background:#e5e7eb;color:#6b7280'}">${dec || '—'}</span></td>`;
         }
-        return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || ''))}" style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${ueCells}${gimCell}${decCell}</tr>`;
+        return `<tr><td class="nz-sticky" title="${esc((s.nom || '') + ' ' + (s.prenom || ''))}" style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}${statutBadge(s.statut)}</td>${mix ? _faceTd(s) : ''}${ueCells}${gimCell}${decCell}</tr>`;
     }).join('');
     const term = d.ues.filter(u => u.terminal).map(u => 'UE' + u.num).join(' et ');
     // Rappel du repère ↺ : seulement quand la grille en porte, pour ne pas allonger
@@ -11745,6 +12007,7 @@ function renderJuryGrid() {
         <div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px">
             <table class="nz-table"><thead>${head1}${head2}</thead><tbody>${body}</tbody></table>
         </div>`;
+    if (mix) _stickFaceCol('jury-content');
     applyPromoReadOnly();
 }
 
@@ -11818,8 +12081,8 @@ async function saveNotesMarks() {
         return false;
     }
     try {
-        const url = entOnly ? `/promotions/${pid}/notes/${sem}/entreprise`
-                            : `/promotions/${pid}/notes/${sem}?formation=${encodeURIComponent(sub)}`;
+        const url = (entOnly ? `/promotions/${pid}/notes/${sem}/entreprise` : `/promotions/${pid}/notes/${sem}`)
+                    + `?formation=${encodeURIComponent(sub)}`;
         _notesData = await api(url, { method: 'PUT', body: JSON.stringify({ marks }) });
         renderNotesGrid();
         markZoneClean('notes-content');
@@ -11834,7 +12097,8 @@ async function deleteSemesterNotes() {
     const sem = document.getElementById('notes-sem-select').value;
     const sub = (document.getElementById('notes-sub-select') || {}).value || 'FTP';
     if (!pid || !sem) { toast('Choisissez une promotion et un semestre', 'error'); return; }
-    if (!confirm(`Supprimer TOUTES les notes du semestre ${sem} pour la sous-cohorte ${sub} ?\nCette action est irréversible.`)) return;
+    const qui = sub === SUB_MIX ? 'TOUS les étudiants (FTP et ALT)' : `la sous-cohorte ${sub}`;
+    if (!confirm(`Supprimer TOUTES les notes du semestre ${sem} pour ${qui} ?\nCette action est irréversible.`)) return;
     try {
         _notesData = await api(`/promotions/${pid}/notes/${sem}?formation=${encodeURIComponent(sub)}`, { method: 'DELETE' });
         renderNotesGrid();

@@ -1096,15 +1096,19 @@ function _aidePromotions() {
         <ul>
             ${_aSi('nav:saisie', `<li>Onglet ${_aOng('Saisie Notes')} de la barre principale : <b>toutes</b> vos grilles de l'année à la suite (cohorte × semestre × sous-cohorte),
                 repliables, filtrables par matière, semestre et sous-cohorte, avec un compteur de ce qui reste à saisir (« ✓ tout est saisi »).</li>`)}
-            ${_aSi('promo:saisie', `<li>${_aOng('Promotions › Saisie Notes')} : une grille à la fois (promotion, semestre, sous-cohorte).</li>`)}
+            ${_aSi('promo:saisie', `<li>${_aOng('Promotions › Saisie Notes')} : une grille à la fois (promotion, semestre, sous-cohorte) ;
+                <b>FTP+ALT</b> réunit les deux sous-cohortes par ordre alphabétique, avec une colonne FTP / ALT
+                (modèle vide et import restent par sous-cohorte).</li>`)}
         </ul>
         <h3>La grille</h3>
         <ul>
             <li>Les étudiants en lignes ; en colonnes, les sous-matières regroupées par matière, puis <b>Moy.</b> (la moyenne pondérée).</li>
             <li>Vos colonnes sont modifiables ; celles des collègues se lisent sans pouvoir être changées.</li>
             <li>Une note de <b>0 à 20</b>, ou <b>ABI</b> (absence injustifiée, comptée 0). Une valeur invalide est signalée à l'enregistrement.</li>
-            <li>Ligne des <b>pondérations</b> : fixée par le <b>référent</b> de la matière (${_aLien('matieres', 'Matières')}) ; 0 exclut une sous-matière de la moyenne.</li>
-            <li>Case <b>définitif</b> en tête de colonne : décochée = notes ⏳ provisoires, cochée = ✓ définitives.</li>
+            <li>Ligne des <b>pondérations</b> : fixée par le <b>référent</b> de la matière (${_aLien('matieres', 'Matières')}) ; 0 exclut une sous-matière de la moyenne.
+                Elle est <b>commune à FTP et ALT</b> : la changer dans une grille la change dans l'autre.</li>
+            <li>Case <b>définitif</b> en tête de colonne : décochée = notes ⏳ provisoires, cochée = ✓ définitives — propre à chaque sous-cohorte
+                (une case par sous-cohorte dans la grille FTP+ALT).</li>
         </ul>
         ${_aEx('une moyenne pondérée', `<div class="aide-maquette"><table><thead><tr><th>Étudiant</th><th>R1.01a · DS<br><small>pondération 2</small></th><th>R1.01b · TP<br><small>pondération 1</small></th><th>Moy. R1.01</th></tr></thead><tbody>
             <tr><td>DUPONT Léa</td><td style="text-align:center">12</td><td style="text-align:center">15</td><td style="text-align:center"><b>13,00</b></td></tr>
@@ -1126,7 +1130,9 @@ function _aidePromotions() {
       mots: 'bulletins notes moyennes ue semestre acquise compensée bonus pénalité assiduité absences abi neutralisée n vaq validation acquis mobilité import apogée pv export supprimer origine calculée importée écart incomplète redoublant sae entreprise alternants responsable alt',
       html: () => `
         <p>Pour une sous-cohorte et un semestre : les notes de chaque matière, les moyennes d'UE du semestre et le bilan de l'année.
-        C'est la grille de référence avant le jury.</p>
+        C'est la grille de référence avant le jury. <b>FTP+ALT</b> affiche les deux sous-cohortes ensemble, par ordre alphabétique,
+        avec une colonne FTP / ALT (cliquez son en-tête pour regrouper par sous-cohorte) ; l'origine des notes (🧮 / 📥) reste
+        réglée par sous-cohorte — repères préfixés F / A quand elles diffèrent.</p>
         <p>À chaque changement de promotion, le <b>semestre en cours</b> s'affiche de lui-même (d'après l'année universitaire active
         et les dates des semestres du Calendrier) ; pour une promotion terminée, son dernier semestre (${_aUi('S6')}).
         Un autre semestre choisi à la main reste affiché tant que l'on garde la même promotion.</p>
@@ -1172,14 +1178,15 @@ function _aidePromotions() {
                 n° Apogée ; bonus et pénalité convertis depuis les points du PV. Trois modes : <b>tout écraser</b> (les matières passent en 📥), <b>préserver</b> les matières
                 dont la saisie enseignante est définitive, ou ne remplir que les <b>cases vides</b>. ${_aUi('🔎 Analyser le fichier')} d'abord, puis ${_aUi('Importer')}.</li>
             <li>${_aUi('⬇ Exporter (.xlsx)')} : les notes du semestre au format Apogée.</li>
-            <li>${_aUi('🗑 Supprimer les notes')} : toutes celles du semestre pour la sous-cohorte ; le 🗑 d'une ligne ne vide que celles d'un étudiant.</li>
+            <li>${_aUi('🗑 Supprimer les notes')} : toutes celles du semestre pour la sous-cohorte (en FTP+ALT : pour toute la promotion) ; le 🗑 d'une ligne ne vide que celles d'un étudiant.</li>
         </ul>`)}` },
 
     { id: 'promo-jury', rub: R, titre: 'Jury', chemin: 'Promotions › Jury',
       onglet: 'promo:jury', cible: 'promotions/jury',
       mots: 'jury décision adm admj ajac aj red cmp ue validée compensée passage redoublant ajourné ue terminale gim moyenne générale',
       html: () => `
-        <p>Pour une sous-cohorte et une année : chaque UE avec ses deux moyennes de semestre, sa <b>moyenne annuelle</b> et son <b>code</b>,
+        <p>Pour une sous-cohorte (ou <b>FTP+ALT</b> : les deux, par ordre alphabétique, avec une colonne FTP / ALT) et une année :
+        chaque UE avec ses deux moyennes de semestre, sa <b>moyenne annuelle</b> et son <b>code</b>,
         la moyenne générale de l'année (GIM1, GIM2, GIM3) et la <b>décision</b>.</p>
         <h3>Codes d'UE (sur la moyenne annuelle de l'UE)</h3>
         <table><tbody>
