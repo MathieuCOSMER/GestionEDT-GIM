@@ -1496,6 +1496,7 @@
     <div class="subtabs">
         <button type="button" id="suivi-alternance-tab-fiches" class="subtab active" onclick="showSuiviTab('alternance', 'fiches')">Tuteurs</button>
         <button type="button" id="suivi-alternance-tab-stats" class="subtab" onclick="showSuiviTab('alternance', 'stats')">Statistiques</button>
+        <button type="button" id="suivi-alternance-tab-documents" class="subtab" style="display:none" onclick="showSuiviTab('alternance', 'documents')">Documents</button>
     </div>
     <div id="suivi-alternance-content"><div class="spinner">Chargement…</div></div>
 </div>
@@ -5776,7 +5777,8 @@ async function loadSuivi(kind) {
     if (!st.data) el.innerHTML = '<div class="spinner">Chargement…</div>';
     try {
         const yq = st.year ? '?year=' + encodeURIComponent(st.year) : '';
-        const [years, data] = await Promise.all([api('/years'), api(`/suivi/${kind}${yq}`)]);
+        const [years, data] = await Promise.all([api('/years'), api(`/suivi/${kind}${yq}`),
+                                                 kind === 'alternance' ? _altDocsCharger(st) : null]);
         st.data = data;
         st.year = data.year_label;
         // Tuteur universitaire : tous les enseignants de l'année affichée,
@@ -5815,11 +5817,19 @@ function onSuiviFilter(kind) {
 
 function renderSuivi(kind) {
     const st = _suiviState(kind), d = st.data;
-    ['fiches', 'stats'].forEach(t =>
-        document.getElementById(`suivi-${kind}-tab-${t}`).classList.toggle('active', t === st.tab));
+    // Documents : Alternance seulement, pour qui le serveur les ouvre
+    const docs = kind === 'alternance' && st.docs;
+    if (st.tab === 'documents' && !docs) st.tab = 'fiches';
+    const boutonDocs = document.getElementById(`suivi-${kind}-tab-documents`);
+    if (boutonDocs) boutonDocs.style.display = docs ? '' : 'none';
+    ['fiches', 'stats', 'documents'].forEach(t => {
+        const b = document.getElementById(`suivi-${kind}-tab-${t}`);
+        if (b) b.classList.toggle('active', t === st.tab);
+    });
     const el = document.getElementById(`suivi-${kind}-content`);
     if (!d) return;
     if (st.tab === 'stats') { renderSuiviStats(kind); return; }
+    if (st.tab === 'documents') { renderAltDocuments(); return; }
     const s = d.stats, who = SUIVI_KINDS[kind].who;
     const nMine = d.cohorts.reduce((n, c) => n + c.students.filter(_suiviMine).length, 0);
     el.innerHTML = `<div class="toolbar" style="margin-bottom:8px">
@@ -6005,6 +6015,109 @@ async function submitSuivi(ev) {
 }
 
 // ----- Statistiques : couverture, suivis par enseignant, départements, entreprises -----
+// ----- Alternance › Documents -----
+// Le livret de chaque promotion de l'année affichée et les modèles à remplir :
+// téléchargés par les titulaires, déposés par le responsable de l'alternance et l'admin.
+let _altDocEnvoi = null;   // emplacement dont le fichier part en ce moment
+
+async function _altDocsCharger(st) {
+    // Refus du serveur (enseignant vacataire) : pas de sous-onglet
+    const q = st.year ? '?annee=' + encodeURIComponent(st.year) : '';
+    st.docs = await api('/alternance/documents' + q).catch(() => null);
+}
+
+function _tailleFichier(n) {
+    return n >= 1048576 ? (n / 1048576).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' Mo'
+                        : Math.max(1, Math.round(n / 1024)) + ' Ko';
+}
+
+function _altDocLigne(d, modifiable) {
+    const f = d.fichier, envoi = _altDocEnvoi === d.cle;
+    const titre = d.promotion
+        ? `<strong>Promotion ${esc(d.promotion)}</strong><div style="font-size:.78rem;color:#6b7280">${_suiviYearLabel(d.annee_etude)}</div>`
+        : `<strong>${esc(d.titre)}</strong>`;
+    const fichier = f
+        ? `${esc(f.nom)}<div style="font-size:.78rem;color:#6b7280">${_tailleFichier(f.taille)} · déposé le ${_dateFr(f.updated_at)}${f.auteur ? ' par ' + esc(f.auteur) : ''}</div>`
+        : '<span style="color:#9ca3af">Pas encore déposé</span>';
+    const actions = [
+        f ? `<a class="btn btn-primary btn-sm" style="text-decoration:none" href="/api/alternance/documents/${encodeURIComponent(d.cle)}">Télécharger</a>` : '',
+        modifiable ? `<button type="button" class="btn btn-secondary btn-sm" ${_altDocEnvoi ? 'disabled' : ''}
+            onclick="altDocChoisir('${esc(d.cle)}')">${envoi ? 'Envoi…' : f ? 'Remplacer' : 'Déposer'}</button>` : '',
+        modifiable && f ? `<button type="button" class="btn btn-secondary btn-sm" title="Supprimer ce document" ${_altDocEnvoi ? 'disabled' : ''}
+            onclick="altDocSupprimer('${esc(d.cle)}')">🗑</button>` : '',
+    ].filter(Boolean).join(' ');
+    return `<tr><td>${titre}</td><td>${fichier}</td><td style="white-space:nowrap;text-align:right">${actions}</td></tr>`;
+}
+
+function _altDocBloc(titre, sous, docs, modifiable) {
+    return `<h3 style="margin:16px 0 2px;color:#374151">${esc(titre)}</h3>
+        <div style="font-size:.82rem;color:#6b7280;margin-bottom:6px">${esc(sous)}</div>
+        ${docs.length ? `<div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px">
+        <table class="pn-table" style="table-layout:auto;width:100%;margin:0">
+            <thead><tr><th style="width:26%">Document</th><th>Fichier</th><th style="width:1%"></th></tr></thead>
+            <tbody>${docs.map(d => _altDocLigne(d, modifiable)).join('')}</tbody>
+        </table></div>` : '<div class="empty">Aucune promotion cette année-là.</div>'}`;
+}
+
+function renderAltDocuments() {
+    const D = _suiviState('alternance').docs;
+    document.getElementById('suivi-alternance-content').innerHTML = (D.modifiable
+        ? `<input type="file" id="alt-doc-file" style="display:none" onchange="altDocEnvoyer(this)"
+               accept=".pdf,.doc,.docx,.odt,.rtf,.xls,.xlsx,.ods">
+           <div style="font-size:.85rem;color:#6b7280;margin-top:8px">PDF, Word, Excel ou OpenDocument, 15 Mo au plus.
+               Un nouveau dépôt remplace le fichier précédent.</div>` : '')
+        + _altDocBloc("Livrets d'alternance", `Un livret par promotion présente en ${D.annee}`, D.livrets, D.modifiable)
+        + _altDocBloc('Modèles', 'Communs à toutes les promotions', D.modeles, D.modifiable);
+}
+
+function altDocChoisir(cle) {
+    const input = document.getElementById('alt-doc-file');
+    input.dataset.cle = cle;
+    input.click();
+}
+
+async function altDocEnvoyer(input) {
+    const f = input.files && input.files[0], cle = input.dataset.cle;
+    input.value = '';
+    if (!f || !cle) return;
+    if (f.size > 15 * 1024 * 1024) { toast('Fichier trop volumineux (15 Mo au plus)', 'error'); return; }
+    const st = _suiviState('alternance');
+    const doc = [...st.docs.livrets, ...st.docs.modeles].find(d => d.cle === cle);
+    if (doc && doc.fichier && !confirm(`Remplacer « ${doc.fichier.nom} » par « ${f.name} » ?`)) return;
+    const fd = new FormData();
+    fd.append('file', f);
+    _altDocEnvoi = cle;
+    renderAltDocuments();
+    try {
+        const r = await fetch(`/api/alternance/documents/${encodeURIComponent(cle)}`, { method: 'PUT', body: fd });
+        if (!r.ok) {
+            let msg = "Échec de l'envoi";
+            try { msg = JSON.parse(await r.text()).error || msg; } catch (_) { /* garde le défaut */ }
+            throw new Error(msg);
+        }
+        toast('Document enregistré');
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+    _altDocEnvoi = null;
+    await _altDocsCharger(st);
+    renderSuivi('alternance');
+}
+
+async function altDocSupprimer(cle) {
+    const st = _suiviState('alternance');
+    const doc = [...st.docs.livrets, ...st.docs.modeles].find(d => d.cle === cle);
+    if (!doc || !doc.fichier || !confirm(`Supprimer « ${doc.fichier.nom} » ?`)) return;
+    try {
+        await api(`/alternance/documents/${encodeURIComponent(cle)}`, { method: 'DELETE' });
+        toast('Document supprimé');
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+    await _altDocsCharger(st);
+    renderSuivi('alternance');
+}
+
 function renderSuiviStats(kind) {
     const st = _suiviState(kind), d = st.data, s = d.stats, k = SUIVI_KINDS[kind];
     const el = document.getElementById(`suivi-${kind}-content`);
@@ -6604,11 +6717,9 @@ async function submitSalonCr(ev) {
 function renderSalonCrFichiers() {
     const s = _salonById(_salons.cr), box = document.getElementById('salon-cr-fichiers');
     if (!s) return;
-    const taille = n => n >= 1048576 ? (n / 1048576).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' Mo'
-                                     : Math.max(1, Math.round(n / 1024)) + ' Ko';
     const list = s.fichiers.map(f => `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:.85rem">
             <a href="/api/salons/${s.id}/fichiers/${f.id}${_salonsQ()}" title="Télécharger">📎 ${esc(f.nom)}</a>
-            <span style="color:#9ca3af;font-size:.76rem">${taille(f.taille || 0)}${f.auteur ? ' · ' + esc(f.auteur) : ''}</span>
+            <span style="color:#9ca3af;font-size:.76rem">${_tailleFichier(f.taille || 0)}${f.auteur ? ' · ' + esc(f.auteur) : ''}</span>
             ${s.peut_cr ? `<button type="button" class="btn btn-secondary btn-sm" title="Supprimer la pièce jointe"
                 onclick="salonCrSupprFichier(${f.id})">🗑</button>` : ''}</div>`).join('');
     box.innerHTML = (list || '<div style="color:#9ca3af;font-size:.85rem">Aucune pièce jointe.</div>')

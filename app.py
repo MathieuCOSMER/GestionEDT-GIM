@@ -1810,6 +1810,20 @@ def _apply_promotions_migrations(db):
         )
     ''')
     db.execute('CREATE INDEX IF NOT EXISTS idx_student_suivi_person ON student_suivi(person_id)')
+    # Documents de l'onglet Alternance : un fichier par emplacement (`cle`), un modèle
+    # ou le livret d'une promotion, qui disparaît avec elle.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS alternance_documents (
+            cle           TEXT PRIMARY KEY,
+            promotion_id  INTEGER,
+            nom           TEXT NOT NULL,
+            taille        INTEGER NOT NULL,
+            data          BLOB NOT NULL,
+            auteur        TEXT,
+            updated_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE
+        )
+    ''')
     # Convocation : CONVOQUE (en attente d'entretien), RECU ou ECARTE. `motifs` garde
     # les motifs vus à ce moment (JSON) : l'étudiant ne revient dans la liste qu'à
     # l'apparition d'un nouveau motif.
@@ -3535,6 +3549,9 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     # Le handler distingue : gestion du salon (responsable, admin), inscription d'un
     # titulaire, compte rendu d'un enseignant inscrit (_salons_droits)
     (r'^/api/salons(/.*)?$', ['nav:salons'], ''),
+    # Documents de l'onglet Alternance : responsable ALT et admin (le droit « modifier »
+    # par défaut de l'enseignant ne couvre que les fiches qu'il suit)
+    (r'^/api/alternance/documents/[^/]+$', ['nav:alternance'], 'strict'),
     (r'^/api/backups$', ['nav:journal'], ''),
 ]]
 
@@ -7788,6 +7805,120 @@ def get_suivi(kind):
                             'mobilite': mobilite})
     return jsonify({'kind': kind, 'year_label': year_label, 'cohorts': cohorts,
                     'editable': power, 'stats': _suivi_stats(pdb, kind, current, start)})
+
+# ----- Alternance › Documents -----
+# Le livret d'alternance de chaque promotion et les modèles à remplir : les titulaires
+# les téléchargent, le responsable ALT et l'admin les déposent. Ils vivent dans
+# promotions.db et suivent donc la sauvegarde complète.
+_ALT_MODELES = (('feuille_visite', 'Feuille de visite'),
+                ('fiche_navette', 'Fiche navette'),
+                ('evaluation_sae', "Fiche d'évaluation SAÉ"))
+_ALT_DOC_EXT = {'.pdf', '.doc', '.docx', '.odt', '.rtf', '.xls', '.xlsx', '.ods'}
+_ALT_DOC_MAX = 15 * 1024 * 1024
+
+def _alt_docs_droits():
+    """(voir, modifier) pour la session. Modifier : droit d'administration de l'onglet
+    Alternance. Voir : en plus, qui l'administre sans modifier, et l'enseignant qui voit
+    l'onglet s'il est titulaire. Statut lu dans l'année de la session : la liste ne passe
+    pas de ?year=, l'année qu'on affiche n'y change rien."""
+    tabs = _session_tabs()
+    if tabs is None:
+        return True, True
+    key = _SUIVI_KINDS['alternance'][0]
+    if key not in tabs['visible']:
+        return False, False
+    if key in tabs['power']:
+        return True, True
+    if key in tabs['admin_view']:
+        return True, False
+    moi = _my_teacher_row(get_db())
+    return bool(moi) and _salon_titulaire(moi), False
+
+def _alt_doc_promotion(pdb, cle):
+    """(emplacement connu ?, promotion du livret ou None)."""
+    if cle in dict(_ALT_MODELES):
+        return True, None
+    m = re.fullmatch(r'livret_(\d+)', cle)
+    if m and pdb.execute('SELECT 1 FROM promotions WHERE id=?', (int(m[1]),)).fetchone():
+        return True, int(m[1])
+    return False, None
+
+@app.route('/api/alternance/documents', methods=['GET'])
+def get_alternance_documents():
+    """Le livret des promotions présentes l'année ?annee=AAAA-AAAA (défaut : celle de
+    la session) et les modèles, avec le fichier déposé pour chacun, sans son contenu."""
+    voir, modifier = _alt_docs_droits()
+    if not voir:
+        return error_response('Réservé aux enseignants titulaires', 403)
+    annee = (request.args.get('annee') or '').strip()
+    if not _is_year(annee):
+        annee = get_current_year() or ''
+    try:
+        start = int(annee[:4])
+    except ValueError:
+        return error_response('Année universitaire inconnue', 400)
+    pdb = get_promotions_db()
+    fichiers = {r['cle']: dict(r) for r in pdb.execute(
+        'SELECT cle, nom, taille, auteur, updated_at FROM alternance_documents')}
+    return jsonify({
+        'annee': annee, 'modifiable': modifier,
+        'livrets': [{'cle': f'livret_{pid}', 'promotion': nom, 'annee_etude': yg,
+                     'fichier': fichiers.get(f'livret_{pid}')}
+                    for pid, nom, yg in _suivi_cohorts(pdb, start)],
+        'modeles': [{'cle': cle, 'titre': titre, 'fichier': fichiers.get(cle)}
+                    for cle, titre in _ALT_MODELES]})
+
+@app.route('/api/alternance/documents/<cle>', methods=['GET'])
+def get_alternance_document(cle):
+    if not _alt_docs_droits()[0]:
+        return error_response('Réservé aux enseignants titulaires', 403)
+    r = get_promotions_db().execute('SELECT nom, data FROM alternance_documents WHERE cle=?',
+                                    (cle,)).fetchone()
+    if not r:
+        return error_response('Document introuvable', 404)
+    # Toujours en téléchargement : un fichier déposé ne s'exécute jamais dans la page
+    return send_file(io.BytesIO(r['data']), as_attachment=True, download_name=r['nom'])
+
+@app.route('/api/alternance/documents/<cle>', methods=['PUT'])
+def put_alternance_document(cle):
+    """Dépose le fichier d'un emplacement ; le précédent est remplacé."""
+    if not _alt_docs_droits()[1]:
+        return error_response("Réservé à l'admin et au responsable de l'alternance", 403)
+    pdb = get_promotions_db()
+    connu, promotion_id = _alt_doc_promotion(pdb, cle)
+    if not connu:
+        return error_response('Document inconnu', 404)
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return error_response('Aucun fichier reçu', 400)
+    # Sans chemin ni caractère de contrôle : ce nom repart dans l'en-tête du téléchargement
+    nom = ''.join(c for c in re.split(r'[\\/]', f.filename)[-1] if c.isprintable()).strip()
+    base, ext = os.path.splitext(nom)
+    if ext.lower() not in _ALT_DOC_EXT:
+        return error_response('Type de fichier non autorisé (PDF, Word, Excel ou OpenDocument)', 400)
+    data = f.read(_ALT_DOC_MAX + 1)
+    if len(data) > _ALT_DOC_MAX:
+        return error_response('Fichier trop volumineux (15 Mo au plus)', 400)
+    if not data:
+        return error_response('Fichier vide', 400)
+    pdb.execute('''INSERT INTO alternance_documents (cle, promotion_id, nom, taille, data, auteur)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (cle) DO UPDATE SET nom = excluded.nom, taille = excluded.taille,
+                       data = excluded.data, auteur = excluded.auteur,
+                       updated_at = CURRENT_TIMESTAMP''',
+                (cle, promotion_id, base[:140] + ext, len(data), sqlite3.Binary(data),
+                 session.get('user')))
+    pdb.commit()
+    return jsonify({'cle': cle, 'nom': base[:140] + ext, 'taille': len(data)})
+
+@app.route('/api/alternance/documents/<cle>', methods=['DELETE'])
+def delete_alternance_document(cle):
+    if not _alt_docs_droits()[1]:
+        return error_response("Réservé à l'admin et au responsable de l'alternance", 403)
+    pdb = get_promotions_db()
+    pdb.execute('DELETE FROM alternance_documents WHERE cle=?', (cle,))
+    pdb.commit()
+    return jsonify({'deleted': True})
 
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>/students', methods=['POST'])
 def add_year_student(pid, year):

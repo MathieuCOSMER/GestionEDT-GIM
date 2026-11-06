@@ -471,7 +471,7 @@ function aideContexte() {
         : _etuVue === 'signalements' ? 'etu-signalements' : 'etu-liste';
     else if (key === 'nav:statistiques') id = 'stats-' + _statsTab;
     else if (key === 'nav:stages' || key === 'nav:alternance')
-        id = _suiviState(key.slice(4)).tab === 'stats' ? 'suivi-stats' : 'suivi-fiches';
+        id = { stats: 'suivi-stats', documents: 'alt-documents' }[_suiviState(key.slice(4)).tab] || 'suivi-fiches';
     else if (key === 'nav:salons') id = _salons.tab === 'bilan' ? 'salons-bilan' : 'salons-vue';
     if (!_aide.sections) _aide.sections = _aideConstruire();
     if (!id || !_aide.sections.some(s => s.id === id)) id = 'bienvenue';
@@ -1488,6 +1488,18 @@ function _aideSuivi() {
             <li>les <b>lieux par département</b> ;</li>
             <li>les <b>entreprises</b> et leurs tuteurs, pour l'année ou toutes années confondues.</li>
         </ul>` },
+    { id: 'alt-documents', rub: R, titre: 'Documents de l\'alternance', chemin: 'Alternance › Documents',
+      onglet: 'nav:alternance', cible: 'alternance/documents',
+      mots: 'documents livret alternance feuille de visite fiche navette évaluation saé modèle télécharger déposer remplacer',
+      html: `
+        <p>Le sous-onglet ${_aUi('Documents')} réunit ce qu'il faut pour suivre un alternant :</p>
+        <ul>
+            <li>le <b>livret d'alternance</b> de chaque promotion présente l'année affichée ;</li>
+            <li>les modèles communs : <b>feuille de visite</b>, <b>fiche navette</b> et <b>fiche d'évaluation SAÉ</b>.</li>
+        </ul>
+        <p>Les <b>enseignants titulaires</b> connectés avec leur mot de passe les téléchargent ; les vacataires ne voient pas ce sous-onglet.</p>
+        <p>Le <b>responsable de l'alternance</b> et l'<b>administrateur</b> les déposent, les remplacent et les suppriment
+            (PDF, Word, Excel ou OpenDocument, 15 Mo au plus). Un nouveau dépôt remplace le fichier précédent, qui n'est pas conservé.</p>` },
     ];
 }
 
