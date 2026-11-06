@@ -2842,7 +2842,7 @@ function _currentTabKey() {
     if (name === 'promotions') return _promoSaisieOnly ? 'nav:saisie' : 'promo:' + _promoTab;
     if (name === 'programme') return 'prog:' + _progTab;
     if (name === 'etudiants') return _etuSelected ? (_ficheSuivi() ? 'etu:suivi' : 'etu:liste')
-                                                 : (_etuVue === 'convoquer' ? 'etu:convoquer' : 'etu:liste');
+                                                 : ({ convoquer: 'etu:convoquer', signalements: 'etu:suivi' }[_etuVue] || 'etu:liste');
     return name ? 'nav:' + name : null;
 }
 // Enseignant à qui le superadmin a ouvert la modification de l'onglet courant :
@@ -7639,35 +7639,44 @@ let _importFormation = 'FTP';
 let _etuData = null;              // liste du registre (payload /api/students)
 let _etuSort = { col: 'nom', dir: 1 };
 let _etuSelected = null;          // étudiant ouvert en fiche, null = la liste
-// Vue de l'onglet : tableau, trombinoscope ou étudiants à convoquer (gardée d'une
-// visite à l'autre)
+// Vue de l'onglet : tableau, trombinoscope, étudiants à convoquer ou signalements
+// (gardée d'une visite à l'autre)
 let _etuVue = (() => { try { const v = localStorage.getItem('etuVue');
-                             return ['trombi', 'convoquer'].includes(v) ? v : 'liste'; }
+                             return ['trombi', 'convoquer', 'signalements'].includes(v) ? v : 'liste'; }
                        catch (e) { return 'liste'; } })();
 
 // Vues ouvertes à la session : la liste et le trombinoscope (etu:liste), la liste
-// des étudiants à convoquer (etu:convoquer)
+// des étudiants à convoquer (etu:convoquer), les signalements (etu:suivi)
 function _etuVuesPermises() {
     return (tabHidden('etu:liste') ? [] : ['liste', 'trombi'])
-        .concat(tabHidden('etu:convoquer') ? [] : ['convoquer']);
+        .concat(tabHidden('etu:convoquer') ? [] : ['convoquer'])
+        .concat(tabHidden('etu:suivi') ? [] : ['signalements']);
 }
 
 function _etuVuesBoutons() {
     const permises = _etuVuesPermises();
     const nb = _convData ? (_convData.etudiants || []).filter(e => e.a_convoquer).length : null;
+    const nbSig = _sigData ? (_sigData.signalements || []).filter(s => s.statut !== 'TRAITE').length : null;
     const vue = (cle, libelle, titre) => permises.includes(cle) ? `<button type="button" class="btn btn-sm ${
         _etuVue === cle ? 'btn-primary' : 'btn-secondary'}" onclick="changerVueEtu('${cle}')"
         title="${esc(titre)}">${libelle}</button>` : '';
     return `<span style="display:inline-flex;gap:4px">${vue('liste', 'Liste', 'Un étudiant par ligne, triable')}${
         vue('trombi', 'Trombinoscope', 'Les photos, par ordre alphabétique')}${
         vue('convoquer', 'À convoquer' + (nb ? ` (${nb})` : ''),
-            "Les étudiants que les critères de suivi désignent (notes, baisse, assiduité, signalements), et leur convocation")}</span>`;
+            "Les étudiants que les critères de suivi désignent (notes, baisse, assiduité, signalements), et leur convocation")}${
+        vue('signalements', 'Signalements' + (nbSig ? ` (${nbSig})` : ''),
+            "Tous les signalements de l'équipe, à suivre et à clore sans ouvrir chaque fiche")}</span>`;
 }
 
 async function loadEtudiants() {
     const el = document.getElementById('etu-content');
     try {
-        _etuData = await api('/students');
+        // Requête légère : le nombre de signalements s'affiche sur le bouton dès
+        // l'arrivée. Si elle échoue, la liste reste utilisable (la vue dira pourquoi).
+        const [etudiants, signalements] = await Promise.all([api('/students'),
+            tabHidden('etu:suivi') ? null : api('/suivi/signalements').catch(() => null)]);
+        _etuData = etudiants;
+        if (signalements) { _sigData = signalements; _sigPerime = false; }
     } catch (e) {
         el.innerHTML = `<div class="empty">Chargement impossible : ${esc(e.message)}</div>`;
         return;
@@ -7770,9 +7779,10 @@ function renderEtudiants() {
     const permises = _etuVuesPermises();
     if (permises.length && !permises.includes(_etuVue)) _etuVue = permises[0];
     const filtres = document.getElementById('etu-filtres');
-    if (filtres) filtres.style.display = _etuSelected || _etuVue === 'convoquer' ? 'none' : '';
+    if (filtres) filtres.style.display = _etuSelected || ['convoquer', 'signalements'].includes(_etuVue) ? 'none' : '';
     if (_etuSelected) return renderEtudiantFiche();
     if (_etuVue === 'convoquer') return !_convData || _convPerime ? loadConvoquer() : renderConvoquer();
+    if (_etuVue === 'signalements') return !_sigData || _sigPerime ? loadSignalements() : renderSignalements();
     if (!permises.length) {
         document.getElementById('etu-content').innerHTML = '<div class="empty">Aucune vue de cet onglet ne vous est ouverte.</div>';
         return;
@@ -7961,17 +7971,21 @@ function exportEtudiants() {
                   ['ps_classement', 'Rang PS'], ['ps_note', 'Note PS'], ['promotion', 'Cohorte'],
                   ['formation', 'FTP/ALT'], ['annee', 'Année'], ['statut', 'Statut'],
                   ['decision', 'Jury'], ['gim', 'Moyenne'], ['nb_notes', 'Notes']];
+    _etuCsv('etudiants.csv', [cols.map(c => c[1])].concat(_etuListe().map(e => cols.map(c => e[c[0]]))));
+}
+
+// Télécharge des lignes (tableaux de cellules) en CSV lisible par Excel
+function _etuCsv(fichier, lignes) {
     const cell = v => {
         const s = (v === null || v === undefined) ? '' : String(v);
         return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
-    const lignes = [cols.map(c => c[1]).join(';')].concat(
-        _etuListe().map(e => cols.map(c => cell(e[c[0]])).join(';')));
     // BOM : sans lui, Excel lit les accents de travers.
-    const blob = new Blob(['\ufeff' + lignes.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const blob = new Blob(['\ufeff' + lignes.map(l => l.map(cell).join(';')).join('\r\n')],
+        { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'etudiants.csv';
+    a.download = fichier;
     a.click();
     URL.revokeObjectURL(a.href);
 }
@@ -8223,7 +8237,7 @@ function _photoUrl(s) {
 
 // `tab` : sous-onglet à ouvrir (infos par défaut) ; `form` : entrée du journal à
 // commencer d'emblée (la liste À convoquer ouvre ainsi un compte rendu d'entretien).
-async function openEtudiant(personId, tab, form) {
+async function openEtudiant(personId, tab, form, entree) {
     try {
         _studentCard = await api(`/students/${personId}`);
         _studentCardHost = 'tab';
@@ -8233,17 +8247,20 @@ async function openEtudiant(personId, tab, form) {
         _etuSuivi = null;
         _suiviSem = null;         // l'étoile s'ouvre sur son dernier semestre
         _suiviForm = form === 'ENTRETIEN' ? _spNouveauForm(form) : null;
-        _signalForm = form && form !== 'ENTRETIEN' ? _spNouveauForm(form) : null;
+        _signalForm = form && form !== 'ENTRETIEN' ? _spNouveauForm(form, entree) : null;
         renderEtudiants();
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
-function fermerEtudiant() {
+async function fermerEtudiant() {
     _etuSelected = null;
     _studentCard = null;
     _etuSuivi = null;
     _suiviForm = null;
     _signalForm = null;
+    // Écrit dans la fiche : le compteur du bouton Signalements est à relire, quelle
+    // que soit la vue où l'on revient (celle des signalements sait dire son erreur)
+    if (_sigPerime) await _sigCharger().catch(() => {});
     renderEtudiants();
 }
 
@@ -8305,7 +8322,7 @@ function renderEtudiantFiche() {
     document.getElementById('etu-content').innerHTML = `
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
             <button class="btn btn-secondary btn-sm" onclick="fermerEtudiant()">${
-                _etuVue === 'convoquer' ? '← Étudiants à convoquer' : '← Liste des étudiants'}</button>
+                { convoquer: '← Étudiants à convoquer', signalements: '← Signalements' }[_etuVue] || '← Liste des étudiants'}</button>
             ${s.photo ? `<img src="${_photoUrl(s)}" alt="" style="width:40px;height:50px;object-fit:cover;border-radius:4px">` : ''}
             <h2 style="margin:0;font-size:1.35rem">${esc(s.nom || '')} <span style="font-weight:400">${esc(s.prenom || '')}</span></h2>
             ${s.numero ? `<span style="color:#4b5563;font-size:.95rem">n° ${esc(s.numero)}</span>` : ''}
@@ -8370,6 +8387,11 @@ const _spAn = u => String(u || '').replace(/^20(\d\d)-20(\d\d)$/, '$1-$2');
 function _spPastille(txt, bg, fg, titre) {
     return `<span title="${esc(titre || '')}" style="display:inline-block;padding:2px 9px;border-radius:999px;
         font-size:.76rem;font-weight:600;background:${bg};color:${fg};white-space:nowrap">${esc(txt)}</span>`;
+}
+function _spStatutSignal(e) {
+    return e.statut === 'TRAITE'
+        ? _spPastille('Traité' + (e.traite_le ? ' le ' + _dateFr(e.traite_le) : ''), '#dcfce7', '#166534', e.traite_par ? 'par ' + e.traite_par : '')
+        : _spPastille('Non traité', '#fee2e2', '#b91c1c');
 }
 // `grand` : dans la fiche, à taille de lecture ; sinon (liste À convoquer) compact
 function _spMotif(m, grand) {
@@ -8750,9 +8772,7 @@ function suiviEntree(e, d, o = {}) {
         e.motif ? `<span style="font-size:.9rem;font-weight:600">${esc(e.motif)}</span>` : '',
         e.matiere ? `<span style="font-size:.88rem;color:#4b5563">${esc(e.matiere)}</span>` : '',
         `<span style="font-size:.84rem;color:#6b7280">par ${esc(e.auteur)}${e.auteur === moi ? ' (vous)' : ''}</span>`].filter(Boolean).join(' ');
-    const statut = e.kind !== 'SIGNAL' ? '' : e.statut === 'TRAITE'
-        ? _spPastille('Traité' + (e.traite_le ? ' le ' + _dateFr(e.traite_le) : ''), '#dcfce7', '#166534', e.traite_par ? 'par ' + e.traite_par : '')
-        : _spPastille('Non traité', '#fee2e2', '#b91c1c');
+    const statut = e.kind === 'SIGNAL' ? _spStatutSignal(e) : '';
     const enCours = o.enCours ? _spPastille('en cours de modification', '#e0e7ff', '#3730a3') : '';
     const ouvrir = e.kind === 'ENTRETIEN' ? 'ouvrirSuiviForm' : 'ouvrirSignalForm';
     const actions = !(o.gerer && e.modifiable) ? '' : `<span style="margin-left:auto;display:inline-flex;gap:4px">
@@ -8931,6 +8951,7 @@ async function _spEcrire(url, options, message, apres) {
         if (_etuSelected !== pid) return true;      // une autre fiche a été ouverte entre-temps
         _etuSuivi = Object.assign(d, { _pid: pid });
         _convPerime = true;
+        _sigPerime = true;
         if (apres) apres();
         renderEtudiantFiche();
         if (message) toast(message);
@@ -9147,23 +9168,176 @@ async function enregistrerConvReglages() {
 }
 
 function exportConvoquer() {
-    const cell = v => {
-        const s = v === null || v === undefined ? '' : String(v);
-        return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-    };
     const etatLib = e => e.etat ? (_SP_ETAT_LIB[e.etat.etat] || [e.etat.etat])[0] : 'À convoquer';
-    const lignes = [['Nom', 'Prénom', 'N° Apogée', 'Cohorte', 'Année', 'FTP/ALT', 'Semestre', 'Moyenne', 'Motifs',
-                     'Convocation', 'Date', 'Dernier entretien', 'Prochain point'].join(';')].concat(_convListe().map(e => [
+    _etuCsv('a_convoquer.csv', [['Nom', 'Prénom', 'N° Apogée', 'Cohorte', 'Année', 'FTP/ALT', 'Semestre', 'Moyenne', 'Motifs',
+                     'Convocation', 'Date', 'Dernier entretien', 'Prochain point']].concat(_convListe().map(e => [
         e.nom, e.prenom, e.numero, e.promotion, e.annee, e.formation, e.sem,
         e.gim === null || e.gim === undefined ? '' : String(e.gim).replace('.', ','),
         (e.motifs || []).map(m => m.texte).join(' | '), etatLib(e), _dateFr((e.etat || {}).date),
-        _dateFr(e.entretien), _dateFr(e.prochain)].map(cell).join(';')));
-    const blob = new Blob(['\ufeff' + lignes.join('\r\n')], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'a_convoquer.csv';
-    a.click();
-    URL.revokeObjectURL(a.href);
+        _dateFr(e.entretien), _dateFr(e.prochain)])));
+}
+
+// ----- Étudiants › Signalements -----
+// Tous les signalements de l'équipe au même endroit, pour les suivre et les clore
+// sans ouvrir chaque fiche. Le serveur les donne ; cohorte, année et sous-cohorte se
+// lisent au registre déjà chargé (où en est l'étudiant aujourd'hui). Les écritures
+// passent par les routes du journal de la fiche : mêmes droits, mêmes effets.
+let _sigData = null;           // payload /suivi/signalements
+let _sigPerime = false;        // une écriture dans une fiche a pu changer la liste
+let _sigFiltres = { q: '', etat: 'OUVERT', motif: '', promo: '', face: '', auteur: '' };
+
+async function _sigCharger() {
+    _sigData = await api('/suivi/signalements');
+    _sigPerime = false;
+}
+
+async function loadSignalements() {
+    const el = document.getElementById('etu-content');
+    if (!_sigData) el.innerHTML = '<div class="spinner">Chargement des signalements…</div>';
+    try {
+        await _sigCharger();
+    } catch (e) {
+        if (_etuVue === 'signalements' && !_etuSelected) el.innerHTML = `<div class="empty">Liste indisponible : ${esc(e.message)}</div>`;
+        return;
+    }
+    if (_etuVue === 'signalements' && !_etuSelected) renderSignalements();
+}
+
+function _sigLignes() {
+    const registre = new Map(((_etuData || {}).students || []).map(e => [e.id, e]));
+    return ((_sigData || {}).signalements || []).map(s => {
+        const e = registre.get(s.person_id) || {};
+        return Object.assign({}, s, { promotion: e.promotion, annee: e.annee, formation: e.formation });
+    });
+}
+
+function _sigListe() {
+    const F = _sigFiltres;
+    const mots = _sansAccent(F.q).trim().split(/\s+/).filter(Boolean);
+    return _sigLignes().filter(s => (!F.etat || (F.etat === 'TRAITE') === (s.statut === 'TRAITE'))
+        && (!F.motif || s.motif === F.motif) && (!F.promo || s.promotion === F.promo)
+        && (!F.face || s.formation === F.face) && (!F.auteur || s.auteur === F.auteur)
+        && mots.every(m => _sansAccent([s.nom, s.prenom, s.numero, s.matiere, s.texte].join(' ')).includes(m)));
+}
+
+function renderSignalements() {
+    if (!_sigData) return loadSignalements();
+    const F = _sigFiltres;
+    const lignes = _sigLignes();
+    const uniques = cle => [...new Set(lignes.map(s => s[cle]).filter(Boolean))].sort();
+    const promos = uniques('promotion').reverse(), auteurs = uniques('auteur');
+    // Dernier signalement d'un auteur ou d'une cohorte supprimé : le filtre n'a plus d'objet
+    if (!promos.includes(F.promo)) F.promo = '';
+    if (!auteurs.includes(F.auteur)) F.auteur = '';
+    const nb = lignes.filter(s => s.statut !== 'TRAITE').length;
+    const opt = (v, lib, cur) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(lib)}</option>`;
+    const filtre = (cle, titre, options) => `<select title="${esc(titre)}"
+        onchange="_sigFiltres.${cle}=this.value;renderSignalementsLignes()">${options}</select>`;
+    // Le défilement du tableau survit au rendu : on clôt souvent plusieurs signalements à la suite
+    const y = (document.querySelector('#sig-lignes > div') || {}).scrollTop || 0;
+    document.getElementById('etu-content').innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+            ${_etuVuesBoutons()}
+            <span style="font-size:.9rem"><strong>${nb}</strong> signalement(s) non traité(s)${lignes.length - nb
+                ? ` <span style="color:#9ca3af">· ${lignes.length - nb} traité(s)</span>` : ''}</span>
+            <span style="margin-left:auto"></span>
+            <button class="btn btn-secondary btn-sm" onclick="exportSignalements()">Exporter (CSV)</button>
+            <button class="btn btn-secondary btn-sm" onclick="loadSignalements()" title="Relire la liste">↻</button>
+        </div>
+        <div class="filters" style="margin-bottom:8px">
+            <input type="search" placeholder="Nom, n° Apogée, matière, texte…" value="${esc(F.q)}" style="min-width:260px"
+                oninput="_sigFiltres.q=this.value;renderSignalementsLignes()">
+            ${filtre('etat', 'Où en est le signalement', opt('OUVERT', 'Non traités', F.etat) + opt('TRAITE', 'Traités', F.etat) + opt('', 'Traités ou non', F.etat))}
+            ${filtre('motif', 'Motif', opt('', 'Tous les motifs', F.motif) + (_sigData.motifs || []).map(m => opt(m, m, F.motif)).join(''))}
+            ${filtre('promo', 'Sa dernière cohorte', opt('', 'Toutes les cohortes', F.promo) + promos.map(p => opt(p, p, F.promo)).join(''))}
+            ${filtre('face', 'Sous-cohorte', opt('', 'FTP + ALT', F.face) + opt('FTP', 'FTP', F.face) + opt('ALT', 'ALT', F.face))}
+            ${filtre('auteur', "Qui l'a écrit", opt('', 'Tous les auteurs', F.auteur) + auteurs.map(a =>
+                opt(a, a + (a === _sigData.moi ? ' (vous)' : ''), F.auteur)).join(''))}
+            <span id="sig-compte" style="font-size:.85rem;color:#6b7280"></span>
+        </div>
+        <div style="font-size:.78rem;color:#6b7280;margin-bottom:8px">Du plus récent au plus ancien. Un signalement de comportement ou de
+            fraude non traité met l'étudiant dans la liste à convoquer. Son auteur et la direction peuvent le clore, le reprendre
+            ou le supprimer. Cliquez un nom pour ouvrir son suivi.</div>
+        <div id="sig-lignes"></div>`;
+    renderSignalementsLignes();
+    const tableau = document.querySelector('#sig-lignes > div');
+    if (tableau) tableau.scrollTop = y;
+}
+
+function renderSignalementsLignes() {
+    const el = document.getElementById('sig-lignes');
+    if (!el) return;
+    const liste = _sigListe();
+    const total = (_sigData.signalements || []).length;
+    const compte = document.getElementById('sig-compte');
+    if (compte) compte.textContent = `${liste.length} affiché(s) sur ${total}`;
+    if (!liste.length) {
+        el.innerHTML = `<div class="empty">${total ? (_sigFiltres.etat === 'OUVERT'
+            ? 'Aucun signalement non traité ne correspond à ces filtres.' : 'Aucun signalement ne correspond à ces filtres.')
+            : "Aucun signalement pour l'instant : ils s'écrivent dans la fiche d'un étudiant, sous-onglet Signalement."}</div>`;
+        return;
+    }
+    const gere = liste.some(s => s.modifiable);
+    const bouton = (lib, action, titre, style) => `<button class="btn btn-secondary btn-sm" onclick="${action}"
+        title="${esc(titre)}" style="white-space:nowrap${style || ''}">${lib}</button>`;
+    const ligne = s => {
+        const traite = s.statut === 'TRAITE';
+        const [, bg, fg] = _SP_TYPES[(s.motif || '').toLowerCase()] || ['', '#fef3c7', '#b45309'];
+        return `<tr${traite ? ' style="opacity:.7"' : ''}>
+        <td style="white-space:nowrap">${_dateFr(s.date_fait)}</td>
+        <td><a href="#" onclick="openEtudiant(${s.person_id}, 'suivi');return false"
+            style="font-weight:700">${esc(s.nom || '')}</a> ${esc(s.prenom || '')}
+            <div style="font-size:.72rem;color:#9ca3af">${esc(s.numero || '')}</div></td>
+        <td style="white-space:nowrap">${esc(s.promotion || '—')}${s.annee ? ' · A' + s.annee : ''}
+            <div style="font-size:.72rem;color:#6b7280">${esc(s.formation || '')}</div></td>
+        <td>${_spPastille(s.motif || 'Autre', bg, fg)}${s.matiere
+            ? `<div style="font-size:.75rem;color:#4b5563;margin-top:3px">${esc(s.matiere)}</div>` : ''}</td>
+        <td style="min-width:220px"><div title="${esc(s.texte || '')}" style="white-space:pre-wrap;font-size:.84rem;line-height:1.4;
+            display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden">${esc(s.texte || '')}</div></td>
+        <td style="font-size:.82rem">${esc(s.auteur || '')}${s.auteur === _sigData.moi ? ' <span style="color:#9ca3af">(vous)</span>' : ''}</td>
+        <td style="white-space:nowrap">${_spStatutSignal(s)}</td>
+        ${gere ? `<td>${s.modifiable ? `<div style="display:flex;gap:4px;justify-content:flex-end">
+            ${bouton(traite ? 'Rouvrir' : 'Marquer traité', `statutSignalement(${s.person_id}, ${s.id}, '${traite ? 'OUVERT' : 'TRAITE'}')`,
+                traite ? 'Le remettre dans les non traités' : 'Il sort des non traités, et des motifs de convocation')}
+            ${bouton('✎', `openEtudiant(${s.person_id}, 'signalement', 'SIGNAL', ${s.id})`, 'Le reprendre dans la fiche')}
+            ${bouton('🗑', `supprimerSignalement(${s.person_id}, ${s.id})`, 'Supprimer', ';color:#b91c1c')}</div>` : ''}</td>` : ''}
+    </tr>`;
+    };
+    el.innerHTML = `<div style="overflow:auto;max-height:70vh;border:1px solid #e5e7eb;border-radius:8px">
+        <table class="pn-table" style="table-layout:auto;width:100%"><thead><tr>
+            <th style="text-align:left" title="Date des faits">Date</th><th style="text-align:left">Étudiant</th>
+            <th style="text-align:left" title="Sa dernière cohorte">Cohorte</th><th style="text-align:left">Motif</th>
+            <th style="text-align:left">Description</th><th style="text-align:left">Auteur</th>
+            <th style="text-align:left">État</th>${gere ? '<th></th>' : ''}
+        </tr></thead><tbody>${liste.map(ligne).join('')}</tbody></table></div>`;
+}
+
+// Mêmes routes que la fiche ; un signalement clos peut changer la liste À convoquer
+async function _sigEcrire(personId, id, options, message) {
+    try {
+        await api(`/students/${personId}/suivi/${id}`, options);
+        _convPerime = true;
+        await _sigCharger();
+        if (_etuVue === 'signalements' && !_etuSelected) renderSignalements();
+        toast(message);
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+function statutSignalement(personId, id, statut) {
+    return _sigEcrire(personId, id, { method: 'PUT', body: JSON.stringify({ statut }) },
+        statut === 'TRAITE' ? 'Signalement marqué traité' : 'Signalement rouvert');
+}
+
+function supprimerSignalement(personId, id) {
+    if (!confirm('Supprimer ce signalement ?')) return;
+    return _sigEcrire(personId, id, { method: 'DELETE' }, 'Signalement supprimé');
+}
+
+function exportSignalements() {
+    _etuCsv('signalements.csv', [['Date', 'Nom', 'Prénom', 'N° Apogée', 'Cohorte', 'Année', 'FTP/ALT', 'Motif', 'Matière',
+                                  'Description', 'Auteur', 'État', 'Traité le', 'Traité par']].concat(_sigListe().map(s => [
+        _dateFr(s.date_fait), s.nom, s.prenom, s.numero, s.promotion, s.annee, s.formation, s.motif, s.matiere, s.texte, s.auteur,
+        s.statut === 'TRAITE' ? 'Traité' : 'Non traité', _dateFr(s.traite_le), s.traite_par])));
 }
 
 // ===== FICHE ÉTUDIANT (registre) =====

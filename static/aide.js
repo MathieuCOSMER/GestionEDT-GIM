@@ -434,7 +434,7 @@ function aideOuvrir(cible) {
     } else if (page === 'etudiants') {
         _etuSelected = null;
         _studentCard = null;
-        if (['trombi', 'liste', 'convoquer'].includes(sous)) {
+        if (['trombi', 'liste', 'convoquer', 'signalements'].includes(sous)) {
             _etuVue = sous;
             try { localStorage.setItem('etuVue', sous); } catch (e) { /* sans mémoire */ }
         }
@@ -467,7 +467,8 @@ function aideContexte() {
     const key = _currentTabKey() || '';
     let id = _AIDE_CONTEXTE[key];
     if (key.startsWith('etu:')) id = _etuSelected ? (_etuFicheTab === 'suivi' ? 'etu-suivi' : 'etu-fiche')
-        : _etuVue === 'trombi' ? 'etu-photos' : _etuVue === 'convoquer' ? 'etu-convoquer' : 'etu-liste';
+        : _etuVue === 'trombi' ? 'etu-photos' : _etuVue === 'convoquer' ? 'etu-convoquer'
+        : _etuVue === 'signalements' ? 'etu-signalements' : 'etu-liste';
     else if (key === 'nav:statistiques') id = 'stats-' + _statsTab;
     else if (key === 'nav:stages' || key === 'nav:alternance')
         id = _suiviState(key.slice(4)).tab === 'stats' ? 'suivi-stats' : 'suivi-fiches';
@@ -1277,7 +1278,8 @@ function _aideEtudiants() {
         dernière décision de jury, dernière moyenne annuelle, nombre de notes. Un clic sur un en-tête trie ; un clic sur une ligne ouvre la ${_aLien('etu-fiche', 'fiche')}.</p>
         <p>${_aUi('Exporter (CSV)')} télécharge exactement ce qui est affiché (filtres et tri compris), lisible par Excel.</p>
         <p>Les boutons ${_aUi('Liste')} / ${_aUi('Trombinoscope')} changent de vue : voir ${_aLien('etu-photos', 'photos et trombinoscope')}.${
-            _aSi('etu:convoquer', ` ${_aUi('À convoquer')} dresse la liste des étudiants à recevoir : voir ${_aLien('etu-convoquer', 'les étudiants à convoquer')}.`)}</p>` },
+            _aSi('etu:convoquer', ` ${_aUi('À convoquer')} dresse la liste des étudiants à recevoir : voir ${_aLien('etu-convoquer', 'les étudiants à convoquer')}.`)}${
+            _aSi('etu:suivi', ` ${_aUi('Signalements')} réunit ceux de toute l'équipe : voir ${_aLien('etu-signalements', 'la liste des signalements')}.`)}</p>` },
 
     { id: 'etu-fiche', rub: R, titre: "La fiche d'un étudiant", chemin: 'Étudiants › fiche',
       onglet: 'etu:liste', cible: 'etudiants/liste',
@@ -1346,8 +1348,25 @@ function _aideEtudiants() {
         ${_aSi('etu:convoquer', `<p>${_aSiModif('etu:convoquer', `${_aUi('+ Entretien')}, dans le cadre des motifs de convocation de ${_aUi('Suivi')} :
             date, participants, compte rendu, décisions, prochain point ; l'étudiant passe alors <b>reçu</b>. `)}Les entretiens ne sont lus
             que par qui voit la liste ${_aLien('etu-convoquer', 'À convoquer')}.</p>`)}
-        <p>Commentaires et signalements sont lus par toute l'équipe ; chacun modifie ou supprime les siens${_aSi('etu:convoquer', ', la direction tous')}.</p>
+        <p>Commentaires et signalements sont lus par toute l'équipe ; chacun modifie ou supprime les siens${_aSi('etu:convoquer', ', la direction tous')}.
+        Tous les signalements se retrouvent dans ${_aLien('etu-signalements', 'la liste des signalements')}.</p>
         ${_aTip("l'étudiant peut demander à lire ce journal : écrivez des faits observables, sans jugement sur la personne, et rien sur sa santé ou sa vie privée.")}` },
+
+    { id: 'etu-signalements', rub: R, titre: 'La liste des signalements', chemin: 'Étudiants › Signalements',
+      onglet: 'etu:suivi', cible: 'etudiants/signalements',
+      mots: 'signalement signalements liste traité non traité clore rouvrir absences retards comportement fraude auteur export',
+      html: () => `
+        <p>La vue ${_aUi('Signalements')} de l'onglet Étudiants réunit les signalements de toute l'équipe, du plus récent au plus ancien, sans
+        passer par chaque fiche. Le bouton affiche le nombre de signalements <b>non traités</b>, et la vue s'ouvre sur eux.</p>
+        <ul>
+            <li>Filtres : recherche (nom, n° Apogée, matière, texte), état, motif, dernière cohorte, FTP/ALT, auteur.</li>
+            <li>Un clic sur un nom ouvre son ${_aLien('etu-suivi', 'suivi')} ; ${_aUi('← Signalements')} y ramène.</li>
+            <li>${_aUi('Exporter (CSV)')} télécharge ce qui est affiché.</li>
+        </ul>
+        <p>${_aUi('Marquer traité')} / ${_aUi('Rouvrir')}, ${_aUi('✎')} (reprendre dans la fiche) et ${_aUi('🗑')} sont proposés à son auteur${
+            _aSi('etu:convoquer', ' et à la direction')}. Un signalement de <b>comportement</b> ou de <b>fraude</b> non traité met l'étudiant dans la liste à convoquer :
+        le marquer traité retire ce motif.</p>
+        <p>Les commentaires et les entretiens restent dans le journal de chaque fiche.</p>` },
 
     { id: 'etu-convoquer', rub: R, titre: 'Les étudiants à convoquer', chemin: 'Étudiants › À convoquer',
       onglet: 'etu:convoquer', cible: 'etudiants/convoquer',

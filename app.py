@@ -6848,6 +6848,24 @@ def set_student_convocation(person_id):
         etat.pop('motifs', None)
     return jsonify({'etat': etat})
 
+@app.route('/api/suivi/signalements', methods=['GET'])
+def get_suivi_signalements():
+    """Vue Signalements de l'onglet Étudiants : tous les signalements de l'équipe,
+    du plus récent au plus ancien, lus par qui lit le journal d'une fiche. Même
+    règle que la fiche pour `modifiable` : son auteur ou la direction."""
+    err = _sp_lecture('etu:suivi')
+    if err:
+        return err
+    direction, ecrire, moi = _tab_edit('etu:convoquer'), _tab_edit('etu:suivi'), session.get('user')
+    rows = get_promotions_db().execute(
+        '''SELECT j.id, j.person_id, j.date_fait, j.motif, j.matiere, j.texte, j.statut,
+                  j.traite_par, j.traite_le, j.auteur, s.nom, s.prenom, s.numero
+           FROM student_suivi j JOIN students s ON s.id = j.person_id
+           WHERE j.kind = 'SIGNAL' ORDER BY j.date_fait DESC, j.id DESC''').fetchall()
+    return jsonify({
+        'signalements': [dict(r, modifiable=direction or (ecrire and r['auteur'] == moi)) for r in rows],
+        'motifs': list(_SP_SIGNAL_MOTIFS), 'moi': moi})
+
 @app.route('/api/suivi/convoquer', methods=['GET'])
 def get_suivi_convoquer():
     """Liste À convoquer : les étudiants de l'année active (fiche active d'une
