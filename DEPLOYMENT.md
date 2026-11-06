@@ -163,9 +163,9 @@ SCHEMA_PATH = '/sessions/optimistic-zen-bardeen/mnt/GestionEDT/schema.sql'
 ### Server Settings
 ```python
 app.run(
-    host='0.0.0.0',      # Listen on all interfaces
+    host='127.0.0.1',    # This machine only (hosting goes through wsgi.py)
     port=5000,            # Default port
-    debug=True            # Enable debug mode
+    debug=False           # Enable with EDT_DEBUG=1
 )
 ```
 

@@ -7,7 +7,7 @@ import socket
 import subprocess
 
 # Werkzeug appelle socket.getfqdn(host) au demarrage : sur Windows la
-# resolution DNS inverse de 0.0.0.0 peut bloquer ~10s au premier lancement.
+# resolution DNS inverse peut bloquer ~10s au premier lancement.
 # On court-circuite (le nom ne sert qu'a l'affichage des logs).
 socket.getfqdn = lambda name='': name or 'localhost'
 
@@ -62,7 +62,8 @@ def main():
 
     sys.path.insert(0, BASE_DIR)
     from app import app
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # En local uniquement, comme app.py ; debug activable avec EDT_DEBUG=1.
+    app.run(host='127.0.0.1', port=5000, debug=os.environ.get('EDT_DEBUG', '0') == '1')
 
 if __name__ == '__main__':
     main()

@@ -20232,8 +20232,9 @@ _init_programmes_db()
 if __name__ == '__main__':
     # Run Flask app
     # debug est désactivé par défaut ; activez-le en local avec EDT_DEBUG=1.
+    # Lancement direct : cette machine seulement (l'hébergement passe par wsgi.py).
     app.run(
-        host='0.0.0.0',
+        host='127.0.0.1',
         port=int(os.environ.get('PORT', 5000)),
         debug=os.environ.get('EDT_DEBUG', '0') == '1'
     )
