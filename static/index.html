@@ -5648,7 +5648,10 @@ async function onPromoChange() {
     // Présélection de l'année de progression = celle correspondant à l'année
     // universitaire choisie en haut à droite (répartition calendaire courante).
     const yg = _ygForTopYear(_promoData.promotion.start_year);
-    _calYG = yg; _grpYG = yg; _effYear = yg;
+    _calYG = yg; _grpYG = yg;
+    // Arrivée depuis la vue Délégués : l'effectif de l'année qu'elle montrait
+    _effYear = _effYearForce || yg;
+    _effYearForce = null;
     // Bulletins : semestre en cours de la promotion qu'on vient de choisir (le
     // choix fait à la main tient tant qu'on reste sur la même promotion).
     if (_notesSemPromo !== id) {
@@ -7112,7 +7115,9 @@ function renderPromoEffectif() {
                 s.mobility ? tag('MI ' + s.mobility.semester, '#cffafe',
                     'Mobilité internationale en ' + s.mobility.semester
                     + (s.mobility.etablissement ? ' — ' + s.mobility.etablissement : '')
-                    + ' : UE validées par équivalence') : ''}</td>
+                    + ' : UE validées par équivalence') : ''}${
+                s.conseil ? tag(s.conseil === 'TITULAIRE' ? 'délégué CD' : 'suppléant CD', '#fce7f3',
+                    `${_conseilLabel(d, s.conseil)} au conseil de département pour l'année ${y} — siège ${s.conseil_siege}`) : ''}</td>
             <td><span onclick="openStudentCard(${s.person_id})" title="Fiche de l'étudiant"
                 style="cursor:pointer;color:#1d4ed8;text-decoration:underline dotted">${esc(s.prenom || '')}</span></td>
             <td>${esc(s.numero || '')}</td>
@@ -7151,6 +7156,7 @@ function renderPromoEffectif() {
         + _effTotaux(d, y)
         + `<div style="font-size:.82rem;color:#6b7280;margin-bottom:10px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px">
             Effectif de l'<strong>année ${y}</strong>. Il se compose automatiquement à partir du jury (les ajournés <strong>AJ/RED</strong> et les départs sont retirés des années suivantes) et reste ajustable à la main (+ Étudiant ou import). La corbeille <strong>supprime la fiche</strong> de toute la cohorte, avec ses notes.</div>`
+        + _renderConseil(d, y)
         + (d.subcohorts || ['FTP', 'ALT']).map(section).join('')
         + _renderHorsAnnee(d, y)
         + _renderDevenirLink(y);
@@ -7187,6 +7193,214 @@ async function setMobility(sid, semester, etablissement) {
         renderPromoEffectif();
         toast(semester ? `Mobilité internationale en ${semester}` : 'Mobilité retirée');
     } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+/// ===== Délégués au conseil de département =====
+// Par promotion et par année d'étude (l'élection se refait chaque année) : un
+// nombre de délégués, chacun avec son suppléant. Les places sont des sièges
+// numérotés, pourvus parmi l'effectif de l'année affichée.
+const _CONSEIL_ROLES_DEFAUT = [{ value: 'TITULAIRE', label: 'Délégué' },
+                               { value: 'SUPPLEANT', label: 'Suppléant' }];
+function _conseilLabel(d, role) {
+    const roles = (d && (d.conseil_roles || d.roles)) || _CONSEIL_ROLES_DEFAUT;
+    return (roles.find(r => r.value === role) || {}).label || role;
+}
+
+// Un élu qui a quitté l'année garde sa place, signalé : elle est à repourvoir.
+function _conseilAlerte(s) {
+    return s.hors_annee ? "hors effectif de l'année"
+        : (s.cesure ? 'en césure' : (s.statut === 'Abandon' ? 'abandon' : ''));
+}
+function _conseilAlerteHtml(s) {
+    const a = _conseilAlerte(s);
+    return a ? ` <span style="font-size:.72rem;color:#b45309" title="Place à repourvoir : l'étudiant n'est plus dans l'effectif actif de l'année">⚠ ${esc(a)}</span>` : '';
+}
+
+let _effYearForce = null;     // année à montrer à l'arrivée sur l'effectif (vue Délégués)
+
+function _renderConseil(d, y) {
+    const c = d.conseil || { nb: 0, sieges: [] };
+    const roles = d.conseil_roles || _CONSEIL_ROLES_DEFAUT;
+    const parId = new Map((d.students || []).map(s => [s.id, s]));
+    // Éligibles : l'effectif de l'année, sans les césures ni les abandons.
+    const eligibles = (d.students || []).filter(s => !s.hors_annee && !s.cesure && s.statut !== 'Abandon');
+    const nomComplet = s => `${s.nom || ''} ${s.prenom || ''}`.trim();
+    const placeDe = s => `${_conseilLabel(d, s.conseil).toLowerCase()} du siège ${s.conseil_siege}`;
+    const cellule = (place, r) => {
+        const s = place[r.value] ? parId.get(place[r.value]) : null;
+        if (s) return `<span style="display:inline-flex;align-items:center;gap:6px;padding:2px 4px 2px 10px;
+            border-radius:14px;background:#fff;border:1px solid #f9a8d4;font-size:.84rem">
+            <span onclick="openStudentCard(${s.person_id})" title="Fiche de l'étudiant"
+                style="cursor:pointer;color:#1d4ed8"><strong>${esc(s.nom || '')}</strong> ${esc(s.prenom || '')}</span>
+            <span style="font-size:.7rem;color:#6b7280">${esc(s.formation || '')}</span>${_conseilAlerteHtml(s)}
+            <button class="btn btn-secondary btn-sm" style="padding:0 6px;font-size:.72rem;line-height:1.5"
+                title="Libérer la place : ${esc(nomComplet(s))} n'est plus ${esc(placeDe(s))}"
+                onclick="setConseilPlace(${place.siege}, '${r.value}', null)">✕</button></span>`;
+        if (place.hors_nombre) return '<span style="color:#9ca3af">—</span>';
+        // Choisir un étudiant déjà placé ailleurs cette année l'y fait passer.
+        const opts = eligibles.map(e => `<option value="${e.id}">${esc(nomComplet(e))} — ${esc(e.formation || '')}${
+            e.conseil ? ` (actuellement ${esc(placeDe(e))})` : ''}</option>`).join('');
+        return `<select onchange="if (this.value) setConseilPlace(${place.siege}, '${r.value}', parseInt(this.value, 10))"
+            title="${esc(r.label)} du siège ${place.siege}, parmi l'effectif de l'année ${y}"
+            style="padding:2px 6px;border:1px solid #f9a8d4;border-radius:6px;font-size:.8rem;max-width:300px;color:#6b7280">
+            <option value="">— à désigner —</option>${opts}</select>`;
+    };
+    const pourvues = c.sieges.filter(p => !p.hors_nombre)
+        .reduce((n, p) => n + roles.filter(r => p[r.value]).length, 0);
+    const places = c.nb * roles.length;
+    const origine = c.herite ? `repris de l'année ${c.fixe_en}`
+        : (c.fixe_en == null ? 'valeur par défaut, à fixer' : '');
+    const rows = c.sieges.map(p => `<tr${p.hors_nombre
+            ? ` style="background:#fef3c7" title="Siège au-delà du nombre de délégués : libérez ses places"` : ''}>
+        <td style="white-space:nowrap;color:#9d174d;font-weight:600">Siège ${p.siege}${p.hors_nombre ? ' ⚠' : ''}</td>
+        ${roles.map(r => `<td>${cellule(p, r)}</td>`).join('')}</tr>`).join('');
+    return `<div style="background:#fdf2f8;border:1px solid #fbcfe8;border-radius:8px;padding:8px 14px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;font-size:.86rem;color:#831843;margin-bottom:6px">
+            <span><strong>Délégués au conseil de département</strong> — ${esc(_effYearLabel(y))}</span>
+            <label style="display:inline-flex;align-items:center;gap:6px"
+                title="Nombre de délégués de la promotion pour cette année ; chacun a son suppléant. Il est repris par les années suivantes tant qu'elles n'en fixent pas un autre.">
+                Nombre de délégués
+                <input type="number" min="0" max="20" value="${c.nb}" onchange="setConseilNb(this.value)"
+                    style="width:52px;padding:2px 4px;border:1px solid #f9a8d4;border-radius:4px;text-align:center">
+                <span style="color:#6b7280">+ autant de suppléants</span></label>
+            ${origine ? `<span style="color:#9ca3af;font-size:.78rem">${esc(origine)}</span>` : ''}
+            <span style="margin-left:auto;font-size:.8rem;color:${places && pourvues < places ? '#b45309' : '#15803d'}">${
+                places ? `${pourvues} / ${places} places pourvues` : 'aucun délégué pour cette année'}</span>
+        </div>
+        ${rows ? `<table class="pn-table" style="table-layout:auto;width:auto;min-width:60%;background:#fff">
+            <thead><tr><th style="width:80px">Siège</th>${roles.map(r => `<th>${esc(r.label)}</th>`).join('')}</tr></thead>
+            <tbody>${rows}</tbody></table>` : ''}
+    </div>`;
+}
+
+async function setConseilNb(v) {
+    const nb = parseInt(v, 10);
+    if (isNaN(nb)) { renderPromoEffectif(); return; }
+    try {
+        _effData = await api(`/promotions/${_promoId}/conseil/${_effYear}`,
+            { method: 'PUT', body: JSON.stringify({ nb }) });
+        _delegData = null;
+        renderPromoEffectif();
+        toast(`${nb} délégué(s) et autant de suppléants pour l'année ${_effYear}`);
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); renderPromoEffectif(); }
+}
+
+async function setConseilPlace(siege, role, sid) {
+    try {
+        _effData = await api(`/promotions/${_promoId}/conseil/${_effYear}/${siege}`,
+            { method: 'PUT', body: JSON.stringify({ role, student_id: sid }) });
+        _delegData = null;
+        renderPromoEffectif();
+        const lib = _conseilLabel(_effData, role);
+        toast(sid ? `${lib} du siège ${siege} désigné` : `Place de ${lib.toLowerCase()} du siège ${siege} libérée`);
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); renderPromoEffectif(); }
+}
+
+// ===== Vue Délégués (onglet Étudiants) =====
+// Les délégués et suppléants de toutes les promotions pour une année universitaire
+// (l'année active par défaut) : chaque cohorte qui la suit, à son année d'étude.
+let _delegData = null;        // payload /api/conseil
+let _delegAnnee = '';         // année universitaire montrée ('' = l'année active)
+
+async function loadDelegues() {
+    const el = document.getElementById('etu-content');
+    if (!_delegData) el.innerHTML = '<div class="spinner">Chargement des délégués…</div>';
+    try {
+        _delegData = await api('/conseil' + (_delegAnnee ? '?annee=' + encodeURIComponent(_delegAnnee) : ''));
+        _delegAnnee = _delegData.annee;
+    } catch (e) {
+        if (_etuVue === 'delegues' && !_etuSelected) el.innerHTML = `<div class="empty">Liste indisponible : ${esc(e.message)}</div>`;
+        return;
+    }
+    if (_etuVue === 'delegues' && !_etuSelected) renderDelegues();
+}
+
+function changerAnneeDelegues(a) {
+    _delegAnnee = a;
+    _delegData = null;
+    loadDelegues();
+}
+
+function _delegNiveau(y) {
+    return y === 1 ? '1re année' : `${y}e année`;
+}
+
+function renderDelegues() {
+    const d = _delegData;
+    if (!d) return loadDelegues();
+    const roles = d.roles || _CONSEIL_ROLES_DEFAUT;
+    let pourvues = 0, places = 0;
+    d.promotions.forEach(p => {
+        places += p.nb * roles.length;
+        p.sieges.forEach(s => roles.forEach(r => { if (s[r.value] && !s.hors_nombre) pourvues++; }));
+    });
+    // Le bouton vers l'effectif n'a de sens que pour qui voit l'onglet Promotions
+    const nav = document.getElementById('nav-promotions');
+    const versPromo = !!(nav && nav.offsetParent !== null);
+    const nom = e => e ? `<span onclick="openEtudiant(${e.person_id})" title="Ouvrir la fiche de l'étudiant"
+            style="cursor:pointer;color:#1d4ed8;text-decoration:underline dotted"><strong>${esc(e.nom || '')}</strong> ${esc(e.prenom || '')}</span>
+            <span style="font-size:.72rem;color:#6b7280">${esc(e.formation || '')}</span>${_conseilAlerteHtml(e)}`
+        : '<span style="color:#b45309;font-size:.82rem">à désigner</span>';
+    const bloc = p => {
+        const lignes = p.sieges.map(s => `<tr${s.hors_nombre ? ' style="background:#fef3c7" title="Siège au-delà du nombre de délégués"' : ''}>
+            <td style="white-space:nowrap;color:#9d174d;font-weight:600">Siège ${s.siege}${s.hors_nombre ? ' ⚠' : ''}</td>
+            ${roles.map(r => `<td>${s.hors_nombre && !s[r.value] ? '<span style="color:#9ca3af">—</span>' : nom(s[r.value])}</td>`).join('')}</tr>`).join('');
+        return `<div class="card" style="padding:10px 14px;margin-bottom:12px">
+            <div style="display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;margin-bottom:6px">
+                <h3 style="margin:0">${esc(p.promotion)} <span style="font-weight:400;color:#6b7280">· ${_delegNiveau(p.year)}</span></h3>
+                <span style="font-size:.8rem;color:#6b7280">${p.nb} délégué(s) + ${p.nb} suppléant(s)</span>
+                ${versPromo ? `<button class="btn btn-secondary btn-sm" style="margin-left:auto"
+                    onclick="ouvrirConseilPromo(${p.promotion_id}, ${p.year})"
+                    title="Fixer le nombre de délégués et les désigner dans Promotions › Effectifs">Désigner dans Promotions →</button>` : ''}
+            </div>
+            ${lignes ? `<table class="pn-table" style="table-layout:auto;width:100%">
+                <thead><tr><th style="width:80px">Siège</th>${roles.map(r => `<th>${esc(r.label)}</th>`).join('')}</tr></thead>
+                <tbody>${lignes}</tbody></table>`
+                : '<div class="empty" style="padding:8px">Aucun délégué prévu pour cette année.</div>'}
+        </div>`;
+    };
+    const opts = (d.annees || []).map(a => `<option value="${esc(a)}"${a === d.annee ? ' selected' : ''}>${
+        esc(a)}${a === d.active ? ' (en cours)' : ''}</option>`).join('');
+    document.getElementById('etu-content').innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+            ${_etuVuesBoutons()}
+            <label style="font-size:.88rem">Année universitaire
+                <select onchange="changerAnneeDelegues(this.value)" style="margin-left:4px;font-weight:600">${opts}</select></label>
+            <span style="font-size:.88rem;color:${places && pourvues < places ? '#b45309' : '#15803d'}">${
+                places ? `<strong>${pourvues}</strong> / ${places} places pourvues` : ''}</span>
+            <span style="margin-left:auto"></span>
+            <button class="btn btn-secondary btn-sm" onclick="exportDelegues()" ${d.promotions.length ? '' : 'disabled'}>Exporter (CSV)</button>
+            <button class="btn btn-secondary btn-sm" onclick="_delegData=null;loadDelegues()" title="Relire la liste">↻</button>
+        </div>
+        <div style="font-size:.78rem;color:#6b7280;margin-bottom:10px">Délégués au conseil de département et leurs suppléants,
+            pour chaque promotion qui suit l'année ${esc(d.annee)}. Le nombre de délégués et leur désignation se règlent dans
+            Promotions › Effectifs, année par année.</div>
+        ${d.promotions.length ? d.promotions.map(bloc).join('')
+            : `<div class="empty">Aucune promotion ne suit l'année ${esc(d.annee)}.</div>`}`;
+}
+
+function exportDelegues() {
+    const d = _delegData;
+    if (!d) return;
+    const roles = d.roles || _CONSEIL_ROLES_DEFAUT;
+    const lignes = [];
+    d.promotions.forEach(p => p.sieges.forEach(s => roles.forEach(r => {
+        const e = s[r.value];
+        if (!e && s.hors_nombre) return;
+        lignes.push([d.annee, p.promotion, _delegNiveau(p.year), s.siege, r.label,
+                     e ? e.nom : '', e ? e.prenom : '', e ? e.numero : '', e ? e.formation : '',
+                     e ? _conseilAlerte(e) : 'à désigner']);
+    })));
+    _etuCsv(`delegues_${d.annee}.csv`, [['Année', 'Promotion', 'Niveau', 'Siège', 'Rôle', 'Nom', 'Prénom',
+                                         'N° Apogée', 'FTP/ALT', 'Remarque']].concat(lignes));
+}
+
+// Depuis la vue Délégués : l'effectif de la promotion, à l'année montrée.
+function ouvrirConseilPromo(pid, year) {
+    _promoId = pid;
+    _effYearForce = year;
+    if (_promoTabAllowed('effectif')) { _promoTab = 'effectif'; _syncPromoSubtabs(); }
+    showPage('promotions');
 }
 
 // Renvoi vers l'onglet Devenir : l'effectif signale ce qu'il reste à trancher,
@@ -7753,13 +7967,14 @@ let _etuSelected = null;          // étudiant ouvert en fiche, null = la liste
 // Vue de l'onglet : tableau, trombinoscope, étudiants à convoquer ou signalements
 // (gardée d'une visite à l'autre)
 let _etuVue = (() => { try { const v = localStorage.getItem('etuVue');
-                             return ['trombi', 'convoquer', 'signalements'].includes(v) ? v : 'liste'; }
+                             return ['trombi', 'delegues', 'convoquer', 'signalements'].includes(v) ? v : 'liste'; }
                        catch (e) { return 'liste'; } })();
 
-// Vues ouvertes à la session : la liste et le trombinoscope (etu:liste), la liste
-// des étudiants à convoquer (etu:convoquer), les signalements (etu:suivi)
+// Vues ouvertes à la session : la liste, le trombinoscope et les délégués
+// (etu:liste), la liste des étudiants à convoquer (etu:convoquer), les
+// signalements (etu:suivi)
 function _etuVuesPermises() {
-    return (tabHidden('etu:liste') ? [] : ['liste', 'trombi'])
+    return (tabHidden('etu:liste') ? [] : ['liste', 'trombi', 'delegues'])
         .concat(tabHidden('etu:convoquer') ? [] : ['convoquer'])
         .concat(tabHidden('etu:suivi') ? [] : ['signalements']);
 }
@@ -7773,6 +7988,7 @@ function _etuVuesBoutons() {
         title="${esc(titre)}">${libelle}</button>` : '';
     return `<span style="display:inline-flex;gap:4px">${vue('liste', 'Liste', 'Un étudiant par ligne, triable')}${
         vue('trombi', 'Trombinoscope', 'Les photos, par ordre alphabétique')}${
+        vue('delegues', 'Délégués', "Les délégués au conseil de département et leurs suppléants, toutes promotions, pour une année universitaire")}${
         vue('convoquer', 'À convoquer' + (nb ? ` (${nb})` : ''),
             "Les étudiants que les critères de suivi désignent (notes, baisse, assiduité, signalements), et leur convocation")}${
         vue('signalements', 'Signalements' + (nbSig ? ` (${nbSig})` : ''),
@@ -7890,8 +8106,9 @@ function renderEtudiants() {
     const permises = _etuVuesPermises();
     if (permises.length && !permises.includes(_etuVue)) _etuVue = permises[0];
     const filtres = document.getElementById('etu-filtres');
-    if (filtres) filtres.style.display = _etuSelected || ['convoquer', 'signalements'].includes(_etuVue) ? 'none' : '';
+    if (filtres) filtres.style.display = _etuSelected || ['delegues', 'convoquer', 'signalements'].includes(_etuVue) ? 'none' : '';
     if (_etuSelected) return renderEtudiantFiche();
+    if (_etuVue === 'delegues') return !_delegData ? loadDelegues() : renderDelegues();
     if (_etuVue === 'convoquer') return !_convData || _convPerime ? loadConvoquer() : renderConvoquer();
     if (_etuVue === 'signalements') return !_sigData || _sigPerime ? loadSignalements() : renderSignalements();
     if (!permises.length) {
@@ -9566,7 +9783,10 @@ function teteAnnee(a) {
         a.en_cours ? etiq('en cours', '#dcfce7', "Année que suit sa cohorte pendant l'année universitaire active") : ''}${
         a.gim != null ? ` <span style="color:#6b7280">— moyenne générale <strong>${a.gim.toFixed(2)}</strong></span>` : ''}${
         a.mobilite ? etiq('MI ' + a.mobilite.semester, '#cffafe', 'Mobilité internationale'
-            + (a.mobilite.etablissement ? ' — ' + a.mobilite.etablissement : '')) : ''}`;
+            + (a.mobilite.etablissement ? ' — ' + a.mobilite.etablissement : '')) : ''}${
+        a.conseil ? etiq(a.conseil.role === 'TITULAIRE' ? 'délégué au conseil' : 'suppléant au conseil', '#fce7f3',
+            (a.conseil.role === 'TITULAIRE' ? 'Délégué' : 'Suppléant')
+            + ' au conseil de département cette année — siège ' + a.conseil.siege) : ''}`;
 }
 
 // ===== Notes de toute la scolarité =====

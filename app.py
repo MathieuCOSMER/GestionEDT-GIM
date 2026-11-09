@@ -1767,6 +1767,36 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
         )
     ''')
+    # Délégués étudiants au conseil de département, par promotion et par ANNÉE d'étude
+    # (l'élection se refait chaque année). Le nombre de délégués se fixe par promotion
+    # et par année — sans ligne, celui de l'année précédente de la cohorte vaut (cf
+    # _conseil_nb) ; chaque délégué a son suppléant, d'où des SIÈGES numérotés qui
+    # portent chacun un délégué (TITULAIRE) et un suppléant (SUPPLEANT).
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS conseil_sieges (
+            promotion_id INTEGER NOT NULL,
+            year         INTEGER NOT NULL CHECK (year IN (1, 2, 3)),
+            nb           INTEGER NOT NULL CHECK (nb BETWEEN 0 AND 20),
+            PRIMARY KEY (promotion_id, year),
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE
+        )
+    ''')
+    # Un étudiant n'occupe qu'une place par année (UNIQUE) ; attaché à sa fiche de
+    # cohorte, il disparaît avec elle.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS conseil_elus (
+            promotion_id INTEGER NOT NULL,
+            year         INTEGER NOT NULL CHECK (year IN (1, 2, 3)),
+            siege        INTEGER NOT NULL CHECK (siege >= 1),
+            role         TEXT NOT NULL CHECK (role IN ('TITULAIRE', 'SUPPLEANT')),
+            student_id   INTEGER NOT NULL,
+            updated_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (promotion_id, year, siege, role),
+            UNIQUE (promotion_id, year, student_id),
+            FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
     # Origine OFFICIELLE de la note matière, par matière × face (voir
     # _matiere_sources) : 'saisie' = calculée depuis les sous-notes (onglet
     # Saisie Notes), 'import' = importée / saisie à la main dans Bulletins.
@@ -5629,6 +5659,7 @@ def _student_parcours(pdb, person_id):
         ref_all = _promo_coeffs(pdb, pid) or {}
         noms_ue = {v: k for k, v in comp['nums'].items()}
         mob = _mobility_map(pdb, pid).get(f['id']) or {}
+        conseil = _conseil_map(pdb, pid)
         nb_notes = pdb.execute('SELECT COUNT(*) FROM student_marks WHERE student_id=?',
                                (f['id'],)).fetchone()[0]
         annees = []
@@ -5724,6 +5755,8 @@ def _student_parcours(pdb, person_id):
                            # Moyenne générale de l'année : moyenne des moyennes
                            # annuelles d'UE, comme dans la grille de jury.
                            'gim': round(sum(moyennes) / len(moyennes), 2) if moyennes else None,
+                           'conseil': dict(zip(('siege', 'role'), conseil[(f['id'], y)]))
+                                      if (f['id'], y) in conseil else None,
                            'mobilite': {'semester': sm, 'etablissement': mob.get(sm)}
                                        if (sm := next((x for x in (so, se) if x in mob), None)) else None})
         devenir = _devenir_last(pdb, pid).get(f['id'])
@@ -7339,6 +7372,7 @@ def _year_effectif_payload(pdb, pid, year):
     # Étudiants dont le dossier de candidature complet (CSV ParcourSup) est importé :
     # les autres ont leurs informations à compléter à la main.
     avec_dossier = {r['person_id'] for r in pdb.execute('SELECT person_id FROM student_candidature')}
+    conseil = _conseil_map(pdb, pid, year)
     students = []
     for r in pdb.execute('''SELECT s.id, s.person_id, s.statut,
                                    s.abandon_semaine, s.abandon_annee,
@@ -7355,6 +7389,8 @@ def _year_effectif_payload(pdb, pid, year):
         d['origin'] = origins.get(r['id'])
         d['nb_notes'] = nb_notes.get(r['id'], 0)
         d['dossier_candidature'] = r['person_id'] in avec_dossier
+        # Délégué ou suppléant au conseil de département cette année, et son siège
+        d['conseil_siege'], d['conseil'] = conseil.get((r['id'], year), (None, None))
         # Dossier ParcourSup abrégé pour l'affichage ; la valeur complète reste
         # dans le champ d'origine, que le tableau donne en infobulle.
         d['ps_court'] = {f: _ps_court(f, d.get(f)) for f in _PS_FIELDS}
@@ -7398,6 +7434,8 @@ def _year_effectif_payload(pdb, pid, year):
             'status_choices': _STUDENT_STATUS_CHOICES,
             'semesters': _PROMO_SEMESTERS, 'years': [1, 2, 3],
             'abandon_semaines': _promo_year_weeks(pdb, pid, year),
+            'conseil_roles': [{'value': k, 'label': v} for k, v in _CONSEIL_ROLES.items()],
+            'conseil': _conseil_payload(pdb, pid, year),
             'profile_options': {k: list(v) for k, v in _STUDENT_PROFILE.items()},
             'profile_labels': _profile_labels_all(),
             # Colonnes du groupe « Scolarité antérieure », dans l'ordre où le
@@ -7479,6 +7517,10 @@ def export_year_effectif(pid, year):
                 notes.append(f'entré directement en année {year}')
             if s.get('manual') == 'add':
                 notes.append('ajouté manuellement')
+            if s.get('conseil'):
+                notes.append('%s au conseil de département (siège %s)'
+                             % (_CONSEIL_ROLES.get(s['conseil'], s['conseil']).lower(),
+                                s.get('conseil_siege') or '?'))
             values = ([n, s.get('nom') or '', s.get('prenom') or '', s.get('numero') or '',
                        s.get('naissance') or '', s.get('sexe') or '', s.get('recrutement') or '']
                       + [s.get(fld) if s.get(fld) is not None else '' for fld, _l in scol]
@@ -10235,6 +10277,172 @@ def set_student_mobility(pid, sid):
     _audit('MOBILITY', ip=_client_ip(), user=session.get('user'),
            promo=pid, student=sid, year=year, semester=sem or '-')
     return jsonify(_year_effectif_payload(pdb, pid, year))
+
+# ===== DÉLÉGUÉS AU CONSEIL DE DÉPARTEMENT =====
+# Par promotion et par année d'étude : un nombre de délégués (conseil_sieges),
+# chacun avec son suppléant — autant de suppléants que de délégués. Les places
+# sont des SIÈGES numérotés, qui portent un délégué et un suppléant.
+_CONSEIL_ROLES = {'TITULAIRE': 'Délégué', 'SUPPLEANT': 'Suppléant'}
+_CONSEIL_NB_DEFAUT = 1          # tant que rien n'est fixé pour la cohorte
+_CONSEIL_NB_MAX = 20
+
+def _conseil_map(pdb, pid, year=None):
+    """{(student_id, année): (siège, rôle)} des délégués et suppléants d'une
+    promotion, restreint à `year` s'il est fourni."""
+    sql = 'SELECT student_id, year, siege, role FROM conseil_elus WHERE promotion_id=?'
+    args = [pid]
+    if year:
+        sql += ' AND year=?'
+        args.append(year)
+    return {(r['student_id'], r['year']): (r['siege'], r['role']) for r in pdb.execute(sql, args)}
+
+def _conseil_nb(pdb, pid, year):
+    """(nombre de délégués de l'année, année où ce nombre a été fixé). Sans ligne
+    pour l'année, celui de la dernière année antérieure de la cohorte vaut : il se
+    fixe une fois et se reprend d'une année sur l'autre. Rien de fixé : le défaut,
+    et None pour l'année."""
+    r = pdb.execute('''SELECT nb, year FROM conseil_sieges WHERE promotion_id=? AND year<=?
+                       ORDER BY year DESC LIMIT 1''', (pid, year)).fetchone()
+    return (r['nb'], r['year']) if r else (_CONSEIL_NB_DEFAUT, None)
+
+def _conseil_payload(pdb, pid, year):
+    """Sièges d'une année : le nombre de délégués et, siège par siège, la fiche
+    (promotion_students.id) du délégué et celle du suppléant, ou None.
+
+    Un siège occupé au-delà du nombre (réduit sur une année antérieure dont
+    celle-ci reprend le nombre) reste listé, marqué `hors_nombre` : rien ne
+    s'efface sans qu'on retire soi-même ses élus."""
+    nb, fixe_en = _conseil_nb(pdb, pid, year)
+    places = {(r['siege'], r['role']): r['student_id'] for r in pdb.execute(
+        'SELECT siege, role, student_id FROM conseil_elus WHERE promotion_id=? AND year=?', (pid, year))}
+    n = max([nb] + [s for s, _r in places])
+    sieges = []
+    for i in range(1, n + 1):
+        place = {'siege': i, 'hors_nombre': i > nb}
+        place.update({role: places.get((i, role)) for role in _CONSEIL_ROLES})
+        sieges.append(place)
+    return {'nb': nb, 'fixe_en': fixe_en, 'herite': fixe_en is not None and fixe_en != year,
+            'sieges': sieges}
+
+@app.route('/api/promotions/<int:pid>/conseil/<int:year>', methods=['PUT'])
+def set_conseil_nb(pid, year):
+    """Nombre de délégués d'une promotion pour une année : {nb}. Il vaut aussi pour
+    les années suivantes qui n'en ont pas de propre. Refusé s'il laisserait des élus
+    sur un siège supprimé : on retire d'abord ces élus."""
+    err = _require_admin()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    pdb = get_promotions_db()
+    if not pdb.execute('SELECT 1 FROM promotions WHERE id=?', (pid,)).fetchone():
+        return error_response('Promotion introuvable', 404)
+    try:
+        nb = int((request.get_json() or {}).get('nb'))
+    except (TypeError, ValueError):
+        return error_response('Nombre de délégués invalide', 400)
+    if not 0 <= nb <= _CONSEIL_NB_MAX:
+        return error_response(f'Le nombre de délégués va de 0 à {_CONSEIL_NB_MAX}', 400)
+    occupe = pdb.execute('SELECT MAX(siege) FROM conseil_elus WHERE promotion_id=? AND year=?',
+                         (pid, year)).fetchone()[0] or 0
+    if occupe > nb:
+        return error_response(f"Le siège {occupe} est occupé : retirez d'abord son délégué et son "
+                              f"suppléant pour passer à {nb} délégué(s).", 409)
+    pdb.execute('''INSERT INTO conseil_sieges(promotion_id, year, nb) VALUES(?,?,?)
+                   ON CONFLICT(promotion_id, year) DO UPDATE SET nb=excluded.nb''', (pid, year, nb))
+    pdb.commit()
+    _audit('CONSEIL_SIEGES', ip=_client_ip(), user=session.get('user'), promo=pid, year=year, nb=nb)
+    return jsonify(_year_effectif_payload(pdb, pid, year))
+
+@app.route('/api/promotions/<int:pid>/conseil/<int:year>/<int:siege>', methods=['PUT'])
+def set_conseil_siege(pid, year, siege):
+    """Occupant d'une place : {role, student_id}. `role` = TITULAIRE (délégué) ou
+    SUPPLEANT ; `student_id` vide libère la place. Un étudiant déjà placé ailleurs
+    la même année quitte son ancienne place : il n'en occupe qu'une."""
+    err = _require_admin()
+    if err:
+        return err
+    if year not in (1, 2, 3):
+        return error_response('Année invalide', 400)
+    pdb = get_promotions_db()
+    data = request.get_json() or {}
+    role = (data.get('role') or '').strip().upper()
+    if role not in _CONSEIL_ROLES:
+        return error_response('Rôle invalide (délégué ou suppléant)', 400)
+    sid = data.get('student_id')
+    if sid in (None, '', 0, '0'):
+        pdb.execute('DELETE FROM conseil_elus WHERE promotion_id=? AND year=? AND siege=? AND role=?',
+                    (pid, year, siege, role))
+        sid = None
+    else:
+        try:
+            sid = int(sid)
+        except (TypeError, ValueError):
+            return error_response('Étudiant invalide', 400)
+        if not pdb.execute('SELECT 1 FROM promotion_students WHERE id=? AND promotion_id=?',
+                           (sid, pid)).fetchone():
+            return error_response('Étudiant introuvable', 404)
+        nb, _fixe = _conseil_nb(pdb, pid, year)
+        if not 1 <= siege <= nb:
+            return error_response(f'Siège {siege} hors du nombre de délégués ({nb})', 400)
+        pdb.execute('DELETE FROM conseil_elus WHERE promotion_id=? AND year=? AND student_id=?',
+                    (pid, year, sid))
+        pdb.execute('''INSERT INTO conseil_elus(promotion_id, year, siege, role, student_id)
+                       VALUES(?,?,?,?,?)
+                       ON CONFLICT(promotion_id, year, siege, role)
+                       DO UPDATE SET student_id=excluded.student_id, updated_at=CURRENT_TIMESTAMP''',
+                    (pid, year, siege, role, sid))
+    pdb.commit()
+    _audit('CONSEIL_ELU', ip=_client_ip(), user=session.get('user'),
+           promo=pid, year=year, siege=siege, role=role, student=sid or '-')
+    return jsonify(_year_effectif_payload(pdb, pid, year))
+
+@app.route('/api/conseil', methods=['GET'])
+def conseil_overview():
+    """Délégués de toutes les promotions pour une année universitaire (?annee=
+    AAAA-AAAA, l'année active par défaut) : chaque cohorte qui la suit, à son
+    année d'étude, avec ses sièges et leurs occupants."""
+    err = _require_promo_read()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    starts = [r['start_year'] for r in pdb.execute('SELECT start_year FROM promotions') if r['start_year']]
+    annees = sorted({'%d-%d' % (s + k, s + k + 1) for s in starts for k in range(3)}, reverse=True)
+    active = get_current_year() or ''
+    annee = (request.args.get('annee') or active or (annees[0] if annees else '')).strip()
+    if not re.match(r'^\d{4}-\d{4}$', annee):
+        return error_response('Année universitaire invalide', 400)
+    debut = int(annee[:4])
+    promos = []
+    for p in pdb.execute('SELECT id, name, start_year FROM promotions ORDER BY start_year DESC, name').fetchall():
+        y = debut - (p['start_year'] or 0) + 1
+        if y not in (1, 2, 3):
+            continue
+        cons = _conseil_payload(pdb, p['id'], y)
+        ids = sorted({sid for s in cons['sieges'] for sid in (s[r] for r in _CONSEIL_ROLES) if sid})
+        fiches = {}
+        if ids:
+            # De quoi signaler l'élu qui n'est plus dans l'effectif de l'année
+            # (départ, retrait) ou qui l'a quitté pour une césure ou un abandon.
+            roster = _year_rosters(pdb, p['id'], _jury_compute(pdb, p['id'])).get(y, set())
+            fm = _year_formation_map(pdb, p['id'], y)
+            for r in pdb.execute('''SELECT s.id, s.person_id, s.statut, s.formation, s.cesure_year, %s
+                                    FROM promotion_students s %s WHERE s.id IN (%s)'''
+                                 % (_person_sql(), _FICHE_JOIN, ','.join('?' * len(ids))), ids):
+                cesure = r['cesure_year'] == y
+                fiches[r['id']] = {'id': r['id'], 'person_id': r['person_id'],
+                                   'nom': r['nom'], 'prenom': r['prenom'], 'numero': r['numero'],
+                                   'formation': fm.get(r['id'], r['formation'] or 'FTP'),
+                                   'statut': r['statut'], 'cesure': cesure,
+                                   'hors_annee': not cesure and r['id'] not in roster}
+        for s in cons['sieges']:
+            for role in _CONSEIL_ROLES:
+                s[role] = fiches.get(s[role]) if s[role] else None
+        promos.append(dict(cons, promotion_id=p['id'], promotion=p['name'],
+                           start_year=p['start_year'], year=y))
+    return jsonify({'annee': annee, 'active': active, 'annees': annees,
+                    'roles': [{'value': k, 'label': v} for k, v in _CONSEIL_ROLES.items()],
+                    'promotions': promos})
 
 def _origin_links(pdb, pid, reason=None):
     """{student_id: (origin_student_id, origin_promotion_id, entry_year)} pour les
