@@ -7209,6 +7209,14 @@ def trombi_pdf_liste():
         return error_response('Aucun étudiant à mettre dans le trombinoscope', 400)
     return _trombi_reponse(sections, request.args.get('fichier'), titre)
 
+def _suit_annee(s, year):
+    """L'étudiant de l'effectif (`_year_effectif_payload`) suit-il l'année d'étude ?
+    Ni hors effectif, ni en césure, ni parti : un abandon compte à partir de son
+    année ; l'année inconnue, il est écarté."""
+    if s.get('hors_annee') or s.get('cesure'):
+        return False
+    return not (s.get('statut') == 'Abandon' and (s.get('abandon_annee') or year) <= year)
+
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>/trombi.pdf', methods=['GET'])
 def trombi_pdf_effectif(pid, year):
     """Le trombinoscope d'une promotion pour une année d'étude : ceux qui suivent
@@ -7227,12 +7235,7 @@ def trombi_pdf_effectif(pid, year):
     nom = promo.get('name') or 'promo %d' % pid
     debut = (promo.get('start_year') or 0) + year - 1
 
-    def present(s):
-        if s.get('hors_annee') or s.get('cesure') or not s.get('person_id'):
-            return False
-        # Un abandon compte à partir de son année ; l'année inconnue, il est écarté.
-        return not (s.get('statut') == 'Abandon' and (s.get('abandon_annee') or year) <= year)
-    presents = [s for s in payload['students'] if present(s)]
+    presents = [s for s in payload['students'] if s.get('person_id') and _suit_annee(s, year)]
     titre = _trombi_titre(year)
     sections = []
     for cle, libelle in _TROMBI_SECTIONS:
@@ -7885,30 +7888,164 @@ def _alt_doc_promotion(pdb, cle):
         return True, int(m[1])
     return False, None
 
-@app.route('/api/alternance/documents', methods=['GET'])
-def get_alternance_documents():
-    """Le livret des promotions présentes l'année ?annee=AAAA-AAAA (défaut : celle de
-    la session) et les modèles, avec le fichier déposé pour chacun, sans son contenu."""
-    voir, modifier = _alt_docs_droits()
-    if not voir:
-        return error_response('Réservé aux enseignants titulaires', 403)
+def _alt_docs_annee():
+    """(année universitaire, année de début) lues dans ?annee=AAAA-AAAA, défaut :
+    celle de la session ; début None si elle est inconnue."""
     annee = (request.args.get('annee') or '').strip()
     if not _is_year(annee):
         annee = get_current_year() or ''
     try:
-        start = int(annee[:4])
+        return annee, int(annee[:4])
     except ValueError:
+        return annee, None
+
+# Feuille d'émargement : la feuille d'appel du département pour les semaines de
+# présence des apprentis, générée à la demande avec les apprentis de l'année
+# (l'effectif fait foi, rien n'est stocké). Modèle Word data/emargement_alternance.docx,
+# tiré de la feuille d'origine sans ses noms ; repères : {ANNEE}, {NIVEAU}, {GP_TITRE},
+# et la ligne d'apprenti {NOM} / {GP}, recopiée autant de fois qu'il y a d'apprentis.
+_EMARGEMENT_MODELE = os.path.join(_BASE_DIR, 'data', 'emargement_alternance.docx')
+# Place des lignes d'apprentis sur la page (twips), vérifiée en rendu Word : avec le
+# cadre du bas et la consigne de remise, une page tient jusqu'à 25 apprentis
+_EMARGEMENT_HAUTEUR = 9600
+_EMARGEMENT_LIGNE = (380, 567)  # hauteur d'une ligne : au moins (6,7 mm), au plus (1 cm)
+_EMARGEMENT_FAMILLES = ('TP12', 'TP8')   # groupes de TP, cherchés dans cet ordre
+
+def _emargement_apprentis(pdb, pid, yg):
+    """Apprentis qui suivent l'année d'étude, dans l'ordre de l'effectif (alphabétique)."""
+    payload = _year_effectif_payload(pdb, pid, yg)
+    return [s for s in (payload or {}).get('students', [])
+            if _face(s.get('formation')) == 'ALT' and _suit_annee(s, yg)]
+
+def _emargement_semestres(start, yg):
+    """Les deux semestres de l'année d'étude, celui dont la feuille reprend les
+    groupes d'abord : le pair une fois commencé si l'année est en cours, le pair
+    aussi pour une année passée, l'impair sinon."""
+    impair, pair = f'S{2 * yg - 1}', f'S{2 * yg}'
+    today = datetime.now().date()
+    courante = today.year if today.month >= 8 else today.year - 1
+    if start == courante:
+        w = today.isocalendar()[1]
+        # Début janvier, la semaine ISO peut encore être la 53 de l'année d'avant
+        au_pair = today.month < 8 and w < 50 and w >= get_year_config()['semester_even_start_week']
+    else:
+        au_pair = start < courante
+    return (pair, impair) if au_pair else (impair, pair)
+
+def _emargement_groupes(pdb, ids, semestres):
+    """(semestre, {student_id: groupe}) : les groupes de TP entre lesquels les
+    apprentis se partagent, au premier des semestres où leurs groupes sont faits.
+    Tous dans le même groupe (ou rien de réparti) : (None, {}), pas de colonne."""
+    if not ids:
+        return None, {}
+    marques = ','.join('?' * len(ids))
+    for sem in semestres:
+        rows = pdb.execute(f'''SELECT student_id, famille, groupe FROM student_groupes
+                               WHERE semestre = ? AND student_id IN ({marques})''',
+                           (sem, *ids)).fetchall()
+        if not rows:
+            continue
+        for fam in _EMARGEMENT_FAMILLES:
+            m = {r['student_id']: r['groupe'] for r in rows if r['famille'] == fam and r['groupe']}
+            if len(set(m.values())) > 1:
+                return sem, m
+        return None, {}
+    return None, {}
+
+def _emargement_nom(s):
+    """« NOM Prénom », comme sur la feuille : un prénom saisi en capitales est remis
+    en casse ordinaire (JEAN-PIERRE → Jean-Pierre), un autre est gardé tel quel."""
+    nom = ' '.join(str(s.get('nom') or '').split()).upper()
+    prenom = ' '.join(str(s.get('prenom') or '').split())
+    if prenom == prenom.upper():
+        prenom = re.sub(r'[^\W\d_]+', lambda m: m[0].capitalize(), prenom)
+    return f'{nom} {prenom}'.strip()
+
+def _emargement_docx(annee, yg, lignes, titre_groupe):
+    """Le .docx de la feuille : le modèle rempli, une ligne par (nom, groupe)."""
+    def xml(t):
+        return str(t).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    with zipfile.ZipFile(_EMARGEMENT_MODELE) as z:
+        parts = [(i, z.read(i.filename)) for i in z.infolist()]
+    doc = next(d for i, d in parts if i.filename == 'word/document.xml').decode('utf-8')
+    for repere, valeur in (('{ANNEE}', annee), ('{NIVEAU}', f'{yg}° ANNÉE'),
+                           ('{GP_TITRE}', titre_groupe)):
+        doc = doc.replace(repere, xml(valeur))
+    k = doc.index('{NOM}')
+    debut = [m.start() for m in re.finditer(r'<w:tr[ >]', doc[:k])][-1]
+    fin = doc.index('</w:tr>', k) + len('</w:tr>')
+    modele = doc[debut:fin]
+    # Plus il y a d'apprentis, plus les lignes sont basses : la feuille tient sur une page
+    bas, haut = _EMARGEMENT_LIGNE
+    h = min(haut, max(bas, _EMARGEMENT_HAUTEUR // max(1, len(lignes))))
+    modele = re.sub(r'<w:trHeight w:val="\d+"/>', f'<w:trHeight w:val="{h}"/>', modele)
+    rangs = ''.join(modele.replace('{NOM}', xml(nom)).replace('{GP}', xml(gp)) for nom, gp in lignes)
+    doc = doc[:debut] + rangs + doc[fin:]
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+        for i, d in parts:
+            z.writestr(i, doc.encode('utf-8') if i.filename == 'word/document.xml' else d)
+    return out.getvalue()
+
+def _groupe_court(nom):
+    """Numéro du groupe (TP12_2 → 2), le nom entier s'il n'en a pas."""
+    m = re.search(r'_(\d+)$', nom or '')
+    return m[1] if m else (nom or '')
+
+@app.route('/api/alternance/documents', methods=['GET'])
+def get_alternance_documents():
+    """Le livret des promotions présentes l'année ?annee=AAAA-AAAA (défaut : celle de
+    la session) et les modèles, avec le fichier déposé pour chacun, sans son contenu ;
+    pour la feuille d'émargement de chaque promotion, générée à la demande : le
+    nombre d'apprentis et le semestre dont elle reprend les groupes de TP."""
+    voir, modifier = _alt_docs_droits()
+    if not voir:
+        return error_response('Réservé aux enseignants titulaires', 403)
+    annee, start = _alt_docs_annee()
+    if start is None:
         return error_response('Année universitaire inconnue', 400)
     pdb = get_promotions_db()
     fichiers = {r['cle']: dict(r) for r in pdb.execute(
         'SELECT cle, nom, taille, auteur, updated_at FROM alternance_documents')}
+    cohortes = _suivi_cohorts(pdb, start)
+    emargements = []
+    for pid, nom, yg in cohortes:
+        gens = _emargement_apprentis(pdb, pid, yg)
+        sem, _ = _emargement_groupes(pdb, [s['id'] for s in gens], _emargement_semestres(start, yg))
+        emargements.append({'pid': pid, 'promotion': nom, 'annee_etude': yg,
+                            'apprentis': len(gens), 'groupes': sem})
     return jsonify({
         'annee': annee, 'modifiable': modifier,
         'livrets': [{'cle': f'livret_{pid}', 'promotion': nom, 'annee_etude': yg,
                      'fichier': fichiers.get(f'livret_{pid}')}
-                    for pid, nom, yg in _suivi_cohorts(pdb, start)],
+                    for pid, nom, yg in cohortes],
+        'emargements': emargements,
         'modeles': [{'cle': cle, 'titre': titre, 'fichier': fichiers.get(cle)}
                     for cle, titre in _ALT_MODELES]})
+
+@app.route('/api/alternance/emargement/<int:pid>', methods=['GET'])
+def get_alternance_emargement(pid):
+    """La feuille d'émargement (Word) d'une promotion pour l'année ?annee=AAAA-AAAA
+    (défaut : celle de la session), avec ses apprentis de l'année et, s'ils se
+    partagent entre plusieurs groupes de TP, le groupe de chacun."""
+    if not _alt_docs_droits()[0]:
+        return error_response('Réservé aux enseignants titulaires', 403)
+    annee, start = _alt_docs_annee()
+    if start is None:
+        return error_response('Année universitaire inconnue', 400)
+    pdb = get_promotions_db()
+    yg = next((y for p, _, y in _suivi_cohorts(pdb, start) if p == pid), None)
+    if yg is None:
+        return error_response("Cette promotion n'est pas présente cette année-là", 404)
+    gens = _emargement_apprentis(pdb, pid, yg)
+    if not gens:
+        return error_response("Aucun apprenti dans cette promotion cette année-là", 404)
+    _, groupes = _emargement_groupes(pdb, [s['id'] for s in gens], _emargement_semestres(start, yg))
+    data = _emargement_docx(annee, yg, [(_emargement_nom(s), _groupe_court(groupes.get(s['id'])))
+                                        for s in gens], 'Gp TP' if groupes else '')
+    return send_file(io.BytesIO(data), as_attachment=True,
+                     download_name=f'Emargement APP{yg} {annee}.docx',
+                     mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
 
 @app.route('/api/alternance/documents/<cle>', methods=['GET'])
 def get_alternance_document(cle):

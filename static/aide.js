@@ -1490,11 +1490,15 @@ function _aideSuivi() {
         </ul>` },
     { id: 'alt-documents', rub: R, titre: 'Documents de l\'alternance', chemin: 'Alternance › Documents',
       onglet: 'nav:alternance', cible: 'alternance/documents',
-      mots: 'documents livret alternance feuille de visite fiche navette évaluation saé modèle télécharger déposer remplacer',
+      mots: 'documents livret alternance feuille de visite fiche navette évaluation saé modèle télécharger déposer remplacer émargement emargement feuille d\'appel présence apprentis',
       html: `
         <p>Le sous-onglet ${_aUi('Documents')} réunit ce qu'il faut pour suivre un alternant :</p>
         <ul>
             <li>le <b>livret d'alternance</b> de chaque promotion présente l'année affichée ;</li>
+            <li>la <b>feuille d'émargement</b> de chaque promotion (Word), faite au moment du téléchargement avec les apprentis
+                de l'année affichée : un apprenti ajouté à l'effectif, parti ou en césure y est pris en compte sans rien déposer.
+                Si les apprentis se partagent entre plusieurs groupes de TP, une colonne donne le groupe de chacun
+                (celui du semestre en cours) ;</li>
             <li>les modèles communs : <b>feuille de visite</b>, <b>fiche navette</b> et <b>fiche d'évaluation SAÉ</b>.</li>
         </ul>
         <p>Les <b>enseignants titulaires</b> connectés avec leur mot de passe les téléchargent ; les vacataires ne voient pas ce sous-onglet.</p>

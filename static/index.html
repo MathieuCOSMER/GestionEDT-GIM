@@ -6020,8 +6020,15 @@ async function submitSuivi(ev) {
 // ----- Statistiques : couverture, suivis par enseignant, départements, entreprises -----
 // ----- Alternance › Documents -----
 // Le livret de chaque promotion de l'année affichée et les modèles à remplir :
-// téléchargés par les titulaires, déposés par le responsable de l'alternance et l'admin.
+// téléchargés par les titulaires, déposés par le responsable de l'alternance et
+// l'admin. La feuille d'émargement, elle, est générée par le serveur avec les
+// apprentis de l'année : rien à déposer.
 let _altDocEnvoi = null;   // emplacement dont le fichier part en ce moment
+
+function _altDocTrouver(cle) {
+    const D = _suiviState('alternance').docs;
+    return [...D.livrets, ...D.modeles].find(d => d.cle === cle);
+}
 
 async function _altDocsCharger(st) {
     // Refus du serveur (enseignant vacataire) : pas de sous-onglet
@@ -6052,13 +6059,25 @@ function _altDocLigne(d, modifiable) {
     return `<tr><td>${titre}</td><td>${fichier}</td><td style="white-space:nowrap;text-align:right">${actions}</td></tr>`;
 }
 
-function _altDocBloc(titre, sous, docs, modifiable) {
+// Feuille d'émargement d'une promotion : générée à chaque téléchargement, elle suit l'effectif
+function _altEmargLigne(e, annee) {
+    const n = e.apprentis;
+    const detail = n
+        ? `${n} apprenti${n > 1 ? 's' : ''}${e.groupes ? `<div style="font-size:.78rem;color:#6b7280">avec leur groupe de TP du ${esc(e.groupes)}</div>` : ''}`
+        : '<span style="color:#9ca3af">Aucun apprenti cette année-là</span>';
+    const bouton = n ? `<a class="btn btn-primary btn-sm" style="text-decoration:none"
+        href="/api/alternance/emargement/${e.pid}?annee=${encodeURIComponent(annee)}">Télécharger</a>` : '';
+    return `<tr><td><strong>Promotion ${esc(e.promotion)}</strong><div style="font-size:.78rem;color:#6b7280">${_suiviYearLabel(e.annee_etude)}</div></td>
+        <td>${detail}</td><td style="white-space:nowrap;text-align:right">${bouton}</td></tr>`;
+}
+
+function _altDocBloc(titre, sous, docs, ligne, colonne = 'Fichier') {
     return `<h3 style="margin:16px 0 2px;color:#374151">${esc(titre)}</h3>
         <div style="font-size:.82rem;color:#6b7280;margin-bottom:6px">${esc(sous)}</div>
         ${docs.length ? `<div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px">
         <table class="pn-table" style="table-layout:auto;width:100%;margin:0">
-            <thead><tr><th style="width:26%">Document</th><th>Fichier</th><th style="width:1%"></th></tr></thead>
-            <tbody>${docs.map(d => _altDocLigne(d, modifiable)).join('')}</tbody>
+            <thead><tr><th style="width:26%">Document</th><th>${esc(colonne)}</th><th style="width:1%"></th></tr></thead>
+            <tbody>${docs.map(ligne).join('')}</tbody>
         </table></div>` : '<div class="empty">Aucune promotion cette année-là.</div>'}`;
 }
 
@@ -6069,8 +6088,12 @@ function renderAltDocuments() {
                accept=".pdf,.doc,.docx,.odt,.rtf,.xls,.xlsx,.ods">
            <div style="font-size:.85rem;color:#6b7280;margin-top:8px">PDF, Word, Excel ou OpenDocument, 15 Mo au plus.
                Un nouveau dépôt remplace le fichier précédent.</div>` : '')
-        + _altDocBloc("Livrets d'alternance", `Un livret par promotion présente en ${D.annee}`, D.livrets, D.modifiable)
-        + _altDocBloc('Modèles', 'Communs à toutes les promotions', D.modeles, D.modifiable);
+        + _altDocBloc("Livrets d'alternance", `Un livret par promotion présente en ${D.annee}`, D.livrets,
+                      d => _altDocLigne(d, D.modifiable))
+        + _altDocBloc("Feuilles d'émargement",
+                      `Une feuille par promotion, faite au téléchargement avec ses apprentis de ${D.annee} : elle suit l'effectif`,
+                      D.emargements || [], e => _altEmargLigne(e, D.annee), 'Apprentis')
+        + _altDocBloc('Modèles', 'Communs à toutes les promotions', D.modeles, d => _altDocLigne(d, D.modifiable));
 }
 
 function altDocChoisir(cle) {
@@ -6085,7 +6108,7 @@ async function altDocEnvoyer(input) {
     if (!f || !cle) return;
     if (f.size > 15 * 1024 * 1024) { toast('Fichier trop volumineux (15 Mo au plus)', 'error'); return; }
     const st = _suiviState('alternance');
-    const doc = [...st.docs.livrets, ...st.docs.modeles].find(d => d.cle === cle);
+    const doc = _altDocTrouver(cle);
     if (doc && doc.fichier && !confirm(`Remplacer « ${doc.fichier.nom} » par « ${f.name} » ?`)) return;
     const fd = new FormData();
     fd.append('file', f);
@@ -6109,7 +6132,7 @@ async function altDocEnvoyer(input) {
 
 async function altDocSupprimer(cle) {
     const st = _suiviState('alternance');
-    const doc = [...st.docs.livrets, ...st.docs.modeles].find(d => d.cle === cle);
+    const doc = _altDocTrouver(cle);
     if (!doc || !doc.fichier || !confirm(`Supprimer « ${doc.fichier.nom} » ?`)) return;
     try {
         await api(`/alternance/documents/${encodeURIComponent(cle)}`, { method: 'DELETE' });
