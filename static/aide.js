@@ -952,7 +952,7 @@ function _aidePromotions() {
 
     { id: 'promo-effectifs', rub: R, titre: 'Effectifs', chemin: 'Promotions › Effectifs',
       onglet: 'promo:effectif', cible: 'promotions/effectif',
-      mots: 'effectif étudiants liste statut actif abandon semaine abandon retirer supprimer fiche réintégrer bascule ftp alt mobilité internationale mi profil sexe recrutement scolarité antérieure autres fiches report jury',
+      mots: 'effectif étudiants liste statut actif abandon semaine abandon retirer supprimer fiche réintégrer bascule ftp alt mobilité internationale mi profil sexe recrutement scolarité antérieure autres fiches report jury groupes td tp12 tp8',
       html: () => `
         <p>L'effectif d'une promotion <b>pour une année d'étude</b>, en deux sections : <b>FTP — formation initiale</b> et
         <b>ALT — alternance</b>. Chaque section affiche ses compteurs par statut (${_aStatut('Actif')} ${_aStatut('RED')}
@@ -969,6 +969,9 @@ function _aidePromotions() {
                 (pays, série de bac, années depuis le bac, études antérieures) : ce sont des données de <b>l'étudiant</b>, pas de l'année —
                 elles valent pour toutes les cohortes où il est inscrit. Les colonnes grisées viennent de ParcourSup ;
                 survolez une abréviation pour lire l'intitulé complet.</li>
+            <li><b>Groupes</b> : les groupes de <b>TD</b>, <b>TP12</b> et <b>TP8</b> de l'étudiant au semestre en cours (par exemple « TD_2, TP12_5, TP8_7 »),
+                tels que répartis dans le sous-onglet ${_aLien('promo-groupes', 'Groupes')} ; l'en-tête indique le semestre. Une famille qui n'a qu'un groupe
+                (dans la promotion si le semestre est mutualisé, sinon dans la sous-cohorte) est notée sans numéro : « TD » plutôt que « TD_1 ».</li>
             <li><b>MI</b> : <b>mobilité internationale</b> — le semestre passé dans un établissement partenaire${_aSiModif('promo:effectif',
                 ' (choisissez le semestre, puis le nom de l\'établissement)')}. Les UE de ce semestre sont validées par équivalence, sans note.</li>
             ${_aSiModif('promo:effectif', `<li><b>Statut</b> : ${_aStatut('Actif')} ou ${_aStatut('Abandon')} (avec la <b>semaine</b> d'abandon). ${_aStatut('RED')} et ${_aStatut('Césure')}

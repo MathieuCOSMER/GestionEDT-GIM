@@ -7103,6 +7103,12 @@ function renderPromoEffectif() {
     const marquerSansDossier = _effSansDossier
         || d.students.some(s => !s.hors_annee && s.dossier_candidature);
 
+    // Colonne Groupes : TD, TP12 et TP8 du semestre en cours, répartis dans Promotions › Groupes
+    const groupesTitre = (d.groupes_semestre
+        ? `Groupes de TD, TP12 et TP8 au ${d.groupes_semestre}`
+        : `Groupes de TD, TP12 et TP8 : pas encore répartis en ${(d.year_semesters || []).join(' ni en ')}`)
+        + " (sous-onglet Groupes). Une famille qui n'a qu'un groupe est notée sans « _1 ».";
+
     // Une section par sous-cohorte (FTP / ALT)
     function section(formation) {
         const label = formation === 'FTP' ? 'FTP — formation initiale' : 'ALT — alternance';
@@ -7148,6 +7154,7 @@ function renderPromoEffectif() {
             <td>${profSelect(s, 'sexe')}</td>
             <td>${profSelect(s, 'recrutement')}</td>
             ${scolCols.map(c => scolCell(s, c)).join('')}
+            <td style="white-space:nowrap">${s.groupes_txt ? esc(s.groupes_txt) : '<span style="color:#d1d5db">—</span>'}</td>
             <td style="white-space:nowrap">${miCell(s)}</td>
             <td style="white-space:nowrap"><select onchange="changeStudentStatus(${s.id}, this.value)"${s.statut === 'RED' || s.statut === 'Césure' ? ` title="Statut issu du jury et de son devenir — il se change dans l'onglet Devenir"` : ''}
                 style="padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;background:${_statutColor(s.statut)}">${optList(s.statut)}</select>${semSelect(s)}${cesSelect(s)}</td>
@@ -7165,6 +7172,7 @@ function renderPromoEffectif() {
                             <th rowspan="2" title="Sexe de l'étudiant (M / F)">Sexe</th>
                             <th rowspan="2" title="Voie de recrutement — PS : ParcourSup · EC : eCandidat · ADIUT : candidats étrangers · HP : hors procédure">Recrut.</th>
                             ${scolGroup}
+                            <th rowspan="2" title="${esc(groupesTitre)}">Groupes${d.groupes_semestre ? ' ' + esc(d.groupes_semestre) : ''}</th>
                             <th rowspan="2" title="Mobilité internationale : semestre effectué dans un établissement partenaire. Ses UE sont validées par équivalence, sans note.">MI</th>
                             <th rowspan="2" style="width:190px">Statut</th>
                             <th rowspan="2" style="width:120px" title="Sous-cohorte FTP / ALT, et suppression de la fiche">Cohorte</th></tr>

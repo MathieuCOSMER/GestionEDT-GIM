@@ -7209,6 +7209,62 @@ def trombi_pdf_liste():
         return error_response('Aucun étudiant à mettre dans le trombinoscope', 400)
     return _trombi_reponse(sections, request.args.get('fichier'), titre)
 
+def _semestres_courant_dabord(start, yg):
+    """Les deux semestres de l'année d'étude `yg` suivie l'année universitaire qui
+    commence en `start`, le semestre « en cours » d'abord : le pair une fois commencé
+    si l'année est en cours, le pair aussi pour une année passée, l'impair sinon."""
+    impair, pair = f'S{2 * yg - 1}', f'S{2 * yg}'
+    today = datetime.now().date()
+    courante = today.year if today.month >= 8 else today.year - 1
+    if start == courante:
+        w = today.isocalendar()[1]
+        try:
+            debut_pair = get_year_config()['semester_even_start_week']
+        except Exception:
+            debut_pair = 5
+        # Début janvier, la semaine ISO peut encore être la 53 de l'année d'avant
+        au_pair = today.month < 8 and w < 50 and w >= debut_pair
+    else:
+        au_pair = start < courante
+    return (pair, impair) if au_pair else (impair, pair)
+
+# Colonne Groupes de l'effectif : familles reprises, dans cet ordre
+_EFFECTIF_GROUPES = ('TD', 'TP12', 'TP8')
+
+def _effectif_groupes(pdb, pid, year, start, students):
+    """(semestre, {student_id: 'TD_2, TP12_5, TP8_7'}) : les groupes de TD, TP12 et
+    TP8 de chacun (Promotions › Groupes) au semestre en cours de l'année d'étude, à
+    l'autre si celui-là n'a encore aucun groupe. Une famille qui n'a qu'un groupe —
+    dans la promo si le semestre est mutualisé, sinon dans la sous-cohorte — s'écrit
+    sans son « _1 » : « TD » plutôt que « TD_1 »."""
+    faces = {s['id']: _face(s.get('formation')) for s in students}
+    for sem in _semestres_courant_dabord(start, year):
+        affect = {}
+        for r in pdb.execute('''SELECT g.student_id, g.famille, g.groupe FROM student_groupes g
+                                JOIN promotion_students s ON s.id = g.student_id
+                                WHERE s.promotion_id = ? AND g.semestre = ?''', (pid, sem)):
+            if r['famille'] in _EFFECTIF_GROUPES and r['groupe']:
+                affect.setdefault(r['student_id'], {})[r['famille']] = r['groupe']
+        if not affect:
+            continue
+        svc = _groupes_service(pdb, pid, sem)
+        mutualise = svc['mutualise'] if svc else True
+        def tableau(sid):
+            return None if mutualise else faces.get(sid, 'FTP')
+        vus = {}
+        for sid, gs in affect.items():
+            for fam, g in gs.items():
+                vus.setdefault((tableau(sid), fam), set()).add(g)
+        def libelle(sid, fam, g):
+            # Groupe unique : celui que prévoit le service, sinon le seul qu'on voit
+            t = tableau(sid)
+            attendus = _groupes_attendus(svc, t, fam)
+            seul = len(attendus) == 1 if attendus else len(vus[(t, fam)]) == 1
+            return fam if seul and _groupe_numero(g) == '1' else g
+        return sem, {sid: ', '.join(libelle(sid, f, gs[f]) for f in _EFFECTIF_GROUPES if gs.get(f))
+                     for sid, gs in affect.items()}
+    return None, {}
+
 def _suit_annee(s, year):
     """L'étudiant de l'effectif (`_year_effectif_payload`) suit-il l'année d'étude ?
     Ni hors effectif, ni en césure, ni parti : un abandon compte à partir de son
@@ -7420,6 +7476,10 @@ def _year_effectif_payload(pdb, pid, year):
         v = mob.get(st['id']) or {}
         sem = next((sm for sm in (s_odd, s_even) if sm in v), None)
         st['mobility'] = {'semester': sem, 'etablissement': v.get(sem, '')} if sem else None
+    # Groupes de TD / TP12 / TP8 au semestre en cours, en une colonne (« TD_2, TP12_5, TP8_7 »)
+    sem_groupes, groupes = _effectif_groupes(pdb, pid, year, promo['start_year'] + year - 1, students)
+    for st in students:
+        st['groupes_txt'] = groupes.get(st['id'], '')
     payload_promo = dict(promo)
     # Compteurs de la COHORTE entière (toutes années, tous statuts) : ils alimentent
     # le bandeau de totaux et le « actifs / total » du sélecteur de promotion, qui
@@ -7430,7 +7490,7 @@ def _year_effectif_payload(pdb, pid, year):
     payload_promo['total_fiches'] = cnt['total']
     payload_promo['actifs_fiches'] = cnt['actifs'] or 0
     return {'promotion': payload_promo, 'year': year, 'students': students,
-            'year_semesters': [s_odd, s_even],
+            'year_semesters': [s_odd, s_even], 'groupes_semestre': sem_groupes,
             'sub_counts': sub_counts, 'subcohorts': list(_SUBCOHORTS),
             'total': len(dans_annee), 'hors_annee': len(students) - len(dans_annee),
             'statuses': _STUDENT_STATUSES,
@@ -7496,7 +7556,8 @@ def export_year_effectif(pid, year):
     cols = ([('#', 5), ('Nom', 22), ('Prénom', 18), ('N° Apogée', 14), ('Naissance', 13),
              ('Sexe', 6), ('Recrut.', 10)]
             + [(lbl, _scol_width.get(fld, 14)) for fld, lbl in scol]
-            + [('Statut', 11), ('Semaine abandon', 16), ('Cohorte', 9), ('Remarques', 26)])
+            + [(' '.join(('Groupes', payload.get('groupes_semestre') or '')).strip(), 20),
+               ('Statut', 11), ('Semaine abandon', 16), ('Cohorte', 9), ('Remarques', 26)])
 
     wb = Workbook()
     wb.remove(wb.active)
@@ -7527,7 +7588,8 @@ def export_year_effectif(pid, year):
             values = ([n, s.get('nom') or '', s.get('prenom') or '', s.get('numero') or '',
                        s.get('naissance') or '', s.get('sexe') or '', s.get('recrutement') or '']
                       + [s.get(fld) if s.get(fld) is not None else '' for fld, _l in scol]
-                      + [s.get('statut') or '', _abandon_libelle(s), formation, ' ; '.join(notes)])
+                      + [s.get('groupes_txt') or '', s.get('statut') or '', _abandon_libelle(s),
+                         formation, ' ; '.join(notes)])
             # Colonnes centrées : tout sauf les noms et les listes de spécialités,
             # qui sont des phrases et se lisent alignées à gauche.
             wide = {'ps_specialites', 'ps_spe_abandon', 'ps_spe_bacpro'}
@@ -7917,21 +7979,6 @@ def _emargement_apprentis(pdb, pid, yg):
     return [s for s in (payload or {}).get('students', [])
             if _face(s.get('formation')) == 'ALT' and _suit_annee(s, yg)]
 
-def _emargement_semestres(start, yg):
-    """Les deux semestres de l'année d'étude, celui dont la feuille reprend les
-    groupes d'abord : le pair une fois commencé si l'année est en cours, le pair
-    aussi pour une année passée, l'impair sinon."""
-    impair, pair = f'S{2 * yg - 1}', f'S{2 * yg}'
-    today = datetime.now().date()
-    courante = today.year if today.month >= 8 else today.year - 1
-    if start == courante:
-        w = today.isocalendar()[1]
-        # Début janvier, la semaine ISO peut encore être la 53 de l'année d'avant
-        au_pair = today.month < 8 and w < 50 and w >= get_year_config()['semester_even_start_week']
-    else:
-        au_pair = start < courante
-    return (pair, impair) if au_pair else (impair, pair)
-
 def _emargement_groupes(pdb, ids, semestres):
     """(semestre, {student_id: groupe}) : les groupes de TP entre lesquels les
     apprentis se partagent, au premier des semestres où leurs groupes sont faits.
@@ -8011,7 +8058,7 @@ def get_alternance_documents():
     emargements = []
     for pid, nom, yg in cohortes:
         gens = _emargement_apprentis(pdb, pid, yg)
-        sem, _ = _emargement_groupes(pdb, [s['id'] for s in gens], _emargement_semestres(start, yg))
+        sem, _ = _emargement_groupes(pdb, [s['id'] for s in gens], _semestres_courant_dabord(start, yg))
         emargements.append({'pid': pid, 'promotion': nom, 'annee_etude': yg,
                             'apprentis': len(gens), 'groupes': sem})
     return jsonify({
@@ -8040,7 +8087,7 @@ def get_alternance_emargement(pid):
     gens = _emargement_apprentis(pdb, pid, yg)
     if not gens:
         return error_response("Aucun apprenti dans cette promotion cette année-là", 404)
-    _, groupes = _emargement_groupes(pdb, [s['id'] for s in gens], _emargement_semestres(start, yg))
+    _, groupes = _emargement_groupes(pdb, [s['id'] for s in gens], _semestres_courant_dabord(start, yg))
     data = _emargement_docx(annee, yg, [(_emargement_nom(s), _groupe_court(groupes.get(s['id'])))
                                         for s in gens], 'Gp TP' if groupes else '')
     return send_file(io.BytesIO(data), as_attachment=True,
