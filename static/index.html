@@ -15744,6 +15744,9 @@ function _grpFamilles() {
 
 const _grpTable = cle => ((_grpRep && _grpRep.tables) || []).find(t => t.cle === cle);
 const _grpMembres = t => _grpRep.students.filter(s => !t.face || s.formation === t.face);
+// Nom affiché d'un groupe : « TD » pour l'unique groupe TD_1 d'une famille (le serveur
+// donne ces noms courts) ; le nom enregistré, lui, reste TD_1
+const _grpLib = (t, f, g) => (((t && t.libelles) || {})[f] || {})[g] || g;
 
 function renderGroupesRepartition() {
     fermerFiltreGroupe();
@@ -15822,7 +15825,7 @@ function renderGroupesResume() {
             const puces = gs.map(g => {
                 const seule = g.F === 1;
                 const detail = `${g.FTP} FTP · ${g.ALT} ALT · ${g.F} fille(s)${g.inconnu ? ` · ${g.inconnu} sexe non renseigné` : ''}${seule ? ' — une seule fille' : ''}`;
-                return `<span class="st-pill" style="background:${seule ? '#fef2f2' : '#eef2ff'};color:#3730a3" title="${detail}">${esc(g.groupe)}
+                return `<span class="st-pill" style="background:${seule ? '#fef2f2' : '#eef2ff'};color:#3730a3" title="${detail}">${esc(_grpLib(t, f, g.groupe))}
                     <span style="font-weight:400">${g.FTP + g.ALT}</span>
                     <span style="font-weight:600;color:${seule ? '#b91c1c' : '#be185d'}">· ${g.F} F${g.inconnu ? `<span style="font-weight:400;color:#9ca3af"> +${g.inconnu}?</span>` : ''}</span></span>`;
             }).join(' ');
@@ -15931,7 +15934,7 @@ function renderGroupesCorpsTable(t) {
                     ? membres.map(s => `<li${s.actif ? '' : ' style="color:#9ca3af"'}>${esc(s.nom || '')} ${esc(s.prenom || '')}${fille(s)}${alt(s)}${inactif(s)}</li>`).join('')
                     : '<li style="list-style:none;color:#9ca3af">—</li>'}</ol></div>`;
         };
-        const cartes = (t.groupes[f] || []).map(g => carte(g.groupe, parNom.filter(s => s.groupes[f] === g.groupe), '#4f46e5'));
+        const cartes = (t.groupes[f] || []).map(g => carte(_grpLib(t, f, g.groupe), parNom.filter(s => s.groupes[f] === g.groupe), '#4f46e5'));
         const sans = parNom.filter(s => s.actif && !s.groupes[f]);
         if (sans.length && cartes.length) cartes.push(carte('Sans groupe', sans, '#b45309'));
         el.innerHTML = bandeau + (cartes.length
@@ -15959,7 +15962,7 @@ function renderGroupesCorpsTable(t) {
         const suit = (d.suivent || {})[c.famille];
         if (!admin || suit) return `<td style="text-align:center${suit ? ';color:#6b7280;font-style:italic' : ''}"${
             suit ? ` title="Numéro repris du groupe de ${esc(suit)}"` : ''}>${
-            v ? esc(v) : '<span style="color:#d1d5db">—</span>'}</td>`;
+            v ? esc(_grpLib(t, c.famille, v)) : '<span style="color:#d1d5db">—</span>'}</td>`;
         const champ = `data-sid="${s.id}" data-famille="${esc(c.famille)}" onchange="setGroupe(this)"
             style="width:96px;padding:2px 4px;font-size:.8rem;text-align:center;border:1px solid #d1d5db;border-radius:4px"`;
         // Familles du service (TD, TP12, TP8…) : le nombre de groupes est connu, on
@@ -15971,7 +15974,7 @@ function renderGroupesCorpsTable(t) {
         }
         return `<td style="text-align:center;padding:2px 4px"><select ${champ}>
             <option value="">—</option>
-            ${choix.map(g => `<option value="${esc(g)}" ${g === v ? 'selected' : ''}>${esc(g)}</option>`).join('')}
+            ${choix.map(g => `<option value="${esc(g)}" ${g === v ? 'selected' : ''}>${esc(_grpLib(t, c.famille, g))}</option>`).join('')}
             </select></td>`;
     };
     el.innerHTML = bandeau + `<div style="overflow:auto;max-height:62vh;border:1px solid #e5e7eb;border-radius:8px;margin-top:10px">
@@ -15982,7 +15985,7 @@ function renderGroupesCorpsTable(t) {
                 : `<tr><td colspan="${cols.length + 1}" style="text-align:center;color:#9ca3af;padding:14px">Aucun étudiant ne correspond aux filtres</td></tr>`}</tbody>
         </table></div>
         <div style="font-size:.78rem;color:#6b7280;margin-top:6px">${admin
-            ? `Chaque case s'enregistre dès qu'on la quitte ; « — » retire l'étudiant du groupe. Les familles du service (TD, TP12, TP8) proposent leurs groupes dans une liste — leur nombre se règle plus haut ; une famille libre (Covoiturage…) se saisit au clavier, un nom nouveau crée le groupe. Une famille à groupe unique est remplie d'office.${
+            ? `Chaque case s'enregistre dès qu'on la quitte ; « — » retire l'étudiant du groupe. Les familles du service (TD, TP12, TP8) proposent leurs groupes dans une liste — leur nombre se règle plus haut ; une famille libre (Covoiturage…) se saisit au clavier, un nom nouveau crée le groupe. Une famille à groupe unique est remplie d'office et son groupe s'affiche sans numéro (« TD » pour TD_1).${
                 Object.entries(d.suivent || {}).map(([f, src]) => ` Le groupe de ${esc(f)} porte le numéro du ${esc(src)}.`).join('')} `
             : ''}Cliquez sur un en-tête pour trier, sur ▾ pour trier et filtrer.</div>`;
 }
@@ -16013,6 +16016,7 @@ function ouvrirFiltreGroupe(ev, cle, i) {
     _grpLignes(t, col.cle).forEach(s => { const v = col.val(s); compte.set(v, (compte.get(v) || 0) + 1); });
     const valeurs = [...compte.keys()].sort(_grpCompare);
     const actuel = (_grpFiltres[cle] || {})[col.cle] ? new Set(_grpFiltres[cle][col.cle]) : null;
+    const affiche = v => col.famille ? _grpLib(t, col.famille, v) : v;   // le filtre garde le nom enregistré
     const menu = document.createElement('div');
     menu.id = 'grp-filtre-menu';
     menu.style.cssText = 'position:absolute;z-index:2000;background:#fff;border:1px solid #d1d5db;border-radius:8px;'
@@ -16028,9 +16032,9 @@ function ouvrirFiltreGroupe(ev, cle, i) {
         <label style="display:block;padding:2px 4px;cursor:pointer"><input type="checkbox" ${!actuel ? 'checked' : ''}
             onchange="toutCocherFiltreGroupe(this.checked)"> <em>(Tout sélectionner)</em></label>
         <div id="grp-flt-valeurs" style="max-height:220px;overflow:auto;border:1px solid #f3f4f6;border-radius:5px;padding:2px 4px">${
-            valeurs.map(v => `<label data-txt="${esc(_grpNorm(v || '(vides)'))}" style="display:flex;gap:6px;align-items:center;padding:2px 0;cursor:pointer">
+            valeurs.map(v => `<label data-txt="${esc(_grpNorm(affiche(v) || '(vides)'))}" style="display:flex;gap:6px;align-items:center;padding:2px 0;cursor:pointer">
                 <input type="checkbox" value="${esc(v)}" ${!actuel || actuel.has(v) ? 'checked' : ''}>
-                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v === '' ? '<em style="color:#9ca3af">(Vides)</em>' : esc(v)}</span>
+                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v === '' ? '<em style="color:#9ca3af">(Vides)</em>' : esc(affiche(v))}</span>
                 <span style="color:#9ca3af;font-size:.74rem">${compte.get(v)}</span></label>`).join('')
             || '<div style="color:#9ca3af;padding:4px">Aucune valeur</div>'}</div>
         <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px">
@@ -16407,7 +16411,7 @@ function renderGroupesAutoApercu(d) {
             const contenu = fam === 'TD'
                 ? `<div style="font-size:.7rem;color:#6b7280;font-weight:400">${['TP12', 'TP8'].map(sous =>
                     (c[sous] || []).map(([g, n]) => `${esc(g)} (${n})`).join(', ')).join('<br>')}</div>` : '';
-            return `<tr${seule ? ' style="background:#fef2f2"' : ''}><td>${esc(c.groupe)}${contenu}</td>
+            return `<tr${seule ? ' style="background:#fef2f2"' : ''}><td>${esc(c.libelle || c.groupe)}${contenu}</td>
                 <td${c.n % 2 ? ' style="color:#b45309;font-weight:700" title="Effectif impair"' : ''}>${c.n}</td>
                 ${d.mutualise ? `<td>${c.FTP}</td><td>${c.ALT}</td>` : ''}
                 <td style="${seule ? 'color:#b91c1c;font-weight:700' : ''}">${c.F}${c.inconnu ? ` <span style="color:#9ca3af" title="sexe non renseigné">+${c.inconnu} ?</span>` : ''}</td></tr>`;

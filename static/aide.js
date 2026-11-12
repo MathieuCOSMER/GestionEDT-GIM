@@ -1054,6 +1054,9 @@ function _aidePromotions() {
         <h3>2. La répartition des étudiants</h3>
         <p>Pour un semestre : le groupe de chaque étudiant dans chaque <b>famille</b> (TD, TP12, TP8 ; TD SAÉ et TP12 SAÉ au S1 ; toute famille ajoutée, comme
         « Covoiturage » ou une langue). Un semestre mutualisé a un tableau pour la promo ; sinon FTP et ALT ont chacun le leur.</p>
+        <p>Une famille qui n'a qu'<b>un seul groupe</b> dans le tableau (TD, TP ou PT) l'affiche sans numéro : « TD » plutôt que « TD_1 », aussi dans
+        l'aperçu de la répartition automatique, le classeur téléchargé et la colonne Groupes des ${_aLien('promo-effectifs', 'Effectifs')}.
+        Le groupe garde son nom TD_1 en coulisse, et un fichier importé peut indiquer l'un ou l'autre.</p>
         <ul>
             <li>Vue ${_aUi('Tableau')} (un étudiant par ligne, tri et filtres par colonne comme dans Excel) ou ${_aUi('Par groupe')} (la liste de chaque groupe, avec son effectif et son nombre de filles — une fille seule est signalée).</li>
             <li>${_aUi('⤓ Télécharger')} : un classeur Excel avec la liste complète et une feuille par famille de groupes.</li>
@@ -1067,7 +1070,8 @@ function _aidePromotions() {
             <li>${_aUi('✓ Vérifier les règles')} : contrôle la répartition affichée (complétude, capacités des TP, chaque TP contenu dans un TD, alternants, SAÉ,
                 filles, covoiturages, effectifs pairs, accord avec le nombre de groupes du service).</li>
             <li>${_aUi('⧉ Reprendre le S1')} (au semestre pair) : recopie la répartition du semestre impair, sans les groupes de SAÉ.</li>
-            <li>${_aUi('⤒ Importer')} : un <code>.xlsx</code> avec <i>Nom</i>, <i>Prénom</i> et une colonne par famille (valeurs <code>TD_1</code>, <code>TP12_3</code>…) ;
+            <li>${_aUi('⤒ Importer')} : un <code>.xlsx</code> avec <i>Nom</i>, <i>Prénom</i> et une colonne par famille (valeurs <code>TD_1</code>, <code>TP12_3</code>…,
+                ou le nom de la famille seul, <code>TD</code>, pour son groupe unique — le classeur téléchargé se réimporte tel quel) ;
                 rapprochement par nom et prénom, aperçu avant écriture, une case vide retire de la famille.</li>`)}
         </ul>
         ${_aSiModif('promo:groupes', _aEx('le S1 d\'une promotion de 48 étudiants FTP', `Nombre de groupes : 2 TD, 4 TP12, 6 TP8. ${_aUi('⚙ Répartition automatique')} → aperçu :

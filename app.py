@@ -7256,11 +7256,8 @@ def _effectif_groupes(pdb, pid, year, start, students):
             for fam, g in gs.items():
                 vus.setdefault((tableau(sid), fam), set()).add(g)
         def libelle(sid, fam, g):
-            # Groupe unique : celui que prévoit le service, sinon le seul qu'on voit
             t = tableau(sid)
-            attendus = _groupes_attendus(svc, t, fam)
-            seul = len(attendus) == 1 if attendus else len(vus[(t, fam)]) == 1
-            return fam if seul and _groupe_numero(g) == '1' else g
+            return _groupe_libelle(fam, g, _groupe_seul(_groupes_attendus(svc, t, fam), vus[(t, fam)]))
         return sem, {sid: ', '.join(libelle(sid, f, gs[f]) for f in _EFFECTIF_GROUPES if gs.get(f))
                      for sid, gs in affect.items()}
     return None, {}
@@ -8527,6 +8524,24 @@ def _groupe_numero(nom):
     m = re.search(r'(\d+)\s*$', str(nom or ''))
     return m.group(1) if m else None
 
+# Familles du service dont le groupe unique s'affiche sans son « _1 » (pas les familles
+# libres : Covoiturage, Anglais…)
+_GROUPES_LIBELLE_COURT = ('TD', 'TD SAE', 'TP12', 'TP12 SAE', 'TP8', 'PT')
+
+def _groupe_seul(attendus, employes):
+    """La famille n'a-t-elle qu'un groupe ? Ceux que prévoit le service et ceux que les
+    étudiants occupent n'en font qu'un."""
+    return len(set(attendus or ()) | set(employes or ())) == 1
+
+def _groupe_libelle(famille, groupe, seul):
+    """Nom AFFICHÉ d'un groupe : la famille seule (« TD », « TP12 ») pour le groupe
+    unique d'une famille du service quand il porte le numéro 1 — « TD » plutôt que
+    « TD_1 ». Le nom enregistré ne change pas : le PT reprend le numéro du TD, l'import,
+    la feuille d'émargement et l'enseignant par groupe s'appuient dessus."""
+    if seul and famille in _GROUPES_LIBELLE_COURT and _groupe_numero(groupe) == '1':
+        return famille
+    return groupe
+
 def _groupes_familles_svc(svc, semestre):
     """Familles de base, augmentées de « PT » quand le service prévoit plusieurs groupes
     de projet : sans cela, un seul groupe de PT n'a rien à répartir."""
@@ -8558,10 +8573,19 @@ def _groupes_tables(students, familles, mutualise, svc=None):
                         elif st.get('sexe') != 'M':
                             c['inconnu'] += 1
             groupes[f] = [dict(groupe=g, **compte[g]) for g in sorted(compte, key=_groupe_tri)]
+        # Groupes que le service prévoit : ce que proposent les listes déroulantes de la
+        # répartition, même vides d'étudiants.
+        attendus = {f: _groupes_attendus(svc, face, f) for f in familles}
+        # Noms affichés qui diffèrent du nom enregistré : {famille: {« TD_1 »: « TD »}}
+        libelles = {}
+        for f in familles:
+            noms = set(attendus[f]) | {g['groupe'] for g in groupes[f]}
+            seul = _groupe_seul(attendus[f], noms)
+            court = {g: _groupe_libelle(f, g, seul) for g in noms}
+            if any(g != lib for g, lib in court.items()):
+                libelles[f] = {g: lib for g, lib in court.items() if g != lib}
         tables.append({'cle': cle, 'titre': titre, 'face': face, 'groupes': groupes,
-                       # Groupes que le service prévoit : ce que proposent les listes
-                       # déroulantes de la répartition, même vides d'étudiants.
-                       'attendus': {f: _groupes_attendus(svc, face, f) for f in familles},
+                       'attendus': attendus, 'libelles': libelles,
                        'effectif': len(membres), 'actifs': sum(1 for st in membres if st['actif']),
                        'sans_groupe': {f: sum(1 for st in membres if st['actif'] and not st['groupes'].get(f))
                                        for f in familles}})
@@ -8805,8 +8829,12 @@ def _parse_groupes_xlsx(path):
                     continue
                 vals = [_cell_txt(ws.cell(r, c).value) for r in lignes]
                 vals = [v for v in vals if v and not v.startswith('=')]
-                if vals and sum(1 for v in vals if _GROUPE_VALEUR.match(v)) >= 0.8 * len(vals):
-                    familles[c] = _groupe_famille(ws.cell(hr, c).value)
+                # Code de groupe (TD_1…), ou nom de la famille seul : un groupe unique
+                # s'affiche et s'exporte ainsi (« TD » pour TD_1, cf. _groupe_libelle)
+                fam = _groupe_famille(ws.cell(hr, c).value)
+                if vals and sum(1 for v in vals if _GROUPE_VALEUR.match(v)
+                                or _groupe_famille(v).casefold() == fam.casefold()) >= 0.8 * len(vals):
+                    familles[c] = fam
             if lignes and familles:
                 score = (len(familles), len(lignes))
                 if meilleur is None or score > meilleur[0]:
@@ -8880,6 +8908,16 @@ def import_promotion_groupes(pid, semestre):
         par_nom.setdefault(_ps_key(st['nom'], st['prenom']), st)
         if st.get('numero'):
             par_num.setdefault(_saisie_num_txt(st['numero']), st)
+
+    def enregistre(st, fam, v):
+        """Nom enregistré d'un groupe lu dans le fichier : le groupe unique d'une famille,
+        affiché et exporté sous le nom de la famille (« TD »), redevient « TD_1 »."""
+        if v and _groupe_famille(v).casefold() == fam.casefold():
+            t = next((t for t in payload['tables'] if t['face'] is None or t['face'] == st['formation']), None)
+            for g, lib in ((t or {}).get('libelles') or {}).get(fam, {}).items():
+                if lib == fam:
+                    return g
+        return v
     nouveaux, non_retrouves, abandon_discordant, cohorte_diff = {}, [], [], 0
     for l in lignes:
         st = (par_num.get(l['numero']) if l['numero'] else None) or par_nom.get(_ps_key(l['nom'], l['prenom']))
@@ -8888,7 +8926,7 @@ def import_promotion_groupes(pid, semestre):
             continue
         if st['id'] in nouveaux:
             continue           # doublon dans le fichier : la première ligne fait foi
-        nouveaux[st['id']] = {fam: g for fam, g in l['groupes'].items() if fam in familles}
+        nouveaux[st['id']] = {fam: enregistre(st, fam, g) for fam, g in l['groupes'].items() if fam in familles}
         if l['cohorte'] in _SUBCOHORTS and l['cohorte'] != st['formation']:
             cohorte_diff += 1
         if l.get('abandon') is not None:
@@ -9170,20 +9208,24 @@ def _repartition_auto(students, regles, sae=None, bloc_unique=False, prefixe='',
             elif x.get('sexe') != 'M':
                 c['inconnu'] += 1
         apercu[fam] = sorted(comp.values(), key=lambda c: _groupe_tri(c['groupe']))
+        # Nom affiché : « TD » pour le groupe unique de la famille (cf. _groupe_libelle)
+        for c in apercu[fam]:
+            c['libelle'] = _groupe_libelle(fam, c['groupe'], len(apercu[fam]) == 1)
         if regles['filles']:
-            alertes.extend(f"{prefixe}{fam} · {c['groupe']} : une seule fille" for c in apercu[fam] if c['F'] == 1)
+            alertes.extend(f"{prefixe}{fam} · {c['libelle']} : une seule fille" for c in apercu[fam] if c['F'] == 1)
+    libelle_de = {fam: {c['groupe']: c['libelle'] for c in cs} for fam, cs in apercu.items()}
     for c in apercu['TD']:
         for sous in ('TP12', 'TP8'):
             n = Counter(aff[x['id']][sous] for x in ordre if aff[x['id']].get('TD') == c['groupe'])
-            c[sous] = [[g, n[g]] for g in sorted(n, key=_groupe_tri)]
+            c[sous] = [[libelle_de.get(sous, {}).get(g, g), n[g]] for g in sorted(n, key=_groupe_tri)]
     for fam in ('TD', 'TP12', 'TP8'):
         cap = regles['capacites'][fam]
         for c in apercu[fam]:
             if c['n'] > cap:
-                alertes.append(f"{prefixe}{fam} · {c['groupe']} : {c['n']} étudiants pour une capacité de {cap}"
+                alertes.append(f"{prefixe}{fam} · {c['libelle']} : {c['n']} étudiants pour une capacité de {cap}"
                                + (' (il prend sur le TP suivant)' if fam == 'TD' else ''))
             elif fam != 'TD' and c['n'] < cap / 2:
-                alertes.append(f"{prefixe}{fam} · {c['groupe']} : petit groupe de {c['n']} étudiant(s)")
+                alertes.append(f"{prefixe}{fam} · {c['libelle']} : petit groupe de {c['n']} étudiant(s)")
     inconnus = sum(1 for x in ordre if x.get('sexe') not in ('M', 'F'))
     if regles['filles'] and inconnus:
         alertes.insert(0, f"{prefixe}Sexe non renseigné pour {inconnus} étudiant(s) : la règle des filles ne s'applique pas à eux")
@@ -9621,6 +9663,11 @@ def export_promotion_groupes(pid, semestre):
     bold, fond = Font(bold=True), PatternFill('solid', fgColor='EEF2FF')
     ordre = lambda st: ((st['nom'] or '').lower(), (st['prenom'] or '').lower())
     familles = [f for f in p['familles'] if any(t['groupes'].get(f) for t in p['tables'])]
+    # Noms affichés à l'écran (« TD » pour un groupe unique) ; l'import les relit
+    def libelle(t, f, g):
+        return ((t or {}).get('libelles') or {}).get(f, {}).get(g, g)
+    def table_de(st):
+        return next((t for t in p['tables'] if t['face'] is None or t['face'] == st['formation']), None)
     wb = Workbook()
     ws = wb.active
     ws.title = 'Répartition'
@@ -9633,7 +9680,7 @@ def export_promotion_groupes(pid, semestre):
     lignes = sorted(p['students'], key=lambda st: (not st['actif'],) + ordre(st))
     for r, st in enumerate(lignes, 4):
         vals = ([st['nom'], st['prenom'], st['formation']]
-                + [st['groupes'].get(f, '') for f in familles]
+                + [libelle(table_de(st), f, st['groupes'].get(f, '')) for f in familles]
                 + ['' if st['actif'] else st['statut']])
         for c, v in enumerate(vals, 1):
             ws.cell(r, c, v)
@@ -9652,7 +9699,7 @@ def export_promotion_groupes(pid, semestre):
                 membres = sorted((st for st in p['students']
                                   if st['actif'] and (t['face'] is None or st['formation'] == t['face'])
                                   and st['groupes'].get(f) == g['groupe']), key=ordre)
-                cell = wsf.cell(1, c0, f"{g['groupe']} ({len(membres)})")
+                cell = wsf.cell(1, c0, f"{libelle(t, f, g['groupe'])} ({len(membres)})")
                 cell.font, cell.fill = bold, fond
                 wsf.cell(2, c0, 'Nom').font = bold
                 wsf.cell(2, c0 + 1, 'Prénom').font = bold
