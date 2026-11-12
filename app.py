@@ -7235,8 +7235,8 @@ def _effectif_groupes(pdb, pid, year, start, students):
     """(semestre, {student_id: 'TD_2, TP12_5, TP8_7'}) : les groupes de TD, TP12 et
     TP8 de chacun (Promotions › Groupes) au semestre en cours de l'année d'étude, à
     l'autre si celui-là n'a encore aucun groupe. Une famille qui n'a qu'un groupe —
-    dans la promo si le semestre est mutualisé, sinon dans la sous-cohorte — s'écrit
-    sans son « _1 » : « TD » plutôt que « TD_1 »."""
+    dans la promo si le semestre est mutualisé, sinon dans la sous-cohorte — n'est pas
+    reprise : elle ne distingue personne (BUT2 à un seul TD : « TP12_1, TP8_2 »)."""
     faces = {s['id']: _face(s.get('formation')) for s in students}
     for sem in _semestres_courant_dabord(start, year):
         affect = {}
@@ -7255,10 +7255,10 @@ def _effectif_groupes(pdb, pid, year, start, students):
         for sid, gs in affect.items():
             for fam, g in gs.items():
                 vus.setdefault((tableau(sid), fam), set()).add(g)
-        def libelle(sid, fam, g):
+        def plusieurs(sid, fam):
             t = tableau(sid)
-            return _groupe_libelle(fam, g, _groupe_seul(_groupes_attendus(svc, t, fam), vus[(t, fam)]))
-        return sem, {sid: ', '.join(libelle(sid, f, gs[f]) for f in _EFFECTIF_GROUPES if gs.get(f))
+            return not _groupe_seul(_groupes_attendus(svc, t, fam), vus[(t, fam)])
+        return sem, {sid: ', '.join(gs[f] for f in _EFFECTIF_GROUPES if gs.get(f) and plusieurs(sid, f))
                      for sid, gs in affect.items()}
     return None, {}
 

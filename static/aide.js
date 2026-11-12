@@ -971,7 +971,8 @@ function _aidePromotions() {
                 survolez une abréviation pour lire l'intitulé complet.</li>
             <li><b>Groupes</b> : les groupes de <b>TD</b>, <b>TP12</b> et <b>TP8</b> de l'étudiant au semestre en cours (par exemple « TD_2, TP12_5, TP8_7 »),
                 tels que répartis dans le sous-onglet ${_aLien('promo-groupes', 'Groupes')} ; l'en-tête indique le semestre. Une famille qui n'a qu'un groupe
-                (dans la promotion si le semestre est mutualisé, sinon dans la sous-cohorte) est notée sans numéro : « TD » plutôt que « TD_1 ».</li>
+                (dans la promotion si le semestre est mutualisé, sinon dans la sous-cohorte) n'est pas reprise, puisqu'elle ne distingue personne :
+                en BUT2 avec un seul TD, la colonne donne seulement « TP12_1, TP8_2 ».</li>
             <li><b>MI</b> : <b>mobilité internationale</b> — le semestre passé dans un établissement partenaire${_aSiModif('promo:effectif',
                 ' (choisissez le semestre, puis le nom de l\'établissement)')}. Les UE de ce semestre sont validées par équivalence, sans note.</li>
             ${_aSiModif('promo:effectif', `<li><b>Statut</b> : ${_aStatut('Actif')} ou ${_aStatut('Abandon')} (avec la <b>semaine</b> d'abandon). ${_aStatut('RED')} et ${_aStatut('Césure')}
@@ -1055,7 +1056,8 @@ function _aidePromotions() {
         <p>Pour un semestre : le groupe de chaque étudiant dans chaque <b>famille</b> (TD, TP12, TP8 ; TD SAÉ et TP12 SAÉ au S1 ; toute famille ajoutée, comme
         « Covoiturage » ou une langue). Un semestre mutualisé a un tableau pour la promo ; sinon FTP et ALT ont chacun le leur.</p>
         <p>Une famille qui n'a qu'<b>un seul groupe</b> dans le tableau (TD, TP ou PT) l'affiche sans numéro : « TD » plutôt que « TD_1 », aussi dans
-        l'aperçu de la répartition automatique, le classeur téléchargé et la colonne Groupes des ${_aLien('promo-effectifs', 'Effectifs')}.
+        l'aperçu de la répartition automatique et le classeur téléchargé (la colonne Groupes des ${_aLien('promo-effectifs', 'Effectifs')}, elle,
+        ne la mentionne pas).
         Le groupe garde son nom TD_1 en coulisse, et un fichier importé peut indiquer l'un ou l'autre.</p>
         <ul>
             <li>Vue ${_aUi('Tableau')} (un étudiant par ligne, tri et filtres par colonne comme dans Excel) ou ${_aUi('Par groupe')} (la liste de chaque groupe, avec son effectif et son nombre de filles — une fille seule est signalée).</li>
