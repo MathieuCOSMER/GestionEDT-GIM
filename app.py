@@ -2197,18 +2197,36 @@ def _apply_migrations(db):
         db.execute('ALTER TABLE course_sessions ADD COLUMN sessions_per_week_max INTEGER DEFAULT 1')
     except sqlite3.OperationalError:
         pass
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS course_ordering (
+    # Ordonnancement : la partie visée de la matière « pred » (toute la matière si
+    # '', sinon CM / TD / TP / PT) doit être terminée avant le début de la partie
+    # visée de la matière « succ ». Posé par l'admin (Ordonnancement) ou par les
+    # intervenants de la matière « succ » (Contraintes Matière).
+    _ORDERING_DDL = '''
+        CREATE TABLE IF NOT EXISTS {name} (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             course_id_pred INTEGER NOT NULL,
             course_id_succ INTEGER NOT NULL,
+            pred_part      TEXT NOT NULL DEFAULT '',
+            succ_part      TEXT NOT NULL DEFAULT '',
             min_gap_weeks  INTEGER DEFAULT 0,
+            created_by     TEXT,
             created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (course_id_pred) REFERENCES courses(id) ON DELETE CASCADE,
             FOREIGN KEY (course_id_succ) REFERENCES courses(id) ON DELETE CASCADE,
-            UNIQUE(course_id_pred, course_id_succ)
+            UNIQUE(course_id_pred, course_id_succ, pred_part, succ_part)
         )
-    ''')
+    '''
+    db.execute(_ORDERING_DDL.format(name='course_ordering'))
+    # Ancienne table (une seule contrainte par couple de matières, sans partie) :
+    # reconstruite, SQLite ne sachant pas modifier une contrainte UNIQUE
+    if 'pred_part' not in [r[1] for r in db.execute('PRAGMA table_info(course_ordering)').fetchall()]:
+        db.execute('DROP TABLE IF EXISTS course_ordering_v2')
+        db.execute(_ORDERING_DDL.format(name='course_ordering_v2'))
+        db.execute('''INSERT INTO course_ordering_v2 (id, course_id_pred, course_id_succ, min_gap_weeks, created_at)
+                      SELECT id, course_id_pred, course_id_succ, min_gap_weeks, created_at FROM course_ordering''')
+        db.execute('DROP TABLE course_ordering')
+        db.execute('ALTER TABLE course_ordering_v2 RENAME TO course_ordering')
+        db.commit()
     # Nouveau calendrier spécial (remplace semester_special_weeks dans l'optimiseur)
     db.execute('''
         CREATE TABLE IF NOT EXISTS special_calendar (
@@ -2536,6 +2554,23 @@ def _apply_migrations(db):
             PRIMARY KEY (course_session_id, group_index),
             FOREIGN KEY (course_session_id) REFERENCES course_sessions(id) ON DELETE CASCADE,
             FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE
+        )
+    ''')
+
+    # Vœux de répartition hebdomadaire d'une matière (Contraintes Matière) : nombre
+    # de séances semaine après semaine, dans l'ordre et SANS numéro de semaine (la
+    # place dans le calendrier revient à l'admin / au responsable FTP), pour chaque
+    # face × type. `data` (JSON) : {"<formation_type>:<CM|TD|TP|PT>": [séances par semaine, dans l'ordre]}.
+    # Clé face × type plutôt que l'id de session : une session supprimée puis
+    # recréée (heures remises à 0 puis rétablies) retrouve ses vœux.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS course_wishes (
+            course_id  INTEGER PRIMARY KEY,
+            n_weeks    INTEGER NOT NULL DEFAULT 0,
+            data       TEXT NOT NULL DEFAULT '{}',
+            updated_by TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
         )
     ''')
 
@@ -3537,7 +3572,7 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     (r'^/api/teachers(/\d+)?$', ['nav:enseignants'], ''),
     (r'^/api/teachers/\d+/availability$', ['nav:enseignants'], ''),
     (r'^/api/courses/\d+/content$', ['prog:contenu'], ''),
-    (r'^/api/courses/\d+/constraints$', ['svc:contraintes-matiere'], ''),
+    (r'^/api/courses/\d+/(constraints|wishes|orderings(/\d+)?)$', ['svc:contraintes-matiere'], ''),
     (r'^/api/course-orderings(/\d+)?$', ['svc:contraintes-matiere'], 'strict'),
     (r'^/api/courses(/\d+)?$', ['svc:matieres'], ''),
     (r'^/api/courses/\d+/(teaching-hours|weekly-distribution)$', ['svc:matieres'], ''),
@@ -15701,6 +15736,131 @@ def update_course_constraints(course_id):
     except Exception as e:
         return error_response(f'Error updating course constraints: {str(e)}', 500)
 
+# ----- Vœux de répartition hebdomadaire (Contraintes Matière) -----
+# L'enseignant indique, pour chaque face × type de séance, combien de séances il
+# souhaite semaine après semaine, dans l'ordre : la grille de la répartition
+# calendaire, SANS numéro de semaine — la place dans le calendrier est décidée par
+# l'admin ou le responsable FTP. Simple indication : rien n'est placé dans la répartition.
+_WISH_TYPES = ('CM', 'TD', 'TP', 'PT')
+_WISH_FORMATIONS = {2: 'MUT', 0: 'FTP', 1: 'ALT'}   # ordre d'affichage : MUT, FTP, ALT
+_WISH_MAX_WEEKS = 40
+_WISH_MAX_PER_WEEK = 9
+
+def _wish_row_from_db(r):
+    if not r:
+        return None
+    try:
+        rows = json.loads(r['data'] or '{}')
+    except (TypeError, ValueError):
+        rows = {}
+    return {'n_weeks': r['n_weeks'] or 0, 'rows': rows if isinstance(rows, dict) else {},
+            'updated_by': r['updated_by'] or '', 'updated_at': r['updated_at'] or ''}
+
+@app.route('/api/courses/wishes', methods=['GET'])
+def get_course_wishes():
+    """Séances de chaque matière (face × type, nb de séances, durée, groupes) et
+    vœux de répartition enregistrés.
+    {course_id: {sessions: [...], wish: {...} | null}}"""
+    try:
+        db = get_db()
+        sg_map, mut_set, tpsep_set = _load_semester_groups(db)
+        rank_ft = {ft: i for i, ft in enumerate(_WISH_FORMATIONS)}
+        out = {}
+        for r in db.execute('''
+                SELECT c.id AS course_id, c.tp_type, s.code AS semester_code,
+                       cs.formation_type, cs.teaching_type, cs.nb_sessions,
+                       cs.total_hours, cs.slot_duration, t.name AS teacher_name
+                FROM course_sessions cs
+                JOIN courses c ON c.id = cs.course_id
+                JOIN semesters s ON s.id = c.semester_id
+                LEFT JOIN teachers t ON t.id = cs.teacher_id
+                WHERE cs.nb_sessions > 0 OR cs.total_hours > 0''').fetchall():
+            ft, tt = r['formation_type'], (r['teaching_type'] or '').upper()
+            if ft not in _WISH_FORMATIONS or tt not in _WISH_TYPES:
+                continue
+            entry = out.setdefault(r['course_id'], {'sessions': [], 'wish': None})
+            slot = r['slot_duration'] or 1.5
+            nb = r['nb_sessions'] or (round((r['total_hours'] or 0) / slot) if slot > 0 else 0)
+            try:
+                groups = int(_group_multiplier(sg_map, mut_set, tpsep_set, r['semester_code'],
+                                               ft, tt, r['tp_type']) or 1)
+            except Exception:
+                groups = 1
+            entry['sessions'].append({
+                'key': f'{ft}:{tt}', 'ft': ft, 'formation': _WISH_FORMATIONS[ft],
+                'type': tt, 'tp_type': r['tp_type'] or 'TP12', 'nb': nb, 'slot': slot,
+                'groups': max(1, groups), 'teacher': r['teacher_name'] or '',
+            })
+        for entry in out.values():
+            entry['sessions'].sort(key=lambda s: (rank_ft[s['ft']], _WISH_TYPES.index(s['type'])))
+        for r in db.execute('SELECT * FROM course_wishes').fetchall():
+            if r['course_id'] in out:
+                out[r['course_id']]['wish'] = _wish_row_from_db(r)
+        return jsonify(out), 200
+    except Exception as e:
+        return error_response(f'Error fetching course wishes: {str(e)}', 500)
+
+@app.route('/api/courses/<int:course_id>/wishes', methods=['PUT'])
+def save_course_wishes(course_id):
+    """Enregistre les vœux de répartition d'une matière (admin, ou enseignant qui
+    y intervient). Body : {n_weeks, rows: {"<ft>:<type>": [nb séances par semaine]}}.
+    Une grille vide efface les vœux."""
+    try:
+        db = get_db()
+        if not db.execute('SELECT 1 FROM courses WHERE id = ?', (course_id,)).fetchone():
+            return error_response('Course not found', 404)
+        if not _admin_power('svc:contraintes-matiere'):
+            if not teacher_intervenes_in_course(course_id, session.get('teacher_name')):
+                return error_response("Vous n'intervenez pas dans cette matière", 403)
+
+        data = request.get_json() or {}
+        try:
+            n_weeks = int(data.get('n_weeks') or 0)
+        except (TypeError, ValueError):
+            return error_response('Nombre de semaines invalide', 400)
+        if not 1 <= n_weeks <= _WISH_MAX_WEEKS:
+            return error_response(f'Le nombre de semaines doit être compris entre 1 et {_WISH_MAX_WEEKS}', 400)
+        # Seules les séances existantes de la matière sont retenues
+        valid_keys = {f"{r['formation_type']}:{(r['teaching_type'] or '').upper()}"
+                      for r in db.execute('''SELECT formation_type, teaching_type FROM course_sessions
+                                             WHERE course_id = ? AND (nb_sessions > 0 OR total_hours > 0)''',
+                                          (course_id,)).fetchall()}
+        rows = {}
+        for key, counts in (data.get('rows') or {}).items():
+            if key not in valid_keys or not isinstance(counts, list):
+                continue
+            clean = []
+            for v in counts[:n_weeks]:
+                try:
+                    v = int(v or 0)
+                except (TypeError, ValueError):
+                    return error_response('Nombre de séances invalide', 400)
+                if not 0 <= v <= _WISH_MAX_PER_WEEK:
+                    return error_response(f'Au plus {_WISH_MAX_PER_WEEK} séances par semaine', 400)
+                clean.append(v)
+            clean += [0] * (n_weeks - len(clean))
+            if any(clean):
+                rows[key] = clean
+
+        who = session.get('teacher_name') or session.get('user') or ''
+        if rows:
+            db.execute('''
+                INSERT INTO course_wishes (course_id, n_weeks, data, updated_by, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(course_id) DO UPDATE SET
+                    n_weeks = excluded.n_weeks, data = excluded.data,
+                    updated_by = excluded.updated_by, updated_at = CURRENT_TIMESTAMP
+            ''', (course_id, n_weeks, json.dumps(rows), who))
+        else:
+            db.execute('DELETE FROM course_wishes WHERE course_id = ?', (course_id,))
+        db.commit()
+        _audit('COURSE_WISHES_SAVE', ip=_client_ip(), user=session.get('user'),
+               course=course_id, rows=len(rows))
+        r = db.execute('SELECT * FROM course_wishes WHERE course_id = ?', (course_id,)).fetchone()
+        return jsonify({'id': course_id, 'wish': _wish_row_from_db(r)}), 200
+    except Exception as e:
+        return error_response(f'Error saving course wishes: {str(e)}', 500)
+
 @app.route('/api/courses/<int:course_id>', methods=['PUT'])
 def update_course(course_id):
     """Update a course"""
@@ -17632,7 +17792,7 @@ def get_repartition():
         # Lignes de données avec heures hebdomadaires
         if semester_code:
             cursor.execute('''
-                SELECT cs.id AS session_id,
+                SELECT cs.id AS session_id, c.id AS course_id,
                        c.code AS course_code, c.name AS course_name,
                        c.tp_type,
                        s.code AS semester_code,
@@ -17653,7 +17813,7 @@ def get_repartition():
             ''', (semester_code,))
         else:
             cursor.execute('''
-                SELECT cs.id AS session_id,
+                SELECT cs.id AS session_id, c.id AS course_id,
                        c.code AS course_code, c.name AS course_name,
                        c.tp_type,
                        s.code AS semester_code,
@@ -17702,10 +17862,11 @@ def get_repartition():
                 n_groups = group_count if _placed_by_group(tt) else 1
                 sessions[sid] = {
                     'session_id': sid,
+                    'course_id': r['course_id'],
                     'course_code': r['course_code'] or '',
                     'course_name': r['course_name'] or '',
                     'semester': r['semester_code'] or '',
-                    'type': r['teaching_type'] or '',
+                    'type':r['teaching_type'] or '',
                     'tp_type': r['tp_type'] or 'TP12',
                     'formation': {0: 'FTP', 1: 'ALT', 2: 'MUT', 3: 'OTHER'}.get(r['formation_type'], str(r['formation_type'] or '')),
                     'total_hours': r['total_hours'] or 0,
@@ -17724,7 +17885,7 @@ def get_repartition():
                 sessions[sid]['by_group'].setdefault(g, {})[r['week_number']] = r['hours'] or 0
 
         # Une ligne par session (CM/PT) ou une ligne par groupe (TP et TD à plusieurs groupes)
-        _BASE = ('session_id', 'course_code', 'course_name', 'semester', 'type',
+        _BASE = ('session_id', 'course_id', 'course_code', 'course_name', 'semester', 'type',
                  'tp_type', 'formation', 'total_hours', 'nb_sessions', 'slot_duration',
                  'teacher', 'room', 'group_count')
         out_rows = []
@@ -19972,22 +20133,97 @@ def internal_error(error):
 
 # ======================= OPTIMISATION CP-SAT =======================
 
+# Ordonnancement « pred (partie) terminée avant succ (partie) » — partie '' =
+# toute la matière, sinon un type de séance.
+_ORD_PARTS = ('', 'CM', 'TD', 'TP', 'PT')
+
+def _ordering_query(where=''):
+    return f'''
+        SELECT co.id, co.min_gap_weeks, co.pred_part, co.succ_part, co.created_by, co.created_at,
+               cp.id AS pred_id, cp.code AS pred_code, cp.name AS pred_name, sp.code AS pred_semester,
+               cs2.id AS succ_id, cs2.code AS succ_code, cs2.name AS succ_name, ss.code AS succ_semester
+        FROM course_ordering co
+        JOIN courses cp  ON co.course_id_pred = cp.id
+        JOIN semesters sp ON sp.id = cp.semester_id
+        JOIN courses cs2 ON co.course_id_succ = cs2.id
+        JOIN semesters ss ON ss.id = cs2.semester_id
+        {where}
+        ORDER BY cp.code, cs2.code, co.pred_part, co.succ_part
+    '''
+
+def _course_types_map(db):
+    """{course_id: {types de séance qui ont des heures}}"""
+    out = {}
+    for r in db.execute('''SELECT course_id, teaching_type FROM course_sessions
+                           WHERE nb_sessions > 0 OR total_hours > 0''').fetchall():
+        out.setdefault(r['course_id'], set()).add((r['teaching_type'] or '').upper())
+    return out
+
+def _ordering_cycle(db, types, pred, pred_part, succ, succ_part):
+    """Vrai si « pred avant succ » fermerait une boucle avec les contraintes déjà
+    posées (A avant B … avant A : impossible à respecter). Graphe sur les couples
+    (matière, type de séance) ; une partie '' couvre tous les types de la matière."""
+    def nodes(c, part):
+        return {(c, t) for t in ({part} if part else (types.get(c) or {''}))}
+    adj = {}
+    for r in db.execute('SELECT course_id_pred, course_id_succ, pred_part, succ_part FROM course_ordering').fetchall():
+        for a in nodes(r['course_id_pred'], r['pred_part']):
+            adj.setdefault(a, set()).update(nodes(r['course_id_succ'], r['succ_part']))
+    targets = nodes(pred, pred_part)
+    stack, seen = list(nodes(succ, succ_part)), set()
+    while stack:
+        n = stack.pop()
+        if n in targets:
+            return True
+        if n in seen:
+            continue
+        seen.add(n)
+        stack.extend(adj.get(n, ()))
+    return False
+
+def _ordering_add(db, pred, succ, pred_part, succ_part, gap):
+    """Ajoute une contrainte d'ordonnancement. Renvoie (ligne, None) ou (None, erreur)."""
+    try:
+        pred, succ, gap = int(pred or 0), int(succ or 0), int(gap or 0)
+    except (TypeError, ValueError):
+        return None, 'Matières invalides'
+    pred_part = str(pred_part or '').strip().upper()
+    succ_part = str(succ_part or '').strip().upper()
+    if pred_part not in _ORD_PARTS or succ_part not in _ORD_PARTS:
+        return None, 'Partie invalide (CM, TD, TP, PT ou toute la matière)'
+    if not pred or not succ:
+        return None, 'Choisissez les deux matières'
+    if pred == succ:
+        return None, 'Une matière ne peut pas être contrainte par elle-même'
+    if not 0 <= gap <= 20:
+        return None, "L'écart doit être compris entre 0 et 20 semaines"
+    codes = {r['id']: r['code'] for r in db.execute(
+        'SELECT id, code FROM courses WHERE id IN (?, ?)', (pred, succ)).fetchall()}
+    if pred not in codes or succ not in codes:
+        return None, 'Matière introuvable'
+    types = _course_types_map(db)
+    for cid, part in ((pred, pred_part), (succ, succ_part)):
+        if part and part not in types.get(cid, set()):
+            return None, f"{codes[cid]} n'a pas de {part}"
+    if _ordering_cycle(db, types, pred, pred_part, succ, succ_part):
+        return None, (f"Contrainte circulaire : {codes[succ]} doit déjà passer avant {codes[pred]} "
+                      f"(directement ou par d'autres matières)")
+    try:
+        cur = db.execute('''INSERT INTO course_ordering
+                                (course_id_pred, course_id_succ, pred_part, succ_part, min_gap_weeks, created_by)
+                            VALUES (?, ?, ?, ?, ?, ?)''',
+                         (pred, succ, pred_part, succ_part, gap,
+                          session.get('teacher_name') or session.get('user') or ''))
+    except sqlite3.IntegrityError:
+        return None, 'Cette contrainte existe déjà'
+    db.commit()
+    row = db.execute(_ordering_query('WHERE co.id = ?'), (cur.lastrowid,)).fetchone()
+    return row_to_dict(row), None
+
 @app.route('/api/course-orderings', methods=['GET'])
 def get_course_orderings():
     try:
-        db = get_db()
-        cursor = db.cursor()
-        cursor.execute('''
-            SELECT co.id, co.min_gap_weeks,
-                   cp.id AS pred_id, cp.code AS pred_code, cp.name AS pred_name,
-                   cs2.id AS succ_id, cs2.code AS succ_code, cs2.name AS succ_name
-            FROM course_ordering co
-            JOIN courses cp  ON co.course_id_pred = cp.id
-            JOIN courses cs2 ON co.course_id_succ = cs2.id
-            ORDER BY cp.code, cs2.code
-        ''')
-        rows = rows_to_list(cursor.fetchall())
-        return jsonify(rows), 200
+        return jsonify(rows_to_list(get_db().execute(_ordering_query()).fetchall())), 200
     except Exception as e:
         return error_response(str(e), 500)
 
@@ -19995,34 +20231,50 @@ def get_course_orderings():
 def create_course_ordering():
     try:
         data = request.get_json() or {}
-        pred = data.get('course_id_pred')
-        succ = data.get('course_id_succ')
-        gap  = int(data.get('min_gap_weeks', 0))
-        if not pred or not succ:
-            return error_response('course_id_pred et course_id_succ requis')
-        if pred == succ:
-            return error_response('Une matière ne peut pas être contrainte par elle-même')
-        db = get_db()
-        cursor = db.cursor()
-        cursor.execute(
-            'INSERT INTO course_ordering (course_id_pred, course_id_succ, min_gap_weeks) VALUES (?, ?, ?)',
-            (pred, succ, gap)
-        )
-        db.commit()
-        oid = cursor.lastrowid
-        cursor.execute('''
-            SELECT co.id, co.min_gap_weeks,
-                   cp.id AS pred_id, cp.code AS pred_code, cp.name AS pred_name,
-                   cs2.id AS succ_id, cs2.code AS succ_code, cs2.name AS succ_name
-            FROM course_ordering co
-            JOIN courses cp  ON co.course_id_pred = cp.id
-            JOIN courses cs2 ON co.course_id_succ = cs2.id
-            WHERE co.id = ?
-        ''', (oid,))
-        row = row_to_dict(cursor.fetchone())
+        row, err = _ordering_add(get_db(), data.get('course_id_pred'), data.get('course_id_succ'),
+                                 data.get('pred_part'), data.get('succ_part'), data.get('min_gap_weeks', 0))
+        if err:
+            return error_response(err)
         return jsonify(row), 201
-    except sqlite3.IntegrityError:
-        return error_response('Cette contrainte existe déjà')
+    except Exception as e:
+        return error_response(str(e), 500)
+
+# Contraintes Matière : les intervenants d'une matière (ou l'admin) posent les
+# matières à placer AVANT elle — la matière de l'URL est toujours celle d'après.
+def _can_edit_course_constraints(course_id):
+    return (_admin_power('svc:contraintes-matiere')
+            or teacher_intervenes_in_course(course_id, session.get('teacher_name')))
+
+@app.route('/api/courses/<int:course_id>/orderings', methods=['POST'])
+def add_course_ordering_for(course_id):
+    try:
+        if not _can_edit_course_constraints(course_id):
+            return error_response("Vous n'intervenez pas dans cette matière", 403)
+        data = request.get_json() or {}
+        db = get_db()
+        row, err = _ordering_add(db, data.get('course_id_pred'), course_id,
+                                 data.get('pred_part'), data.get('succ_part'), data.get('min_gap_weeks', 0))
+        if err:
+            return error_response(err)
+        _audit('COURSE_ORDERING_ADD', ip=_client_ip(), user=session.get('user'),
+               pred=row['pred_id'], succ=course_id, parts=f"{row['pred_part']}>{row['succ_part']}")
+        return jsonify(row), 201
+    except Exception as e:
+        return error_response(str(e), 500)
+
+@app.route('/api/courses/<int:course_id>/orderings/<int:oid>', methods=['DELETE'])
+def delete_course_ordering_for(course_id, oid):
+    try:
+        if not _can_edit_course_constraints(course_id):
+            return error_response("Vous n'intervenez pas dans cette matière", 403)
+        db = get_db()
+        r = db.execute('SELECT course_id_succ FROM course_ordering WHERE id = ?', (oid,)).fetchone()
+        if not r or r['course_id_succ'] != course_id:
+            return error_response('Contrainte introuvable pour cette matière', 404)
+        db.execute('DELETE FROM course_ordering WHERE id = ?', (oid,))
+        db.commit()
+        _audit('COURSE_ORDERING_DEL', ip=_client_ip(), user=session.get('user'), succ=course_id, id=oid)
+        return jsonify({'message': 'Contrainte supprimée'}), 200
     except Exception as e:
         return error_response(str(e), 500)
 
@@ -20129,7 +20381,7 @@ def optimize_repartition():
         # --- Contraintes d'ordonnancement ---
         course_ids_in_scope = {s['course_id'] for s in sessions}
         cursor.execute('''
-            SELECT id, course_id_pred, course_id_succ, min_gap_weeks
+            SELECT id, course_id_pred, course_id_succ, pred_part, succ_part, min_gap_weeks
             FROM course_ordering
         ''')
         orderings = [r for r in cursor.fetchall()
@@ -20141,6 +20393,24 @@ def optimize_repartition():
         course_to_sessions = {}
         for s in sessions:
             course_to_sessions.setdefault(s['course_id'], []).append(s['id'])
+        _sess_by_id = {s['id']: s for s in sessions}
+
+        def _ord_pairs(o):
+            """Couples (séance d'avant, séance d'après) d'une contrainte : la partie
+            visée de chaque matière (toutes ses séances si aucune). Une séance FTP
+            n'est comparée qu'aux séances FTP ou mutualisées, de même pour l'ALT :
+            ce ne sont pas les mêmes étudiants."""
+            def sids(cid, part):
+                return [sid for sid in course_to_sessions.get(cid, [])
+                        if not part or (_sess_by_id[sid]['teaching_type'] or '').upper() == part]
+            pairs = []
+            for ps in sids(o['course_id_pred'], o['pred_part']):
+                for ss_ in sids(o['course_id_succ'], o['succ_part']):
+                    fp = _sess_by_id[ps]['formation_type']
+                    fs = _sess_by_id[ss_]['formation_type']
+                    if fp == fs or fp == 2 or fs == 2:
+                        pairs.append((ps, ss_))
+            return pairs
 
         # =========================================================
         # Construction du modèle CP-SAT
@@ -20339,19 +20609,16 @@ def optimize_repartition():
             return ob[sid][w]
 
         for ord_row in orderings:
-            gap       = ord_row['min_gap_weeks']
-            pred_sids = course_to_sessions.get(ord_row['course_id_pred'], [])
-            succ_sids = course_to_sessions.get(ord_row['course_id_succ'], [])
-            for ps in pred_sids:
-                for ss_ in succ_sids:
-                    for w_p in session_weeks.get(ps, []):
-                        for w_s in session_weeks.get(ss_, []):
-                            # succ doit être au moins (gap+1) semaines après pred
-                            if week_to_idx.get(w_s, 0) <= week_to_idx.get(w_p, 0) + gap:
-                                bp = get_ob(ps,  w_p)
-                                bs = get_ob(ss_, w_s)
-                                if bp is not None and bs is not None:
-                                    model.add(bp + bs <= 1)
+            gap = ord_row['min_gap_weeks'] or 0
+            for ps, ss_ in _ord_pairs(ord_row):
+                for w_p in session_weeks.get(ps, []):
+                    for w_s in session_weeks.get(ss_, []):
+                        # succ doit être au moins (gap+1) semaines après pred
+                        if week_to_idx.get(w_s, 0) <= week_to_idx.get(w_p, 0) + gap:
+                            bp = get_ob(ps,  w_p)
+                            bs = get_ob(ss_, w_s)
+                            if bp is not None and bs is not None:
+                                model.add(bp + bs <= 1)
 
         # =========================================================
         # Objectif multi-critères
@@ -20544,25 +20811,22 @@ def optimize_repartition():
             # 5. Contraintes d'ordonnancement problématiques
             if orderings:
                 for ord_row in orderings:
-                    pred_sids_list = course_to_sessions.get(ord_row['course_id_pred'], [])
-                    succ_sids_list = course_to_sessions.get(ord_row['course_id_succ'], [])
-                    for ps in pred_sids_list:
-                        for ss_ in succ_sids_list:
-                            pw = session_weeks.get(ps, [])
-                            sw_ = session_weeks.get(ss_, [])
-                            if pw and sw_:
-                                last_pred = max(week_to_idx.get(w, 0) for w in pw)
-                                first_succ = min(week_to_idx.get(w, 0) for w in sw_)
-                                gap = ord_row['min_gap_weeks']
-                                if first_succ <= last_pred + gap:
-                                    ps_info = next((s for s in sessions if s['id'] == ps), None)
-                                    ss_info = next((s for s in sessions if s['id'] == ss_), None)
-                                    if ps_info and ss_info:
-                                        problems.append(
-                                            f"🔗 Ordre : {ps_info['course_code']} doit finir "
-                                            f"{gap} sem. avant {ss_info['course_code']} "
-                                            f"— plages se chevauchent"
-                                        )
+                    for ps, ss_ in _ord_pairs(ord_row):
+                        pw = session_weeks.get(ps, [])
+                        sw_ = session_weeks.get(ss_, [])
+                        if pw and sw_:
+                            last_pred = max(week_to_idx.get(w, 0) for w in pw)
+                            first_succ = min(week_to_idx.get(w, 0) for w in sw_)
+                            gap = ord_row['min_gap_weeks'] or 0
+                            if first_succ <= last_pred + gap:
+                                ps_info = _sess_by_id.get(ps)
+                                ss_info = _sess_by_id.get(ss_)
+                                if ps_info and ss_info:
+                                    problems.append(
+                                        f"🔗 Ordre : {ps_info['course_code']} {ps_info['teaching_type']} doit finir "
+                                        f"{gap} sem. avant {ss_info['course_code']} {ss_info['teaching_type']} "
+                                        f"— plages se chevauchent"
+                                    )
 
             return problems
 

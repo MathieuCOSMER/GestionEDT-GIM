@@ -358,6 +358,46 @@
         .pn-table td.pn-cell { background: #f9fafb; border-bottom: 3px solid #475569; }
         .pn-table .pn-empty { color: #9ca3af; }
         .pn-table textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font: inherit; font-size: .82rem; resize: vertical; }
+        /* Contraintes Matière : vœux de répartition hebdomadaire (semaines relatives).
+           Préfixe .pn-table : la grille est imbriquée dans une cellule du tableau des
+           matières, dont les règles s'appliqueraient sinon à ses propres cellules. */
+        .mc-wish { margin-top: 10px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fcfcfd; }
+        .mc-wish > summary { cursor: pointer; padding: 6px 10px; font-size: .82rem; font-weight: 600; color: #374151; }
+        .mc-wish-state { font-weight: 400; color: #6b7280; margin-left: 6px; }
+        .mc-wish-state.is-set { color: #166534; }
+        .mc-wish-state.is-dirty { color: #b45309; font-weight: 600; }
+        .mc-wish-body { padding: 2px 10px 10px; }
+        .mc-wish-none { font-size: .8rem; color: #9ca3af; padding: 4px 0; }
+        .mc-wish-scroll { overflow-x: auto; max-width: 100%; }
+        .pn-table .mc-wish-table { width: auto; table-layout: auto; margin: 0; box-shadow: none; border-radius: 0; user-select: none; }
+        .pn-table .mc-wish-table th, .pn-table .mc-wish-table td { padding: 2px 5px; border: 1px solid #e5e7eb; text-align: center; vertical-align: middle; font-size: .75rem; white-space: nowrap; text-transform: none; }
+        .pn-table .mc-wish-table th { background: #f9fafb; color: #4b5563; }
+        .pn-table .mc-wish-table th.mc-seq { text-align: left; font-weight: 600; }
+        .pn-table .mc-wish-table td.mc-type { text-align: left; }
+        .mc-wish-table .mc-dur, .mc-wish-table .mc-grp { font-size: .68rem; color: #6b7280; margin-left: 3px; }
+        .pn-table .mc-wish-table td.mc-cell { min-width: 20px; cursor: pointer; font-weight: 700; color: #111; background: #fff; }
+        .pn-table .mc-wish-table td.mc-cell.is-zero { color: #c4c4c4; font-weight: 400; }
+        .pn-table .mc-wish-table td.mc-cell:hover { outline: 2px solid #6366f1; outline-offset: -2px; }
+        .pn-table .mc-wish-table td.mc-form { font-size: .62rem; font-weight: 700; letter-spacing: .04em; }
+        .pn-table .mc-wish-table td.mc-form-ftp { background: #e0f2fe; color: #0369a1; }
+        .pn-table .mc-wish-table td.mc-form-alt { background: #fff7ed; color: #9a3412; }
+        .pn-table .mc-wish-table td.mc-form-mut { background: #f3e8ff; color: #6b21a8; }
+        .pn-table .mc-wish-table td.mc-rest-bad { color: #dc2626; font-weight: 700; }
+        .pn-table .mc-wish-table tr.mc-hours td { background: #f9fafb; color: #4b5563; font-weight: 600; }
+        .pn-table .mc-wish-table tr.mc-hours td.mc-hlabel { text-align: right; font-weight: 400; }
+        .mc-wish-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; font-size: .75rem; color: #6b7280; }
+        .mc-wish-tools .btn { padding: 2px 8px; font-size: .75rem; }
+        /* Contraintes Matière : matières à placer avant */
+        .mc-ord-list { list-style: none; margin: 0 0 6px; padding: 0; }
+        .mc-ord-list li { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid #f3f4f6; font-size: .8rem; }
+        .mc-ord-list li > span:first-child { flex: 1; }
+        .mc-ord-list .badge, .mc-ord-after .badge { padding: 1px 6px; font-size: .68rem; }
+        .mc-ord-name { color: #6b7280; }
+        .mc-ord-by { color: #9ca3af; font-size: .72rem; white-space: nowrap; }
+        .mc-ord-del { border: none; background: none; color: #b91c1c; cursor: pointer; font-size: .85rem; padding: 0 4px; }
+        .mc-ord-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: .8rem; color: #374151; }
+        .mc-ord-form select { padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 6px; font-size: .8rem; max-width: 100%; background: #fff; }
+        .mc-ord-after { margin-top: 6px; font-size: .75rem; color: #6b7280; }
         /* Journal d'audit */
         .journal-table th, .journal-table td { padding: 6px 10px; border-bottom: 1px solid #f3f4f6; text-align: left; vertical-align: top; }
         .journal-table tbody tr:hover td { background: #f9fafb; }
@@ -375,10 +415,35 @@
                     padding: 10px 14px; margin-bottom: 12px; font-size: .88rem; line-height: 1.5; }
         /* Édition inline répartition */
         .repartition-wrap td.cell-hours:hover, .repartition-wrap td.cell-empty:hover { outline: 2px solid #6366f1; outline-offset: -2px; cursor: pointer; }
-        .cell-arrows { display: flex; flex-direction: column; align-items: center; gap: 0; line-height: 1; }
-        .cell-arrows button { background: none; border: none; cursor: pointer; padding: 0; font-size: 10px; line-height: 1; color: #6366f1; width: 20px; height: 10px; display: flex; align-items: center; justify-content: center; }
-        .cell-arrows button:hover { color: #4338ca; background: #eef2ff; border-radius: 2px; }
-        .cell-arrows .cell-val { font-size: .7rem; font-weight: 600; line-height: 1; }
+        /* Clics rapprochés sur une case (+ / − 1 séance) : pas de sélection de texte */
+        .repartition-wrap td.cell-hours, .repartition-wrap td.cell-empty { user-select: none; }
+        .rep-click-hint { margin-left: 12px; font-size: .78rem; color: #6b7280; flex: 1 1 160px; min-width: 0; }
+        /* L'indication se replie ; les sous-onglets et la barre du brouillon gardent leur largeur */
+        #rep-subtabs .subtab { white-space: nowrap; flex-shrink: 0; }
+        #rep-subtabs .rep-draft-bar { flex-shrink: 0; }
+        #rep-subtabs .rep-draft-bar .btn { white-space: nowrap; }
+        /* Clic droit sur un libellé de ligne ou de matière : menu « Vider » */
+        .repartition-wrap.rep-editable tr.row-mat td, .repartition-wrap.rep-editable tr.row-data td.s-col { cursor: context-menu; }
+        .rep-ctx-menu { position: fixed; z-index: 300; min-width: 230px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.15); padding: 4px; font-size: .82rem; }
+        .rep-ctx-title { padding: 5px 10px 5px; font-weight: 700; color: #4f46e5; border-bottom: 1px solid #f3f4f6; margin-bottom: 2px; white-space: nowrap; }
+        .rep-ctx-menu button { display: flex; justify-content: space-between; align-items: baseline; gap: 18px; width: 100%; padding: 6px 10px; border: none; background: none; border-radius: 5px; cursor: pointer; font: inherit; text-align: left; color: #111; white-space: nowrap; }
+        .rep-ctx-menu button span { color: #6b7280; font-size: .75rem; }
+        .rep-ctx-menu button:hover:not(:disabled), .rep-ctx-menu button:focus-visible { background: #fef2f2; color: #b91c1c; outline: none; }
+        .rep-ctx-menu button:disabled { color: #9ca3af; cursor: default; }
+        .rep-ctx-note { padding: 4px 10px 2px; font-size: .72rem; color: #92400e; }
+        /* Ordonnancement dans la répartition : repère 🔗 sur la ligne bleue, triangle rouge sur les cases en cause */
+        .repartition-wrap .mat-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+        .repartition-wrap .mat-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ord-badge:empty, .wish-badge:empty { display: none; }
+        /* Écart à la répartition souhaitée : cadre rouge (pointillé, laisse voir l'encadré du brouillon) */
+        .repartition-wrap td.cell-wish-bad { outline: 2px dashed #dc2626; outline-offset: -2px; }
+        .ord-badge, .wish-badge { flex-shrink: 0; font-size: .68rem; font-weight: 700; padding: 0 6px; border-radius: 999px; line-height: 1.6; cursor: help; white-space: nowrap; }
+        .ord-badge.ord-ok, .wish-badge.ord-ok { background: #dcfce7; color: #166534; }
+        .ord-badge.ord-bad, .wish-badge.ord-bad { background: #fee2e2; color: #b91c1c; }
+        .ord-badge.ord-unknown { background: #f3f4f6; color: #6b7280; }
+        .repartition-wrap td.cell-order-bad { position: relative; }
+        .repartition-wrap td.cell-order-bad::after { content: ''; position: absolute; top: 0; right: 0; pointer-events: none;
+            border-style: solid; border-width: 0 7px 7px 0; border-color: transparent #dc2626 transparent transparent; }
         /* Total restant rouge si != 0 */
         .col-total-bad { color: #dc2626 !important; }
         /* Brouillon de la répartition : cases modifiées pas encore enregistrées */
@@ -826,6 +891,8 @@
             </div>
             <input type="text" id="mc-search" placeholder="Rechercher une matière…"
                    oninput="renderCourseConstraints()" style="margin-left:12px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+            <label style="font-weight:400;display:inline-flex;align-items:center;gap:4px;margin-left:8px">
+                <input type="checkbox" id="mc-wish-only" onchange="renderCourseConstraints()"> Avec répartition souhaitée</label>
         </div>
     </div>
     <div id="contraintes-matiere-content"><div class="spinner">Chargement…</div></div>
@@ -1418,6 +1485,7 @@
     <div class="subtabs" id="rep-subtabs">
         <button type="button" id="rep-subtab-annuelle" class="subtab active" onclick="showRepTab('annuelle')">Répartition annuelle</button>
         <button type="button" id="rep-subtab-jour" class="subtab admin-only" onclick="showRepTab('jour')">Répartition journalière</button>
+        <span id="rep-click-hint" class="rep-click-hint" style="display:none" title="Maj + clic retire aussi une séance. Clic droit sur le libellé d'une ligne, la colonne Form. ou la ligne bleue d'une matière : vider la ligne, la formation ou la matière.">Clic : + 1 séance · clic droit : − 1 · clic droit sur un libellé : vider</span>
         <!-- Brouillon de la répartition annuelle : rien n'est enregistré avant « Enregistrer » -->
         <div id="rep-draft-bar" class="rep-draft-bar admin-only" style="display:none">
             <span id="rep-draft-status" class="rep-draft-status"></span>
@@ -1579,19 +1647,33 @@
     <div class="modal modal-wide">
         <h2>Contraintes d'ordonnancement</h2>
         <p style="color:#6b7280;font-size:.85rem;margin-bottom:14px">
-            Définissez l'ordre dans lequel les matières doivent être enseignées.<br>
-            Ces contraintes sont prises en compte lors de l'optimisation.
+            Définissez l'ordre dans lequel les matières doivent être enseignées : la partie choisie de la
+            première doit être terminée avant le début de la partie choisie de la seconde.<br>
+            Ces contraintes sont prises en compte lors de l'optimisation. Les enseignants posent aussi les
+            leurs dans Service › Contraintes Matière.
         </p>
 
         <div class="section-title">Ajouter une contrainte</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr auto auto;gap:10px;align-items:end;margin-bottom:14px">
+        <div style="display:grid;grid-template-columns:1fr auto 1fr auto auto auto;gap:10px;align-items:end;margin-bottom:14px">
             <div class="form-group" style="margin-bottom:0">
                 <label>Matière à placer EN PREMIER</label>
                 <select id="ord-pred"></select>
             </div>
             <div class="form-group" style="margin-bottom:0">
+                <label>Partie</label>
+                <select id="ord-pred-part">
+                    <option value="">Toute la matière</option><option>CM</option><option>TD</option><option>TP</option><option>PT</option>
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
                 <label>Matière à placer APRÈS</label>
                 <select id="ord-succ"></select>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+                <label>Partie</label>
+                <select id="ord-succ-part">
+                    <option value="">Toute la matière</option><option>CM</option><option>TD</option><option>TP</option><option>PT</option>
+                </select>
             </div>
             <div class="form-group" style="margin-bottom:0">
                 <label>Écart min (sem.)</label>
@@ -3156,6 +3238,10 @@ const _DIRTY_ZONES = [
     // (isDirty), et l'abandonner la ramène à la version enregistrée (discard).
     { mark: 'rep-pane-annuelle', label: 'des modifications de la répartition calendaire',
       isDirty: () => _repDraft.cells.size > 0, save: () => saveRepDraft(), discard: () => discardRepDraft() },
+    // Contraintes Matière : texte et répartition souhaitée gardés dans des copies
+    // de travail (survivent au filtrage), enregistrés matière par matière
+    { mark: 'page-contraintes-matiere', label: 'des contraintes de matière (texte ou répartition souhaitée)',
+      isDirty: () => mcDirtyIds().length > 0, save: () => saveAllCourseConstraints(), discard: () => mcDiscardAll() },
 ];
 let _dirtyZones = {};
 
@@ -4179,12 +4265,28 @@ function toggleMcSemester(code, btn) {
     renderCourseConstraints();
 }
 
+// Répartition souhaitée : pour chaque face × type de séance, le nombre de séances
+// voulu semaine après semaine, dans l'ordre — la grille de la répartition
+// calendaire, SANS numéro de semaine : la place dans le calendrier revient à
+// l'admin / au responsable FTP. Simple vœu.
+let _mcWishes = {};            // {course_id: {sessions, wish}} (serveur)
+let _mcOrders = [];            // contraintes d'ordonnancement de l'année (« X avant Y »)
+const _mcDraft = new Map();    // course_id → {n, rows} : grille touchée, pas encore enregistrée
+const _mcText = new Map();     // course_id → texte des contraintes en cours de saisie
+const _mcOpen = new Map();     // course_id → volet « répartition souhaitée » ouvert / fermé
+const _MC_MAX_WEEKS = 40, _MC_MAX_PER_WEEK = 9;
+
 async function loadCourseConstraints() {
     const el = document.getElementById('contraintes-matiere-content');
     el.innerHTML = '<div class="spinner">Chargement…</div>';
     try {
         // Toujours recharger : le cache peut venir d'une autre année
-        state.courses = await api('/courses' + svcQ());
+        [state.courses, _mcWishes, _mcOrders] = await Promise.all([
+            api('/courses' + svcQ()), api('/courses/wishes' + svcQ()), api('/course-orderings' + svcQ())
+        ]);
+        // Les saisies en cours ont été enregistrées ou abandonnées avant d'arriver ici
+        _mcDraft.clear();
+        _mcText.clear();
         renderCourseConstraints();
     } catch (e) {
         el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
@@ -4203,30 +4305,56 @@ function renderCourseConstraints() {
         return;
     }
     const q = ((document.getElementById('mc-search') || {}).value || '').trim().toLowerCase();
+    const wishOnly = (document.getElementById('mc-wish-only') || {}).checked;
     list = list.filter(c => _mcSemesters.has(c.semester_code));
     if (q) list = list.filter(c => ((c.code || '') + ' ' + (c.name || '')).toLowerCase().includes(q));
+    if (wishOnly) list = list.filter(c => (_mcWishes[c.id] || {}).wish || _mcIsDirty(c.id));
     if (!list.length) { el.innerHTML = '<div class="empty">Aucune matière pour cette sélection.</div>'; return; }
     list.sort((a, b) => (_SEM_ORDER.indexOf(a.semester_code) - _SEM_ORDER.indexOf(b.semester_code))
                         || (a.code || '').localeCompare(b.code || ''));
     const bySem = {};
     list.forEach(c => { (bySem[c.semester_code] = bySem[c.semester_code] || []).push(c); });
+    // Enseignant : volets ouverts d'emblée (il vient les remplir) ; admin : fermés,
+    // l'état de chaque vœu se lit dans le titre du volet
+    const openDefault = !adminPower('svc:contraintes-matiere');
     let html = `<p style="color:#6b7280;margin:0 0 4px">Indiquez les contraintes propres à chaque
-        matière (salle spécifique, ordre des séances, période imposée…).</p>`;
+        matière (salle spécifique, période imposée…) et, dans <strong>Répartition souhaitée</strong>,
+        l'enchaînement voulu : combien de séances de chaque type, semaine après semaine, dans l'ordre.
+        Les semaines ne sont pas numérotées : leur place dans le calendrier est décidée par
+        l'administration ou le responsable FTP. Un TD ou un TP à plusieurs groupes suit le même rythme
+        pour chaque groupe. Dans <strong>Matières à placer avant</strong>, ajoutez une à une les matières
+        (ou leur CM, TD…) qui doivent être terminées avant le début de celle-ci ou d'une de ses parties :
+        chaque contrainte est enregistrée dès l'ajout.</p>`;
     _SEM_ORDER.forEach(sem => {
         const rows = bySem[sem];
         if (!rows || !rows.length) return;
         html += `<h2 style="margin:18px 0 8px;color:#4f46e5">${esc(sem)}</h2>`;
         html += `<table class="pn-table"><thead><tr>
             <th style="width:22%">Matière</th>
-            <th>Contraintes de la matière</th>
+            <th>Contraintes et répartition souhaitée</th>
         </tr></thead><tbody>`;
         rows.forEach(c => {
             const teachers = c.teacher_names ? `<br><small style="color:#6b7280">${esc(c.teacher_names)}</small>` : '';
+            const text = _mcText.has(c.id) ? _mcText.get(c.id) : (c.constraints || '');
+            const open = _mcOpen.has(c.id) ? _mcOpen.get(c.id) : (openDefault || _mcIsDirty(c.id));
+            const [stCls, stTxt] = _mcWishState(c.id);
+            const openOrd = _mcOpen.has('o' + c.id) ? _mcOpen.get('o' + c.id) : openDefault;
+            const [osCls, osTxt] = _mcOrdState(c.id);
             html += `<tr>
                 <td class="pn-mat"><strong>${esc(c.code || '')}</strong><br>${esc(c.name || '')}${teachers}</td>
                 <td>
-                    <textarea id="mc-ta-${c.id}" rows="4"
-                        placeholder="Ex : TP en salle B12 uniquement ; CM avant les TP ; à placer avant la semaine 45…">${esc(c.constraints || '')}</textarea>
+                    <textarea id="mc-ta-${c.id}" rows="3" oninput="_mcText.set(${c.id}, this.value)"
+                        placeholder="Ex : TP en salle B12 uniquement ; à placer avant la semaine 45…">${esc(text)}</textarea>
+                    <details class="mc-wish"${openOrd ? ' open' : ''} ontoggle="_mcOpen.set('o${c.id}', this.open)">
+                        <summary>Matières à placer avant
+                            <span class="mc-wish-state ${osCls}" id="mc-os-${c.id}">${esc(osTxt)}</span></summary>
+                        <div class="mc-wish-body" id="mc-ord-${c.id}">${mcOrdHtml(c.id)}</div>
+                    </details>
+                    <details class="mc-wish"${open ? ' open' : ''} ontoggle="_mcOpen.set(${c.id}, this.open)">
+                        <summary>Répartition souhaitée des séances
+                            <span class="mc-wish-state ${stCls}" id="mc-ws-${c.id}">${esc(stTxt)}</span></summary>
+                        <div class="mc-wish-body" id="mc-wish-${c.id}">${mcWishGridHtml(c.id)}</div>
+                    </details>
                     <div style="margin-top:6px;text-align:right">
                         <button class="btn btn-primary btn-sm" onclick="saveCourseConstraints(${c.id})">Enregistrer</button>
                     </div>
@@ -4238,30 +4366,369 @@ function renderCourseConstraints() {
     el.innerHTML = html;
 }
 
-// Enregistre les contraintes d'une matière (année affichée dans Service enseignant)
-async function saveCourseConstraints(id) {
-    const ta = document.getElementById('mc-ta-' + id);
-    if (!ta) return;
-    const constraints = ta.value;
-    try {
-        // Appel direct : la garde client de api() bloque les écritures côté
-        // enseignant, or l'intervenant est autorisé ici (vérifié côté serveur).
-        const r = await fetch('/api/courses/' + id + '/constraints' + svcQ(), {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ constraints })
+// Grille enregistrée, au format de travail {n, rows: {"ft:TYPE": [séances par semaine]}}
+function _mcSaved(cid) {
+    const e = _mcWishes[cid] || {};
+    const w = e.wish;
+    // Sans vœu : de quoi placer une séance par semaine du type le plus fourni
+    const n = (w && w.n_weeks)
+        || Math.min(_MC_MAX_WEEKS, Math.max(4, ...(e.sessions || []).map(s => s.nb || 0)));
+    const rows = {};
+    (e.sessions || []).forEach(s => {
+        const src = (w && w.rows && w.rows[s.key]) || [];
+        rows[s.key] = Array.from({ length: n }, (_, i) => +src[i] || 0);
+    });
+    return { n, rows };
+}
+function _mcWorking(cid) { return _mcDraft.get(cid) || _mcSaved(cid); }
+// Forme comparable d'une grille : lignes non vides seulement ('' = aucun vœu)
+function _mcNorm(wk) {
+    const rows = {};
+    Object.keys(wk.rows).sort().forEach(k => {
+        if (wk.rows[k].some(v => v)) rows[k] = wk.rows[k].slice(0, wk.n);
+    });
+    return Object.keys(rows).length ? JSON.stringify({ n: wk.n, rows }) : '';
+}
+function _mcIsDirty(cid) {
+    const d = _mcDraft.get(cid);
+    return !!d && _mcNorm(d) !== _mcNorm(_mcSaved(cid));
+}
+function _mcTextDirty(cid) {
+    if (!_mcText.has(cid)) return false;
+    const c = (state.courses || []).find(x => x.id === cid);
+    return _mcText.get(cid).trim() !== ((c && c.constraints) || '').trim();
+}
+function mcDirtyIds() {
+    const ids = new Set([..._mcDraft.keys()].filter(_mcIsDirty));
+    [..._mcText.keys()].filter(_mcTextDirty).forEach(id => ids.add(id));
+    return [...ids];
+}
+function mcDiscardAll() { _mcDraft.clear(); _mcText.clear(); }
+
+function _mcDate(s) {
+    const d = new Date(String(s).replace(' ', 'T') + (/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? '' : 'Z'));
+    return isNaN(d) ? '' : d.toLocaleDateString('fr-FR');
+}
+function _mcWishState(cid) {
+    if (_mcIsDirty(cid)) return ['is-dirty', '· modifiée, non enregistrée'];
+    const w = (_mcWishes[cid] || {}).wish;
+    if (w) return ['is-set', '· renseignée' + (w.updated_by ? ' par ' + w.updated_by : '')
+                              + (w.updated_at ? ' le ' + _mcDate(w.updated_at) : '')];
+    return ['', '· non renseignée'];
+}
+function _mcFmtDur(h) {
+    const m = Math.round((h || 0) * 60), mm = m % 60;
+    return Math.floor(m / 60) + 'h' + (mm ? String(mm).padStart(2, '0') : '');
+}
+const _mcFmtH = h => h ? String(Math.round(h * 100) / 100).replace('.', ',') : '';
+
+function mcWishGridHtml(cid) {
+    const e = _mcWishes[cid];
+    if (!e || !(e.sessions || []).length)
+        return `<div class="mc-wish-none">Aucune séance n'est encore définie pour cette matière.</div>`;
+    const wk = _mcWorking(cid), n = wk.n, sess = e.sessions;
+    const badge = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' };
+    // Colonnes sans numéro : seul l'ordre compte, la place dans le calendrier
+    // revient à l'administration / au responsable FTP
+    let h = `<div class="mc-wish-scroll"><table class="mc-wish-table"
+                onclick="mcWishClick(event, ${cid}, 1)" oncontextmenu="mcWishClick(event, ${cid}, -1)">
+        <thead><tr><th>Form.</th><th>Type</th>
+            <th title="Séances à répartir (par groupe)">Séances</th>
+            <th title="Séances restant à répartir">Reste</th>
+            <th class="mc-seq" colspan="${n}" title="Une colonne par semaine, dans l'ordre ; leur place dans le calendrier est décidée par l'administration">Semaine après semaine →</th></tr></thead><tbody>`;
+    // Un bloc par face (MUT, FTP, ALT), libellé fusionné à gauche comme dans la répartition
+    const faces = [];
+    sess.forEach(s => {
+        let f = faces.find(x => x.ft === s.ft);
+        if (!f) faces.push(f = { ft: s.ft, label: s.formation, list: [] });
+        f.list.push(s);
+    });
+    faces.forEach(f => {
+        f.list.forEach((s, j) => {
+            const counts = wk.rows[s.key] || [];
+            const rest = s.nb - counts.reduce((a, b) => a + b, 0);
+            const tLbl = s.type === 'TP' ? (s.tp_type === 'TP8' ? 'TP8' : 'TP12') : s.type;
+            const grp = s.type !== 'CM' && s.groups > 1;
+            const title = `Séances de ${_mcFmtDur(s.slot)}`
+                + (grp ? ` · ${s.groups} groupes (même rythme pour chaque groupe)` : '')
+                + (s.teacher ? ` · ${s.teacher}` : '');
+            const form = j === 0
+                ? `<td class="mc-form mc-form-${f.label.toLowerCase()}" rowspan="${f.list.length}">${esc(f.label)}</td>` : '';
+            const cells = counts.map((v, i) =>
+                `<td class="mc-cell${v ? '' : ' is-zero'}" data-key="${s.key}" data-i="${i}">${v || '·'}</td>`).join('');
+            h += `<tr>${form}
+                <td class="mc-type" title="${esc(title)}"><span class="badge ${badge[s.type] || 'badge-cm'}">${tLbl}</span><span class="mc-dur">${_mcFmtDur(s.slot)}</span>${grp ? `<span class="mc-grp">× ${s.groups} gr.</span>` : ''}</td>
+                <td>${s.nb}</td>
+                <td class="${rest ? 'mc-rest-bad' : ''}">${rest}</td>${cells}</tr>`;
         });
-        if (!r.ok) {
-            let msg = "Échec de l'enregistrement";
-            try { msg = JSON.parse(await r.text()).error || msg; } catch (_) {}
-            throw new Error(msg);
-        }
-        const c = (state.courses || []).find(x => x.id === id);
-        if (c) c.constraints = constraints.trim();
-        toast('Contraintes enregistrées');
-    } catch (e) {
-        toast('Erreur : ' + e.message, 'error');
+    });
+    // Heures par semaine vues d'un étudiant (un seul groupe), côté FTP et côté ALT
+    // (le mutualisé compte des deux côtés)
+    const hasFtp = sess.some(s => s.ft === 0), hasAlt = sess.some(s => s.ft === 1);
+    const sides = (hasFtp || hasAlt)
+        ? [['FTP', [0, 2]], ['ALT', [1, 2]]].filter(([, fts]) => sess.some(s => fts.includes(s.ft)))
+        : [['', [2]]];
+    sides.forEach(([lbl, fts]) => {
+        const rows = sess.filter(s => fts.includes(s.ft));
+        const cells = Array.from({ length: n }, (_, i) =>
+            `<td>${_mcFmtH(rows.reduce((a, s) => a + (wk.rows[s.key][i] || 0) * s.slot, 0))}</td>`).join('');
+        h += `<tr class="mc-hours"><td class="mc-hlabel" colspan="4">Heures / semaine${lbl ? ' ' + lbl : ''}</td>${cells}</tr>`;
+    });
+    h += `</tbody></table></div>`;
+    // Outils
+    const lastUsed = Object.values(wk.rows).some(r => r[n - 1]);
+    const copyable = sess.some(s => s.ft === 1 && sess.some(t => t.ft === 0 && t.type === s.type));
+    h += `<div class="mc-wish-tools">
+        <span>Clic : + 1 séance · clic droit (ou Maj + clic) : − 1</span>
+        <button type="button" class="btn btn-secondary" onclick="mcWishWeeks(${cid}, 1)"${n >= _MC_MAX_WEEKS ? ' disabled' : ''}>+ 1 semaine</button>
+        <button type="button" class="btn btn-secondary" onclick="mcWishWeeks(${cid}, -1)"${n <= 1 || lastUsed ? ' disabled' : ''}
+            title="${lastUsed ? 'La dernière semaine contient des séances' : 'Retirer la dernière semaine'}">− 1 semaine</button>
+        ${copyable ? `<button type="button" class="btn btn-secondary" onclick="mcWishCopyFtpAlt(${cid})"
+            title="Reprendre pour l'ALT la répartition des séances FTP de même type">Copier FTP → ALT</button>` : ''}
+        <button type="button" class="btn btn-secondary" onclick="mcWishClear(${cid})">Vider</button>
+        ${_mcIsDirty(cid) ? `<button type="button" class="btn btn-secondary" onclick="mcWishRevert(${cid})"
+            title="Revenir à la répartition enregistrée">Annuler les modifications</button>` : ''}
+    </div>`;
+    return h;
+}
+
+// Réaffiche la grille d'une matière et l'état affiché dans le titre de son volet
+function _mcRefreshWish(cid) {
+    const box = document.getElementById('mc-wish-' + cid);
+    if (box) box.innerHTML = mcWishGridHtml(cid);
+    const st = document.getElementById('mc-ws-' + cid);
+    if (st) { const [cls, txt] = _mcWishState(cid); st.className = 'mc-wish-state ' + cls; st.textContent = txt; }
+}
+
+// Modifie la copie de travail d'une matière (créée au premier changement)
+function _mcEdit(cid, fn) {
+    const cur = _mcWorking(cid);
+    const next = { n: cur.n, rows: {} };
+    Object.entries(cur.rows).forEach(([k, v]) => { next.rows[k] = v.slice(); });
+    fn(next);
+    _mcDraft.set(cid, next);
+    _mcRefreshWish(cid);
+}
+
+function mcWishClick(ev, cid, delta) {
+    const td = ev.target.closest('td.mc-cell');
+    if (!td) return;
+    ev.preventDefault();
+    if (ev.shiftKey) delta = -1;
+    const key = td.dataset.key, i = +td.dataset.i;
+    _mcEdit(cid, wk => {
+        const r = wk.rows[key];
+        if (r) r[i] = Math.max(0, Math.min(_MC_MAX_PER_WEEK, (r[i] || 0) + delta));
+    });
+}
+
+function mcWishWeeks(cid, d) {
+    const cur = _mcWorking(cid);
+    const n = Math.max(1, Math.min(_MC_MAX_WEEKS, cur.n + d));
+    if (n === cur.n || (d < 0 && Object.values(cur.rows).some(r => r[cur.n - 1]))) return;
+    _mcEdit(cid, wk => {
+        Object.keys(wk.rows).forEach(k => {
+            const r = wk.rows[k];
+            wk.rows[k] = Array.from({ length: n }, (_, i) => r[i] || 0);
+        });
+        wk.n = n;
+    });
+}
+
+function mcWishCopyFtpAlt(cid) {
+    const sess = (_mcWishes[cid] || {}).sessions || [];
+    _mcEdit(cid, wk => {
+        sess.filter(s => s.ft === 1).forEach(s => {
+            const src = wk.rows['0:' + s.type];
+            if (src) wk.rows[s.key] = src.slice();
+        });
+    });
+}
+
+function mcWishClear(cid) {
+    _mcEdit(cid, wk => { Object.keys(wk.rows).forEach(k => { wk.rows[k] = wk.rows[k].map(() => 0); }); });
+}
+
+function mcWishRevert(cid) {
+    _mcDraft.delete(cid);
+    _mcRefreshWish(cid);
+}
+
+// ----- Matières à placer avant (ordonnancement « X avant cette matière ») -----
+// Chaque contrainte est enregistrée dès l'ajout (hors bouton « Enregistrer ») et
+// sert à l'optimiseur ; l'admin la retrouve dans Répartition › Ordonnancement.
+const _MC_TYPES = ['CM', 'TD', 'TP', 'PT'];
+// Types de séance (avec des heures) d'une matière, dans l'ordre CM, TD, TP, PT
+function _mcTypes(cid) {
+    const set = new Set(((_mcWishes[cid] || {}).sessions || []).map(s => s.type));
+    return _MC_TYPES.filter(t => set.has(t));
+}
+function _mcOrdState(cid) {
+    const n = (_mcOrders || []).filter(o => o.succ_id === cid).length;
+    return n ? ['is-set', `· ${n} contrainte${n > 1 ? 's' : ''}`] : ['', '· aucune'];
+}
+
+function mcOrdHtml(cid) {
+    const before = (_mcOrders || []).filter(o => o.succ_id === cid);
+    const after = (_mcOrders || []).filter(o => o.pred_id === cid);
+    let h = '';
+    if (before.length) {
+        h += '<ul class="mc-ord-list">' + before.map(o => `<li>
+            <span>${o.pred_part ? `${_ordPartTag(o.pred_part).trim()} de ` : ''}<strong>${esc(o.pred_code)}</strong>
+                <span class="mc-ord-name">${esc(o.pred_name)}</span>
+                → terminé avant ${o.succ_part ? `le ${_ordPartTag(o.succ_part).trim()} de cette matière` : 'cette matière'}${
+                o.min_gap_weeks ? ` · écart ≥ ${o.min_gap_weeks} sem.` : ''}</span>
+            <span class="mc-ord-by">${o.created_by ? 'par ' + esc(o.created_by) : ''}</span>
+            <button type="button" class="mc-ord-del" title="Supprimer cette contrainte"
+                onclick="mcOrdDelete(${cid}, ${o.id})">✕</button></li>`).join('') + '</ul>';
+    } else {
+        h += '<div class="mc-wish-none">Aucune matière imposée avant celle-ci.</div>';
     }
+    h += `<div id="mc-ord-form-${cid}"><button type="button" class="btn btn-secondary btn-sm"
+        onclick="mcOrdForm(${cid})">+ Ajouter une matière à placer avant</button></div>`;
+    if (after.length)
+        h += `<div class="mc-ord-after">Cette matière doit elle-même être terminée avant : ${after.map(o =>
+            `<strong>${esc(o.succ_code)}</strong>${o.succ_part ? ' (' + o.succ_part + ')' : ''}`).join(', ')}</div>`;
+    return h;
+}
+
+function _mcRefreshOrd(cid) {
+    const box = document.getElementById('mc-ord-' + cid);
+    if (box) box.innerHTML = mcOrdHtml(cid);
+    const st = document.getElementById('mc-os-' + cid);
+    if (st) { const [cls, txt] = _mcOrdState(cid); st.className = 'mc-wish-state ' + cls; st.textContent = txt; }
+}
+
+function _mcPartOptions(types, whole, fmt) {
+    return `<option value="">${whole}</option>` + types.map(t => `<option value="${t}">${fmt(t)}</option>`).join('');
+}
+
+// Formulaire d'ajout, construit à la demande (la liste des matières est longue)
+function mcOrdForm(cid) {
+    const box = document.getElementById('mc-ord-form-' + cid);
+    if (!box) return;
+    const me = (state.courses || []).find(c => c.id === cid) || {};
+    const bySem = {};
+    (state.courses || []).filter(c => c.id !== cid)
+        .forEach(c => { (bySem[c.semester_code] = bySem[c.semester_code] || []).push(c); });
+    // Le semestre de la matière d'abord, puis les autres dans l'ordre
+    const sems = [me.semester_code, ..._SEM_ORDER.filter(s => s !== me.semester_code)].filter(s => bySem[s]);
+    const opts = sems.map(s => `<optgroup label="${esc(s)}">` + bySem[s]
+        .sort((a, b) => (a.code || '').localeCompare(b.code || ''))
+        .map(c => `<option value="${c.id}">${esc(c.code)} — ${esc(c.name)}</option>`).join('') + '</optgroup>').join('');
+    box.innerHTML = `<div class="mc-ord-form">
+        <select id="mc-ord-pred-${cid}" onchange="mcOrdPartOptions(${cid})">
+            <option value="">— Matière à placer avant —</option>${opts}</select>
+        <select id="mc-ord-pp-${cid}" title="Partie de la matière choisie"></select>
+        <span>terminé(e) avant</span>
+        <select id="mc-ord-sp-${cid}" title="Partie de cette matière-ci">${
+            _mcPartOptions(_mcTypes(cid), 'cette matière (en entier)', t => `le ${t} de cette matière`)}</select>
+        <button type="button" class="btn btn-primary btn-sm" onclick="mcOrdAdd(${cid})">Ajouter</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="_mcRefreshOrd(${cid})">Annuler</button>
+    </div>`;
+    mcOrdPartOptions(cid);
+}
+
+// Parties proposées pour la matière choisie : ses seuls types de séance
+function mcOrdPartOptions(cid) {
+    const pid = parseInt(document.getElementById('mc-ord-pred-' + cid).value) || 0;
+    const sel = document.getElementById('mc-ord-pp-' + cid);
+    sel.innerHTML = _mcPartOptions(pid ? _mcTypes(pid) : [], 'en entier', t => 'son ' + t);
+    sel.disabled = !pid;
+}
+
+async function mcOrdAdd(cid) {
+    const pred = parseInt(document.getElementById('mc-ord-pred-' + cid).value) || 0;
+    if (!pred) { toast('Choisissez la matière à placer avant', 'error'); return; }
+    const body = { course_id_pred: pred,
+                   pred_part: document.getElementById('mc-ord-pp-' + cid).value,
+                   succ_part: document.getElementById('mc-ord-sp-' + cid).value };
+    try {
+        const row = await _mcSend('POST', '/api/courses/' + cid + '/orderings', body);
+        _mcOrders.push(row);
+        _mcRefreshOrd(cid);
+        _mcRefreshOrd(pred);   // son volet indique ce qu'elle doit précéder
+        toast('Contrainte ajoutée');
+    } catch (e) {
+        toast(e.message, 'error');   // le formulaire reste ouvert pour corriger
+    }
+}
+
+async function mcOrdDelete(cid, oid) {
+    const o = (_mcOrders || []).find(x => x.id === oid);
+    try {
+        await _mcSend('DELETE', '/api/courses/' + cid + '/orderings/' + oid);
+        _mcOrders = _mcOrders.filter(x => x.id !== oid);
+        _mcRefreshOrd(cid);
+        if (o) _mcRefreshOrd(o.pred_id);
+        toast('Contrainte supprimée');
+    } catch (e) {
+        toast(e.message, 'error');
+    }
+}
+
+// Écritures directes : la garde client de api() bloque les écritures côté
+// enseignant, or l'intervenant est autorisé ici (vérifié côté serveur).
+async function _mcPut(path, body) { return _mcSend('PUT', path, body); }
+async function _mcSend(method, path, body) {
+    const r = await fetch(path + svcQ(), {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body)
+    });
+    if (!r.ok) {
+        let msg = "Échec de l'enregistrement";
+        try { msg = JSON.parse(await r.text()).error || msg; } catch (_) {}
+        throw new Error(msg);
+    }
+    return r.json();
+}
+
+// Enregistre les contraintes d'une matière — texte et répartition souhaitée, ce
+// qui a changé seulement (année affichée dans Service enseignant). Renvoie false
+// en cas d'échec (la garde des modifications non enregistrées reste alors sur place).
+async function saveCourseConstraints(id, quiet) {
+    const c = (state.courses || []).find(x => x.id === id);
+    const textDirty = _mcTextDirty(id), wishDirty = _mcIsDirty(id);
+    if (!textDirty && !wishDirty) {
+        if (!quiet) toast('Aucune modification à enregistrer');
+        return true;
+    }
+    try {
+        if (textDirty) {
+            const constraints = _mcText.get(id);
+            await _mcPut('/api/courses/' + id + '/constraints', { constraints });
+            if (c) c.constraints = constraints.trim();
+            _mcText.delete(id);
+        }
+        let incomplete = false;
+        if (wishDirty) {
+            const d = _mcDraft.get(id);
+            const res = await _mcPut('/api/courses/' + id + '/wishes', { n_weeks: d.n, rows: d.rows });
+            if (_mcWishes[id]) _mcWishes[id].wish = res.wish;
+            incomplete = !!res.wish && ((_mcWishes[id] || {}).sessions || []).some(s =>
+                (res.wish.rows[s.key] || []).reduce((a, b) => a + b, 0) !== s.nb);
+            _mcDraft.delete(id);
+            _mcRefreshWish(id);
+        }
+        if (!quiet) toast(incomplete
+            ? 'Enregistré — toutes les séances ne sont pas réparties (colonne Reste)'
+            : 'Contraintes enregistrées');
+        return true;
+    } catch (e) {
+        toast((c ? c.code + ' : ' : '') + e.message, 'error');
+        return false;
+    }
+}
+
+// Garde des modifications non enregistrées : enregistre chaque matière touchée
+async function saveAllCourseConstraints() {
+    let ok = true;
+    for (const id of mcDirtyIds()) {
+        if (!(await saveCourseConstraints(id, true))) ok = false;
+    }
+    if (ok) toast('Contraintes enregistrées');
+    return ok;
 }
 
 // ===== PROMOTIONS (admin) =====
@@ -15186,7 +15653,7 @@ function toggleSemester(code, btn) {
 }
 
 // ===== Brouillon de la répartition calendaire =====
-// Les clics ▲/▼ ne partent plus au serveur : ils modifient une copie de travail
+// Les clics sur les cases ne partent pas au serveur : ils modifient une copie de travail
 // gardée dans le navigateur. « Enregistrer » envoie d'un bloc les cases modifiées,
 // « Abandonner » revient à la version enregistrée, et chaque clic peut être
 // annulé (retour arrière) puis rétabli. Contrôle et Export portent sur la copie
@@ -15194,7 +15661,8 @@ function toggleSemester(code, btn) {
 // affichés ; quitter l'onglet, l'année ou la page demande quoi en faire.
 const _repDraft = {
     cells: new Map(),  // "séance|groupe|semaine" → { sid, week, group, saved, hours }
-    undo: [],          // un pas par clic : { sid, week, group, from, to, label }
+    undo: [],          // un pas par clic : { sid, week, group, from, to, label },
+                       // ou un vidage d'un coup : { cells: [{ sid, week, group, from, to }], label }
     redo: [],
     saving: false,
 };
@@ -15220,8 +15688,7 @@ function repRowFor(sid, group) {
 }
 
 function repCellLabel(row, week) {
-    const grp = row.n_groups > 1 ? ' ' + (row.group_label || 'gr.' + (row.group_index || 1)) : '';
-    return `${row.course_code} ${typeDisp(row)}${grp} ${row.formation}, semaine ${week}`;
+    return `${repRowName(row)}, semaine ${week}`;
 }
 
 function repDraftReset() {
@@ -15234,6 +15701,8 @@ function repDraftReset() {
 // Barre du brouillon (à droite des sous-onglets) : visible dès qu'il y a
 // quelque chose à enregistrer ou à annuler
 function repDraftBar() {
+    const hint = document.getElementById('rep-click-hint');
+    if (hint) hint.style.display = (editUI('rep:annuelle') && _repTab !== 'jour') ? '' : 'none';
     const bar = document.getElementById('rep-draft-bar');
     if (!bar) return;
     const n = _repDraft.cells.size, busy = _repDraft.saving;
@@ -15261,9 +15730,7 @@ function repRefreshCell(sid, week, group, td) {
     if (!td) return null;
     const row = repRowFor(sid, group);
     const h = (row && row.by_week[week]) || 0;
-    const val = td.querySelector('.cell-val');   // widget ▲/▼ ouvert sur la case
-    if (val) val.textContent = h || '·';
-    else td.textContent = h || '·';
+    td.textContent = h || '·';
     td.classList.toggle('cell-hours', !!h);
     td.classList.toggle('cell-empty', !h);
     const c = _repDraft.cells.get(repDraftKey(sid, group, week));
@@ -15272,7 +15739,7 @@ function repRefreshCell(sid, week, group, td) {
     return td;
 }
 
-// Clic ▲/▼ : un nouveau pas dans l'historique
+// Clic sur une case (+ / − 1 séance) : un nouveau pas dans l'historique
 function repEditCell(sid, week, group, hours) {
     if (_repDraft.saving) return;
     const row = repRowFor(sid, group);
@@ -15306,7 +15773,7 @@ function repUndo() {
     if (_repDraft.saving || !_repDraft.undo.length) return;
     const step = _repDraft.undo.pop();
     _repDraft.redo.push(step);
-    repApplyStep(step, step.from);
+    (step.cells || [step]).forEach(p => repApplyStep(p, p.from));
     repShowStep(step, 'Retour arrière');
 }
 
@@ -15314,13 +15781,26 @@ function repRedo() {
     if (_repDraft.saving || !_repDraft.redo.length) return;
     const step = _repDraft.redo.pop();
     _repDraft.undo.push(step);
-    repApplyStep(step, step.to);
+    (step.cells || [step]).forEach(p => repApplyStep(p, p.to));
     repShowStep(step, 'Rétabli');
 }
 
 // Montre la case qui vient de changer : défilement jusqu'à elle (hors colonnes et
 // en-têtes figés) et bref halo ; message si elle n'est pas affichée (filtres).
+// Vidage d'une ligne ou d'une matière : message, et halo sur les cases affichées.
 function repShowStep(step, verb) {
+    if (step.cells) {
+        toast(`${verb} : ${step.label}`);
+        step.cells.forEach(p => {
+            const td = document.querySelector(
+                `#repartition-table td[data-sid="${p.sid}"][data-week="${p.week}"][data-group="${p.group}"]`);
+            if (!td) return;
+            td.classList.remove('cell-flash');
+            void td.offsetWidth;
+            td.classList.add('cell-flash');
+        });
+        return;
+    }
     const td = document.querySelector(
         `#repartition-table td[data-sid="${step.sid}"][data-week="${step.week}"][data-group="${step.group}"]`);
     if (!td) { toast(`${verb} : ${step.label} (hors affichage)`); return; }
@@ -15474,6 +15954,9 @@ async function loadOrderings() {
     try {
         const rows = await api('/course-orderings' + svcQ());
         renderOrderingList(rows);
+        // Le tableau de la répartition, derrière le modal, suit les changements
+        _repOrders = rows;
+        repOrdSchedule();
     } catch(e) {
         document.getElementById('ordering-list').innerHTML = '<div class="empty">Erreur chargement</div>';
     }
@@ -15494,8 +15977,9 @@ function renderOrderingList(rows) {
         </tr></thead>
         <tbody>${rows.map(r => `
         <tr style="border-top:1px solid #f3f4f6">
-            <td style="padding:7px 12px;font-size:.88rem"><strong>${esc(r.pred_code)}</strong> — ${esc(r.pred_name)}</td>
-            <td style="padding:7px 12px;font-size:.88rem"><strong>${esc(r.succ_code)}</strong> — ${esc(r.succ_name)}</td>
+            <td style="padding:7px 12px;font-size:.88rem"><strong>${esc(r.pred_code)}</strong>${_ordPartTag(r.pred_part)} — ${esc(r.pred_name)}</td>
+            <td style="padding:7px 12px;font-size:.88rem"><strong>${esc(r.succ_code)}</strong>${_ordPartTag(r.succ_part)} — ${esc(r.succ_name)}${
+                r.created_by ? `<br><small style="color:#6b7280">posée par ${esc(r.created_by)}</small>` : ''}</td>
             <td style="padding:7px 12px;font-size:.88rem;text-align:center">${r.min_gap_weeks} sem.</td>
             <td style="padding:7px 12px;text-align:right">
                 <button class="btn btn-danger btn-sm" onclick="deleteOrdering(${r.id})">Supprimer</button>
@@ -15504,16 +15988,24 @@ function renderOrderingList(rows) {
     </table>`;
 }
 
+// Partie visée d'une matière dans une contrainte d'ordonnancement ('' = toute la matière)
+function _ordPartTag(part) {
+    const cls = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' }[part];
+    return cls ? ` <span class="badge ${cls}">${part}</span>` : '';
+}
+
 async function addOrdering() {
     const pred = parseInt(document.getElementById('ord-pred').value);
     const succ = parseInt(document.getElementById('ord-succ').value);
     const gap  = parseInt(document.getElementById('ord-gap').value) || 0;
+    const pred_part = document.getElementById('ord-pred-part').value;
+    const succ_part = document.getElementById('ord-succ-part').value;
     if (!pred || !succ) { toast('Sélectionnez les deux matières', 'error'); return; }
     if (pred === succ)  { toast('Les deux matières doivent être différentes', 'error'); return; }
     try {
         await api('/course-orderings' + svcQ(), {
             method: 'POST',
-            body: JSON.stringify({ course_id_pred: pred, course_id_succ: succ, min_gap_weeks: gap }),
+            body: JSON.stringify({ course_id_pred: pred, course_id_succ: succ, pred_part, succ_part, min_gap_weeks: gap }),
         });
         toast('Contrainte ajoutée');
         loadOrderings();
@@ -16800,11 +17292,14 @@ async function loadRepartition() {
         await mapLimit(promoSet, 2, async s => {
             datas[s] = await api('/repartition?semester=' + encodeURIComponent(s) + svcQ('&'));
         });
-        const [wc, calRaw, catCodes] = await Promise.all([
+        const [wc, calRaw, catCodes, orders, wishes] = await Promise.all([
             api('/week-comments' + svcQ()), api('/special-calendar' + svcQ()),
-            api('/category-codes' + svcQ())
+            api('/category-codes' + svcQ()), api('/course-orderings' + svcQ()),
+            api('/courses/wishes' + svcQ())
         ]);
         if (seq !== _repLoadSeq) return;   // une autre sélection est déjà en cours de chargement
+        _repOrders = orders || [];
+        _repWishes = wishes || {};
         // Brouillon : les cases modifiées reprennent leur valeur de travail
         const allRows = promoSet.flatMap(s => datas[s].rows);
         repDraftOverlay(allRows);
@@ -17737,7 +18232,8 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
         if (['CM', 'TD', 'TP', 'PT'].includes(rtype) && !_selectedTypes.includes(rtype)) return;
         const key = r.course_code + '|' + r.semester;
         if (!byCode[key]) {
-            byCode[key] = { code: r.course_code, name: r.course_name, sem: r.semester, ftp: [], alt: [], mut: [] };
+            byCode[key] = { code: r.course_code, name: r.course_name, sem: r.semester, courseId: r.course_id,
+                            ftp: [], alt: [], mut: [] };
             codeOrder.push(key);
         }
         if (r.formation === 'FTP') byCode[key].ftp.push(r);
@@ -17871,9 +18367,10 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
 
         // En-tête matière
         const semLabel = showSem ? ` <span class="mat-sem">· ${esc(block.sem)}</span>` : '';
+        // Repère d'ordonnancement (🔗) à droite du nom, rempli par repOrdRefresh()
         bodyRows += `<tr class="row-mat">
             <td class="s-col" colspan="${fixedSpan}" style="left:0;z-index:2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-                <strong>${esc(block.code)}</strong> — ${esc(block.name)}${semLabel}
+                <div class="mat-head"><span class="mat-title"><strong>${esc(block.code)}</strong> — ${esc(block.name)}${semLabel}</span><span class="wish-badge" data-wish-cid="${block.courseId}"></span><span class="ord-badge" data-ord-cid="${block.courseId}"></span></div>
             </td><td colspan="${weeks.length}"></td>
         </tr>`;
 
@@ -18077,62 +18574,511 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
         <tbody>${bodyRows}</tbody>
     </table></div>`;
 
-    // Délégation d'événement : clic sur une cellule de données → édition inline
+    // Délégation d'événement : clic gauche / clic droit sur une case de données,
+    // clic droit sur un libellé (ligne, Form., matière) → menu « Vider »
     const wrap = el.querySelector('.repartition-wrap');
-    if (wrap) wrap.addEventListener('click', onRepartitionCellClick);
+    if (wrap) {
+        wrap.classList.toggle('rep-editable', editUI('rep:annuelle'));
+        wrap.addEventListener('click', e => repCellStep(e, e.shiftKey ? -1 : 1));
+        wrap.addEventListener('contextmenu', repContextMenu);
+    }
+    repOrdRefresh();
 }
 
-function onRepartitionCellClick(e) {
-    // Enseignant (lecture seule) : pas d'édition des cases
+// Clic gauche : + 1 séance (durée de séance de la ligne) ; clic droit ou Maj + clic :
+// − 1 séance. Chaque clic est un pas du brouillon (retour arrière possible).
+function repCellStep(e, dir) {
+    // Enseignant (lecture seule) : pas d'édition, le menu du clic droit reste normal
     if (!editUI('rep:annuelle')) return;
-    // Ignorer si clic sur un bouton flèche déjà présent
-    if (e.target.closest('.cell-arrows')) return;
     const td = e.target.closest('td[data-sid][data-week]');
-    if (!td || td.querySelector('.cell-arrows')) return;
-
+    if (!td) return;
+    e.preventDefault();
     const sid = parseInt(td.dataset.sid);
     const week = parseInt(td.dataset.week);
     const group = parseInt(td.dataset.group) || 1;
-    const tr = td.closest('tr');
-    const slot = parseFloat(tr.dataset.slot) || 1.5;
-    // Valeur lue dans la copie de travail (un retour arrière peut la changer widget ouvert)
-    const current = () => { const r = repRowFor(sid, group); return (r && r.by_week[week]) || 0; };
+    const slot = parseFloat(td.closest('tr').dataset.slot) || 1.5;
+    const r = repRowFor(sid, group);
+    const cur = (r && r.by_week[week]) || 0;
+    repEditCell(sid, week, group, Math.max(0, Math.round((cur + dir * slot) * 100) / 100));
+}
 
-    // Créer le widget flèches
-    const div = document.createElement('div');
-    div.className = 'cell-arrows';
-    const btnUp = document.createElement('button');
-    btnUp.innerHTML = '&#9650;';
-    btnUp.title = '+' + slot + 'h';
-    const valSpan = document.createElement('span');
-    valSpan.className = 'cell-val';
-    valSpan.textContent = current() || '·';
-    const btnDown = document.createElement('button');
-    btnDown.innerHTML = '&#9660;';
-    btnDown.title = '-' + slot + 'h';
-    div.appendChild(btnUp);
-    div.appendChild(valSpan);
-    div.appendChild(btnDown);
-    td.textContent = '';
-    td.appendChild(div);
+// ===== Vider une ligne / une matière : clic droit sur les libellés =====
+// Sur une case de semaine, le clic droit retire une séance (repCellStep). Sur les
+// libellés d'une ligne (type, enseignant, salle, H. mod., reste), sur la colonne
+// Form. ou sur la ligne bleue d'une matière, il ouvre un petit menu pour vider d'un
+// coup. Seules les lignes AFFICHÉES (filtres) sont touchées, sur toutes leurs
+// semaines (même masquées par Impair / Pair : le Reste les compte). Le vidage est un
+// seul pas du brouillon : Ctrl+Z le défait, rien n'est enregistré sans « Enregistrer ».
+function repContextMenu(e) {
+    repCloseMenu();
+    if (!editUI('rep:annuelle')) return;          // lecture seule : menu du navigateur
+    if (e.target.closest('td[data-sid][data-week]')) { repCellStep(e, -1); return; }
+    if (_repDraft.saving) return;
+    const tr = e.target.closest('tbody tr');
+    if (!tr) return;
+    let menu = null;
+    if (tr.classList.contains('row-mat')) menu = repMatMenu(tr);
+    else if (tr.classList.contains('row-data'))
+        menu = e.target.closest('td.form-col') ? repFormMenu(tr) : repRowMenu(tr);
+    if (!menu) return;
+    e.preventDefault();
+    repOpenMenu(e.clientX, e.clientY, menu);
+}
 
-    btnUp.addEventListener('click', ev => {
-        ev.stopPropagation();
-        repEditCell(sid, week, group, Math.round((current() + slot) * 100) / 100);
+function repRowName(row) {
+    const grp = row.n_groups > 1 ? ' ' + (row.group_label || 'gr.' + (row.group_index || 1)) : '';
+    return `${row.course_code} ${typeDisp(row)}${grp} ${row.formation}`;
+}
+
+// Cases non vides (copie de travail) des lignes affichées `trs`, toutes semaines
+function repCellsOf(trs) {
+    const out = [], seen = new Set();
+    trs.forEach(tr => {
+        const sid = parseInt(tr.dataset.sid), group = parseInt(tr.dataset.group) || 1;
+        const row = repRowFor(sid, group);
+        if (!row || seen.has(sid + '|' + group)) return;
+        seen.add(sid + '|' + group);
+        Object.entries(row.by_week).forEach(([w, h]) => {
+            if (h > 0) out.push({ sid, week: parseInt(w), group, from: h, to: 0 });
+        });
     });
-    btnDown.addEventListener('click', ev => {
-        ev.stopPropagation();
-        repEditCell(sid, week, group, Math.max(0, Math.round((current() - slot) * 100) / 100));
-    });
+    return out;
+}
 
-    // Fermer le widget si on clique ailleurs
-    function closeWidget(ev) {
-        if (td.contains(ev.target)) return;
-        document.removeEventListener('click', closeWidget, true);
-        td.textContent = '';
-        repRefreshCell(sid, week, group, td);
+// Ligne bleue de la matière d'une ligne ; lignes affichées sous une ligne bleue
+function repMatOf(tr) {
+    let t = tr;
+    while (t && !t.classList.contains('row-mat')) t = t.previousElementSibling;
+    return t;
+}
+function repMatRows(trMat) {
+    const out = [];
+    for (let t = trMat.nextElementSibling; t && t.classList.contains('row-data'); t = t.nextElementSibling) out.push(t);
+    return out;
+}
+function repMatCode(trMat) {
+    const s = trMat && trMat.querySelector('strong');
+    return s ? s.textContent : 'matière';
+}
+
+function repRowMenu(tr) {
+    const sid = parseInt(tr.dataset.sid), group = parseInt(tr.dataset.group) || 1;
+    const row = repRowFor(sid, group);
+    if (!row) return null;
+    const items = [{ label: 'Vider cette ligne', cells: repCellsOf([tr]), what: repRowName(row) }];
+    // TD / TP partagé en groupes : une ligne par groupe, la séance les regroupe
+    const groupRows = [...tr.parentNode.querySelectorAll(`tr.row-data[data-sid="${sid}"]`)];
+    if (groupRows.length > 1)
+        items.push({ label: 'Vider la séance, tous les groupes', cells: repCellsOf(groupRows),
+                     what: `${row.course_code} ${typeDisp(row)} ${row.formation}, tous les groupes` });
+    return { title: repRowName(row), items };
+}
+
+function repFormMenu(tr) {
+    const mat = repMatOf(tr);
+    if (!mat) return null;
+    const rows = repMatRows(mat), form = tr.dataset.formation, code = repMatCode(mat);
+    const items = [{ label: `Vider ${form}`, cells: repCellsOf(rows.filter(t => t.dataset.formation === form)),
+                     what: `${code} ${form}` }];
+    if (rows.some(t => t.dataset.formation !== form))
+        items.push({ label: 'Vider la matière', cells: repCellsOf(rows), what: code });
+    return { title: `${code} · ${form}`, items };
+}
+
+function repMatMenu(trMat) {
+    const rows = repMatRows(trMat), code = repMatCode(trMat);
+    if (!rows.length) return null;
+    const items = [{ label: 'Vider la matière', cells: repCellsOf(rows), what: code }];
+    const forms = [...new Set(rows.map(t => t.dataset.formation))];   // ordre affiché : MUT, FTP, ALT
+    if (forms.length > 1)
+        forms.forEach(f => items.push({ label: `Vider seulement ${f}`,
+            cells: repCellsOf(rows.filter(t => t.dataset.formation === f)), what: `${code} ${f}` }));
+    return { title: code, items };
+}
+
+// Un filtre masque-t-il des lignes d'une matière (le vidage ne les touche pas) ?
+function repFiltersActive() {
+    const v = id => (document.getElementById(id) || {}).value;
+    return _selectedTypes.length < 4 || !!v('filter-formation-repartition')
+        || !!v('filter-teacher-repartition') || !!v('filter-room-repartition');
+}
+
+function repOpenMenu(x, y, menu) {
+    const fmt = h => String(Math.round(h * 100) / 100).replace('.', ',');
+    const m = document.createElement('div');
+    m.id = 'rep-ctx-menu';
+    m.className = 'rep-ctx-menu';
+    m.setAttribute('role', 'menu');
+    const head = document.createElement('div');
+    head.className = 'rep-ctx-title';
+    head.textContent = menu.title;
+    m.appendChild(head);
+    menu.items.forEach(it => {
+        const n = it.cells.length, h = it.cells.reduce((a, p) => a + p.from, 0);
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.setAttribute('role', 'menuitem');
+        b.innerHTML = `${esc(it.label)}<span>${n ? `${n} case${n > 1 ? 's' : ''} · ${fmt(h)} h` : 'rien à vider'}</span>`;
+        b.disabled = !n;
+        b.addEventListener('click', () => { repCloseMenu(); repClearCells(it.cells, it.what); });
+        m.appendChild(b);
+    });
+    if (repFiltersActive()) {
+        const note = document.createElement('div');
+        note.className = 'rep-ctx-note';
+        note.textContent = 'Filtres actifs : seules les lignes affichées sont vidées';
+        m.appendChild(note);
     }
-    setTimeout(() => document.addEventListener('click', closeWidget, true), 0);
+    document.body.appendChild(m);
+    const r = m.getBoundingClientRect();
+    m.style.left = Math.max(4, Math.min(x, window.innerWidth - r.width - 4)) + 'px';
+    m.style.top = Math.max(4, Math.min(y, window.innerHeight - r.height - 4)) + 'px';
+    // Pas de mise au point sur un choix : Entrée juste après le clic droit ne vide rien
+    // Fermeture : clic ailleurs, Échap, défilement, redimensionnement, autre fenêtre
+    setTimeout(() => {
+        if (!document.getElementById('rep-ctx-menu')) return;
+        document.addEventListener('mousedown', _repMenuOutside, true);
+        document.addEventListener('keydown', _repMenuKey, true);
+        window.addEventListener('scroll', repCloseMenu, true);
+        window.addEventListener('resize', repCloseMenu);
+        window.addEventListener('blur', repCloseMenu);
+    }, 0);
+}
+function _repMenuOutside(e) {
+    const m = document.getElementById('rep-ctx-menu');
+    if (m && !m.contains(e.target)) repCloseMenu();
+}
+function _repMenuKey(e) {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    repCloseMenu();
+}
+function repCloseMenu() {
+    const m = document.getElementById('rep-ctx-menu');
+    if (m) m.remove();
+    document.removeEventListener('mousedown', _repMenuOutside, true);
+    document.removeEventListener('keydown', _repMenuKey, true);
+    window.removeEventListener('scroll', repCloseMenu, true);
+    window.removeEventListener('resize', repCloseMenu);
+    window.removeEventListener('blur', repCloseMenu);
+}
+
+// Vide des cases d'un coup : un seul pas dans l'historique du brouillon
+function repClearCells(cells, what) {
+    if (_repDraft.saving) return;
+    // Valeurs relues au moment du choix (le brouillon a pu changer, menu ouvert)
+    const live = [];
+    cells.forEach(p => {
+        const row = repRowFor(p.sid, p.group);
+        const h = (row && row.by_week[p.week]) || 0;
+        if (h > 0) live.push({ sid: p.sid, week: p.week, group: p.group, from: h, to: 0 });
+    });
+    if (!live.length) return;
+    _repDraft.undo.push({ cells: live, label: 'vidage de ' + what });
+    _repDraft.redo = [];
+    live.forEach(p => repApplyStep(p, 0));
+    const n = live.length;
+    toast(`${what} : ${n} case${n > 1 ? 's' : ''} vidée${n > 1 ? 's' : ''} — Ctrl+Z pour annuler`);
+}
+
+// ===== Ordonnancement dans la répartition (« X terminé avant Y ») =====
+// Évalué dans le navigateur sur la copie de travail, à chaque clic : repère 🔗 sur
+// la ligne bleue des matières concernées (✓ / ✗ / ?), petit triangle rouge sur les
+// cases en cause, rubrique dans Contrôle. Mêmes règles que l'optimiseur : la partie
+// d'avant est entièrement terminée avant le début de la partie d'après (+ écart),
+// côté FTP (FTP + MUT) et côté ALT (ALT + MUT) séparément ; pour des groupes, chaque
+// groupe d'après commence après la fin de tous les groupes d'avant.
+let _repOrders = [];             // contraintes de l'année (/api/course-orderings)
+let _repOrdMarked = new Set();   // cases marquées « ordre non respecté » (repDraftKey)
+let _repOrdPending = false;
+
+function repOrdText(o) {
+    return `${o.pred_part ? o.pred_part + ' de ' : ''}${o.pred_code} terminé avant ${
+        o.succ_part ? 'le ' + o.succ_part + ' de ' : ''}${o.succ_code}`;
+}
+
+// → { list: [{ o, status: 'ok'|'bad'|'pending'|'unknown', msgs }], bad: Map(case → texte) }
+function repOrdEvaluate() {
+    const out = { list: [], bad: new Map() };
+    const data = _repartitionData;
+    if (!data || !_repOrders.length) return out;
+    const all = data.allRows || data.rows;
+    const anchor = (state.config && state.config.academic_start_week) || 36, mw = maxWeek();
+    const skey = w => (w >= anchor ? w - anchor : w - anchor + mw);   // ordre scolaire
+    const loaded = new Set(all.map(r => r.course_id));
+    const pick = (cid, part, forms) => all.filter(r => r.course_id === cid && forms.includes(r.formation)
+        && (!part || (r.type || '').toUpperCase() === part));
+    const placed = rows => rows.flatMap(r => Object.keys(r.by_week)
+        .filter(w => r.by_week[w] > 0).map(w => ({ r, w: +w, k: skey(+w) })));
+    _repOrders.forEach(o => {
+        const inP = loaded.has(o.pred_id), inS = loaded.has(o.succ_id);
+        if (!inP && !inS) return;                       // aucune des deux matières chargée
+        const text = repOrdText(o);
+        if (!inP || !inS) {
+            const miss = inP ? [o.succ_code, o.succ_semester] : [o.pred_code, o.pred_semester];
+            out.list.push({ o, text, status: 'unknown',
+                            msgs: [`${miss[0]} n'est pas affichée : cochez ${miss[1]} pour vérifier`] });
+            return;
+        }
+        const e = { o, text, status: 'pending', msgs: [] };
+        let checked = false;
+        [['FTP', ['FTP', 'MUT']], ['ALT', ['ALT', 'MUT']]].forEach(([side, forms]) => {
+            const pr = pick(o.pred_id, o.pred_part, forms), sr = pick(o.succ_id, o.succ_part, forms);
+            if (!pr.length || !sr.length) return;
+            // Tout en mutualisé : le côté ALT redirait exactement le côté FTP
+            const allMut = pr.concat(sr).every(r => r.formation === 'MUT');
+            if (side === 'ALT' && allMut) return;
+            const pw = placed(pr), sw = placed(sr);
+            if (!pw.length || !sw.length) return;       // pas encore placé d'un côté
+            checked = true;
+            const gap = o.min_gap_weeks || 0;
+            const last = pw.reduce((a, b) => (b.k > a.k ? b : a)), first = sw.reduce((a, b) => (b.k < a.k ? b : a));
+            if (first.k > last.k + gap) return;          // respecté
+            e.status = 'bad';
+            const pLbl = o.pred_part ? `le ${o.pred_part} de ${o.pred_code}` : o.pred_code;
+            const sLbl = o.succ_part ? `le ${o.succ_part} de ${o.succ_code}` : o.succ_code;
+            e.msgs.push(`${allMut ? '' : side + ' : '}${pLbl} finit S${last.w}, ${sLbl} commence S${first.w}${
+                gap ? ` (écart min ${gap} sem.)` : ''}`);
+            const why = `Ordre non respecté : ${text}`;
+            sw.filter(c => c.k <= last.k + gap).concat(pw.filter(c => c.k >= first.k - gap))
+                .forEach(c => out.bad.set(repDraftKey(c.r.session_id, c.r.group_index || 1, c.w), why));
+        });
+        if (e.status === 'pending') {
+            if (checked) e.status = 'ok';
+            else e.msgs.push('pas encore placé');
+        }
+        out.list.push(e);
+    });
+    return out;
+}
+
+// Plusieurs cases changées d'un coup (vidage, retour arrière) : un seul recalcul
+function repOrdSchedule() {
+    if (_repOrdPending) return;
+    _repOrdPending = true;
+    queueMicrotask(() => { _repOrdPending = false; repOrdRefresh(); });
+}
+
+function repOrdLine(e) {
+    const sym = { ok: '✓', bad: '✗', pending: '…', unknown: '?' }[e.status];
+    return `${sym} ${e.text}${e.msgs.length ? ' — ' + e.msgs.join(' ; ') : ''}`;
+}
+
+// ----- Répartition souhaitée (Contraintes Matière) : l'enchaînement est-il suivi ? -----
+// Le vœu ne fixe que l'ORDRE des séances (ses semaines ne sont pas numérotées : la
+// place dans le calendrier revient à l'admin). Une séance placée est en écart si
+// une séance d'un autre type que le vœu met AVANT elle n'est pas placée au plus tard
+// la même semaine — pour un TD / TP en groupes, dans chaque groupe. Colonnes vides
+// du vœu ignorées ; regrouper dans une semaine ce que le vœu étale est toléré.
+let _repWishes = {};             // /api/courses/wishes : {course_id: {sessions, wish}}
+
+// Enchaînement voulu d'une face, lisible sans numéro de semaine : « 2 CM → CM + TD → TD »
+function repWishSeqText(w, typeKey) {
+    const cols = [];
+    for (let c = 0; c < w.n_weeks; c++) {
+        const parts = Object.entries(typeKey).map(([t, k]) => {
+            const v = (w.rows[k] || [])[c] || 0;
+            return v ? (v > 1 ? v + ' ' : '') + t : '';
+        }).filter(Boolean);
+        if (parts.length) cols.push(parts.join(' + '));
+    }
+    return cols.length > 10 ? cols.slice(0, 10).join(' → ') + ' → …' : cols.join(' → ');
+}
+
+// → { per: Map(cid → { seqs: [texte par face], msgs, nBad }), bad: Map(case → texte) }
+function repWishEvaluate() {
+    const out = { per: new Map(), bad: new Map() };
+    const data = _repartitionData;
+    if (!data) return out;
+    const all = data.allRows || data.rows;
+    const anchor = (state.config && state.config.academic_start_week) || 36, mw = maxWeek();
+    const skey = w => (w >= anchor ? w - anchor : w - anchor + mw);
+    const byCourse = new Map();
+    all.forEach(r => {
+        if (!byCourse.has(r.course_id)) byCourse.set(r.course_id, []);
+        byCourse.get(r.course_id).push(r);
+    });
+    byCourse.forEach((rows, cid) => {
+        const w = (_repWishes[cid] || {}).wish;
+        if (!w || !w.n_weeks) return;
+        const res = { wish: w, seqs: [], msgs: [], nBad: 0 };
+        [['FTP', 0], ['ALT', 1]].forEach(([side, ft]) => {
+            // Type → clé du vœu pour cette face (la face elle-même plutôt que le mutualisé)
+            const typeKey = {};
+            Object.keys(w.rows).forEach(k => {
+                const [f, t] = k.split(':');
+                if (+f !== ft && +f !== 2) return;
+                if (!typeKey[t] || +f !== 2) typeKey[t] = k;
+            });
+            const types = _MC_TYPES.filter(t => typeKey[t]);
+            if (!types.length) return;
+            const allMut = types.every(t => typeKey[t].startsWith('2:'));
+            if (side === 'ALT' && allMut) return;     // redirait le côté FTP
+            const sideLbl = allMut ? '' : side + ' : ';
+            const ordered = {};
+            types.forEach(t => { ordered[t] = typeKey[t]; });
+            res.seqs.push(sideLbl + repWishSeqText(w, ordered));
+            // cum[t][c] = séances de t voulues dans les colonnes avant c ; colOf[t][i] = colonne de la (i+1)e
+            const cum = {}, colOf = {};
+            types.forEach(t => {
+                const arr = w.rows[typeKey[t]] || [];
+                cum[t] = []; colOf[t] = [];
+                let acc = 0;
+                for (let c = 0; c < w.n_weeks; c++) {
+                    cum[t][c] = acc;
+                    for (let i = 0; i < (arr[c] || 0); i++) colOf[t].push(c);
+                    acc += arr[c] || 0;
+                }
+            });
+            // Séances placées, dans l'ordre, par type et par groupe
+            const forms = [side, 'MUT'];
+            const placed = {}, nbOf = {};
+            rows.filter(r => forms.includes(r.formation) && types.includes((r.type || '').toUpperCase()))
+                .forEach(r => {
+                    const t = r.type.toUpperCase(), slot = r.slot_duration || 1.5;
+                    const list = [];
+                    Object.keys(r.by_week).map(Number).filter(x => r.by_week[x] > 0)
+                        .sort((a, b) => skey(a) - skey(b)).forEach(x => {
+                            const n = Math.max(1, Math.round(r.by_week[x] / slot));
+                            for (let i = 0; i < n; i++) list.push({ w: x, k: skey(x), r });
+                        });
+                    (placed[t] = placed[t] || []).push(list);
+                    nbOf[t] = Math.max(nbOf[t] || 0, r.nb_sessions || 0);
+                });
+            Object.entries(placed).forEach(([t, groups]) => groups.forEach(list => list.forEach((s, i) => {
+                const c = colOf[t][i];
+                if (c === undefined) return;               // au-delà de ce que décrit le vœu
+                const missing = types.filter(u => {
+                    if (u === t || !placed[u]) return false;
+                    const need = Math.min(cum[u][c], nbOf[u] || cum[u][c]);
+                    return need > 0 && placed[u].some(l => l.length < need || l[need - 1].k > s.k);
+                });
+                if (!missing.length) return;
+                const key = repDraftKey(s.r.session_id, s.r.group_index || 1, s.w);
+                const what = `${sideLbl}${missing.join(' et ')} attendu${missing.length > 1 ? 's' : ''} avant ce ${t}`;
+                if (!out.bad.has(key)) {
+                    res.nBad++;
+                    res.msgs.push(`${t} S${s.w}${s.r.n_groups > 1 ? ' ' + (s.r.group_label || 'gr.' + s.r.group_index) : ''} : `
+                                  + `${missing.join(' et ')} attendu${missing.length > 1 ? 's' : ''} avant`);
+                }
+                out.bad.set(key, `Répartition souhaitée${w.updated_by ? ' (' + w.updated_by + ')' : ''} : ${what}`
+                    + `\nEnchaînement voulu : ${repWishSeqText(w, ordered)}`);
+            })));
+        });
+        if (res.seqs.length) out.per.set(cid, res);
+    });
+    return out;
+}
+
+function repOrdRefresh() {
+    const { list, bad } = repOrdEvaluate();
+    const wish = repWishEvaluate();
+    // Cases : on retire les anciennes marques, puis on pose les nouvelles
+    // (triangle = ordre entre matières, cadre rouge = répartition souhaitée)
+    const cellTd = key => {
+        const [sid, group, week] = key.split('|');
+        return document.querySelector(
+            `#repartition-table td[data-sid="${sid}"][data-week="${week}"][data-group="${group}"]`);
+    };
+    _repOrdMarked.forEach(key => {
+        if (bad.has(key) || wish.bad.has(key)) return;
+        const td = cellTd(key);
+        if (!td) return;
+        td.classList.remove('cell-order-bad', 'cell-wish-bad');
+        const [sid, group, week] = key.split('|').map(Number);
+        repRefreshCell(sid, week, group, td);   // rend son titre à la case
+    });
+    const keys = new Set([...bad.keys(), ...wish.bad.keys()]);
+    keys.forEach(key => {
+        const td = cellTd(key);
+        if (!td) return;
+        const [sid, group, week] = key.split('|').map(Number);
+        repRefreshCell(sid, week, group, td);
+        td.classList.toggle('cell-order-bad', bad.has(key));
+        td.classList.toggle('cell-wish-bad', wish.bad.has(key));
+        td.title = [td.title, bad.get(key), wish.bad.get(key)].filter(Boolean).join('\n');
+    });
+    _repOrdMarked = keys;
+    // Repères « vœu » des lignes bleues : rappel de l'enchaînement voulu
+    document.querySelectorAll('#repartition-table .wish-badge').forEach(b => {
+        const r = wish.per.get(parseInt(b.dataset.wishCid));
+        if (!r) { b.className = 'wish-badge'; b.textContent = ''; b.removeAttribute('title'); return; }
+        b.className = 'wish-badge ' + (r.nBad ? 'ord-bad' : 'ord-ok');
+        b.textContent = r.nBad ? `vœu ✗${r.nBad}` : 'vœu ✓';
+        const w = r.wish;
+        b.title = `Répartition souhaitée${w.updated_by ? ' par ' + w.updated_by : ''}${
+            w.updated_at ? ' le ' + _mcDate(w.updated_at) : ''} :\n${r.seqs.join('\n')}${
+            r.msgs.length ? '\n\nÉcarts :\n' + r.msgs.join('\n') : ''}`;
+    });
+    // Repères des lignes bleues : chaque contrainte compte pour ses deux matières
+    const per = new Map();
+    list.forEach(e => [e.o.pred_id, e.o.succ_id].forEach(cid => {
+        if (!per.has(cid)) per.set(cid, []);
+        per.get(cid).push(e);
+    }));
+    document.querySelectorAll('#repartition-table .ord-badge').forEach(b => {
+        const es = per.get(parseInt(b.dataset.ordCid)) || [];
+        if (!es.length) { b.className = 'ord-badge'; b.textContent = ''; b.removeAttribute('title'); return; }
+        const nBad = es.filter(e => e.status === 'bad').length;
+        const nUnk = es.filter(e => e.status === 'unknown').length;
+        b.className = 'ord-badge ' + (nBad ? 'ord-bad' : nUnk ? 'ord-unknown' : 'ord-ok');
+        b.textContent = `🔗${es.length} ${nBad ? '✗' + nBad : nUnk ? '?' : '✓'}`;
+        b.title = 'Ordonnancement :\n' + es.map(repOrdLine).join('\n');
+    });
+}
+
+// Contrôle → matière : défilement jusqu'à sa ligne bleue et halo sur ses cases en cause
+function repOrdGoto(cid) {
+    const b = document.querySelector(`#repartition-table .ord-badge[data-ord-cid="${cid}"]`);
+    if (!b) { toast('Matière hors affichage (filtres)'); return; }
+    const tr = b.closest('tr');
+    tr.scrollIntoView({ block: 'center', inline: 'nearest' });
+    for (let t = tr.nextElementSibling; t && t.classList.contains('row-data'); t = t.nextElementSibling) {
+        t.querySelectorAll('td.cell-order-bad, td.cell-wish-bad').forEach(td => {
+            td.classList.remove('cell-flash');
+            void td.offsetWidth;
+            td.classList.add('cell-flash');
+        });
+    }
+}
+
+// Rubrique « Ordonnancement » du panneau Contrôle (brouillon compris)
+function repOrdChecksHtml() {
+    const { list } = repOrdEvaluate();
+    let h = '<h3 style="margin:12px 0 6px;font-size:.95rem">Ordonnancement</h3>';
+    if (!list.length) return h + '<p style="color:#6b7280;font-size:.85rem">Aucune contrainte sur les matières affichées.</p>';
+    const bad = list.filter(e => e.status === 'bad'), unk = list.filter(e => e.status === 'unknown');
+    if (!bad.length) {
+        h += `<p style="color:#166534;font-size:.85rem">${list.length - unk.length} contrainte${
+            list.length - unk.length > 1 ? 's' : ''} respectée${list.length - unk.length > 1 ? 's' : ''} (ou pas encore placée${
+            list.length - unk.length > 1 ? 's' : ''}).</p>`;
+    } else {
+        h += '<table><thead><tr><th>Contrainte non respectée</th></tr></thead><tbody>' + bad.map(e =>
+            `<tr class="check-danger" style="cursor:pointer" title="Aller à ${esc(e.o.succ_code)}"
+                 onclick="repOrdGoto(${e.o.succ_id})"><td><b>🔗 ${esc(e.text)}</b><br>${
+                     esc(e.msgs.map(m => m.charAt(0).toUpperCase() + m.slice(1)).join(' ; '))}</td></tr>`).join('')
+            + '</tbody></table>';
+    }
+    if (unk.length)
+        h += `<p style="color:#6b7280;font-size:.75rem">Non vérifiable : ${unk.map(e => esc(e.text)).join(' · ')} (matière d'un semestre non affiché).</p>`;
+    return h;
+}
+
+// Rubrique « Répartition souhaitée » du panneau Contrôle : matières qui s'écartent du vœu
+function repWishChecksHtml() {
+    const { per } = repWishEvaluate();
+    let h = '<h3 style="margin:12px 0 6px;font-size:.95rem">Répartition souhaitée</h3>';
+    if (!per.size) return h + '<p style="color:#6b7280;font-size:.85rem">Aucun vœu sur les matières affichées.</p>';
+    const all = (_repartitionData.allRows || _repartitionData.rows);
+    const codeOf = cid => { const r = all.find(x => x.course_id === cid); return r ? r.course_code : '?'; };
+    const bad = [...per.entries()].filter(([, r]) => r.nBad);
+    if (!bad.length)
+        return h + `<p style="color:#166534;font-size:.85rem">${per.size} vœu${per.size > 1 ? 'x' : ''} suivi${per.size > 1 ? 's' : ''} (ou pas encore placé${per.size > 1 ? 's' : ''}).</p>`;
+    return h + '<table><thead><tr><th>Écart au vœu de l\'enseignant</th></tr></thead><tbody>' + bad.map(([cid, r]) =>
+        `<tr class="check-danger" style="cursor:pointer" title="Aller à la matière" onclick="repOrdGoto(${cid})">
+            <td><b>${esc(codeOf(cid))}</b> — voulu : ${esc(r.seqs.join(' ; '))}<br>${esc(r.msgs.slice(0, 4).join(' ; '))}${
+            r.msgs.length > 4 ? ` (+${r.msgs.length - 4})` : ''}</td></tr>`).join('') + '</tbody></table>';
 }
 
 // Pose `newHours` dans la copie de travail et met l'affichage à jour sans re-rendu
@@ -18206,6 +19152,7 @@ function repApplyCell(sid, week, group, newHours) {
         }
     }
     repRefreshCell(sid, week, group);
+    repOrdSchedule();
 }
 
 // ===== EXPORT EXCEL =====
@@ -18305,6 +19252,10 @@ function renderChecksPanel({ teacher_load, room_conflicts }, nDraft = 0) {
         html += `<p style="margin:8px 0 0;padding:6px 8px;border-radius:6px;background:#fef3c7;color:#92400e;font-weight:600">
             Brouillon compris : ${nDraft} modification${nDraft > 1 ? 's' : ''} non enregistrée${nDraft > 1 ? 's' : ''}.</p>`;
     }
+
+    // Contraintes d'ordonnancement et vœux des enseignants (calculés ici, sur la copie de travail)
+    html += repOrdChecksHtml();
+    html += repWishChecksHtml();
 
     // Table charge enseignants
     html += '<h3 style="margin:12px 0 6px;font-size:.95rem">Charge enseignants par semaine</h3>';

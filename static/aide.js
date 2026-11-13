@@ -729,7 +729,7 @@ function _aideService() {
                 _aSi('rep:jour', ", et ce qu'il reste à poser semaine après semaine (vue journalière)")}. ${_aLien('rep-annuelle', 'Voir')}`],
             ['svc:matieres', _aUi('Matières'), `Les matières de l'année : volumes, durées de séance, salles, enseignants, référents. ${_aLien('matieres', 'Voir')}`],
             ['svc:contraintes', _aUi('Contraintes Enseignant'), `Les indisponibilités et préférences de chacun. ${_aLien('contraintes', 'Voir')}`],
-            ['svc:contraintes-matiere', _aUi('Contraintes Matière'), `Les contraintes propres à une matière (salle, ordre, période). ${_aLien('contraintes-matiere', 'Voir')}`],
+            ['svc:contraintes-matiere', _aUi('Contraintes Matière'), `Les contraintes propres à une matière (salle, ordre, période) et la répartition souhaitée des séances semaine après semaine. ${_aLien('contraintes-matiere', 'Voir')}`],
             ['svc:comparaison', _aUi('Comparaison'), `Confronter un export Hyperplanning aux heures saisies ici. ${_aLien('comparaison', 'Voir')}`],
         ])}</tbody></table>
         <p>À droite de la barre, la liste ${_aUi('Année')} choisit l'année universitaire <b>affichée dans le Service seulement</b> :
@@ -791,23 +791,54 @@ function _aideService() {
         </ul>
         ${_aSiModif('rep:annuelle', `<h3>Placer des heures</h3>
         ${_aSteps([
-            'Cliquez sur la case d\'une semaine : deux flèches apparaissent.',
-            `${_aUi('▲')} ajoute une séance (la durée de séance de la matière, ex. 1,5 h), ${_aUi('▼')} en retire une.`,
+            `Un <b>clic</b> sur la case d'une semaine ajoute une séance (la durée de séance de la matière, ex. 1,5 h) ;
+             un <b>clic droit</b> (ou <kbd>Maj</kbd> + clic) en retire une.`,
             `Le ${_aUi('Reste')}, les taux horaires et les totaux suivent aussitôt ; la case modifiée est encadrée en orange.`,
             `Quand tout est bon : ${_aUi('Enregistrer')} (ou <kbd>Ctrl</kbd>+<kbd>S</kbd>).`])}
         <div class="aide-maquette"><table><thead><tr><th>Matière</th><th>Type</th><th>S37</th><th>S38</th><th>S39</th><th>S40</th><th>H. module</th><th>Reste</th></tr></thead><tbody>
             <tr><td><b>R1.04</b> FTP</td><td><span class="badge badge-td">TD</span></td><td style="text-align:center">1,5</td><td style="text-align:center;box-shadow:inset 0 0 0 2px #b45309;font-weight:700">3</td><td style="text-align:center">1,5</td><td style="text-align:center;background:#fdba74"></td><td style="text-align:center">21</td><td style="text-align:center;color:#dc2626;font-weight:700">15</td></tr>
         </tbody></table>
         <p style="font-size:.8rem;color:#6b7280;margin:6px 0 0">S38 vient de passer à 3 h (deux séances), case encadrée = pas encore enregistrée ; S40 est une semaine de vacances ; il reste 15 h à placer.</p></div>
+        <h3>Vider une ligne ou une matière</h3>
+        <p>Un <b>clic droit sur un libellé</b> ouvre un petit menu qui vide d'un coup, sur toutes les semaines :</p>
+        <ul>
+            <li>sur le type, l'enseignant, la salle ou le reste d'une ligne : ${_aUi('Vider cette ligne')}, et pour un TD ou un TP en groupes
+                ${_aUi('Vider la séance, tous les groupes')} ;</li>
+            <li>sur la colonne ${_aUi('Form.')} (MUT, FTP, ALT) : vider cette formation de la matière, ou toute la matière ;</li>
+            <li>sur la ligne bleue d'une matière : ${_aUi('Vider la matière')}, ou seulement sa partie MUT, FTP ou ALT.</li>
+        </ul>
+        <p>Le menu indique le nombre de cases et d'heures concernées. Seules les <b>lignes affichées</b> sont vidées : avec un filtre
+        (type, formation, enseignant, salle), les lignes masquées restent intactes. Le vidage compte pour <b>un seul pas</b> :
+        <kbd>Ctrl</kbd>+<kbd>Z</kbd> remet tout, et rien n'est enregistré avant ${_aUi('Enregistrer')}.</p>
         <h3>Le brouillon : rien n'est enregistré sans vous</h3>
         <p>Les clics modifient une <b>copie de travail</b> : la barre au-dessus du tableau compte les modifications en attente.
         ${_aUi('↶ Retour arrière')} (<kbd>Ctrl</kbd>+<kbd>Z</kbd>) et ${_aUi('↷ Rétablir')} (<kbd>Ctrl</kbd>+<kbd>Y</kbd>) défont et refont clic par clic ;
         ${_aUi('Abandonner')} revient à la version enregistrée. Le brouillon survit au changement de semestres affichés ; quitter l'onglet
         ou l'année demande quoi en faire.</p>`)}
+        <h3>Ordre entre matières</h3>
+        <p>Une matière concernée par une contrainte d'ordre (« le CM de R1.03b terminé avant le TD de R1.03a », posée dans
+        ${_aUi('Ordonnancement')} ou dans ${_aOng('Contraintes Matière')}) porte un repère sur sa ligne bleue, mis à jour à chaque clic :</p>
+        <ul>
+            <li><span class="ord-badge ord-ok">🔗2 ✓</span> les contraintes sont respectées (ou pas encore placées) ;</li>
+            <li><span class="ord-badge ord-bad">🔗2 ✗1</span> une contrainte n'est pas respectée : les cases en cause portent un
+                <b>petit triangle rouge</b> dans leur coin (séances d'après placées trop tôt, ou d'avant placées trop tard) ;</li>
+            <li><span class="ord-badge ord-unknown">🔗1 ?</span> l'autre matière est dans un semestre non affiché : cochez-le pour vérifier.</li>
+        </ul>
+        <p>Le survol du repère détaille chaque contrainte (« le CM de R1.03b finit S45, le TD de R1.03a commence S40 »). Le côté FTP et le côté ALT
+        sont vérifiés séparément, le mutualisé comptant pour les deux ; un TD ou un TP en groupes ne commence qu'une fois
+        <b>tous</b> les groupes d'avant terminés. ${_aUi('Contrôle')} les liste aussi : un clic sur une ligne amène à la matière.</p>
+        <h3>Répartition souhaitée par l'enseignant</h3>
+        <p>Quand un enseignant a donné l'enchaînement voulu de ses séances (${_aOng('Contraintes Matière')}), la ligne bleue de la matière
+        porte <span class="wish-badge ord-ok">vœu ✓</span> ; le survol rappelle cet enchaînement (« CM → TD → CM + TD → TP… »).
+        Seul l'<b>ordre</b> compte, la place dans le calendrier reste votre choix. Une séance placée alors qu'une séance que le vœu
+        met avant elle ne l'est pas encore (au plus tard la même semaine) prend un <b>cadre rouge pointillé</b>, avec le rappel au survol,
+        et le repère passe à <span class="wish-badge ord-bad">vœu ✗1</span>. Exemple : vœu « CM → TD → CM », deux CM placés d'affilée :
+        le second est encadré tant qu'aucun TD (dans chaque groupe) n'est placé avant lui ou la même semaine.
+        ${_aUi('Contrôle')} liste aussi les matières en écart.</p>
         <h3>Outils de la barre</h3>
         <ul>
-            ${_aSiModif('rep:annuelle', `<li>${_aUi('Contrôle')} : un panneau à droite liste la <b>charge des enseignants par semaine</b> (orange au-delà de 20 h, rouge au-delà de 30 h) et les <b>conflits de salle</b> (plus de 2 matières la même semaine). Le brouillon est compris dans le contrôle.</li>
-            <li>${_aUi('Ordonnancement')} : des règles d'ordre entre matières (« R1.01 avant R1.05, avec au moins 2 semaines d'écart »), à respecter dans le placement.</li>`)}
+            ${_aSiModif('rep:annuelle', `<li>${_aUi('Contrôle')} : un panneau à droite liste la <b>charge des enseignants par semaine</b> (orange au-delà de 20 h, rouge au-delà de 30 h) , les <b>conflits de salle</b> (plus de 2 matières la même semaine) et les <b>contraintes d'ordre non respectées</b>. Le brouillon est compris dans le contrôle.</li>
+            <li>${_aUi('Ordonnancement')} : des règles d'ordre entre matières, ou entre parties de matières (« le CM de R1.01 terminé avant le TD de R1.05, avec au moins 2 semaines d'écart »), à respecter dans le placement. On y retrouve aussi celles posées par les enseignants dans ${_aOng('Contraintes Matière')}, avec leur auteur.</li>`)}
             <li>${_aUi('Export Excel')} : exactement ce qui est affiché (semestres, formation, enseignant)${_aSiModif('rep:annuelle', ', brouillon compris')}.</li>
             ${_aSiModif('rep:annuelle', `<li>${_aUi('Import Excel')} : recharge des heures depuis un fichier au format de l'export — elles <b>remplacent</b> les heures existantes, après confirmation.</li>`)}
             <li>${_aUi('Taux horaires')} : la case masque les lignes de taux pour gagner de la place.</li>
@@ -897,12 +928,31 @@ function _aideService() {
 
     { id: 'contraintes-matiere', rub: R, titre: 'Contraintes par matière', chemin: 'Service › Contraintes Matière',
       onglet: 'svc:contraintes-matiere', cible: 'contraintes-matiere',
-      mots: 'contrainte matière salle imposée ordre des séances période',
+      mots: 'contrainte matière salle imposée ordre des séances période répartition souhaitée vœux séances par semaine rythme enchaînement avant prérequis ordonnancement',
       html: `
         <p>Un texte par matière pour ce qui ne tient pas dans les volumes : <b>salle spécifique</b>, <b>ordre des séances</b>,
         <b>période imposée</b>… (« TP en salle B12 uniquement ; CM avant les TP ; à placer avant la semaine 45 »).</p>
-        <p>Chaque matière a son bouton ${_aUi('Enregistrer')}. Un enseignant ne voit et ne modifie que les matières <b>où il intervient</b> ;
-        l'administration et le responsable FTP les renseignent toutes. Filtres : semestres et recherche.</p>` },
+        <p>Sous le texte, le volet ${_aUi('Répartition souhaitée des séances')} donne l'<b>enchaînement voulu</b> : combien de séances de CM,
+        TD, TP, PT semaine après semaine, dans l'ordre. C'est la grille de la répartition calendaire, mais les colonnes ne portent
+        <b>aucun numéro de semaine</b> : leur place dans le calendrier est décidée par l'administration ou le responsable FTP.</p>
+        ${_aSteps([
+            `Cliquez une case pour ajouter une séance, clic droit (ou ${_aUi('Maj')} + clic) pour en retirer une.`,
+            `La colonne ${_aUi('Reste')} indique les séances qu'il reste à répartir (en rouge tant qu'elle n'est pas à zéro) ; les lignes
+             ${_aUi('Heures / semaine')} donnent la charge d'un étudiant, côté FTP et côté ALT.`,
+            `${_aUi('+ 1 semaine')} / ${_aUi('− 1 semaine')} règlent le nombre de colonnes. ${_aUi('Copier FTP → ALT')} reprend pour les
+             alternants le rythme des séances FTP.`,
+        ])}
+        <p>Un TD ou un TP à plusieurs groupes suit le même rythme pour chaque groupe. Le titre du volet indique si la répartition est
+        renseignée, par qui et quand. C'est un <b>vœu</b> : rien n'est placé dans la répartition calendaire, mais l'administration y
+        voit l'enchaînement voulu et les séances placées dans un autre ordre.</p>
+        <p>Le volet ${_aUi('Matières à placer avant')} liste les matières qui doivent être <b>terminées avant le début</b> de celle-ci.
+        ${_aUi('+ Ajouter une matière à placer avant')} propose toutes les matières de l'année (celles du même semestre d'abord) ;
+        on peut viser une partie de chaque côté : « le CM de R1.01 terminé avant le TD de cette matière ». Chaque contrainte est
+        <b>enregistrée dès l'ajout</b> et ${_aUi('✕')} la retire. Une contrainte qui ferait une boucle (A avant B, B avant A) est refusée.
+        Ces contraintes servent à l'optimisation de la répartition ; l'administration les retrouve dans ${_aUi('Ordonnancement')}.</p>
+        <p>Chaque matière a son bouton ${_aUi('Enregistrer')} (texte et répartition ensemble) ; quitter l'onglet avec des modifications non
+        enregistrées demande quoi en faire. Un enseignant ne voit et ne modifie que les matières <b>où il intervient</b> ;
+        l'administration et le responsable FTP les renseignent toutes. Filtres : semestres, recherche, et ${_aUi('Avec répartition souhaitée')}.</p>` },
 
     { id: 'comparaison', rub: R, titre: 'Comparaison avec Hyperplanning', chemin: 'Service › Comparaison',
       onglet: 'svc:comparaison', cible: 'comparaison',
@@ -1906,7 +1956,7 @@ function _aideExemples() {
             _aSi('svc:contraintes', `<b>Les contraintes</b> — les enseignants remplissent ${_aOng('Service › Contraintes Enseignant')}${
                 _aSi('svc:contraintes-matiere', ` ; les contraintes de matière se notent dans ${_aOng('Contraintes Matière')}`)}.`),
             _aSiModif('svc:matieres', `<b>Les matières</b> — ${_aOng('Service › Matières')} : pour chaque sous-matière, volumes, durée de séance, salle, enseignant (par groupe si besoin). ${_aLien('matieres', 'Détail')}`),
-            `<b>La répartition annuelle</b> — choisissez les semestres, placez les heures semaine par semaine avec ${_aUi('▲')} ${_aUi('▼')} jusqu'à ce que chaque ${_aUi('Reste')} soit à zéro,
+            `<b>La répartition annuelle</b> — choisissez les semestres, placez les heures semaine par semaine (clic : + 1 séance, clic droit : − 1) jusqu'à ce que chaque ${_aUi('Reste')} soit à zéro,
              en surveillant les taux horaires des promos. ${_aLien('rep-annuelle', 'Détail')}`,
             `<b>Contrôler</b> — ${_aUi('Contrôle')} (charge des enseignants, conflits de salle) et ${_aUi('Ordonnancement')} ; corrigez, puis ${_aUi('Enregistrer')}.`,
             `<b>Diffuser</b> — ${_aUi('Export Excel')} de la répartition.`,
