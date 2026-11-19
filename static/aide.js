@@ -471,7 +471,8 @@ function aideContexte() {
         : _etuVue === 'signalements' ? 'etu-signalements' : 'etu-liste';
     else if (key === 'nav:statistiques') id = 'stats-' + _statsTab;
     else if (key === 'nav:stages' || key === 'nav:alternance')
-        id = { stats: 'suivi-stats', documents: 'alt-documents' }[_suiviState(key.slice(4)).tab] || 'suivi-fiches';
+        id = { stats: 'suivi-stats', documents: 'alt-documents', depots: 'alt-depots', visites: 'alt-visites' }[
+            _suiviState(key.slice(4)).tab] || 'suivi-fiches';
     else if (key === 'nav:salons') id = _salons.tab === 'bilan' ? 'salons-bilan' : 'salons-vue';
     if (!_aide.sections) _aide.sections = _aideConstruire();
     if (!id || !_aide.sections.some(s => s.id === id)) id = 'bienvenue';
@@ -1516,7 +1517,8 @@ function _aideSuivi() {
         <h3>Remplir une fiche</h3>
         <p>Un clic sur un étudiant ouvre sa fiche :</p>
         <ul>
-            <li><b>Entreprise / organisme</b> : la liste propose les entreprises déjà connues (toutes années) — en choisir une reprend son lieu ;</li>
+            <li><b>Entreprise / organisme</b> : la liste propose les entreprises déjà connues (toutes années) — en choisir une reprend son lieu et son adresse ;</li>
+            <li><b>Adresse</b> (n°, rue, code postal), reprise sur le PV de visite de l'alternance ;</li>
             <li><b>Ville</b>, <b>Département</b> (numéro « 83 » ou nom « Var ») ;</li>
             <li><b>Tuteur entreprise</b> (Prénom Nom), sa <b>fonction</b>, son <b>e-mail</b> et son <b>téléphone</b> — un tuteur déjà connu dans cette entreprise reprend ses coordonnées ;</li>
             <li><b>Mission</b> ;</li>
@@ -1564,11 +1566,32 @@ function _aideSuivi() {
         <p>Le <b>responsable de l'alternance</b> et l'<b>administrateur</b> les déposent, les remplacent et les suppriment
             (PDF, Word, Excel ou OpenDocument, 15 Mo au plus). Un nouveau dépôt remplace le fichier précédent, qui n'est pas conservé.</p>` },
 
-    { id: 'alt-depots', rub: R, titre: "Dépôt des fiches d'évaluation", chemin: 'Alternance › Dépôts',
-      onglet: 'nav:alternance', cible: 'alternance/depots',
-      mots: "dépôts depots fiche d'évaluation evaluation tuteur universitaire semestre date limite échéance retard manquantes récapitulatif",
+    { id: 'alt-visites', rub: R, titre: 'Visites en entreprise', chemin: 'Alternance › Visites',
+      onglet: 'nav:alternance', cible: 'alternance/visites',
+      mots: "visites visite entreprise pv procès-verbal proces verbal feuille de visite prérempli prerempli tuteur universitaire semestre date limite échéance",
       html: `
-        <p>Le sous-onglet ${_aUi('Dépôts')} recueille la <b>fiche d'évaluation de chaque alternant, pour chaque semestre</b> de son année
+        <p>Chaque alternant reçoit <b>deux visites par an</b> de son tuteur universitaire, <b>une par semestre</b> de son année, avant la date limite
+        du semestre. Le sous-onglet ${_aUi('Visites')} donne ces dates et le <b>procès-verbal de visite prérempli</b> de chaque alternant.
+        Le PV rempli et signé se dépose sur le <b>site dédié de l'université</b>, pas ici.</p>
+        <h3>Les dates limites</h3>
+        <p>Une pour les <b>semestres impairs</b> (S1, S3, S5) et une pour les <b>semestres pairs</b> (S2, S4, S6), avec le nombre de jours restants.
+        Le <b>responsable de l'alternance</b> et l'<b>administrateur</b> les fixent pour l'année (${_aUi('Enregistrer les dates')}) ; elles sont
+        distinctes de celles des fiches d'évaluation.</p>
+        <h3>Le PV de visite prérempli</h3>
+        <p>${_aUi('⤓ PV (PDF)')} et ${_aUi('⤓ Excel')} téléchargent le PV, rempli d'après la fiche de l'alternant (sous-onglet Tuteurs) : année
+        universitaire, formation et année d'étude, parcours, tuteur universitaire, site de formation (Campus de la Garde, coché), nom et prénom
+        de l'alternant, entreprise et son adresse, nom et prénom du tuteur entreprise. Ce qui est prérempli est écrit en bleu. Le PDF s'imprime
+        tel quel ; l'Excel (la trame d'origine) se complète aussi à l'ordinateur.</p>
+        <p>L'<b>adresse</b> n'est écrite que si la fiche en a une (n°, rue, code postal) : la ville seule ne suffit pas, la ligne reste alors vide
+        et l'alternant est signalé <b>adresse à renseigner</b>. Restent à écrire le type de contrat, le compte rendu, la date et les signatures.</p>
+        <p>Le tuteur universitaire voit ses alternants ; l'administrateur et les responsables de l'alternance et FTP les voient tous
+        (recherche, ${_aUi('Mes alternants')}).</p>` },
+
+    { id: 'alt-depots', rub: R, titre: "Évaluation entreprise : dépôt des fiches", chemin: 'Alternance › Évaluation entreprise',
+      onglet: 'nav:alternance', cible: 'alternance/depots',
+      mots: "évaluation entreprise dépôts depots fiche d'évaluation evaluation tuteur universitaire semestre date limite échéance retard manquantes récapitulatif",
+      html: `
+        <p>Le sous-onglet ${_aUi('Évaluation entreprise')} recueille la <b>fiche d'évaluation de chaque alternant, pour chaque semestre</b> de son année
         (S1 et S2 en 1<sup>re</sup> année, S3 et S4, S5 et S6), pour l'année universitaire affichée.</p>
         <h3>La date limite</h3>
         <p>Rappelée en tête, une pour les <b>semestres impairs</b> (S1, S3, S5) et une pour les <b>semestres pairs</b> (S2, S4, S6), avec le nombre
@@ -1964,7 +1987,7 @@ function _aideAdmin() {
                 enregistrements d'une même personne sur une matière en moins de 12 h se cumulent dans une seule notification.</li>
             <li><b>Rappel · contraintes</b> et <b>Rappel · notes à saisir</b> : envoyés par l'administration. Le rappel des contraintes
                 indique « Contraintes déposées » dès que vous l'avez fait.</li>
-            <li><b>Dépôt · fiche d'évaluation</b> : un tuteur universitaire a déposé la fiche d'un alternant dans ${_aOng('Alternance › Dépôts')}
+            <li><b>Dépôt · fiche d'évaluation</b> : un tuteur universitaire a déposé la fiche d'un alternant dans ${_aOng('Alternance › Évaluation entreprise')}
                 (dans les délais ou après la date limite). Pour l'administrateur, le responsable de l'alternance et le responsable FTP ;
                 un nouveau dépôt du même semestre remplace la notification.</li>
         </ul>
@@ -1973,7 +1996,7 @@ function _aideAdmin() {
         <ul>
             <li>L'onglet s'ouvre sur les <b>non lues</b> ; la première liste choisit ${_aUi('Non lues')}, ${_aUi('Lues')} ou ${_aUi('Toutes')}
                 (avec leur nombre), la seconde le type.</li>
-            <li>${_aUi('Ouvrir')} affiche l'écran concerné (fiche de l'étudiant, Saisie Notes, Contraintes, Dépôts) et marque la notification comme lue ;
+            <li>${_aUi('Ouvrir')} affiche l'écran concerné (fiche de l'étudiant, Saisie Notes, Contraintes, Évaluation entreprise) et marque la notification comme lue ;
                 ${_aUi('✓ Lue')} / ${_aUi('Non lue')} bascule une carte ; ${_aUi('🗑')} la retire de votre liste.</li>
             <li>Cochez plusieurs cartes (ou ${_aUi('Tout sélectionner')}, qui prend celles affichées) pour les ${_aUi('Marquer comme lues')},
                 ${_aUi('Marquer comme non lues')} ou les ${_aUi('Retirer de ma liste')} d'un coup.</li>
@@ -1989,8 +2012,8 @@ function _aideAdmin() {
             <li>${_aUi('Notes à saisir…')} : ceux à qui il manque des notes dans les colonnes non définitives des semestres cochés
                 (par défaut ceux en cours), avec le détail par colonne ;</li>
             <li>${_aUi('Fiches d\'évaluation…')} (administrateur, responsable de l'alternance) : les tuteurs universitaires dont des fiches
-                d'alternants manquent dans ${_aOng('Alternance › Dépôts')} pour les semestres cochés, avec la date limite et la liste de leurs alternants ;
-                le rappel affiche ensuite en direct combien de fiches restent à déposer (aussi depuis le récapitulatif des Dépôts).</li>
+                d'alternants manquent dans ${_aOng('Alternance › Évaluation entreprise')} pour les semestres cochés, avec la date limite et la liste de
+                leurs alternants ; le rappel affiche ensuite en direct combien de fiches restent à déposer (aussi depuis le récapitulatif d'Évaluation entreprise).</li>
         </ul>
         <p>Décochez ceux à ne pas relancer, ajoutez un message si besoin, puis ${_aUi('Envoyer')}. Renvoyer un rappel remplace le précédent
         (il redevient non lu). Un enseignant sans mot de passe ne le lira qu'une fois son mot de passe créé.</p>`}` },
