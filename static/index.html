@@ -1595,10 +1595,12 @@
     </div>
     <div class="subtabs">
         <button type="button" id="suivi-alternance-tab-fiches" class="subtab active" onclick="showSuiviTab('alternance', 'fiches')">Tuteurs</button>
-        <button type="button" id="suivi-alternance-tab-stats" class="subtab" onclick="showSuiviTab('alternance', 'stats')">Statistiques</button>
-        <button type="button" id="suivi-alternance-tab-documents" class="subtab" style="display:none" onclick="showSuiviTab('alternance', 'documents')">Documents</button>
+        <button type="button" id="suivi-alternance-tab-visites" class="subtab" style="display:none" onclick="showSuiviTab('alternance', 'visites')"
+                title="Les deux visites en entreprise de l'année : dates limites et PV de visite prérempli de chaque alternant">Visites</button>
         <button type="button" id="suivi-alternance-tab-depots" class="subtab" style="display:none" onclick="showSuiviTab('alternance', 'depots')"
-                title="Fiches d'évaluation des alternants, par semestre, déposées par leur tuteur universitaire">Dépôts</button>
+                title="Fiches d'évaluation des alternants, par semestre, déposées par leur tuteur universitaire">Évaluation entreprise</button>
+        <button type="button" id="suivi-alternance-tab-documents" class="subtab" style="display:none" onclick="showSuiviTab('alternance', 'documents')">Documents</button>
+        <button type="button" id="suivi-alternance-tab-stats" class="subtab" onclick="showSuiviTab('alternance', 'stats')">Statistiques</button>
     </div>
     <div id="suivi-alternance-content"><div class="spinner">Chargement…</div></div>
 </div>
@@ -1674,7 +1676,7 @@
                 <option value="">Tous les types</option>
                 <option value="signalement">Signalements</option>
                 <option value="saisie">Saisies de notes</option>
-                <option value="depot_alternance">Dépôts : fiches d'évaluation</option>
+                <option value="depot_alternance">Fiches d'évaluation déposées</option>
                 <option value="rappel_contraintes">Rappels : contraintes</option>
                 <option value="rappel_notes">Rappels : notes à saisir</option>
                 <option value="rappel_fiches">Rappels : fiches d'évaluation</option>
@@ -2245,6 +2247,8 @@
             <div class="form-group"><label>Entreprise / organisme</label>
                 <input id="suivi-entreprise" list="suivi-entreprises" oninput="suiviEntrepriseInput()" autocomplete="off"></div>
             <datalist id="suivi-entreprises"></datalist>
+            <div class="form-group"><label>Adresse <span style="font-weight:400;color:#6b7280">(n°, rue, code postal — reprise sur le PV de visite)</span></label>
+                <input id="suivi-adresse" placeholder="12 avenue de la Mer, 83500" autocomplete="off"></div>
             <div style="display:flex;gap:10px">
                 <div class="form-group" style="flex:2"><label>Ville</label><input id="suivi-ville"></div>
                 <div class="form-group" style="flex:1"><label>Département</label>
@@ -3351,7 +3355,7 @@ function renderNotifRappels() {
             ${R.notes ? `<button class="btn btn-secondary btn-sm" onclick="ouvrirRappel('notes')"
                 title="Les enseignants qui ont des notes manquantes dans des colonnes non définitives">🔔 Notes à saisir…</button>` : ''}
             ${R.fiches ? `<button class="btn btn-secondary btn-sm" onclick="ouvrirRappel('fiches')"
-                title="Les tuteurs universitaires dont des fiches d'évaluation d'alternants manquent (Alternance › Dépôts)">📝 Fiches d'évaluation…</button>` : ''}
+                title="Les tuteurs universitaires dont des fiches d'évaluation d'alternants manquent (Alternance › Évaluation entreprise)">📝 Fiches d'évaluation…</button>` : ''}
         </div></div>`;
 }
 
@@ -3556,7 +3560,7 @@ async function notifOuvrir(id) {
         if (_promoTabAllowed('saisie')) { _promoTab = 'saisie'; _syncPromoSubtabs(); }
         showPage('promotions');
     } else if (l.page === 'alternance') {
-        // Alternance › Dépôts, à l'année universitaire du dépôt
+        // Alternance › Évaluation entreprise, à l'année universitaire du dépôt
         const st = _suiviState('alternance');
         if (l.annee && l.annee !== st.year) { st.year = l.annee; st.data = null; }
         st.tab = l.onglet || 'fiches';
@@ -6723,7 +6727,7 @@ const SUIVI_KINDS = {
     stages: { who: 'stagiaire', mission: 'Sujet du stage', years: [2, 3] },
     alternance: { who: 'alternant', mission: 'Poste et missions', years: [1, 2, 3] },
 };
-const SUIVI_FIELDS = ['entreprise', 'ville', 'departement', 'tuteur_entreprise', 'tuteur_fonction',
+const SUIVI_FIELDS = ['entreprise', 'adresse', 'ville', 'departement', 'tuteur_entreprise', 'tuteur_fonction',
                       'tuteur_email', 'tuteur_tel', 'mission', 'tuteur_univ'];
 const _suivi = {};
 let _suiviEdit = null;   // fiche ouverte dans le modal : {kind, pid, year, sid}
@@ -6761,7 +6765,8 @@ async function loadSuivi(kind) {
         const yq = st.year ? '?year=' + encodeURIComponent(st.year) : '';
         const [years, data] = await Promise.all([api('/years'), api(`/suivi/${kind}${yq}`),
                                                  kind === 'alternance' ? _altDocsCharger(st) : null,
-                                                 kind === 'alternance' ? _altDepotsCharger(st) : null]);
+                                                 kind === 'alternance' ? _altDepotsCharger(st) : null,
+                                                 kind === 'alternance' ? _altVisitesCharger(st) : null]);
         st.data = data;
         st.year = data.year_label;
         // Tuteur universitaire : tous les enseignants de l'année affichée,
@@ -6805,12 +6810,17 @@ function renderSuivi(kind) {
     if (st.tab === 'documents' && !docs) st.tab = 'fiches';
     const boutonDocs = document.getElementById(`suivi-${kind}-tab-documents`);
     if (boutonDocs) boutonDocs.style.display = docs ? '' : 'none';
-    // Dépôts des fiches d'évaluation : Alternance seulement, pour qui le serveur les ouvre
+    // Évaluation entreprise (dépôt des fiches d'évaluation) et Visites : Alternance
+    // seulement, pour qui le serveur les ouvre
     const depots = kind === 'alternance' && st.depots;
     if (st.tab === 'depots' && !depots) st.tab = 'fiches';
     const boutonDep = document.getElementById(`suivi-${kind}-tab-depots`);
     if (boutonDep) boutonDep.style.display = depots ? '' : 'none';
-    ['fiches', 'stats', 'documents', 'depots'].forEach(t => {
+    const visites = kind === 'alternance' && st.visites;
+    if (st.tab === 'visites' && !visites) st.tab = 'fiches';
+    const boutonVis = document.getElementById(`suivi-${kind}-tab-visites`);
+    if (boutonVis) boutonVis.style.display = visites ? '' : 'none';
+    ['fiches', 'visites', 'depots', 'documents', 'stats'].forEach(t => {
         const b = document.getElementById(`suivi-${kind}-tab-${t}`);
         if (b) b.classList.toggle('active', t === st.tab);
     });
@@ -6819,6 +6829,7 @@ function renderSuivi(kind) {
     if (st.tab === 'stats') { renderSuiviStats(kind); return; }
     if (st.tab === 'documents') { renderAltDocuments(); return; }
     if (st.tab === 'depots') { renderAltDepots(); return; }
+    if (st.tab === 'visites') { renderAltVisites(); return; }
     const s = d.stats, who = SUIVI_KINDS[kind].who;
     const nMine = d.cohorts.reduce((n, c) => n + c.students.filter(_suiviMine).length, 0);
     el.innerHTML = `<div class="toolbar" style="margin-bottom:8px">
@@ -6852,7 +6863,7 @@ function renderSuiviBody(kind) {
         return;
     }
     const q = _suiviNorm(st.q);
-    const match = s => !q || [s.nom, s.prenom, s.entreprise, s.ville, s.tuteur_entreprise, s.tuteur_univ]
+    const match = s => !q || [s.nom, s.prenom, s.entreprise, s.adresse, s.ville, s.tuteur_entreprise, s.tuteur_univ]
         .some(v => _suiviNorm(v).includes(q));
     const incomplete = s => !s.entreprise || !s.tuteur_entreprise || !s.tuteur_univ;
     const edit = d.editable;
@@ -6881,7 +6892,7 @@ function renderSuiviBody(kind) {
                     esc(s.nom || '')}</strong> ${esc(s.prenom || '')}</span>${s.inherited_from
                     ? `<div style="font-size:.72rem;color:#6b7280">fiche reprise de la ${_suiviYearLabel(s.inherited_from)}</div>` : ''}</td>
                 <td>${s.entreprise ? `<strong>${esc(s.entreprise)}</strong>` : missing}${
-                    s.ville || s.departement ? `<div style="font-size:.78rem;color:#6b7280">${esc(_suiviLieu(s.ville, s.departement))}</div>` : ''}</td>
+                    _suiviAdresse(s) ? `<div style="font-size:.78rem;color:#6b7280">${esc(_suiviAdresse(s))}</div>` : ''}</td>
                 <td>${s.tuteur_entreprise ? esc(s.tuteur_entreprise) : missing}${
                     s.tuteur_fonction ? `<div style="font-size:.78rem;color:#6b7280">${esc(s.tuteur_fonction)}</div>` : ''}${
                     contact ? `<div style="font-size:.78rem">${contact}</div>` : ''}</td>
@@ -6964,15 +6975,21 @@ function suiviRefreshTuteurs() {
     document.getElementById('suivi-tuteurs').innerHTML = e
         ? e.tuteurs.map(t => `<option value="${esc(t.nom)}">`).join('') : '';
 }
-// Entreprise déjà connue : reprend son lieu si la fiche n'en a pas encore
+// Entreprise déjà connue : reprend son lieu (et son adresse) si la fiche n'en a pas encore
 function suiviEntrepriseInput() {
     suiviRefreshTuteurs();
     const e = _suiviEntreprise();
     const ville = document.getElementById('suivi-ville'), dep = document.getElementById('suivi-departement');
+    const adr = document.getElementById('suivi-adresse');
     if (e && e.lieux.length === 1 && !ville.value && !dep.value) {
         ville.value = e.lieux[0].ville;
         dep.value = e.lieux[0].departement;
+        if (!adr.value && e.lieux[0].adresse) adr.value = e.lieux[0].adresse;
     }
+}
+// Adresse et lieu d'une fiche, sur une ligne : « 12 avenue de la Mer, 83500 · La Seyne (83) »
+function _suiviAdresse(s) {
+    return [s.adresse, _suiviLieu(s.ville, s.departement)].filter(Boolean).join(' · ');
 }
 // Tuteur déjà connu dans cette entreprise : reprend ses coordonnées si elles sont vides
 function suiviTuteurInput() {
@@ -7130,7 +7147,7 @@ async function altDocSupprimer(cle) {
     renderSuivi('alternance');
 }
 
-// ----- Alternance › Dépôts -----
+// ----- Alternance › Évaluation entreprise (sous-onglet 'depots') -----
 // La fiche d'évaluation de chaque alternant, par semestre de son année, déposée par son
 // tuteur universitaire. Date limite par parité (fixée par l'admin et le responsable
 // ALT) rappelée en tête ; récapitulatif de ce qui manque pour l'admin et les
@@ -7421,18 +7438,111 @@ async function altDepSupprimer(sid, sem) {
     renderSuivi('alternance');
 }
 
-async function altEcheancesEnregistrer() {
-    const st = _suiviState('alternance'), D = st.depots;
+// Dates limites (admin, responsable ALT) : du dépôt des fiches d'évaluation, ou des visites
+async function altEcheancesEnregistrer(usage = 'evaluation') {
+    const st = _suiviState('alternance'), D = usage === 'visite' ? st.visites : st.depots;
     const val = p => (document.getElementById('alt-ech-' + p) || {}).value || '';
     try {
         await api('/alternance/echeances', { method: 'PUT',
-            body: JSON.stringify({ annee: D.annee, impair: val('impair'), pair: val('pair') }) });
-        toast('Dates limites enregistrées');
+            body: JSON.stringify({ annee: D.annee, usage, impair: val('impair'), pair: val('pair') }) });
+        toast(usage === 'visite' ? 'Dates des visites enregistrées' : 'Dates limites enregistrées');
     } catch (err) {
         toast('Erreur : ' + err.message, 'error');
     }
-    await _altDepotsCharger(st);
+    await (usage === 'visite' ? _altVisitesCharger(st) : _altDepotsCharger(st));
     renderSuivi('alternance');
+}
+
+// ----- Alternance › Visites -----
+// Deux visites en entreprise par an, une par semestre, avant la date limite fixée par
+// l'admin ou le responsable ALT. Le PV se dépose sur le site dédié de l'université :
+// l'onglet donne les dates et le PV de chaque alternant prérempli (Excel), d'après sa
+// fiche du sous-onglet Tuteurs. Le tuteur universitaire voit ses alternants ; l'admin
+// et les responsables ALT et FTP les voient tous.
+let _altVisFiltres = { q: '', mes: false };
+
+async function _altVisitesCharger(st) {
+    // Refus du serveur : pas de sous-onglet
+    const q = st.year ? '?annee=' + encodeURIComponent(st.year) : '';
+    st.visites = await api('/alternance/visites' + q).catch(() => null);
+}
+
+function renderAltVisites() {
+    const D = _suiviState('alternance').visites;
+    const el = document.getElementById('suivi-alternance-content');
+    const mes = D.etudiants.filter(e => e.mien);
+    const F = _altVisFiltres;
+    let html = `<div class="card" style="border-left-color:#0369a1;max-width:980px;box-sizing:border-box;margin:8px 0 14px;padding:12px 16px">
+            <div style="font-weight:700">📅 Date limite des visites en entreprise — ${esc(D.annee)}</div>
+            ${_altEcheanceHtml(D, 'impair')}${_altEcheanceHtml(D, 'pair')}
+            ${D.droits.echeances ? `<div style="margin-top:8px"><button type="button" class="btn btn-primary btn-sm"
+                onclick="altEcheancesEnregistrer('visite')">Enregistrer les dates</button></div>` : ''}
+            <div style="font-size:.8rem;color:#6b7280;margin-top:8px">Deux visites par an et par alternant, une par semestre,
+                faites par son tuteur universitaire avant la date limite. Le procès-verbal se dépose sur le site dédié de
+                l'université ; téléchargez ici celui de chaque alternant, prérempli avec sa formation, son entreprise et ses
+                tuteurs (fiche du sous-onglet Tuteurs). Ce qui manque à la fiche reste à écrire à la main.</div>
+        </div>`;
+    if (!D.droits.tous) {
+        html += `<h3 style="margin:4px 0 6px;color:#374151">Mes alternants</h3>` + (mes.length
+            ? _altVisTableau(D, mes, false)
+            : `<div class="empty">Vous n'êtes tuteur universitaire d'aucun alternant en ${esc(D.annee)}
+                (sous-onglet Tuteurs).</div>`);
+        el.innerHTML = html;
+        return;
+    }
+    html += `<h3 style="margin:4px 0 6px;color:#374151">Alternants de ${esc(D.annee)}</h3>
+        <div class="filters" style="margin-bottom:8px">
+            <input type="search" id="alt-vis-q" value="${esc(F.q)}" placeholder="Alternant, entreprise, tuteur, promotion…"
+                oninput="_altVisFiltres.q=this.value;renderAltVisitesListe()"
+                style="min-width:260px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+            ${mes.length ? `<label style="display:inline-flex;align-items:center;gap:6px;font-size:.85rem;cursor:pointer"
+                title="Les alternants dont vous êtes le tuteur universitaire">
+                <input type="checkbox" style="width:auto" ${F.mes ? 'checked' : ''}
+                    onchange="_altVisFiltres.mes=this.checked;renderAltVisitesListe()"> Mes alternants (${mes.length})</label>` : ''}
+            <span id="alt-vis-compte" style="font-size:.85rem;color:#6b7280"></span>
+        </div>
+        <div id="alt-vis-liste"></div>`;
+    el.innerHTML = html;
+    renderAltVisitesListe();
+}
+
+function renderAltVisitesListe() {
+    const D = _suiviState('alternance').visites;
+    const el = document.getElementById('alt-vis-liste');
+    if (!D || !el) return;
+    const F = _altVisFiltres;
+    const mots = _suiviNorm(F.q).split(' ').filter(Boolean);
+    const liste = D.etudiants.filter(e => (!F.mes || e.mien) && mots.every(m => _suiviNorm(
+        [e.nom, e.prenom, e.entreprise, e.adresse, e.ville, e.tuteur_entreprise, e.tuteur_univ, e.promotion].join(' ')).includes(m)));
+    document.getElementById('alt-vis-compte').textContent = `${liste.length} affiché(s) sur ${D.etudiants.length}`;
+    el.innerHTML = liste.length ? _altVisTableau(D, liste, true) : '<div class="empty">Aucun alternant ne correspond.</div>';
+}
+
+function _altVisTableau(D, liste, avecTuteur) {
+    const manque = '<span style="color:#b45309;font-size:.8rem">à renseigner</span>';
+    const q = '?annee=' + encodeURIComponent(D.annee);
+    return `<div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px">
+        <table class="pn-table" style="table-layout:auto;width:100%;margin:0">
+            <thead><tr><th style="width:24%">Alternant</th><th>Entreprise</th><th>Tuteur entreprise</th>${
+                avecTuteur ? '<th>Tuteur universitaire</th>' : ''}<th style="width:1%"></th></tr></thead>
+            <tbody>${liste.map(e => {
+                const incomplet = !e.entreprise || !e.adresse || !e.tuteur_entreprise || !e.tuteur_univ;
+                const aide = incomplet ? 'Fiche incomplète : ce qui manque reste vide sur le PV (à compléter dans Tuteurs, ou à la main)'
+                                       : 'Le PV de visite prérempli pour cet alternant';
+                const lien = (fmt, lib, cls) => `<a class="btn ${cls} btn-sm" style="text-decoration:none"
+                    href="/api/alternance/visites/${e.id}/pv${q}${fmt}" title="${esc(aide)}">${lib}</a>`;
+                return `<tr${e.mien && avecTuteur ? ' style="background:#f5f3ff" title="Alternant que vous suivez"' : ''}>
+                <td style="vertical-align:top">${_altDepNom(e)}</td>
+                <td style="vertical-align:top">${e.entreprise ? `<strong>${esc(e.entreprise)}</strong>` : manque}${
+                    _suiviAdresse(e) ? `<div style="font-size:.78rem;color:#6b7280">${esc(_suiviAdresse(e))}</div>` : ''}${
+                    e.entreprise && !e.adresse ? '<div style="color:#b45309;font-size:.76rem">adresse à renseigner</div>' : ''}</td>
+                <td style="vertical-align:top">${e.tuteur_entreprise ? esc(e.tuteur_entreprise) : manque}</td>${avecTuteur
+                    ? `<td style="vertical-align:top">${e.tuteur_univ ? esc(e.tuteur_univ)
+                        : '<span style="color:#b91c1c;font-weight:600">Sans tuteur</span>'}</td>` : ''}
+                <td style="vertical-align:top;white-space:nowrap">${lien('&format=pdf', '⤓ PV (PDF)', 'btn-primary')}
+                    ${lien('', '⤓ Excel', 'btn-secondary')}</td></tr>`;
+            }).join('')}</tbody>
+        </table></div>`;
 }
 
 function renderSuiviStats(kind) {

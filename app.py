@@ -1601,7 +1601,9 @@ def _apply_promotions_migrations(db):
     # Coordonnées du tuteur entreprise (fonction, mail, téléphone) et mission confiée
     # (sujet du stage, poste de l'alternant) : saisies dans les onglets Stages et
     # Alternance, elles alimentent la liste des entreprises.
-    for _col in ('ville', 'departement', 'tuteur_fonction', 'tuteur_email', 'tuteur_tel', 'mission'):
+    # Adresse de l'entreprise (n°, rue, code postal), reprise sur le PV de visite.
+    for _col in ('ville', 'departement', 'tuteur_fonction', 'tuteur_email', 'tuteur_tel', 'mission',
+                 'adresse'):
         try:
             db.execute('ALTER TABLE student_tutors ADD COLUMN %s TEXT' % _col)
         except sqlite3.OperationalError:
@@ -1854,8 +1856,8 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE
         )
     ''')
-    # Alternance › Dépôts : la fiche d'évaluation de chaque alternant, par semestre,
-    # déposée par son tuteur universitaire (cf « Alternance › Dépôts »). Suit la
+    # Alternance › Évaluation entreprise : la fiche d'évaluation de chaque alternant,
+    # par semestre, déposée par son tuteur universitaire. Suit la
     # fiche de l'étudiant dans sa cohorte.
     db.execute('''
         CREATE TABLE IF NOT EXISTS alternance_depots (
@@ -1874,6 +1876,18 @@ def _apply_promotions_migrations(db):
     # parité de semestre (impair : S1/S3/S5 ; pair : S2/S4/S6), AAAA-MM-JJ.
     db.execute('''
         CREATE TABLE IF NOT EXISTS alternance_echeances (
+            annee   TEXT NOT NULL,
+            parite  TEXT NOT NULL CHECK (parite IN ('impair', 'pair')),
+            date    TEXT NOT NULL,
+            auteur  TEXT,
+            PRIMARY KEY (annee, parite)
+        )
+    ''')
+    # Alternance › Visites : deux visites en entreprise par an, une par semestre de
+    # l'année de l'alternant, à faire (PV déposé sur le site dédié de l'université)
+    # avant la date fixée ici, par année universitaire et par parité.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS alternance_visite_echeances (
             annee   TEXT NOT NULL,
             parite  TEXT NOT NULL CHECK (parite IN ('impair', 'pair')),
             date    TEXT NOT NULL,
@@ -3696,8 +3710,9 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     # Notifications : marquer comme lu = il suffit de voir l'onglet ; envoyer un
     # rappel = administrer les contraintes ou les notes (contrôle fin dans le handler)
     (r'^/api/notifications/(lu|masquer)$', ['nav:notifications'], 'readlike'),
-    # Alternance › Dépôts : le tuteur universitaire dépose la fiche de ses alternants
-    # (contrôle dans le handler) ; la date limite revient à l'administration de l'onglet
+    # Alternance › Évaluation entreprise : le tuteur universitaire dépose la fiche de ses
+    # alternants (contrôle dans le handler) ; les dates limites (fiches d'évaluation,
+    # visites) reviennent à l'administration de l'onglet
     (r'^/api/alternance/depots/\d+/S[1-6]$', ['nav:alternance'], ''),
     (r'^/api/alternance/echeances$', ['nav:alternance'], 'strict'),
     (r'^/api/notifications/rappel$', ['svc:contraintes', 'promo:notes', 'promo:jury', 'nav:alternance'], 'strict'),
@@ -4290,7 +4305,8 @@ def download_constraint_file(teacher_id):
 #                          enseignants de l'année sans contraintes déposées ;
 #   • rappel_notes       — envoyé par l'admin à chaque enseignant à qui il reste des
 #                          notes à saisir (colonnes non définitives) ;
-#   • depot_alternance   — une fiche d'évaluation déposée dans Alternance › Dépôts →
+#   • depot_alternance   — une fiche d'évaluation déposée dans Alternance ›
+#                          Évaluation entreprise →
 #                          l'admin, le responsable ALT et le responsable FTP ;
 #   • rappel_fiches      — envoyé par l'admin ou le responsable ALT à chaque tuteur
 #                          universitaire dont des fiches d'évaluation manquent ; il
@@ -4654,7 +4670,7 @@ def _notif_saisie(pdb, pid, semester, formation, groupes, changes):
                      data=cumul, groupe=groupe, fenetre_h=_NOTIF_REGROUPE_H, acteur=acteur)
 
 def _notif_depot_alternance(pdb, s, sem, yg, tuteur, fichier):
-    """Fiche d'évaluation déposée (Alternance › Dépôts) : l'admin, le responsable ALT
+    """Fiche d'évaluation déposée (Alternance › Évaluation entreprise) : l'admin, le responsable ALT
     et le responsable FTP sont prévenus. Un nouveau dépôt du même semestre remplace
     la notification, qui redevient non lue ; supprimer la fiche la retire."""
     p = pdb.execute('SELECT start_year FROM promotions WHERE id=?', (s['promotion_id'],)).fetchone()
@@ -4737,7 +4753,7 @@ def _rappel_notes_cibles(pdb, annee, semestres):
 
 def _rappel_fiches_cibles(pdb, annee, semestres):
     """Tuteurs universitaires dont des fiches d'évaluation manquent (Alternance ›
-    Dépôts) pour l'année et les semestres demandés (tous si aucun), avec leurs
+    Évaluation entreprise) pour l'année et les semestres demandés (tous si aucun), avec leurs
     alternants concernés ; et le nombre de fiches manquantes sans tuteur."""
     try:
         start = int(annee[:4])
@@ -4845,7 +4861,7 @@ def envoyer_rappel():
             limites = ' ; '.join(
                 f"semestres {p}s : " + (f'le {_notif_date_fr(echeances[p])}' if echeances.get(p) else 'non fixée')
                 for p in parites)
-            corps = (f"Fiches d'évaluation de vos alternants à déposer dans Alternance › Dépôts "
+            corps = (f"Fiches d'évaluation de vos alternants à déposer dans Alternance › Évaluation entreprise "
                      f"(date limite — {limites}) :\n" + '\n'.join(
                          f"{x['semestre']} · {x['promotion']} · {x['etudiant']}" for x in c['detail']))
             lien = {'page': 'alternance', 'onglet': 'depots', 'annee': annee}
@@ -8346,7 +8362,7 @@ def export_year_effectif(pid, year):
 
 # Champs d'une fiche de suivi (table student_tutors) et longueur maximale saisie
 _TUTOR_FIELDS = {'tuteur_univ': 120, 'tuteur_entreprise': 120, 'entreprise': 160,
-                 'ville': 60, 'departement': 30, 'tuteur_fonction': 120,
+                 'adresse': 200, 'ville': 60, 'departement': 30, 'tuteur_fonction': 120,
                  'tuteur_email': 160, 'tuteur_tel': 40, 'mission': 1000}
 # Coordonnées du tuteur entreprise : seules, elles ne font pas une fiche
 _TUTOR_CONTACT = ('tuteur_fonction', 'tuteur_email', 'tuteur_tel')
@@ -8536,11 +8552,16 @@ def _suivi_stats(pdb, kind, current, start):
     for r in history:
         e = ents.setdefault(_suivi_key(r['entreprise']), {
             'entreprise': r['entreprise'], 'lieux': set(), 'annees': set(), 'etudiants': set(),
-            'cette_annee': set(), 'tuteurs': {}, 'derniere': ''})
+            'cette_annee': set(), 'tuteurs': {}, 'derniere': '', 'adresses': {}})
         if r['annee'] >= e['derniere']:
             e['entreprise'], e['derniere'] = r['entreprise'], r['annee']
         if r['ville'] or r['departement']:
-            e['lieux'].add((r['ville'] or '', r['departement'] or ''))
+            lieu = (r['ville'] or '', r['departement'] or '')
+            e['lieux'].add(lieu)
+            # Adresse du lieu : la plus récente saisie, reprise pour un nouvel alternant
+            a = e['adresses'].get(lieu)
+            if (r['adresse'] or '').strip() and (not a or r['annee'] >= a[0]):
+                e['adresses'][lieu] = (r['annee'], r['adresse'].strip())
         e['annees'].add(r['annee'])
         e['etudiants'].add(r['student_id'])
         if r['annee'] == current_label:
@@ -8553,7 +8574,8 @@ def _suivi_stats(pdb, kind, current, start):
                                     'email': r['tuteur_email'] or '', 'tel': r['tuteur_tel'] or '',
                                     'annee': r['annee']}
     entreprises = [{'entreprise': e['entreprise'],
-                    'lieux': [{'ville': v, 'departement': d} for v, d in sorted(e['lieux'])],
+                    'lieux': [{'ville': v, 'departement': d, 'adresse': e['adresses'].get((v, d), ('', ''))[1]}
+                              for v, d in sorted(e['lieux'])],
                     'annees': sorted(e['annees']), 'etudiants': len(e['etudiants']),
                     'cette_annee': len(e['cette_annee']),
                     'tuteurs': sorted(e['tuteurs'].values(), key=lambda t: _suivi_key(t['nom']))}
@@ -8717,10 +8739,7 @@ def _emargement_nom(s):
     """« NOM Prénom », comme sur la feuille : un prénom saisi en capitales est remis
     en casse ordinaire (JEAN-PIERRE → Jean-Pierre), un autre est gardé tel quel."""
     nom = ' '.join(str(s.get('nom') or '').split()).upper()
-    prenom = ' '.join(str(s.get('prenom') or '').split())
-    if prenom == prenom.upper():
-        prenom = re.sub(r'[^\W\d_]+', lambda m: m[0].capitalize(), prenom)
-    return f'{nom} {prenom}'.strip()
+    return f"{nom} {_prenom_casse(s.get('prenom'))}".strip()
 
 def _emargement_docx(annee, yg, lignes, titre_groupe):
     """Le .docx de la feuille : le modèle rempli, une ligne par (nom, groupe)."""
@@ -8860,7 +8879,7 @@ def delete_alternance_document(cle):
     pdb.commit()
     return jsonify({'deleted': True})
 
-# ----- Alternance › Dépôts -----
+# ----- Alternance › Évaluation entreprise (routes /api/alternance/depots) -----
 # La fiche d'évaluation de chaque alternant, par semestre de son année d'étude
 # (S1/S2 en 1re année, S3/S4, S5/S6), déposée par son tuteur universitaire (fiche
 # de suivi de l'année, héritée comprise). La date limite, par parité de semestre,
@@ -8890,9 +8909,12 @@ def _alt_depots_droits():
     recap = power or key in tabs['admin_view'] or 'ftp' in (session.get('resp') or [])
     return {'voir': True, 'tout': power, 'recap': recap, 'echeances': power}
 
-def _alt_echeances(pdb, annee):
+# Dates limites par usage : dépôt des fiches d'évaluation, visites en entreprise
+_ALT_ECHEANCES = {'evaluation': 'alternance_echeances', 'visite': 'alternance_visite_echeances'}
+
+def _alt_echeances(pdb, annee, usage='evaluation'):
     out = {p: None for p in _ALT_PARITES}
-    for r in pdb.execute('SELECT parite, date FROM alternance_echeances WHERE annee=?', (annee,)):
+    for r in pdb.execute(f'SELECT parite, date FROM {_ALT_ECHEANCES[usage]} WHERE annee=?', (annee,)):
         out[r['parite']] = r['date']
     return out
 
@@ -9101,32 +9123,488 @@ def delete_alternance_depot(sid, sem):
 
 @app.route('/api/alternance/echeances', methods=['PUT'])
 def put_alternance_echeances():
-    """Dates limites de dépôt {annee, impair, pair} (AAAA-MM-JJ, vide = aucune)."""
+    """Dates limites {annee, impair, pair, usage} (AAAA-MM-JJ, vide = aucune) :
+    usage 'evaluation' (dépôt des fiches d'évaluation, défaut) ou 'visite'
+    (visites en entreprise). Toutes les dates sont vérifiées avant d'en écrire une."""
     if not _alt_depots_droits()['echeances']:
         return error_response("Réservé à l'admin et au responsable de l'alternance", 403)
     d = request.get_json(silent=True) or {}
     annee = str(d.get('annee') or '').strip()
     if not _is_year(annee):
         return error_response('Année universitaire inconnue', 400)
-    pdb = get_promotions_db()
+    usage = d.get('usage') or 'evaluation'
+    if usage not in _ALT_ECHEANCES:
+        return error_response('Usage inconnu', 400)
+    table = _ALT_ECHEANCES[usage]
+    dates = {}
     for p in _ALT_PARITES:
         if p not in d:
             continue
         v = str(d.get(p) or '').strip()
+        if v:
+            try:
+                v = datetime.strptime(v, '%Y-%m-%d').strftime('%Y-%m-%d')
+            except ValueError:
+                return error_response(f'Date invalide pour le semestre {p}', 400)
+        dates[p] = v
+    pdb = get_promotions_db()
+    for p, v in dates.items():
         if not v:
-            pdb.execute('DELETE FROM alternance_echeances WHERE annee=? AND parite=?', (annee, p))
+            pdb.execute(f'DELETE FROM {table} WHERE annee=? AND parite=?', (annee, p))
             continue
-        try:
-            v = datetime.strptime(v, '%Y-%m-%d').strftime('%Y-%m-%d')
-        except ValueError:
-            return error_response(f'Date invalide pour le semestre {p}', 400)
-        pdb.execute('''INSERT INTO alternance_echeances (annee, parite, date, auteur) VALUES (?, ?, ?, ?)
-                       ON CONFLICT (annee, parite) DO UPDATE SET date = excluded.date, auteur = excluded.auteur''',
+        pdb.execute(f'''INSERT INTO {table} (annee, parite, date, auteur) VALUES (?, ?, ?, ?)
+                        ON CONFLICT (annee, parite) DO UPDATE SET date = excluded.date, auteur = excluded.auteur''',
                     (annee, p, v, session.get('user')))
     pdb.commit()
-    _audit('ALT_ECHEANCES', ip=_client_ip(), user=session.get('user'), annee=annee,
+    _audit('ALT_ECHEANCES', ip=_client_ip(), user=session.get('user'), annee=annee, usage=usage,
            impair=d.get('impair', '-'), pair=d.get('pair', '-'))
-    return jsonify({'annee': annee, 'echeances': _alt_echeances(pdb, annee)})
+    return jsonify({'annee': annee, 'usage': usage, 'echeances': _alt_echeances(pdb, annee, usage)})
+
+# ----- Alternance › Visites -----
+# Deux visites en entreprise par an, une par semestre de l'année de l'alternant, faites
+# par son tuteur universitaire avant la date limite du semestre (fixée par l'admin et le
+# responsable ALT, comme celles des fiches d'évaluation). Le procès-verbal se dépose sur
+# le site dédié de l'université, pas ici : l'onglet donne les dates et le PV de chaque
+# alternant prérempli, à partir de la trame Excel data/pv_visite_alternance.xlsx.
+_PV_VISITE_MODELE = os.path.join(_BASE_DIR, 'data', 'pv_visite_alternance.xlsx')
+_PV_VISITE_PARCOURS = 'Ingénierie des systèmes pluritechniques (ISP)'
+_PV_VISITE_CAMPUS = 'G13'      # site de formation coché : « ⃝ Campus de la Garde »
+_PV_VISITE_BLEU = 'FF1F4E79'   # ce que le site a prérempli, distinct de l'écriture à la main
+
+def _prenom_casse(prenom):
+    """Un prénom saisi en capitales est remis en casse ordinaire (JEAN-PIERRE →
+    Jean-Pierre), un autre est gardé tel quel."""
+    prenom = ' '.join(str(prenom or '').split())
+    if prenom == prenom.upper():
+        prenom = re.sub(r'[^\W\d_]+', lambda m: m[0].capitalize(), prenom)
+    return prenom
+
+def _pv_nom_prenom(texte):
+    """(nom, prénom) du tuteur entreprise, saisi d'un seul tenant : les mots en
+    capitales font le nom (« Jean DUPONT », « DUPONT Jean ») ; sans repère (tout en
+    capitales ou rien), tout va dans le nom. Une civilité en tête est écartée."""
+    mots = str(texte or '').split()
+    if mots and mots[0].rstrip('.').casefold() in ('m', 'mr', 'mme', 'mlle', 'monsieur', 'madame'):
+        mots = mots[1:]
+    capitales = [m for m in mots if m.isupper() and sum(c.isalpha() for c in m) > 1]
+    if capitales and len(capitales) < len(mots):
+        return ' '.join(capitales), ' '.join(m for m in mots if m not in capitales)
+    return ' '.join(mots), ''
+
+def _pv_visite_xlsx(champs, coches=()):
+    """Le .xlsx du PV : la trame, chaque cellule de `champs` ({réf: valeur})
+    complétée. Le libellé de la cellule reste dans sa police ; la valeur le suit,
+    dans la même police sans gras et en bleu. Les cases `coches` (« ⃝ … ») sont
+    cochées (« ◉ … », en bleu). Le reste du classeur (logo, mise en page, zone
+    d'impression) est recopié tel quel."""
+    def xml(t):
+        return str(t).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    with zipfile.ZipFile(_PV_VISITE_MODELE) as z:
+        parts = [(i, z.read(i.filename)) for i in z.infolist()]
+    contenu = {i.filename: d.decode('utf-8') for i, d in parts if i.filename.endswith('.xml')}
+    sst_xml = contenu['xl/sharedStrings.xml']
+    from html import unescape
+    chaines = [unescape(''.join(re.findall(r'<t(?: [^>]*)?>(.*?)</t>', si, re.S)))
+               for si in re.findall(r'<si>(.*?)</si>', sst_xml, re.S)]
+    styles = contenu['xl/styles.xml']
+    polices = re.findall(r'<font\b[^>]*?(?:/>|>.*?</font>)',
+                         re.search(r'<fonts\b[^>]*>(.*?)</fonts>', styles, re.S)[1], re.S)
+    formats = re.findall(r'<xf\b[^>]*?(?:/>|>.*?</xf>)',
+                         re.search(r'<cellXfs\b[^>]*>(.*?)</cellXfs>', styles, re.S)[1], re.S)
+
+    def police(style, valeur):
+        """La police d'un format de cellule, écrite en propriétés de texte enrichi."""
+        try:
+            xf = formats[int(style)]
+            f = polices[int(re.search(r'fontId="(\d+)"', xf)[1])]
+        except (ValueError, IndexError, TypeError):
+            f = ''
+        corps = re.sub(r'^<font\b[^>]*?(?:/>|>)|</font>$', '', f).replace('<name ', '<rFont ')
+        if valeur:
+            # Sans gras, en bleu : la couleur à la place de celle de la police (même ordre qu'Excel)
+            bleu = f'<color rgb="{_PV_VISITE_BLEU}"/>'
+            corps = corps.replace('<b/>', '')
+            corps = re.sub(r'<color\b[^>]*/>', bleu, corps, 1) if '<color' in corps else bleu + corps
+        return f'<rPr>{corps}</rPr>'
+
+    feuille = contenu['xl/worksheets/sheet1.xml']
+    partages = 0
+
+    def cellule(ref):
+        return re.search(rf'<c r="{ref}"(?: s="(\d+)")?( t="s")?\s*(?:/>|>(?:<v>(\d+)</v>)?</c>)', feuille)
+
+    for ref in coches:
+        m = cellule(ref)
+        if not (m and m[2] and m[3] is not None) or '⃝' not in chaines[int(m[3])]:
+            continue
+        style = m[1] or '0'
+        partages += 1
+        texte = chaines[int(m[3])].replace('⃝', '◉', 1)
+        feuille = (feuille[:m.start()] + f'<c r="{ref}" s="{style}" t="inlineStr"><is><r>{police(style, True)}'
+                   f'<t xml:space="preserve">{xml(texte)}</t></r></is></c>' + feuille[m.end():])
+    for ref, valeur in champs.items():
+        valeur = ' '.join(str(valeur or '').split())
+        m = cellule(ref)
+        if not valeur or not m:
+            continue
+        style = m[1] or '0'
+        libelle = chaines[int(m[3])] if m[2] and m[3] is not None else ''
+        partages += 1 if libelle else 0
+        if libelle and not libelle[-1].isspace():
+            libelle += ' '      # « Année de formation/scolaire : 2026-2027 »
+        runs = (f'<r>{police(style, False)}<t xml:space="preserve">{xml(libelle)}</t></r>' if libelle else '') \
+            + f'<r>{police(style, True)}<t xml:space="preserve">{xml(valeur)}</t></r>'
+        feuille = (feuille[:m.start()] + f'<c r="{ref}" s="{style}" t="inlineStr"><is>{runs}</is></c>'
+                   + feuille[m.end():])
+    # Les chaînes partagées remplacées ne sont plus comptées
+    sst_xml = re.sub(r'(<sst\b[^>]*\bcount=")(\d+)"', lambda x: f'{x[1]}{max(0, int(x[2]) - partages)}"', sst_xml, 1)
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+        for i, d in parts:
+            if i.filename == 'xl/worksheets/sheet1.xml':
+                d = feuille.encode('utf-8')
+            elif i.filename == 'xl/sharedStrings.xml':
+                d = sst_xml.encode('utf-8')
+            z.writestr(i, d)
+    return out.getvalue()
+
+# Le même PV en PDF, redessiné sans Excel (le serveur n'en a pas) d'après la trame :
+# largeur de ses colonnes (6 px par caractère + 5, à 0,75 pt le pixel), hauteur de ses
+# lignes, couleurs de son thème et ses textes. Helvetica, police standard de tout
+# lecteur PDF, un dixième plus petite que le Calibri de la trame pour la même largeur.
+# Le logo est celui de la trame. À reprendre si la trame change de mise en page.
+_PV_COLS = [21, 51, 21, 22] + [21] * 5 + [29] + [21] * 23      # colonnes A … AG, en pixels
+_PV_LIGNES = {1: 14.45, 2: 14.45, 3: 14.45, 5: 19.15, 6: 10.9, 7: 15.75, 8: 19.15, 9: 15.75,
+              **{r: 15.75 for r in range(11, 24)}, 26: 15.75, 27: 12, 28: 14.45, 31: 12, 32: 13.5,
+              47: 15.75, 48: 15.75, 49: 12, 50: 15.75, **{r: 13.15 for r in range(51, 55)}}  # sinon 15
+_PV_POLICES = {'': b'Helvetica', 'b': b'Helvetica-Bold', 'i': b'Helvetica-Oblique',
+               'bi': b'Helvetica-BoldOblique'}
+_PV_CERCLES = ('◯', '◉')      # case d'option vide, cochée : dessinées, absentes de la police
+
+def _pv_visite_pdf(champs, coches=(), titre='PV de visite'):
+    """Le PV de visite en PDF (A4 portrait) : la trame redessinée, `champs` et
+    `coches` comme pour _pv_visite_xlsx (valeurs en bleu, après leur libellé)."""
+    W, H, M = 595.28, 841.89, 22.68                 # A4 et marges de la trame (0,8 cm)
+    hauteurs = [_PV_LIGNES.get(r, 15.0) for r in range(1, 55)]
+    FV = min(1.0, (H - M - 34) / sum(hauteurs))     # place pour le pied de page
+    NOIR, BLEU, SOMBRE, GRIS, CLAIR = '000000', _PV_VISITE_BLEU[2:], '333F4F', 'D9D9D9', 'F2F2F2'
+
+    def col(lettres):
+        n = 0
+        for ch in lettres:
+            n = n * 26 + ord(ch) - 64
+        return n - 1
+
+    def x(lettres, fin=False):
+        return M + sum(_PV_COLS[:col(lettres) + (1 if fin else 0)]) * 0.75
+
+    def y(r, fin=False):
+        """Haut de la ligne r (fin : son bas), en points depuis le bas de la page."""
+        return H - M - sum(hauteurs[:r if fin else r - 1]) * FV
+
+    def rgb(h):
+        return b'%.3f %.3f %.3f' % tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+
+    def largeur(t, corps, style):
+        return corps * 0.95 if t in _PV_CERCLES else _pdf_largeur(t, corps, 'b' in style)
+
+    ops = []
+
+    def boite(c1, c2, r1, r2, fond=None, trait=1.0):
+        x0, x1, y1, y0 = x(c1), x(c2, True), y(r1), y(r2, True)
+        if fond:
+            ops.append(b'%s rg %.2f %.2f %.2f %.2f re f' % (rgb(fond), x0, y0, x1 - x0, y1 - y0))
+        if trait:
+            ops.append(b'0 0 0 RG %.2f w %.2f %.2f %.2f %.2f re S' % (trait, x0, y0, x1 - x0, y1 - y0))
+        return x0, y0, x1, y1
+
+    def ligne_de_texte(morceaux, x0, base, corps):
+        """Dessine des morceaux (texte, style, couleur) côte à côte ; style : b, i, u."""
+        for t, style, coul in morceaux:
+            w = largeur(t, corps, style)
+            if t in _PV_CERCLES:
+                r, cx, cy = corps * 0.36, x0 + corps * 0.45, base + corps * 0.32
+                k = 0.5523 * r
+                arc = (b'%.2f %.2f m %.2f %.2f %.2f %.2f %.2f %.2f c %.2f %.2f %.2f %.2f %.2f %.2f c '
+                       b'%.2f %.2f %.2f %.2f %.2f %.2f c %.2f %.2f %.2f %.2f %.2f %.2f c' % (
+                           cx + r, cy, cx + r, cy + k, cx + k, cy + r, cx, cy + r,
+                           cx - k, cy + r, cx - r, cy + k, cx - r, cy,
+                           cx - r, cy - k, cx - k, cy - r, cx, cy - r,
+                           cx + k, cy - r, cx + r, cy - k, cx + r, cy))
+                ops.append(b'%s RG 0.6 w %s S' % (rgb(coul), arc))
+                if t == '◉':
+                    r2 = r * 0.55
+                    k2 = 0.5523 * r2
+                    ops.append(b'%s rg %.2f %.2f m %.2f %.2f %.2f %.2f %.2f %.2f c %.2f %.2f %.2f %.2f %.2f %.2f c '
+                               b'%.2f %.2f %.2f %.2f %.2f %.2f c %.2f %.2f %.2f %.2f %.2f %.2f c f' % (
+                                   rgb(coul), cx + r2, cy, cx + r2, cy + k2, cx + k2, cy + r2, cx, cy + r2,
+                                   cx - k2, cy + r2, cx - r2, cy + k2, cx - r2, cy,
+                                   cx - r2, cy - k2, cx - k2, cy - r2, cx, cy - r2,
+                                   cx + k2, cy - r2, cx + r2, cy - k2, cx + r2, cy))
+            elif t:
+                f = b'F%d' % (1 + list(_PV_POLICES).index(style.replace('u', '')))
+                ops.append(b'BT /%s %.2f Tf %s rg %.2f %.2f Td %s Tj ET' % (
+                    f, corps, rgb(coul), x0, base, _pdf_chaine(t)))
+                if 'u' in style:
+                    ops.append(b'%s RG 0.5 w %.2f %.2f m %.2f %.2f l S' % (rgb(coul), x0, base - 1.3, x0 + w, base - 1.3))
+            x0 += w
+
+    def texte(c1, c2, r1, r2, morceaux, corps, aligne='gauche', marge=3.0):
+        """Une ligne de texte dans le cadre (c1:c2, r1:r2), centrée en hauteur et
+        rapetissée si elle déborde."""
+        morceaux = [(t, s, c) for t, s, c in morceaux if t]
+        x0, x1 = x(c1) + marge, x(c2, True) - marge
+        w = sum(largeur(t, corps, s) for t, s, _ in morceaux)
+        if w > x1 - x0:
+            corps, w = corps * (x1 - x0) / w, x1 - x0
+        depart = x0 + ((x1 - x0) - w) / 2 if aligne == 'centre' else x0
+        ligne_de_texte(morceaux, depart, (y(r1) + y(r2, True)) / 2 - corps * 0.35, corps)
+
+    def paragraphe(c1, c2, r1, r2, morceaux, corps, haut=False, marge=3.0):
+        """Texte à la ligne dans le cadre ; « \\n » force un retour."""
+        x0, x1 = x(c1) + marge, x(c2, True) - marge
+        lignes, cur, w = [], [], 0.0
+        for t, s, c in morceaux:
+            for m in re.split(r'(\n| +)', t):
+                if not m:
+                    continue
+                if m == '\n':
+                    lignes.append(cur)
+                    cur, w = [], 0.0
+                    continue
+                lw = largeur(m, corps, s)
+                if m.strip() and cur and w + lw > x1 - x0:
+                    while cur and not cur[-1][0].strip():
+                        cur.pop()
+                    lignes.append(cur)
+                    cur, w = [], 0.0
+                if not m.strip() and not cur:
+                    continue
+                cur.append((m, s, c))
+                w += lw
+        if cur:
+            lignes.append(cur)
+        pas = corps * 1.2
+        haut_txt = y(r1) - 2 - corps * 0.85 if haut else \
+            (y(r1) + y(r2, True)) / 2 + (len(lignes) - 1) * pas / 2 - corps * 0.35
+        for i, l in enumerate(lignes):
+            ligne_de_texte(l, x0, haut_txt - i * pas, corps)
+
+    def bandeau(r, titre_bande):
+        boite('B', 'AG', r, r, fond=SOMBRE)
+        texte('B', 'AG', r, r, [(titre_bande, 'b', 'FFFFFF')], 9, 'centre')
+
+    def rubrique(r, libelle, ref, gras=True):
+        boite('B', 'AG', r, r)
+        texte('B', 'AG', r, r, [(libelle, 'b' if gras else '', NOIR), (champs.get(ref) or '', '', BLEU)], 9.9)
+
+    def option(c1, c2, r, ref, libelle, aligne='centre'):
+        coche = ref in coches
+        coul = BLEU if coche else NOIR
+        texte(c1, c2, r, r, [('◉' if coche else '◯', '', coul), (' ' + libelle, '', coul)], 9.9, aligne)
+
+    # En-tête : logo de la trame, titre, année
+    images = []
+    try:
+        with zipfile.ZipFile(_PV_VISITE_MODELE) as z:
+            logo = next((z.read(n) for n in z.namelist() if n.startswith('xl/media/') and n.lower().endswith(('.jpg', '.jpeg'))), None)
+    except (OSError, zipfile.BadZipFile):
+        logo = None
+    info = _jpeg_info(logo) if logo else None
+    if info and info[0] and info[1]:
+        lw, lh, nc, bits = info
+        images.append((logo, lw, lh, nc, bits))
+        hl = 53.0
+        wl = hl * lw / lh
+        ops.append(b'q %.2f 0 0 %.2f %.2f %.2f cm /Im1 Do Q' % (wl, hl, x('B') + 0.6, y(1) - 1.2 - hl))
+    boite('J', 'AG', 1, 3, fond=SOMBRE, trait=0.5)
+    texte('J', 'AG', 1, 3, [('PROCES VERBAL VISITE EN ENTREPRISE', 'b', 'ABC7FF')], 10.8, 'centre')
+    texte('B', 'AG', 5, 5, [('Année de formation/scolaire : ', 'b', '002060'), (champs.get('B5') or '', '', BLEU)],
+          18, 'centre')
+    # Formation
+    boite('B', 'AG', 7, 7, fond=GRIS)
+    texte('B', 'AG', 7, 7, [("*** Nous vous remercions d'écrire lisiblement ***", 'i', NOIR)], 8.1, 'centre')
+    boite('B', 'AG', 8, 8)
+    texte('B', 'AG', 8, 8, [('A transmettre au responsable pédagogique et au service alternance par mail : '
+                             'alternance@univ-tln.fr', 'b', 'FF0000')], 9.9, 'centre')
+    bandeau(9, 'Formation concernée')
+    rubrique(10, 'Intitulé de formation suivie et année 1, 2 ou 3 : ', 'B10')
+    boite('B', 'AG', 11, 11)
+    texte('B', 'C', 11, 11, [('Parcours :', '', NOIR)], 9.9)
+    texte('D', 'AG', 11, 11, [(champs.get('D11') or '', '', BLEU)], 9.9, 'centre')
+    rubrique(12, 'Nom du tuteur universitaire : ', 'B12')
+    boite('B', 'AG', 13, 13)
+    texte('B', 'F', 13, 13, [('Site de formation :', '', NOIR)], 9.9)
+    option('G', 'O', 13, 'G13', 'Campus de la Garde')
+    option('P', 'X', 13, 'P13', 'Campus de Toulon')
+    option('Y', 'AG', 13, 'Y13', 'Campus de Draguignan')
+    # Étudiant, entreprise, tuteur entreprise
+    bandeau(14, "Partie concernant l'étudiant/e")
+    rubrique(15, 'Nom : ', 'B15')
+    rubrique(16, 'Prénom : ', 'B16')
+    boite('B', 'AG', 17, 17)
+    option('E', 'P', 17, '-', "contrat d'apprentissage")
+    option('Q', 'AE', 17, '-', 'contrat de professionalisation')
+    bandeau(18, "Partie concernant l'entreprise d'accueil")
+    rubrique(19, "Nom de l'entreprise visitée : ", 'B19')
+    rubrique(20, "Adresse de l'entreprise visitée : ", 'B20', gras=False)
+    bandeau(21, "Partie concernant le tuteur entreprise (maître d'apprentissage)")
+    rubrique(22, 'Nom : ', 'B22')
+    rubrique(23, 'Prénom : ', 'B23')
+    boite('B', 'AG', 24, 26)
+    paragraphe('B', 'AG', 24, 26, [(
+        "Rappel : Le tuteur en entreprise a pour mission de conduire l'alternant vers l'autonomie. Il joue donc un "
+        "rôle clé dans l'accueil, la transmission des savoirs, l'accompagnement et le soutien de l'alternant. Sa "
+        "capacité à installer une relation de confiance est déterminante pour que l'alternant se sente bien dans "
+        "l'entreprise.", '', NOIR)], 9.9)
+    # Santé et sécurité, compte rendu
+    boite('B', 'AG', 28, 30, fond=CLAIR, trait=0.5)
+    paragraphe('B', 'AG', 28, 30, [
+        ('Question préalable', 'bu', NOIR),
+        (" : L'apprenti/e a-t-il/elle été formé/e aux règles applicables en matière de santé et de sécurité en "
+         "milieu professionnel ?  ", '', NOIR), ('◯', '', NOIR), (' Oui    ', '', NOIR), ('◯', '', NOIR),
+        (' Non\n==> ', '', NOIR), ("Si non : planification d'une action d'information et/ou formation :", 'bi', NOIR)],
+        9.9, haut=True)
+    bandeau(32, 'Résumé du compte rendu de la visite')
+    boite('B', 'AG', 33, 47)
+    boite('B', 'AG', 48, 48, fond=GRIS)
+    texte('B', 'AG', 48, 48, [('date de la visite :', 'b', NOIR)], 9.9)
+    # Signatures
+    boite('B', 'U', 50, 50, fond=SOMBRE)
+    texte('B', 'U', 50, 50, [('Je confirme la véracité des renseignements indiqués dans ce document.', 'b', 'FFFFFF')], 9)
+    boite('V', 'AG', 50, 50, fond=CLAIR)
+    texte('V', 'AG', 50, 50, [('Fait le : ', 'b', NOIR)], 9)
+    for c1, c2, libelle, style, aligne in (('B', 'J', "Signature et cachet de l'entreprise", '', 'gauche'),
+                                           ('K', 'U', "Signature de l'étudiant/e", 'i', 'centre'),
+                                           ('V', 'AG', 'Signature du tuteur enseignant', 'i', 'centre')):
+        boite(c1, c2, 51, 51)
+        texte(c1, c2, 51, 51, [(libelle, style, NOIR)], 9.9, aligne)
+        boite(c1, c2, 52, 54)
+    pied = 'REALISER LA FORMATION – PCS-COMPO-OPE-02 - © DFPA 2024'
+    ops.append(b'BT /F1 8 Tf 0 0 0 rg %.2f 16 Td %s Tj ET' % ((W - _pdf_largeur(pied, 8)) / 2, _pdf_chaine(pied)))
+
+    # Assemblage : catalogue, pages, polices, logo, contenu, page, informations
+    objs = [b'<< /Type /Catalog /Pages 2 0 R >>', b'<< /Type /Pages /Kids [%d 0 R] /Count 1 >>' % (
+        4 + len(_PV_POLICES) + len(images))]
+    for nom in _PV_POLICES.values():
+        objs.append(b'<< /Type /Font /Subtype /Type1 /BaseFont /%s /Encoding /WinAnsiEncoding >>' % nom)
+    for data, lw, lh, nc, bits in images:
+        espace = {1: b'/DeviceGray', 4: b'/DeviceCMYK'}.get(nc, b'/DeviceRGB')
+        dico = b'<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace %s /BitsPerComponent %d ' \
+               b'/Filter /DCTDecode' % (lw, lh, espace, bits or 8)
+        if nc == 4:
+            dico += b' /Decode [1 0 1 0 1 0 1 0]'
+        objs.append(dico + b' /Length %d >>\nstream\n' % len(data) + data + b'\nendstream')
+    contenu = b'\n'.join(ops)
+    objs.append(b'<< /Length %d >>\nstream\n' % len(contenu) + contenu + b'\nendstream')
+    polices = b' '.join(b'/F%d %d 0 R' % (i + 1, 3 + i) for i in range(len(_PV_POLICES)))
+    xo = b'/XObject << /Im1 %d 0 R >>' % (3 + len(_PV_POLICES)) if images else b''
+    objs.append(b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %.2f %.2f] /Resources << /Font << %s >> %s >> '
+                b'/Contents %d 0 R >>' % (W, H, polices, xo, len(objs)))
+    objs.append(b'<< /Title <%s> /Producer (GestionEDT) >>' % ('﻿' + titre).encode('utf-16-be').hex().encode())
+    out = bytearray(b'%PDF-1.4\n%\xe2\xe3\xcf\xd3\n')
+    positions = []
+    for n, corps in enumerate(objs, 1):
+        positions.append(len(out))
+        out += b'%d 0 obj\n' % n + corps + b'\nendobj\n'
+    xref = len(out)
+    out += b'xref\n0 %d\n0000000000 65535 f \n' % (len(objs) + 1)
+    for pos in positions:
+        out += b'%010d 00000 n \n' % pos
+    out += b'trailer\n<< /Size %d /Root 1 0 R /Info %d 0 R >>\nstartxref\n%d\n%%%%EOF\n' % (
+        len(objs) + 1, len(objs), xref)
+    return bytes(out)
+
+def _pv_adresse(s):
+    """L'adresse de l'entreprise pour le PV : celle de la fiche (n°, rue, code postal),
+    suivie de la ville si elle n'y est pas déjà. Sans elle, rien : la ville et le
+    département seuls ne font pas une adresse, et une adresse incomplète n'est pas
+    écrite sur le PV (demande utilisateur)."""
+    rue = ' '.join(str(s.get('adresse') or '').split())
+    if not rue:
+        return ''
+    ville = ' '.join(str(s.get('ville') or '').split())
+    if not ville or ville.casefold() in rue.casefold():
+        return rue
+    # « 12 avenue de la Mer, 83500 » + ville : « 12 avenue de la Mer, 83500 La Seyne-sur-Mer »
+    return f"{rue}{' ' if re.search(r'(?<!\d)\d{5}$', rue) else ', '}{ville}"
+
+def _alt_visites_alternants(pdb, start, moi, tous):
+    """Les alternants de l'année universitaire commençant en `start`, avec leur fiche
+    de suivi (héritée comprise) : tous, ou seulement ceux dont `moi` est le tuteur."""
+    out = []
+    for pid, nom, yg in _suivi_cohorts(pdb, start):
+        for s in (_tuteurs_students(pdb, pid, yg) or {'students': []})['students']:
+            if not _suivi_concerne('alternance', s['formation'], yg):
+                continue
+            mien = bool(moi) and _suivi_key(s['tuteur_univ']) == moi
+            if tous or mien:
+                out.append(dict(s, pid=pid, promotion=nom, annee_etude=yg, mien=mien))
+    return out
+
+@app.route('/api/alternance/visites', methods=['GET'])
+def get_alternance_visites():
+    """Les dates limites des deux visites de l'année ?annee=AAAA-AAAA (défaut : celle
+    de la session) et les alternants pour qui télécharger le PV prérempli : ceux dont
+    la session est le tuteur universitaire ; tous pour l'admin et les responsables
+    ALT et FTP."""
+    droits = _alt_depots_droits()
+    if not droits['voir']:
+        return error_response('Accès réservé', 403)
+    annee, start = _alt_docs_annee()
+    if start is None:
+        return error_response('Année universitaire inconnue', 400)
+    pdb = get_promotions_db()
+    tous = droits['tout'] or droits['recap']
+    gens = _alt_visites_alternants(pdb, start, _suivi_key(session.get('teacher_name')), tous)
+    champs = ('id', 'person_id', 'nom', 'prenom', 'pid', 'promotion', 'annee_etude', 'mien',
+              'tuteur_univ', 'entreprise', 'adresse', 'ville', 'departement', 'tuteur_entreprise')
+    return jsonify({'annee': annee, 'echeances': _alt_echeances(pdb, annee, 'visite'),
+                    'droits': {'echeances': droits['echeances'], 'tous': tous},
+                    'aujourdhui': datetime.now().strftime('%Y-%m-%d'),
+                    'etudiants': [dict({k: s.get(k) for k in champs},
+                                       semestres=[f"S{2 * s['annee_etude'] - 1}", f"S{2 * s['annee_etude']}"])
+                                  for s in gens]})
+
+@app.route('/api/alternance/visites/<int:sid>/pv', methods=['GET'])
+def get_alternance_pv_visite(sid):
+    """Le PV de visite d'un alternant pour l'année ?annee=, en Excel (défaut) ou en PDF
+    (?format=pdf), prérempli : année, formation et année d'étude, parcours, tuteur
+    universitaire, site de formation (La Garde), l'alternant, son entreprise et son
+    adresse si la fiche en a une (_pv_adresse), le tuteur entreprise. Pour son tuteur
+    universitaire, l'admin et les responsables ALT et FTP."""
+    droits = _alt_depots_droits()
+    if not droits['voir']:
+        return error_response('Accès réservé', 403)
+    annee, start = _alt_docs_annee()
+    if start is None:
+        return error_response('Année universitaire inconnue', 400)
+    pdb = get_promotions_db()
+    moi = _suivi_key(session.get('teacher_name'))
+    s = next((x for x in _alt_visites_alternants(pdb, start, moi, True) if x['id'] == sid), None)
+    if not s:
+        return error_response(f"Pas un alternant de {annee}", 404)
+    if not (s['mien'] or droits['tout'] or droits['recap']):
+        return error_response("Réservé au tuteur universitaire de l'alternant et aux responsables", 403)
+    yg = s['annee_etude']
+    t_nom, t_prenom = _pv_nom_prenom(s['tuteur_entreprise'])
+    nom, prenom = ' '.join(str(s['nom'] or '').split()).upper(), _prenom_casse(s['prenom'])
+    champs = {
+        'B5': annee,
+        'B10': f"BUT {_TROMBI_FORMATION}, {yg}{'re' if yg == 1 else 'e'} année",
+        'D11': _PV_VISITE_PARCOURS,
+        'B12': s['tuteur_univ'],
+        'B15': nom, 'B16': prenom,
+        'B19': s['entreprise'], 'B20': _pv_adresse(s),
+        'B22': t_nom, 'B23': t_prenom,
+    }
+    fichier = _zip_nom(f'PV visite {nom} {prenom} {annee}', 150)
+    if request.args.get('format') == 'pdf':
+        return send_file(io.BytesIO(_pv_visite_pdf(champs, [_PV_VISITE_CAMPUS], f'PV de visite {nom} {prenom} {annee}')),
+                         as_attachment=True, download_name=fichier + '.pdf', mimetype='application/pdf')
+    return send_file(io.BytesIO(_pv_visite_xlsx(champs, coches=[_PV_VISITE_CAMPUS])), as_attachment=True,
+                     download_name=fichier + '.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>/students', methods=['POST'])
 def add_year_student(pid, year):
