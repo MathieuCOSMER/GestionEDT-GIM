@@ -1563,6 +1563,32 @@ function _aideSuivi() {
         <p>Les <b>enseignants titulaires</b> connectés avec leur mot de passe les téléchargent ; les vacataires ne voient pas ce sous-onglet.</p>
         <p>Le <b>responsable de l'alternance</b> et l'<b>administrateur</b> les déposent, les remplacent et les suppriment
             (PDF, Word, Excel ou OpenDocument, 15 Mo au plus). Un nouveau dépôt remplace le fichier précédent, qui n'est pas conservé.</p>` },
+
+    { id: 'alt-depots', rub: R, titre: "Dépôt des fiches d'évaluation", chemin: 'Alternance › Dépôts',
+      onglet: 'nav:alternance', cible: 'alternance/depots',
+      mots: "dépôts depots fiche d'évaluation evaluation tuteur universitaire semestre date limite échéance retard manquantes récapitulatif",
+      html: `
+        <p>Le sous-onglet ${_aUi('Dépôts')} recueille la <b>fiche d'évaluation de chaque alternant, pour chaque semestre</b> de son année
+        (S1 et S2 en 1<sup>re</sup> année, S3 et S4, S5 et S6), pour l'année universitaire affichée.</p>
+        <h3>La date limite</h3>
+        <p>Rappelée en tête, une pour les <b>semestres impairs</b> (S1, S3, S5) et une pour les <b>semestres pairs</b> (S2, S4, S6), avec le nombre
+        de jours restants. Le <b>responsable de l'alternance</b> et l'<b>administrateur</b> la fixent pour l'année (${_aUi('Enregistrer les dates')}).
+        Un dépôt après la date reste possible ; il est marqué <b>en retard</b>.</p>
+        <h3>Déposer (tuteur universitaire)</h3>
+        <p>${_aUi('Mes alternants')} liste les alternants dont vous êtes le tuteur universitaire (fiche de suivi de l'année, sous-onglet Tuteurs).
+        Pour chaque semestre : ${_aUi('Déposer')}, puis ${_aUi('Télécharger')}, ${_aUi('Remplacer')} ou ${_aUi('🗑')}
+        (PDF, Word, Excel ou OpenDocument, 15 Mo au plus). Le modèle de fiche est dans ${_aOng('Alternance › Documents')}.
+        L'administrateur et le responsable de l'alternance peuvent aussi déposer pour un alternant.</p>
+        <h3>Récapitulatif</h3>
+        <p>Pour l'administrateur, le responsable de l'alternance et le responsable FTP : par semestre, les fiches déposées, celles qui manquent
+        et celles en retard ; les fiches manquantes <b>par tuteur</b> (et les alternants sans tuteur universitaire) ; puis tous les alternants,
+        filtrables (${_aUi('Manquantes seulement')}, semestre, recherche), avec le téléchargement de chaque fiche.</p>
+        <p>${_aUi('Télécharger les fiches déposées')} : une archive ZIP de <b>toutes</b> les fiches de l'année (rangées par promotion puis par
+        alternant) ou d'<b>une promotion</b> ; ${_aUi('⤓ ses fiches')}, sous le nom d'un alternant, donne les siennes. Le semestre choisi dans le
+        filtre s'applique (les deux, impair ou pair).</p>
+        <p>Chaque dépôt prévient l'administrateur, le responsable de l'alternance et le responsable FTP dans l'onglet ${_aOng('Notifications')}.
+        ${_aUi('🔔 Rappeler les tuteurs…')} (administrateur, responsable de l'alternance) envoie à chaque tuteur dont des fiches manquent une
+        notification avec la date limite et ses alternants concernés.</p>` },
     ];
 }
 
@@ -1923,6 +1949,51 @@ function _aideAdmin() {
             <li><b>Public</b> : visible aussi par l'administration — jamais par les autres enseignants. ${_aUi('🔒')} / ${_aUi('👁')} basculent une ligne.</li>
         </ul>
         ${_aEx('déclarer des heures', `« Dépt GEII, IUT de Toulon » — 24 HETD — Public : l'administration les voit dans votre Bilan Global, vos collègues non.`)}` },
+
+    { id: 'notifications', rub: R, titre: 'Notifications', chemin: 'Notifications', onglet: 'nav:notifications', cible: 'notifications',
+      mots: 'notifications cloche pastille non lues lues retirer supprimer sélection signalement saisie notes rappel contraintes fiches évaluation dépôt définitif provisoire mail',
+      html: `
+        <p>Ce que le site vous signale, à la place de mails. L'onglet est réservé aux connexions <b>avec mot de passe</b> ; la
+        <b>pastille rouge</b> donne le nombre de notifications non lues (relue toutes les deux minutes).</p>
+        <h3>Ce que vous recevez</h3>
+        <ul>
+            <li><b>Signalement</b> : un enseignant a signalé un problème sur une fiche étudiant. Pour la direction (droit de modifier
+                la liste ${_aOng('Étudiants › À convoquer')}). La carte indique s'il est déjà <b>traité</b>.</li>
+            <li><b>Saisie de notes</b> : des notes ajoutées, modifiées ou effacées dans ${_aOng('Saisie Notes')}, une colonne passée en
+                définitif ou repassée en provisoire. Pour le <b>référent</b> de la matière et l'administration des Bulletins. Les
+                enregistrements d'une même personne sur une matière en moins de 12 h se cumulent dans une seule notification.</li>
+            <li><b>Rappel · contraintes</b> et <b>Rappel · notes à saisir</b> : envoyés par l'administration. Le rappel des contraintes
+                indique « Contraintes déposées » dès que vous l'avez fait.</li>
+            <li><b>Dépôt · fiche d'évaluation</b> : un tuteur universitaire a déposé la fiche d'un alternant dans ${_aOng('Alternance › Dépôts')}
+                (dans les délais ou après la date limite). Pour l'administrateur, le responsable de l'alternance et le responsable FTP ;
+                un nouveau dépôt du même semestre remplace la notification.</li>
+        </ul>
+        <p>On ne reçoit jamais la notification de ce qu'on a fait soi-même. Elles sont gardées 180 jours.</p>
+        <h3>Les gérer</h3>
+        <ul>
+            <li>L'onglet s'ouvre sur les <b>non lues</b> ; la première liste choisit ${_aUi('Non lues')}, ${_aUi('Lues')} ou ${_aUi('Toutes')}
+                (avec leur nombre), la seconde le type.</li>
+            <li>${_aUi('Ouvrir')} affiche l'écran concerné (fiche de l'étudiant, Saisie Notes, Contraintes, Dépôts) et marque la notification comme lue ;
+                ${_aUi('✓ Lue')} / ${_aUi('Non lue')} bascule une carte ; ${_aUi('🗑')} la retire de votre liste.</li>
+            <li>Cochez plusieurs cartes (ou ${_aUi('Tout sélectionner')}, qui prend celles affichées) pour les ${_aUi('Marquer comme lues')},
+                ${_aUi('Marquer comme non lues')} ou les ${_aUi('Retirer de ma liste')} d'un coup.</li>
+            <li>${_aUi('Tout marquer comme lu')} vide la pastille ; ${_aUi('Retirer les lues')} fait le ménage de celles déjà lues.</li>
+        </ul>
+        <p>Retirer une notification ne la retire que de <b>votre</b> liste : les autres destinataires la gardent, et elle revient si
+        l'événement se reproduit (nouvelle saisie de la même matière, nouveau dépôt, rappel renvoyé).</p>
+        ${state.role !== 'admin' ? '' : `<h3>Envoyer un rappel</h3>
+        <p>Le cadre ${_aUi('Envoyer un rappel')} (administration) prépare la liste des enseignants concernés pour l'année active :</p>
+        <ul>
+            <li>${_aUi('Contraintes d\'emploi du temps…')} : ceux qui ont au moins une séance et n'ont déposé ni texte ni fichier (aussi depuis
+                ${_aOng('Service › Contraintes Enseignant')}, pour l'année affichée) ;</li>
+            <li>${_aUi('Notes à saisir…')} : ceux à qui il manque des notes dans les colonnes non définitives des semestres cochés
+                (par défaut ceux en cours), avec le détail par colonne ;</li>
+            <li>${_aUi('Fiches d\'évaluation…')} (administrateur, responsable de l'alternance) : les tuteurs universitaires dont des fiches
+                d'alternants manquent dans ${_aOng('Alternance › Dépôts')} pour les semestres cochés, avec la date limite et la liste de leurs alternants ;
+                le rappel affiche ensuite en direct combien de fiches restent à déposer (aussi depuis le récapitulatif des Dépôts).</li>
+        </ul>
+        <p>Décochez ceux à ne pas relancer, ajoutez un message si besoin, puis ${_aUi('Envoyer')}. Renvoyer un rappel remplace le précédent
+        (il redevient non lu). Un enseignant sans mot de passe ne le lira qu'une fois son mot de passe créé.</p>`}` },
     ];
 }
 

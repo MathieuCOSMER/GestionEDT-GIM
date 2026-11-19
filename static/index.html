@@ -481,6 +481,36 @@
         .role-badge.teacher { background: #dbeafe; color: #1e40af; }
         .role-badge.superadmin { background: #fef3c7; color: #92400e; }
         .role-badge.resp { background: #ede9fe; color: #5b21b6; }
+        /* Onglet Notifications : pastille des non lues, cartes, rappels */
+        .notif-pill { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px; border-radius: 999px;
+                      background: #dc2626; color: #fff; font-size: .7rem; line-height: 18px; text-align: center; font-weight: 700; }
+        .notif-list { display: flex; flex-direction: column; gap: 8px; max-width: 980px; }
+        .notif-jour { font-size: .75rem; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: .04em; margin: 10px 0 0; }
+        .notif-card { display: flex; gap: 12px; align-items: flex-start; background: #fff; border: 1px solid #e5e7eb;
+                      border-left: 4px solid #d1d5db; border-radius: 8px; padding: 10px 12px; }
+        .notif-card.unread { border-left-color: #4f46e5; background: #f8f9ff; }
+        .notif-card.selected { box-shadow: 0 0 0 2px #a5b4fc; }
+        .notif-groupe { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; max-width: 980px; margin-bottom: 4px;
+                        font-size: .85rem; padding: 6px 10px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; }
+        .notif-ico { width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+                     flex-shrink: 0; font-size: 1rem; }
+        .notif-main { flex: 1; min-width: 0; }
+        .notif-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: .78rem; color: #6b7280; }
+        .notif-type { font-weight: 700; }
+        .notif-titre { margin-top: 2px; font-size: .93rem; color: #111827; font-weight: 500; }
+        .notif-card.unread .notif-titre { font-weight: 700; }
+        .notif-texte { margin-top: 3px; font-size: .84rem; color: #374151; white-space: pre-line; overflow-wrap: anywhere; }
+        .notif-etat { padding: 1px 8px; border-radius: 999px; font-weight: 600; }
+        .notif-etat.ok { background: #dcfce7; color: #15803d; }
+        .notif-etat.ko { background: #fef3c7; color: #b45309; }
+        .notif-actions { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+        .rappel-ligne { display: flex; gap: 8px; align-items: flex-start; padding: 6px 4px; border-bottom: 1px solid #f3f4f6; font-size: .86rem; }
+        .rappel-ligne details { font-size: .8rem; color: #4b5563; margin-top: 2px; }
+        .rappel-sansmdp { font-size: .72rem; background: #f3f4f6; color: #6b7280; border-radius: 999px; padding: 1px 7px; margin-left: 6px; }
+        @media (max-width: 640px) {
+            .notif-card { flex-wrap: wrap; }
+            .notif-actions { flex-direction: row; width: 100%; justify-content: flex-end; }
+        }
         /* Droits étendus d'un enseignant (liste de l'onglet Enseignant, vue superadmin) */
         .right-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px;
                      font-size: .7rem; font-weight: 600; background: #ede9fe; color: #5b21b6; }
@@ -711,6 +741,8 @@
     <button onclick="showPage('parametres')" id="nav-parametres" class="admin-only">Paramètres</button>
     <button onclick="showPage('salons')" id="nav-salons" title="Salons étudiants, forums et portes ouvertes de l'année : calendrier, inscriptions, comptes rendus">Salons</button>
     <button onclick="showPage('mon-compte')" id="nav-mon-compte" style="display:none">Mon Compte</button>
+    <button onclick="showPage('notifications')" id="nav-notifications" style="display:none"
+            title="Signalements, saisies de notes et rappels qui vous concernent">🔔 Notifications<span id="notif-pill" class="notif-pill" style="display:none"></span></button>
     <button onclick="showPage('aide')" id="nav-aide" title="Mode d'emploi du site : chaque écran expliqué, avec des exemples">Aide</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
         <span id="role-badge" class="role-badge" style="display:none"></span>
@@ -1565,6 +1597,8 @@
         <button type="button" id="suivi-alternance-tab-fiches" class="subtab active" onclick="showSuiviTab('alternance', 'fiches')">Tuteurs</button>
         <button type="button" id="suivi-alternance-tab-stats" class="subtab" onclick="showSuiviTab('alternance', 'stats')">Statistiques</button>
         <button type="button" id="suivi-alternance-tab-documents" class="subtab" style="display:none" onclick="showSuiviTab('alternance', 'documents')">Documents</button>
+        <button type="button" id="suivi-alternance-tab-depots" class="subtab" style="display:none" onclick="showSuiviTab('alternance', 'depots')"
+                title="Fiches d'évaluation des alternants, par semestre, déposées par leur tuteur universitaire">Dépôts</button>
     </div>
     <div id="suivi-alternance-content"><div class="spinner">Chargement…</div></div>
 </div>
@@ -1621,6 +1655,58 @@
                 title="Visiteurs, public rencontré, mobilisation des enseignants et des étudiants, comparaison des années">Bilan</button>
     </div>
     <div id="salons-content"><div class="spinner">Chargement…</div></div>
+</div>
+
+<!-- ===== NOTIFICATIONS : ce que le site signale à chacun (loadNotifications) ===== -->
+<!-- Réservé aux connexions avec mot de passe. Signalements (direction), saisies de
+     notes (référent, administration des Bulletins), rappels de l'administration. -->
+<div class="page" id="page-notifications">
+    <div class="toolbar">
+        <h1>Notifications <span id="notif-compte-titre" style="font-size:.95rem;color:#6b7280;font-weight:500"></span></h1>
+        <div class="filters">
+            <!-- Par défaut : les non lues ; les compteurs suivent le type choisi -->
+            <select id="notif-filtre-etat" onchange="_notifSel.clear();renderNotifications()" title="Lues ou non lues" style="font-weight:600">
+                <option value="non_lues" selected>Non lues</option>
+                <option value="lues">Lues</option>
+                <option value="toutes">Toutes</option>
+            </select>
+            <select id="notif-filtre-type" onchange="_notifSel.clear();renderNotifications()" title="Type de notification">
+                <option value="">Tous les types</option>
+                <option value="signalement">Signalements</option>
+                <option value="saisie">Saisies de notes</option>
+                <option value="depot_alternance">Dépôts : fiches d'évaluation</option>
+                <option value="rappel_contraintes">Rappels : contraintes</option>
+                <option value="rappel_notes">Rappels : notes à saisir</option>
+                <option value="rappel_fiches">Rappels : fiches d'évaluation</option>
+            </select>
+            <button class="btn btn-secondary btn-sm" id="notif-tout-lu" onclick="notifToutLu()" title="Toutes vos notifications non lues, quel que soit le filtre">✓ Tout marquer comme lu</button>
+            <button class="btn btn-secondary btn-sm" id="notif-vider-lues" onclick="notifRetirerLues()"
+                    title="Retire de votre liste toutes les notifications déjà lues (les autres destinataires les gardent)">🗑 Retirer les lues</button>
+            <button class="btn btn-secondary btn-sm" onclick="loadNotifications()" title="Relire les notifications">↻</button>
+        </div>
+    </div>
+    <div id="notif-rappels"></div>
+    <div id="notif-content"><div class="spinner">Chargement…</div></div>
+</div>
+
+<!-- Rappel envoyé par l'administration (contraintes / notes à saisir) : aperçu des
+     destinataires avant l'envoi (ouvrirRappel) -->
+<div class="modal-backdrop" id="modal-rappel">
+    <div class="modal" style="max-width:760px">
+        <h2 id="rappel-titre" style="font-size:1.05rem;margin-bottom:4px">Envoyer un rappel</h2>
+        <p id="rappel-intro" style="color:#6b7280;font-size:.84rem;margin:0 0 8px"></p>
+        <div id="rappel-semestres" style="display:none;margin:6px 0 10px;font-size:.88rem"></div>
+        <label for="rappel-message" style="font-weight:600;display:block;margin:6px 0 4px;font-size:.88rem">
+            Message <span style="color:#9ca3af;font-weight:400">(facultatif, placé en tête du rappel)</span></label>
+        <textarea id="rappel-message" rows="3" maxlength="1000"
+            style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #d1d5db;border-radius:6px;font:inherit;resize:vertical"
+            placeholder="Ex : à faire avant le 5 décembre, merci !"></textarea>
+        <div id="rappel-liste" style="margin-top:12px;max-height:45vh;overflow:auto"></div>
+        <div class="form-actions" style="margin-top:16px">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-rappel')">Annuler</button>
+            <button type="button" class="btn btn-primary" id="rappel-envoyer" onclick="envoyerRappel()" disabled>Envoyer</button>
+        </div>
+    </div>
 </div>
 
 <!-- ===== AIDE : mode d'emploi du site (rendu par aide.js) ===== -->
@@ -2602,11 +2688,13 @@ async function api(endpoint, opts = {}) {
     if (state.role === 'teacher' && method !== 'GET' && method !== 'HEAD'
             && !(state.tabs && state.tabs.editExtra.size)
             && endpoint !== '/years/session' && endpoint !== '/session-mode'
+            && endpoint !== '/notifications/lu'
             && !endpoint.startsWith('/my-account')
             && !endpoint.startsWith('/qr-attendance')
             && !endpoint.startsWith('/salons/')
             && !/\/saisie\/S[1-6]\//.test(endpoint)
             && !/^\/promotions\/\d+\/tuteurs\//.test(endpoint)
+            && !/^\/alternance\/depots\//.test(endpoint)
             && !/^\/students\/\d+\/suivi(\/\d+)?$/.test(endpoint)) {
         toast('Lecture seule', 'error');
         throw new Error('Lecture seule');
@@ -2858,10 +2946,13 @@ function applyRole(me) {
         // Admin : la saisie reste un sous-onglet de Promotions
         else if (b.id === 'nav-saisie') show = (role === 'teacher' && state.promoAccess) || state.resp.length > 0;
         else if (b.id === 'nav-enseignants') show = role === 'admin';        // admin seul
+        // Connexions avec mot de passe seulement (accès réglé côté serveur)
+        else if (b.id === 'nav-notifications') show = !tabHidden('nav:notifications');
         else show = !(role === 'teacher' && !teacherTabs.includes(b.id));
         b.style.display = show ? '' : 'none';
     });
     applyTabVisibility();
+    notifDemarrer();
     // Bouton « ? » (aide de l'écran affiché) : suit l'onglet Aide, que le superadmin peut fermer
     const aideBtn = document.getElementById('aide-flottant');
     if (aideBtn) aideBtn.style.display = tabHidden('nav:aide') ? 'none' : '';
@@ -3193,6 +3284,422 @@ function logout() {
     });
 }
 
+// ===== NOTIFICATIONS =====
+// Ce que le site signale à chacun, à la place de mails (connexions avec mot de
+// passe) : signalements déposés (direction), saisies de notes (référent de la
+// matière, administration des Bulletins), rappels de l'administration (contraintes,
+// notes à saisir). La pastille de l'onglet est relue toutes les 2 minutes et au
+// retour sur la fenêtre ; la lecture est propre à chacun (serveur).
+let _notifData = null;        // payload /notifications
+let _notifTimer = null;
+const NOTIF_TYPES = {
+    signalement:        ['⚠', 'Signalement', '#fef3c7', '#b45309'],
+    saisie:             ['✎', 'Saisie de notes', '#e0e7ff', '#4338ca'],
+    rappel_contraintes: ['🗓', 'Rappel · contraintes', '#dcfce7', '#15803d'],
+    rappel_notes:       ['🔔', 'Rappel · notes à saisir', '#fee2e2', '#b91c1c'],
+    depot_alternance:   ['📄', "Dépôt · fiche d'évaluation", '#e0f2fe', '#0369a1'],
+    rappel_fiches:      ['📝', "Rappel · fiches d'évaluation", '#fef3c7', '#92400e'],
+};
+
+function _notifOuvert() { return !!state.role && !tabHidden('nav:notifications'); }
+
+function _notifPastille(n) {
+    const el = document.getElementById('notif-pill');
+    if (el) { el.textContent = n > 99 ? '99+' : String(n); el.style.display = n ? '' : 'none'; }
+    const t = document.getElementById('notif-compte-titre');
+    if (t) t.textContent = n ? `· ${n} non lue(s)` : '';
+}
+
+async function notifCompte() {
+    if (!_notifOuvert() || document.hidden) return;
+    try { _notifPastille((await api('/notifications/compte')).non_lues || 0); }
+    catch (e) { /* silencieux : la pastille attend la prochaine relecture */ }
+}
+
+function notifDemarrer() {
+    clearInterval(_notifTimer);
+    _notifPastille(0);
+    if (!_notifOuvert()) return;
+    notifCompte();
+    _notifTimer = setInterval(notifCompte, 120000);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) notifCompte(); });
+
+async function loadNotifications() {
+    const el = document.getElementById('notif-content');
+    _notifSel.clear();
+    if (!_notifData) el.innerHTML = '<div class="spinner">Chargement…</div>';
+    try { _notifData = await api('/notifications'); }
+    catch (e) { el.innerHTML = `<div class="empty">Notifications indisponibles : ${esc(e.message)}</div>`; return; }
+    _notifPastille(_notifData.non_lues || 0);
+    renderNotifRappels();
+    renderNotifications();
+}
+
+// Envoi des rappels : admin (contraintes, notes), responsable FTP (contraintes)…
+function renderNotifRappels() {
+    const el = document.getElementById('notif-rappels');
+    const R = (_notifData || {}).rappels || {};
+    if (!R.contraintes && !R.notes && !R.fiches) { el.innerHTML = ''; return; }
+    el.innerHTML = `<div class="card" style="max-width:980px;box-sizing:border-box;margin-bottom:12px;padding:12px 16px">
+        <strong>Envoyer un rappel</strong>
+        <span style="color:#6b7280;font-size:.84rem"> — il arrive dans l'onglet Notifications de chaque enseignant concerné
+            (${esc(_notifData.annee || 'année active')}). Vous voyez la liste avant d'envoyer.</span>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            ${R.contraintes ? `<button class="btn btn-secondary btn-sm" onclick="ouvrirRappel('contraintes')"
+                title="Les enseignants de l'année qui n'ont déposé ni texte ni fichier">🗓 Contraintes d'emploi du temps…</button>` : ''}
+            ${R.notes ? `<button class="btn btn-secondary btn-sm" onclick="ouvrirRappel('notes')"
+                title="Les enseignants qui ont des notes manquantes dans des colonnes non définitives">🔔 Notes à saisir…</button>` : ''}
+            ${R.fiches ? `<button class="btn btn-secondary btn-sm" onclick="ouvrirRappel('fiches')"
+                title="Les tuteurs universitaires dont des fiches d'évaluation d'alternants manquent (Alternance › Dépôts)">📝 Fiches d'évaluation…</button>` : ''}
+        </div></div>`;
+}
+
+// « aujourd'hui à 14:05 », « il y a 3 min », « hier à 9:12 », « 12 nov. à 16:40 »
+function _notifQuand(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return iso || '';
+    const s = (Date.now() - d.getTime()) / 1000;
+    if (s < 60) return "à l'instant";
+    if (s < 3600) return `il y a ${Math.floor(s / 60)} min`;
+    const h = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const jour = _notifJour(iso);
+    return (jour === "Aujourd'hui" || jour === 'Hier' ? jour.toLowerCase() : d.toLocaleDateString('fr-FR',
+        { day: 'numeric', month: 'short' })) + ' à ' + h;
+}
+function _notifJour(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    const auj = new Date(), hier = new Date();
+    hier.setDate(hier.getDate() - 1);
+    if (d.toDateString() === auj.toDateString()) return "Aujourd'hui";
+    if (d.toDateString() === hier.toDateString()) return 'Hier';
+    return d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long',
+        year: d.getFullYear() === auj.getFullYear() ? undefined : 'numeric' });
+}
+
+// Notifications cochées (actions groupées) ; vidée à chaque changement de filtre
+const _notifSel = new Set();
+
+// Celles qu'on affiche : état (non lues par défaut, lues, toutes) et type
+function _notifAffichees() {
+    const etat = document.getElementById('notif-filtre-etat').value;
+    const type = document.getElementById('notif-filtre-type').value;
+    return ((_notifData || {}).items || []).filter(n => (!type || n.type === type)
+        && (etat === 'toutes' || (etat === 'lues') === n.lu));
+}
+
+function renderNotifications() {
+    const el = document.getElementById('notif-content');
+    if (!_notifData) return;
+    const tous = _notifData.items || [];
+    // Compteurs des choix « Non lues / Lues / Toutes », pour le type choisi
+    const type = document.getElementById('notif-filtre-type').value;
+    const duType = tous.filter(n => !type || n.type === type);
+    const nl = duType.filter(n => !n.lu).length;
+    const selEtat = document.getElementById('notif-filtre-etat');
+    [['non_lues', 'Non lues', nl], ['lues', 'Lues', duType.length - nl], ['toutes', 'Toutes', duType.length]]
+        .forEach(([v, lib, n]) => { const o = selEtat.querySelector(`option[value="${v}"]`); if (o) o.textContent = `${lib} (${n})`; });
+    document.getElementById('notif-tout-lu').disabled = !tous.some(n => !n.lu);
+    document.getElementById('notif-vider-lues').disabled = !tous.some(n => n.lu);
+    const items = _notifAffichees();
+    // Une sélection ne porte que sur ce qui est affiché
+    const ids = new Set(items.map(n => n.id));
+    [..._notifSel].forEach(id => { if (!ids.has(id)) _notifSel.delete(id); });
+    if (!items.length) {
+        const etat = selEtat.value;
+        el.innerHTML = `<div class="empty">${!tous.length
+            ? "Aucune notification pour l'instant. Vous serez prévenu ici des signalements, des saisies de notes, des dépôts et des rappels qui vous concernent."
+            : etat === 'non_lues' ? 'Aucune notification non lue' + (type ? ' de ce type' : '') + ". Choisissez « Lues » ou « Toutes » pour revoir les autres."
+            : 'Aucune notification ne correspond au filtre.'}</div>`;
+        return;
+    }
+    let jour = null;
+    const html = [];
+    items.forEach(n => {
+        const j = _notifJour(n.maj);
+        if (j !== jour) { jour = j; html.push(`<div class="notif-jour">${esc(j)}</div>`); }
+        html.push(_notifCarte(n));
+    });
+    el.innerHTML = `<div class="notif-groupe" id="notif-groupe"></div><div class="notif-list">${html.join('')}</div>`;
+    _notifBarreGroupe();
+}
+
+// Barre des actions groupées : tout cocher (ce qui est affiché), marquer lues / non lues, retirer
+function _notifBarreGroupe() {
+    const el = document.getElementById('notif-groupe');
+    if (!el) return;
+    const items = _notifAffichees(), n = _notifSel.size;
+    const tout = n && n === items.length;
+    const sel = items.filter(x => _notifSel.has(x.id));
+    el.innerHTML = `<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:600">
+            <input type="checkbox" style="width:auto" ${tout ? 'checked' : ''} onchange="notifToutCocher(this.checked)"
+                   title="Cocher toutes les notifications affichées"> ${n ? `${n} sélectionnée(s)` : 'Tout sélectionner'}</label>
+        ${n ? `<button class="btn btn-secondary btn-sm" ${sel.some(x => !x.lu) ? '' : 'disabled'} onclick="notifGroupe('lu')">✓ Marquer comme lues</button>
+               <button class="btn btn-secondary btn-sm" ${sel.some(x => x.lu) ? '' : 'disabled'} onclick="notifGroupe('non_lu')">Marquer comme non lues</button>
+               <button class="btn btn-secondary btn-sm" onclick="notifGroupe('retirer')"
+                       title="Les retire de votre liste ; elles reviennent si l'événement se reproduit">🗑 Retirer de ma liste</button>` : ''}`;
+}
+
+function notifCocher(id, on) {
+    if (on) _notifSel.add(id); else _notifSel.delete(id);
+    const carte = document.querySelector(`.notif-card[data-id="${id}"]`);
+    if (carte) carte.classList.toggle('selected', on);
+    _notifBarreGroupe();
+}
+
+function notifToutCocher(on) {
+    _notifSel.clear();
+    if (on) _notifAffichees().forEach(n => _notifSel.add(n.id));
+    renderNotifications();
+}
+
+async function notifGroupe(action) {
+    const ids = [..._notifSel];
+    if (!ids.length) return;
+    try {
+        if (action === 'retirer') await _notifRetirer({ ids });
+        else await _notifMarquer({ ids, lu: action === 'lu' });
+        _notifSel.clear();
+        renderNotifications();
+    } catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+function _notifCarte(n) {
+    const [ico, lib, bg, fg] = NOTIF_TYPES[n.type] || ['•', n.type, '#f3f4f6', '#374151'];
+    const etat = n.etat ? `<span class="notif-etat ${n.etat.ok ? 'ok' : 'ko'}">${esc(n.etat.texte)}</span>` : '';
+    const coche = _notifSel.has(n.id);
+    return `<div class="notif-card${n.lu ? '' : ' unread'}${coche ? ' selected' : ''}" data-id="${n.id}">
+        <input type="checkbox" style="width:auto;margin-top:9px" ${coche ? 'checked' : ''}
+               onchange="notifCocher(${n.id}, this.checked)" title="Sélectionner" aria-label="Sélectionner cette notification">
+        <div class="notif-ico" style="background:${bg};color:${fg}" aria-hidden="true">${ico}</div>
+        <div class="notif-main">
+            <div class="notif-head"><span class="notif-type" style="color:${fg}">${esc(lib)}</span>
+                <span title="${esc(new Date(n.maj).toLocaleString('fr-FR'))}">${esc(_notifQuand(n.maj))}</span>
+                ${n.auteur ? `<span>par ${esc(n.auteur)}</span>` : ''}${etat}</div>
+            <div class="notif-titre">${esc(n.titre)}</div>
+            ${n.texte ? `<div class="notif-texte">${esc(n.texte)}</div>` : ''}
+        </div>
+        <div class="notif-actions">
+            ${n.lien ? `<button class="btn btn-primary btn-sm" onclick="notifOuvrir(${n.id})">Ouvrir</button>` : ''}
+            <button class="btn btn-secondary btn-sm" onclick="notifBasculer(${n.id})"
+                title="${n.lu ? 'La remettre en non lue' : 'La marquer comme lue'}">${n.lu ? 'Non lue' : '✓ Lue'}</button>
+            <button class="btn btn-secondary btn-sm" onclick="notifRetirerUne(${n.id})"
+                title="La retirer de votre liste (elle revient si l'événement se reproduit)">🗑</button>
+        </div>
+    </div>`;
+}
+
+async function _notifMarquer(body) {
+    const r = await api('/notifications/lu', { method: 'PUT', body: JSON.stringify(body) });
+    const ids = new Set(r.ids || []);
+    const lu = body.lu !== false;
+    ((_notifData || {}).items || []).forEach(n => { if (ids.has(n.id)) n.lu = lu; });
+    _notifPastille(r.non_lues || 0);
+    renderNotifications();
+}
+
+// Retirer de SA liste (les autres destinataires gardent la leur)
+async function _notifRetirer(body) {
+    const r = await api('/notifications/masquer', { method: 'PUT', body: JSON.stringify(body) });
+    const ids = new Set(r.ids || []);
+    if (_notifData) _notifData.items = (_notifData.items || []).filter(n => !ids.has(n.id));
+    ids.forEach(id => _notifSel.delete(id));
+    _notifPastille(r.non_lues || 0);
+    renderNotifications();
+    return ids.size;
+}
+
+async function notifRetirerUne(id) {
+    try { await _notifRetirer({ ids: [id] }); toast('Notification retirée de votre liste'); }
+    catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function notifRetirerLues() {
+    const n = ((_notifData || {}).items || []).filter(x => x.lu).length;
+    if (!n || !confirm(`Retirer de votre liste les ${n} notification(s) déjà lue(s) ?`)) return;
+    try { toast(`${await _notifRetirer({ lues: true })} notification(s) retirée(s)`); }
+    catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function notifBasculer(id) {
+    const n = ((_notifData || {}).items || []).find(x => x.id === id);
+    if (!n) return;
+    try { await _notifMarquer({ ids: [id], lu: !n.lu }); }
+    catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+async function notifToutLu() {
+    try { await _notifMarquer({ tout: true, lu: true }); }
+    catch (e) { toast('Erreur : ' + e.message, 'error'); }
+}
+
+// Ouvrir : la notification est lue, et l'écran concerné s'affiche
+async function notifOuvrir(id) {
+    const n = ((_notifData || {}).items || []).find(x => x.id === id);
+    if (!n) return;
+    if (!n.lu) { try { await _notifMarquer({ ids: [id], lu: true }); } catch (e) { /* on ouvre quand même */ } }
+    const l = n.lien || {};
+    if (l.page === 'etudiants' && l.person_id) {
+        // La fiche s'affiche dès qu'elle est lue, que la liste soit déjà là ou non
+        showPage('etudiants');
+        openEtudiant(l.person_id, l.onglet || 'suivi');
+    } else if (l.page === 'saisie') {
+        const navSaisie = document.getElementById('nav-saisie');
+        if (navSaisie && navSaisie.style.display !== 'none') { showPage('saisie'); return; }
+        // Admin : la grille de la promotion, du semestre et de la sous-cohorte concernés
+        if (l.pid) {
+            _promoId = l.pid;
+            if (l.semestre) document.getElementById('saisie-sem-select').value = l.semestre;
+            if (l.face) document.getElementById('saisie-sub-select').value = l.face;
+        }
+        if (_promoTabAllowed('saisie')) { _promoTab = 'saisie'; _syncPromoSubtabs(); }
+        showPage('promotions');
+    } else if (l.page === 'alternance') {
+        // Alternance › Dépôts, à l'année universitaire du dépôt
+        const st = _suiviState('alternance');
+        if (l.annee && l.annee !== st.year) { st.year = l.annee; st.data = null; }
+        st.tab = l.onglet || 'fiches';
+        showPage('alternance');
+    } else if (l.page === 'contraintes') {
+        const sel = document.getElementById('service-year-select');
+        if (l.annee && sel && [...sel.options].some(o => o.value === l.annee)) { sel.value = l.annee; _serviceYear = l.annee; }
+        showPage('contraintes');
+    } else if (l.page) {
+        showPage(l.page);
+    }
+}
+
+// ----- Rappels (aperçu des destinataires, puis envoi) -----
+let _rappel = null;   // {type, annee, semestres: Set, cibles, exclus: Set}
+
+// Semestres en cours : impairs d'août à janvier, pairs de février à juillet
+function _rappelSemestresDefaut() {
+    const m = new Date().getMonth() + 1;
+    return m >= 8 || m === 1 ? ['S1', 'S3', 'S5'] : ['S2', 'S4', 'S6'];
+}
+
+const RAPPEL_TITRES = { contraintes: "Rappel : contraintes d'emploi du temps", notes: 'Rappel : notes à saisir',
+                        fiches: "Rappel : fiches d'évaluation des alternants" };
+
+async function ouvrirRappel(type, annee) {
+    _rappel = { type, annee: annee || '', cibles: null, exclus: new Set(), sansTuteur: 0, echeances: null,
+                semestres: new Set(type === 'contraintes' ? [] : _rappelSemestresDefaut()) };
+    document.getElementById('rappel-titre').textContent = RAPPEL_TITRES[type] || 'Rappel';
+    document.getElementById('rappel-message').value = '';
+    openModal('modal-rappel');
+    await chargerRappel();
+}
+
+function toggleRappelSemestre(s, on) {
+    if (on) _rappel.semestres.add(s); else _rappel.semestres.delete(s);
+    chargerRappel();
+}
+
+async function chargerRappel() {
+    const R = _rappel;
+    const el = document.getElementById('rappel-liste');
+    const sems = document.getElementById('rappel-semestres');
+    const parSemestre = R.type !== 'contraintes';
+    sems.style.display = parSemestre ? '' : 'none';
+    if (parSemestre) sems.innerHTML = 'Semestres : ' + ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].map(s =>
+        `<label style="display:inline-flex;align-items:center;gap:3px;margin-right:10px;font-weight:400;cursor:pointer">
+            <input type="checkbox" style="width:auto" ${R.semestres.has(s) ? 'checked' : ''}
+                onchange="toggleRappelSemestre('${s}', this.checked)"> ${s}</label>`).join('');
+    R.cibles = null;
+    _rappelBouton();
+    if (parSemestre && !R.semestres.size) {
+        el.innerHTML = '<div class="empty">Cochez au moins un semestre.</div>';
+        return;
+    }
+    el.innerHTML = '<div class="spinner">Recherche des enseignants concernés…</div>';
+    const q = `?type=${R.type}` + (R.annee ? '&annee=' + encodeURIComponent(R.annee) : '')
+            + (parSemestre ? '&semestres=' + [...R.semestres].join(',') : '');
+    try {
+        const d = await api('/notifications/rappel' + q);
+        if (_rappel !== R) return;            // fenêtre rouverte entre-temps
+        R.annee = d.annee;
+        R.cibles = d.cibles || [];
+        R.sansTuteur = d.sans_tuteur || 0;
+        R.echeances = d.echeances || null;
+    } catch (e) {
+        el.innerHTML = `<div class="empty">Aperçu impossible : ${esc(e.message)}</div>`;
+        return;
+    }
+    renderRappelListe();
+}
+
+function renderRappelListe() {
+    const R = _rappel;
+    const lim = p => R.echeances && R.echeances[p] ? _dateFr(R.echeances[p]) : 'non fixée';
+    document.getElementById('rappel-intro').textContent = R.type === 'contraintes'
+        ? `Enseignants de ${R.annee} qui ont au moins une séance et n'ont déposé ni texte ni fichier de contraintes.`
+        : R.type === 'fiches'
+        ? `Tuteurs universitaires dont des fiches d'évaluation d'alternants ne sont pas encore déposées en ${R.annee}, pour les semestres cochés
+           (date limite : semestres impairs ${lim('impair')}, pairs ${lim('pair')}). Le rappel indique en direct combien il en reste.`
+        : `Enseignants à qui il manque des notes en ${R.annee}, dans les colonnes non définitives des semestres cochés
+           (intervenants de la sous-matière, et référent quand la saisie lui est confiée).`;
+    const el = document.getElementById('rappel-liste');
+    const sansTuteur = R.type === 'fiches' && R.sansTuteur
+        ? `<div style="font-size:.82rem;color:#b91c1c;margin-bottom:6px">⚠ ${R.sansTuteur} fiche(s) manquante(s) d'alternants
+            sans tuteur universitaire : personne à relancer (sous-onglet Tuteurs de l'Alternance).</div>` : '';
+    if (!R.cibles.length) {
+        el.innerHTML = sansTuteur + `<div class="empty">${R.type === 'contraintes'
+            ? 'Tous les enseignants ont déposé leurs contraintes : personne à relancer.'
+            : R.type === 'fiches' ? 'Aucune fiche manquante chez un tuteur pour ces semestres : personne à relancer.'
+            : 'Aucune note manquante dans ces semestres : personne à relancer.'}</div>`;
+        _rappelBouton();
+        return;
+    }
+    el.innerHTML = sansTuteur + `<div style="font-size:.8rem;color:#6b7280;margin-bottom:4px">Décochez ceux que vous ne voulez pas relancer.
+        Un enseignant sans mot de passe ne voit pas l'onglet Notifications : il lira le rappel une fois son mot de passe créé.</div>`
+        + R.cibles.map((c, i) => `<div class="rappel-ligne">
+            <input type="checkbox" style="width:auto;margin-top:3px" ${R.exclus.has(c.nom) ? '' : 'checked'}
+                onchange="toggleRappelCible(${i}, this.checked)">
+            <div style="flex:1;min-width:0"><strong>${esc(c.nom)}</strong>${c.mdp ? ''
+                : '<span class="rappel-sansmdp" title="Ne verra la notification qu\'après avoir créé son mot de passe">sans mot de passe</span>'}
+                ${R.type === 'notes' ? `<span style="color:#b45309;margin-left:6px">${c.manque} note(s) manquante(s)</span>
+                <details><summary style="cursor:pointer">Détail (${c.detail.length} colonne(s))</summary>${c.detail.map(x =>
+                    `<div>${esc(x.semestre)} ${esc(x.face)} · ${esc(x.promotion)} · <strong>${esc(x.code)}</strong> ${esc(x.libelle || '')}
+                     : ${x.manque} / ${x.total}</div>`).join('')}</details>`
+                : R.type === 'fiches' ? `<span style="color:#b45309;margin-left:6px">${c.manque} fiche(s) à déposer</span>
+                <details><summary style="cursor:pointer">Alternants concernés</summary>${c.detail.map(x =>
+                    `<div>${esc(x.semestre)} · ${esc(x.promotion)} · <strong>${esc(x.etudiant)}</strong></div>`).join('')}</details>` : ''}</div>
+        </div>`).join('');
+    _rappelBouton();
+}
+
+function toggleRappelCible(i, on) {
+    const c = _rappel.cibles[i];
+    if (on) _rappel.exclus.delete(c.nom); else _rappel.exclus.add(c.nom);
+    _rappelBouton();
+}
+
+function _rappelBouton() {
+    const R = _rappel, btn = document.getElementById('rappel-envoyer');
+    const n = R && R.cibles ? R.cibles.filter(c => !R.exclus.has(c.nom)).length : 0;
+    btn.disabled = !n;
+    btn.textContent = n ? `Envoyer à ${n} enseignant(s)` : 'Envoyer';
+}
+
+async function envoyerRappel() {
+    const R = _rappel;
+    if (!R || !R.cibles) return;
+    const btn = document.getElementById('rappel-envoyer');
+    btn.disabled = true;
+    try {
+        const r = await api('/notifications/rappel', { method: 'POST', body: JSON.stringify({
+            type: R.type, annee: R.annee, semestres: [...R.semestres],
+            message: document.getElementById('rappel-message').value, exclus: [...R.exclus] }) });
+        closeModal('modal-rappel');
+        toast(`Rappel envoyé à ${r.envoyes} enseignant(s)` + (r.sans_mdp
+            ? ` — ${r.sans_mdp} sans mot de passe le liront une fois leur mot de passe créé` : ''));
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+        _rappelBouton();
+    }
+}
+
 // ===== TOAST =====
 function toast(msg, type = 'success') {
     const el = document.createElement('div');
@@ -3432,6 +3939,7 @@ async function loadPage(name, forceReload) {
             renderTeacherRepartition();
         }
         else if (name === 'mon-compte') { await loadMonCompte(); }
+        else if (name === 'notifications') { await loadNotifications(); }
         else if (name === 'aide') { await aideCharger(); }
         else if (name === 'repartition') {
             await loadRepartition();
@@ -4229,6 +4737,10 @@ function renderConstraintsAdmin(list, below = false) {
     let html = '';
     if (below) html = '<h3 style="color:#374151;margin:28px 0 8px">Contraintes des enseignants</h3>';
     else document.getElementById('contraintes-title').textContent = 'Contraintes des enseignants';
+    // Rappel aux enseignants de l'année affichée qui n'ont rien déposé (onglet Notifications)
+    if (adminPower('svc:contraintes') && !tabHidden('nav:notifications'))
+        html += `<div style="margin:0 0 10px"><button class="btn btn-secondary btn-sm" onclick="ouvrirRappel('contraintes', _serviceYear)"
+            title="Une notification à chaque enseignant de l'année qui n'a déposé ni texte ni fichier">🔔 Rappeler les enseignants sans contraintes…</button></div>`;
     if (!list.length) {
         html += '<div class="empty">Aucune contrainte renseignée pour le moment.</div>';
         if (below) el.insertAdjacentHTML('beforeend', html); else el.innerHTML = html;
@@ -6248,7 +6760,8 @@ async function loadSuivi(kind) {
     try {
         const yq = st.year ? '?year=' + encodeURIComponent(st.year) : '';
         const [years, data] = await Promise.all([api('/years'), api(`/suivi/${kind}${yq}`),
-                                                 kind === 'alternance' ? _altDocsCharger(st) : null]);
+                                                 kind === 'alternance' ? _altDocsCharger(st) : null,
+                                                 kind === 'alternance' ? _altDepotsCharger(st) : null]);
         st.data = data;
         st.year = data.year_label;
         // Tuteur universitaire : tous les enseignants de l'année affichée,
@@ -6292,7 +6805,12 @@ function renderSuivi(kind) {
     if (st.tab === 'documents' && !docs) st.tab = 'fiches';
     const boutonDocs = document.getElementById(`suivi-${kind}-tab-documents`);
     if (boutonDocs) boutonDocs.style.display = docs ? '' : 'none';
-    ['fiches', 'stats', 'documents'].forEach(t => {
+    // Dépôts des fiches d'évaluation : Alternance seulement, pour qui le serveur les ouvre
+    const depots = kind === 'alternance' && st.depots;
+    if (st.tab === 'depots' && !depots) st.tab = 'fiches';
+    const boutonDep = document.getElementById(`suivi-${kind}-tab-depots`);
+    if (boutonDep) boutonDep.style.display = depots ? '' : 'none';
+    ['fiches', 'stats', 'documents', 'depots'].forEach(t => {
         const b = document.getElementById(`suivi-${kind}-tab-${t}`);
         if (b) b.classList.toggle('active', t === st.tab);
     });
@@ -6300,6 +6818,7 @@ function renderSuivi(kind) {
     if (!d) return;
     if (st.tab === 'stats') { renderSuiviStats(kind); return; }
     if (st.tab === 'documents') { renderAltDocuments(); return; }
+    if (st.tab === 'depots') { renderAltDepots(); return; }
     const s = d.stats, who = SUIVI_KINDS[kind].who;
     const nMine = d.cohorts.reduce((n, c) => n + c.students.filter(_suiviMine).length, 0);
     el.innerHTML = `<div class="toolbar" style="margin-bottom:8px">
@@ -6608,6 +7127,311 @@ async function altDocSupprimer(cle) {
         toast('Erreur : ' + e.message, 'error');
     }
     await _altDocsCharger(st);
+    renderSuivi('alternance');
+}
+
+// ----- Alternance › Dépôts -----
+// La fiche d'évaluation de chaque alternant, par semestre de son année, déposée par son
+// tuteur universitaire. Date limite par parité (fixée par l'admin et le responsable
+// ALT) rappelée en tête ; récapitulatif de ce qui manque pour l'admin et les
+// responsables ALT et FTP. Chaque dépôt les prévient (onglet Notifications).
+let _altDepEnvoi = null;                              // « id|semestre » en cours d'envoi
+let _altDepFiltres = { q: '', manquantes: true, parite: '' };
+const ALT_PARITES = { impair: ['Semestre impair', 'S1, S3, S5'], pair: ['Semestre pair', 'S2, S4, S6'] };
+
+async function _altDepotsCharger(st) {
+    // Refus du serveur : pas de sous-onglet
+    const q = st.year ? '?annee=' + encodeURIComponent(st.year) : '';
+    st.depots = await api('/alternance/depots' + q).catch(() => null);
+}
+
+function _altParite(sem) { return Number(sem.slice(1)) % 2 ? 'impair' : 'pair'; }
+// Année universitaire affichée : le serveur vérifie que le semestre est bien celui de l'alternant cette année-là
+function _altDepAnnee(D) { return D && D.annee ? '?annee=' + encodeURIComponent(D.annee) : ''; }
+function _altJours(limite, auj) { return Math.round((Date.parse(limite) - Date.parse(auj)) / 86400000); }
+function _altDateLongue(iso) {
+    return new Date(iso + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+// Fiche non déposée : manquante une fois la date limite passée, à déposer avant
+function _altDepManque(D, sem) {
+    const lim = D.echeances[_altParite(sem)];
+    return lim && D.aujourdhui > lim ? 'retard' : 'attente';
+}
+
+function _altEcheanceHtml(D, p) {
+    const lim = D.echeances[p];
+    const [titre, sems] = ALT_PARITES[p];
+    let quand = '<span style="color:#9ca3af">pas encore fixée</span>';
+    if (lim) {
+        const j = _altJours(lim, D.aujourdhui);
+        const txt = j > 1 ? `dans ${j} jours` : j === 1 ? 'demain' : j === 0 ? "aujourd'hui"
+                  : `dépassée depuis ${-j} jour${j < -1 ? 's' : ''}`;
+        const coul = j < 0 ? '#b91c1c' : j <= 14 ? '#b45309' : '#15803d';
+        quand = `<strong>${esc(_altDateLongue(lim))}</strong> <span style="color:${coul};font-weight:600">(${txt})</span>`;
+    }
+    const champ = D.droits.echeances ? `<input type="date" id="alt-ech-${p}" value="${esc(lim || '')}"
+        style="margin-left:8px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px" title="Nouvelle date limite (vide = aucune)">` : '';
+    return `<div style="margin-top:4px">${titre} <span style="color:#6b7280">(${sems})</span> : ${quand}${champ}</div>`;
+}
+
+function _altDepNom(e) {
+    const nom = `<strong>${esc((e.nom || '').toUpperCase())}</strong> ${esc(e.prenom || '')}`;
+    return `${e.person_id ? `<a href="#" onclick="openStudentCard(${e.person_id});return false" style="color:inherit"
+        title="Fiche de l'étudiant">${nom}</a>` : nom}
+        <div style="font-size:.76rem;color:#6b7280">Promotion ${esc(e.promotion)} · ${_suiviYearLabel(e.annee_etude)}</div>`;
+}
+
+// Case d'un semestre : état de la fiche et ce qu'on peut en faire
+function _altDepCase(D, e, sem) {
+    const f = e.depots[sem], cle = e.id + '|' + sem;
+    const peut = e.mien || D.droits.tout, occupe = !!_altDepEnvoi;
+    let etat;
+    if (f) {
+        etat = `<span style="color:#15803d;font-weight:600">✓ Déposée</span>${f.retard
+                ? ' <span style="color:#b91c1c;font-weight:600" title="Déposée après la date limite">en retard</span>' : ''}
+            <div style="font-size:.76rem;color:#6b7280;overflow-wrap:anywhere">${esc(f.nom)} · ${_tailleFichier(f.taille)}
+                · le ${_dateFr(f.updated_at)}${f.auteur ? ' par ' + esc(f.auteur) : ''}</div>`;
+    } else {
+        etat = _altDepManque(D, sem) === 'retard'
+            ? '<span style="color:#b91c1c;font-weight:600">✗ Manquante</span> <span style="font-size:.76rem;color:#b91c1c">(date limite dépassée)</span>'
+            : '<span style="color:#b45309;font-weight:600">À déposer</span>';
+    }
+    const actions = [
+        f ? `<a class="btn btn-secondary btn-sm" style="text-decoration:none" href="/api/alternance/depots/${e.id}/${sem}${_altDepAnnee(D)}">Télécharger</a>` : '',
+        peut ? `<button type="button" class="btn ${f ? 'btn-secondary' : 'btn-primary'} btn-sm" ${occupe ? 'disabled' : ''}
+            onclick="altDepChoisir(${e.id}, '${sem}')">${_altDepEnvoi === cle ? 'Envoi…' : f ? 'Remplacer' : 'Déposer'}</button>` : '',
+        peut && f ? `<button type="button" class="btn btn-secondary btn-sm" title="Supprimer cette fiche" ${occupe ? 'disabled' : ''}
+            onclick="altDepSupprimer(${e.id}, '${sem}')">🗑</button>` : '',
+    ].filter(Boolean).join(' ');
+    return `<td style="vertical-align:top"><div style="font-size:.74rem;font-weight:700;color:#6b7280">${sem}</div>${etat}${
+        actions ? `<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${actions}</div>` : ''}</td>`;
+}
+
+function _altDepTableau(D, liste, avecTuteur) {
+    return `<div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px">
+        <table class="pn-table" style="table-layout:auto;width:100%;margin:0">
+            <thead><tr><th style="width:26%">Alternant</th>${avecTuteur ? '<th style="width:16%">Tuteur universitaire</th>' : ''}
+                <th>Semestre impair</th><th>Semestre pair</th></tr></thead>
+            <tbody>${liste.map(e => `<tr><td style="vertical-align:top">${_altDepNom(e)}${
+                avecTuteur && D.droits.recap && _altDepNbFiches([e]) ? `<a href="${esc(_altDepZipUrl(D, { sid: e.id }))}"
+                    style="font-size:.76rem" title="Ses fiches déposées, en une archive ZIP">⤓ ses fiches (${_altDepNbFiches([e])})</a>` : ''}</td>${avecTuteur
+                ? `<td style="vertical-align:top">${e.tuteur_univ ? esc(e.tuteur_univ)
+                    : '<span style="color:#b91c1c;font-weight:600">Sans tuteur</span>'}</td>` : ''}
+                ${e.semestres.map(sem => _altDepCase(D, e, sem)).join('')}</tr>`).join('')}</tbody>
+        </table></div>`;
+}
+
+function renderAltDepots() {
+    const D = _suiviState('alternance').depots;
+    const el = document.getElementById('suivi-alternance-content');
+    const mes = D.etudiants.filter(e => e.mien);
+    const docs = _suiviState('alternance').docs;
+    let html = `<input type="file" id="alt-dep-file" style="display:none" onchange="altDepEnvoyer(this)"
+            accept=".pdf,.doc,.docx,.odt,.rtf,.xls,.xlsx,.ods">
+        <div class="card" style="border-left-color:#b45309;max-width:980px;box-sizing:border-box;margin:8px 0 14px;padding:12px 16px">
+            <div style="font-weight:700">📅 Date limite de dépôt des fiches d'évaluation — ${esc(D.annee)}</div>
+            ${_altEcheanceHtml(D, 'impair')}${_altEcheanceHtml(D, 'pair')}
+            ${D.droits.echeances ? `<div style="margin-top:8px"><button type="button" class="btn btn-primary btn-sm"
+                onclick="altEcheancesEnregistrer()">Enregistrer les dates</button></div>` : ''}
+            <div style="font-size:.8rem;color:#6b7280;margin-top:8px">Une fiche par alternant et par semestre, déposée par son tuteur
+                universitaire (PDF, Word, Excel ou OpenDocument, 15 Mo au plus).${docs ? ` Le modèle est dans
+                <a href="#" onclick="showSuiviTab('alternance','documents');return false">Documents</a>.` : ''}
+                Un dépôt après la date limite reste possible ; il est marqué « en retard ».</div>
+        </div>`;
+    // Les alternants que la session suit comme tuteur universitaire
+    if (mes.length || !D.droits.recap) {
+        html += `<h3 style="margin:4px 0 6px;color:#374151">Mes alternants</h3>` + (mes.length
+            ? _altDepTableau(D, mes, false)
+            : `<div class="empty">Vous n'êtes tuteur universitaire d'aucun alternant en ${esc(D.annee)}
+                (sous-onglet Tuteurs).</div>`);
+    }
+    if (D.droits.recap) html += _altDepRecapHtml(D);
+    el.innerHTML = html;
+    if (D.droits.recap) renderAltDepotsListe();
+}
+
+// Récapitulatif (admin, responsables ALT et FTP) : bilan par semestre, manquantes par tuteur, liste filtrable
+function _altDepRecapHtml(D) {
+    const tous = D.etudiants;
+    const bilan = p => {
+        let total = 0, deposees = 0, retard = 0, manquantes = 0;
+        tous.forEach(e => e.semestres.filter(s => _altParite(s) === p).forEach(s => {
+            total++;
+            const f = e.depots[s];
+            if (f) { deposees++; if (f.retard) retard++; }
+            else if (_altDepManque(D, s) === 'retard') manquantes++;
+        }));
+        const reste = total - deposees;
+        return `<div style="flex:1;min-width:240px;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;background:#fff">
+            <div style="font-weight:700">${ALT_PARITES[p][0]} <span style="color:#6b7280;font-weight:400">(${ALT_PARITES[p][1]})</span></div>
+            <div style="font-size:1.4rem;font-weight:700;color:${reste ? '#b45309' : '#15803d'}">${deposees} / ${total}
+                <span style="font-size:.85rem;font-weight:500;color:#6b7280">déposées</span></div>
+            <div style="font-size:.82rem;color:#374151">${reste ? `<strong>${reste}</strong> non déposée(s)` : '✓ toutes déposées'}${
+                manquantes ? ` · <span style="color:#b91c1c;font-weight:600">${manquantes} après la date limite</span>` : ''}${
+                retard ? ` · ${retard} déposée(s) en retard` : ''}</div></div>`;
+    };
+    // Manquantes par tuteur : qui relancer
+    const parTuteur = new Map();
+    tous.forEach(e => {
+        const k = e.tuteur_univ || '';
+        const t = parTuteur.get(k) || { tuteur: k, impair: 0, pair: 0, suivis: 0 };
+        t.suivis++;
+        e.semestres.forEach(s => { if (!e.depots[s]) t[_altParite(s)]++; });
+        parTuteur.set(k, t);
+    });
+    const lignes = [...parTuteur.values()].filter(t => t.impair || t.pair)
+        .sort((a, b) => (!a.tuteur) - (!b.tuteur) || (b.impair + b.pair) - (a.impair + a.pair) || a.tuteur.localeCompare(b.tuteur));
+    const tuteurs = lignes.length ? `<div style="overflow:auto;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;max-width:720px">
+        <table class="pn-table" style="table-layout:auto;width:100%;margin:0">
+            <thead><tr><th>Tuteur universitaire</th><th>Manquantes (impair)</th><th>Manquantes (pair)</th><th>Alternants suivis</th></tr></thead>
+            <tbody>${lignes.map(t => `<tr>
+                <td>${t.tuteur ? `<a href="#" onclick="altDepFiltrerTuteur(${esc(JSON.stringify(t.tuteur))});return false">${esc(t.tuteur)}</a>`
+                    : '<span style="color:#b91c1c;font-weight:600">Sans tuteur universitaire</span>'}</td>
+                <td>${t.impair || '—'}</td><td>${t.pair || '—'}</td><td>${t.suivis}</td></tr>`).join('')}</tbody>
+        </table></div>` : '<div class="empty">Aucune fiche manquante.</div>';
+    const F = _altDepFiltres;
+    // Relance des tuteurs (admin, responsable ALT), par l'onglet Notifications
+    const relance = D.droits.echeances && !tabHidden('nav:notifications')
+        ? `<button type="button" class="btn btn-secondary btn-sm" style="margin-left:10px;vertical-align:middle"
+              onclick="ouvrirRappel('fiches', ${esc(JSON.stringify(D.annee))})"
+              title="Une notification à chaque tuteur dont des fiches manquent, avec la liste de ses alternants">🔔 Rappeler les tuteurs…</button>` : '';
+    return `<h3 style="margin:16px 0 6px;color:#374151">Récapitulatif — ${tous.length} alternant(s) en ${esc(D.annee)}${relance}</h3>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;max-width:980px">${bilan('impair')}${bilan('pair')}</div>
+        <h4 style="margin:4px 0 6px;color:#374151">Fiches non déposées, par tuteur</h4>${tuteurs}
+        <h4 style="margin:12px 0 6px;color:#374151">Tous les alternants</h4>
+        <div class="filters" style="margin-bottom:8px">
+            <input type="search" id="alt-dep-q" value="${esc(F.q)}" placeholder="Alternant, tuteur, promotion…"
+                oninput="_altDepFiltres.q=this.value;renderAltDepotsListe()"
+                style="min-width:240px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+            <select onchange="_altDepFiltres.parite=this.value;renderAltDepotsListe()" title="Semestre regardé par le filtre">
+                <option value=""${F.parite === '' ? ' selected' : ''}>Les deux semestres</option>
+                <option value="impair"${F.parite === 'impair' ? ' selected' : ''}>Semestre impair</option>
+                <option value="pair"${F.parite === 'pair' ? ' selected' : ''}>Semestre pair</option>
+            </select>
+            <label style="display:inline-flex;align-items:center;gap:6px;font-size:.85rem;cursor:pointer">
+                <input type="checkbox" style="width:auto" ${F.manquantes ? 'checked' : ''}
+                    onchange="_altDepFiltres.manquantes=this.checked;renderAltDepotsListe()"> Manquantes seulement</label>
+            <span id="alt-dep-compte" style="font-size:.85rem;color:#6b7280"></span>
+        </div>
+        <div id="alt-dep-zip" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px"></div>
+        <div id="alt-dep-liste"></div>`;
+}
+
+// Archive ZIP des fiches déposées (admin, responsables ALT et FTP) : tout, une
+// promotion ou un alternant, pour le semestre choisi dans le filtre
+function _altDepZipUrl(D, extra) {
+    const p = new URLSearchParams(Object.assign({ annee: D.annee }, _altDepFiltres.parite ? { parite: _altDepFiltres.parite } : {}, extra));
+    return '/api/alternance/depots/zip?' + p.toString();
+}
+function _altDepNbFiches(liste) {
+    return liste.reduce((n, e) => n + e.semestres.filter(s => e.depots[s]
+        && (!_altDepFiltres.parite || _altParite(s) === _altDepFiltres.parite)).length, 0);
+}
+function _altDepZipBarre(D) {
+    const el = document.getElementById('alt-dep-zip');
+    if (!el) return;
+    const total = _altDepNbFiches(D.etudiants);
+    const sem = _altDepFiltres.parite ? ` (${ALT_PARITES[_altDepFiltres.parite][0].toLowerCase()})` : '';
+    const promos = [];
+    D.etudiants.forEach(e => { if (!promos.some(p => p.pid === e.pid)) promos.push({ pid: e.pid, promotion: e.promotion, annee: e.annee_etude }); });
+    const bouton = (lib, n, extra, titre) => n
+        ? `<a class="btn btn-secondary btn-sm" style="text-decoration:none" href="${esc(_altDepZipUrl(D, extra))}" title="${esc(titre)}">⤓ ${lib} (${n})</a>`
+        : `<button type="button" class="btn btn-secondary btn-sm" disabled title="Aucune fiche déposée">⤓ ${lib} (0)</button>`;
+    el.innerHTML = `<span style="font-size:.85rem;color:#374151;font-weight:600">Télécharger les fiches déposées${sem} :</span>`
+        + bouton('Toutes', total, {}, 'Une archive ZIP, rangée par promotion puis par alternant')
+        + promos.map(p => bouton(`${esc(p.promotion)} · ${_suiviYearLabel(p.annee)}`,
+                                 _altDepNbFiches(D.etudiants.filter(e => e.pid === p.pid)), { pid: p.pid },
+                                 'Une archive ZIP de la promotion, rangée par alternant')).join('');
+}
+
+function renderAltDepotsListe() {
+    const D = _suiviState('alternance').depots;
+    const el = document.getElementById('alt-dep-liste');
+    if (!D || !el) return;
+    const F = _altDepFiltres;
+    const mots = _suiviNorm(F.q).split(' ').filter(Boolean);
+    const liste = D.etudiants.filter(e => {
+        const sems = e.semestres.filter(s => !F.parite || _altParite(s) === F.parite);
+        if (F.manquantes && sems.every(s => e.depots[s])) return false;
+        const texte = _suiviNorm([e.nom, e.prenom, e.tuteur_univ, e.promotion].join(' '));
+        return mots.every(m => texte.includes(m));
+    });
+    document.getElementById('alt-dep-compte').textContent = `${liste.length} affiché(s) sur ${D.etudiants.length}`;
+    _altDepZipBarre(D);
+    el.innerHTML = liste.length ? _altDepTableau(D, liste, true)
+        : `<div class="empty">${F.manquantes ? 'Aucune fiche manquante pour ce filtre.' : 'Aucun alternant ne correspond.'}</div>`;
+}
+
+function altDepFiltrerTuteur(nom) {
+    _altDepFiltres.q = nom;
+    const q = document.getElementById('alt-dep-q');
+    if (q) { q.value = nom; q.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    renderAltDepotsListe();
+}
+
+function altDepChoisir(sid, sem) {
+    const input = document.getElementById('alt-dep-file');
+    input.dataset.sid = sid;
+    input.dataset.sem = sem;
+    input.click();
+}
+
+async function altDepEnvoyer(input) {
+    const f = input.files && input.files[0], sid = input.dataset.sid, sem = input.dataset.sem;
+    input.value = '';
+    if (!f || !sid || !sem) return;
+    if (f.size > 15 * 1024 * 1024) { toast('Fichier trop volumineux (15 Mo au plus)', 'error'); return; }
+    const st = _suiviState('alternance');
+    const e = st.depots.etudiants.find(x => String(x.id) === String(sid));
+    const deja = e && e.depots[sem];
+    if (deja && !confirm(`Remplacer « ${deja.nom} » par « ${f.name} » ?`)) return;
+    const fd = new FormData();
+    fd.append('file', f);
+    _altDepEnvoi = sid + '|' + sem;
+    renderAltDepots();
+    try {
+        const r = await fetch(`/api/alternance/depots/${encodeURIComponent(sid)}/${encodeURIComponent(sem)}${_altDepAnnee(st.depots)}`,
+                              { method: 'PUT', body: fd });
+        if (!r.ok) {
+            let msg = "Échec de l'envoi";
+            try { msg = JSON.parse(await r.text()).error || msg; } catch (_) { /* garde le défaut */ }
+            throw new Error(msg);
+        }
+        toast(`Fiche ${sem} déposée`);
+    } catch (err) {
+        toast('Erreur : ' + err.message, 'error');
+    }
+    _altDepEnvoi = null;
+    await _altDepotsCharger(st);
+    renderSuivi('alternance');
+}
+
+async function altDepSupprimer(sid, sem) {
+    const st = _suiviState('alternance');
+    const e = st.depots.etudiants.find(x => x.id === sid);
+    const f = e && e.depots[sem];
+    if (!f || !confirm(`Supprimer la fiche ${sem} « ${f.nom} » ?`)) return;
+    try {
+        await api(`/alternance/depots/${sid}/${sem}${_altDepAnnee(st.depots)}`, { method: 'DELETE' });
+        toast('Fiche supprimée');
+    } catch (err) {
+        toast('Erreur : ' + err.message, 'error');
+    }
+    await _altDepotsCharger(st);
+    renderSuivi('alternance');
+}
+
+async function altEcheancesEnregistrer() {
+    const st = _suiviState('alternance'), D = st.depots;
+    const val = p => (document.getElementById('alt-ech-' + p) || {}).value || '';
+    try {
+        await api('/alternance/echeances', { method: 'PUT',
+            body: JSON.stringify({ annee: D.annee, impair: val('impair'), pair: val('pair') }) });
+        toast('Dates limites enregistrées');
+    } catch (err) {
+        toast('Erreur : ' + err.message, 'error');
+    }
+    await _altDepotsCharger(st);
     renderSuivi('alternance');
 }
 
