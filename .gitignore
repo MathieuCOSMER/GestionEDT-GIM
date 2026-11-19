@@ -36,3 +36,6 @@ uploads/
 
 # Coefficients HETD édités en direct via l'appli (gérés hors git côté serveur)
 data/coefficients.json
+
+# Réglages Claude Code propres à chaque poste (autorisations locales)
+.claude/settings.local.json
