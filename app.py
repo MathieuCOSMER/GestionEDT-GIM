@@ -19,7 +19,7 @@ import time
 import threading
 import logging
 from logging.handlers import RotatingFileHandler
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import io
 import zipfile
@@ -1854,6 +1854,33 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (promotion_id) REFERENCES promotions(id) ON DELETE CASCADE
         )
     ''')
+    # Alternance › Dépôts : la fiche d'évaluation de chaque alternant, par semestre,
+    # déposée par son tuteur universitaire (cf « Alternance › Dépôts »). Suit la
+    # fiche de l'étudiant dans sa cohorte.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS alternance_depots (
+            student_id  INTEGER NOT NULL,
+            semestre    TEXT NOT NULL CHECK (semestre IN ('S1', 'S2', 'S3', 'S4', 'S5', 'S6')),
+            nom         TEXT NOT NULL,
+            taille      INTEGER NOT NULL,
+            data        BLOB NOT NULL,
+            auteur      TEXT,
+            updated_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (student_id, semestre),
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
+    # Date limite de dépôt des fiches d'évaluation, par année universitaire et par
+    # parité de semestre (impair : S1/S3/S5 ; pair : S2/S4/S6), AAAA-MM-JJ.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS alternance_echeances (
+            annee   TEXT NOT NULL,
+            parite  TEXT NOT NULL CHECK (parite IN ('impair', 'pair')),
+            date    TEXT NOT NULL,
+            auteur  TEXT,
+            PRIMARY KEY (annee, parite)
+        )
+    ''')
     # Convocation : CONVOQUE (en attente d'entretien), RECU ou ECARTE. `motifs` garde
     # les motifs vus à ce moment (JSON) : l'étudiant ne revient dans la liste qu'à
     # l'apparition d'un nouveau motif.
@@ -1875,6 +1902,47 @@ def _apply_promotions_migrations(db):
             data TEXT NOT NULL
         )
     ''')
+    # Notifications (onglet Notifications, cf « NOTIFICATIONS ») : l'événement, ses
+    # destinataires (un utilisateur nommé, ou qui a le droit « modifier » d'un
+    # onglet) et la lecture propre à chacun. Horodatage en UTC (AAAA-MM-JJTHH:MM:SSZ).
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS notifications (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind       TEXT NOT NULL,      -- signalement, saisie, rappel_contraintes, rappel_notes
+            title      TEXT NOT NULL,
+            body       TEXT,
+            link       TEXT,               -- JSON : écran à ouvrir
+            data       TEXT,               -- JSON : compteurs, références
+            group_key  TEXT,               -- événements répétés regroupés
+            actor      TEXT,               -- auteur (affiché)
+            actor_key  TEXT,               -- auteur, en minuscules : il ne reçoit pas sa notification
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    ''')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_notifications_maj ON notifications(updated_at)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_notifications_groupe ON notifications(group_key)')
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS notification_targets (
+            notification_id INTEGER NOT NULL,
+            kind            TEXT NOT NULL CHECK (kind IN ('user', 'droit')),
+            value           TEXT NOT NULL,   -- nom en minuscules / clé d'onglet
+            PRIMARY KEY (notification_id, kind, value),
+            FOREIGN KEY (notification_id) REFERENCES notifications(id) ON DELETE CASCADE
+        )
+    ''')
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS notification_reads (
+            notification_id INTEGER NOT NULL,
+            reader          TEXT NOT NULL,   -- nom en minuscules
+            read_at         TEXT NOT NULL,
+            hidden          INTEGER NOT NULL DEFAULT 0,   -- retirée de sa liste par le lecteur
+            PRIMARY KEY (notification_id, reader),
+            FOREIGN KEY (notification_id) REFERENCES notifications(id) ON DELETE CASCADE
+        )
+    ''')
+    if 'hidden' not in {r[1] for r in db.execute('PRAGMA table_info(notification_reads)')}:
+        db.execute('ALTER TABLE notification_reads ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0')
     # Marqueurs techniques de la base (ex. version de règle de calcul déjà
     # appliquée aux données, cf _sync_matiere_marks_rule).
     db.execute('''
@@ -3136,6 +3204,8 @@ _WRITE_METHODS = {'POST', 'PUT', 'DELETE', 'PATCH'}
 # POST qui n'enregistrent rien : le brouillon de la répartition calendaire y est
 # seulement essayé (contrôles, export), puis annulé — hors journal d'audit
 _DRY_RUN_POSTS = {'/api/checks/repartition', '/api/export/repartition'}
+# Écritures sans portée sur les données : hors journal d'audit (qui serait noyé)
+_UNAUDITED_WRITES = {'/api/notifications/lu', '/api/notifications/masquer'}
 
 @app.after_request
 def _security_headers(resp):
@@ -3155,7 +3225,8 @@ def _audit_writes(resp):
     try:
         if (request.path.startswith('/api/') and request.method in _WRITE_METHODS
                 and request.path not in ('/api/login', '/api/logout')
-                and request.path not in _DRY_RUN_POSTS):
+                and request.path not in _DRY_RUN_POSTS
+                and request.path not in _UNAUDITED_WRITES):
             _audit('WRITE', ip=_client_ip(), user=session.get('user') or '-',
                    role=session.get('role') or '-', method=request.method,
                    path=request.path, status=resp.status_code)
@@ -3545,6 +3616,10 @@ _TAB_TREE = [
     # inscrit — contrôle dans les handlers (_salons_droits).
     _tn('nav:salons', 'Salons', [_TA, _RSL, _TP, _TT], [_TA, _RSL, _TP, _TT]),
     _tn('nav:mon-compte', 'Mon Compte', [_TP, _TT], [_TP, _TT]),
+    # Ce que le site signale à chacun (signalements, saisies de notes, rappels) :
+    # réservé aux connexions avec mot de passe — n'importe qui peut se connecter
+    # sous le seul nom d'un enseignant. Marquer comme lu n'y est pas une modification.
+    _tn('nav:notifications', 'Notifications', [_TA, _TP] + _TRESP_ALL, never=[_TT]),
     # Mode d'emploi du site : ouvert à tous, rien à y modifier
     _tn('nav:aide', 'Aide', _TALL + _TRESP_ALL),
 ]
@@ -3618,6 +3693,14 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     # par défaut de l'enseignant ne couvre que les fiches qu'il suit)
     (r'^/api/alternance/documents/[^/]+$', ['nav:alternance'], 'strict'),
     (r'^/api/backups$', ['nav:journal'], ''),
+    # Notifications : marquer comme lu = il suffit de voir l'onglet ; envoyer un
+    # rappel = administrer les contraintes ou les notes (contrôle fin dans le handler)
+    (r'^/api/notifications/(lu|masquer)$', ['nav:notifications'], 'readlike'),
+    # Alternance › Dépôts : le tuteur universitaire dépose la fiche de ses alternants
+    # (contrôle dans le handler) ; la date limite revient à l'administration de l'onglet
+    (r'^/api/alternance/depots/\d+/S[1-6]$', ['nav:alternance'], ''),
+    (r'^/api/alternance/echeances$', ['nav:alternance'], 'strict'),
+    (r'^/api/notifications/rappel$', ['svc:contraintes', 'promo:notes', 'promo:jury', 'nav:alternance'], 'strict'),
 ]]
 
 def _write_tab_rule(path):
@@ -4096,6 +4179,8 @@ def save_my_constraints():
                (tid, content or None))
     db.commit()
     _audit('CONSTRAINTS_SAVE', ip=_client_ip(), user=session.get('user'))
+    if content:
+        _notif_sur(_notif_contraintes_lues)
     return jsonify({'content': content or ''})
 
 @app.route('/api/constraints/me/file', methods=['POST'])
@@ -4134,6 +4219,7 @@ def upload_my_constraint_file():
                (tid, rel, f.filename))
     db.commit()
     _audit('CONSTRAINTS_FILE', ip=_client_ip(), user=session.get('user'), file=f.filename)
+    _notif_sur(_notif_contraintes_lues)
     return jsonify({'file_original': f.filename, 'has_file': True})
 
 @app.route('/api/constraints/me/file', methods=['GET'])
@@ -4190,6 +4276,598 @@ def download_constraint_file(teacher_id):
     if not row or not row['file_path']:
         return error_response('Aucun fichier', 404)
     return _send_constraint_file(row)
+
+# ======================= NOTIFICATIONS =======================
+# Onglet Notifications : ce que le site signale à chaque utilisateur connecté avec
+# un mot de passe (enseignant, responsable, admin), à la place de mails :
+#   • signalement        — un signalement déposé sur une fiche étudiant → la
+#                          direction (droit « modifier » de la liste À convoquer) ;
+#   • saisie             — des notes ajoutées, modifiées ou effacées dans Saisie
+#                          Notes, une colonne passée en définitif ou repassée en
+#                          provisoire → le référent de la matière sur la face, et
+#                          l'administration des Bulletins ;
+#   • rappel_contraintes — envoyé par l'admin (ou le responsable FTP) aux
+#                          enseignants de l'année sans contraintes déposées ;
+#   • rappel_notes       — envoyé par l'admin à chaque enseignant à qui il reste des
+#                          notes à saisir (colonnes non définitives) ;
+#   • depot_alternance   — une fiche d'évaluation déposée dans Alternance › Dépôts →
+#                          l'admin, le responsable ALT et le responsable FTP ;
+#   • rappel_fiches      — envoyé par l'admin ou le responsable ALT à chaque tuteur
+#                          universitaire dont des fiches d'évaluation manquent ; il
+#                          dit en direct combien il en reste.
+# Une notification vise des utilisateurs (nom, en minuscules) et/ou un droit (clé
+# d'onglet dont il faut le droit « modifier », ou rôle 'role:admin',
+# 'role:resp_alt', 'role:resp_ftp'…). Le droit s'évalue à la lecture,
+# avec les sessions que l'utilisateur peut ouvrir : un enseignant administrateur
+# voit en session normale ce qui s'adresse à l'admin. La lecture est propre à
+# chacun ; l'auteur d'un événement ne le reçoit pas. Les événements répétés
+# (enregistrements successifs d'une matière, rappels renvoyés) mettent à jour la
+# notification existante, qui redevient non lue. Stockées dans promotions.db
+# (base pluriannuelle, comprise dans la sauvegarde complète), 180 jours.
+_NOTIF_JOURS = 180          # conservation
+_NOTIF_REGROUPE_H = 12      # enregistrements successifs d'une même matière fusionnés
+_NOTIF_MAX = 300            # notifications renvoyées au plus
+
+def _notif_horodatage(recul=None):
+    """Horodatage UTC (AAAA-MM-JJTHH:MM:SSZ), éventuellement `recul` dans le passé."""
+    t = datetime.now(timezone.utc)
+    if recul:
+        t -= recul
+    return t.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+def _notif_cle(nom):
+    """Identité d'un destinataire : son nom, en minuscules."""
+    return (nom or '').strip().lower()
+
+def _notif_moi():
+    return _notif_cle(session.get('teacher_name') or session.get('user'))
+
+def _notif_droits():
+    """Ce qui ouvre les notifications « droit » à la session : les onglets dont elle a
+    le droit « modifier » (plus ceux de la session admin que l'enseignant
+    administrateur peut ouvrir) et ses rôles — 'role:admin', 'role:resp_alt',
+    'role:resp_ftp'… (responsabilités qu'ouvre son mot de passe), quelle que soit
+    la session choisie. None = tout (superadmin)."""
+    t = _session_tabs()
+    if t is None:
+        return None
+    droits = set(t['edit'])
+    if session.get('admin_eligible'):
+        droits |= _tab_effective(_TA, _tab_access_conf()[_TA])['edit']
+    if session.get('admin_eligible') or (session.get('role') == 'admin' and not session.get('resp')):
+        droits.add('role:admin')
+    droits |= {'role:resp_' + r for r in (session.get('resp_eligible') or session.get('resp') or [])}
+    return droits
+
+def _notif_json(v):
+    return None if v is None else json.dumps(v, ensure_ascii=False)
+
+def _notif_lire_json(v):
+    try:
+        return json.loads(v) if v else None
+    except (TypeError, ValueError):
+        return None
+
+def _notif_date_fr(v):
+    try:
+        return datetime.strptime(str(v or '')[:10], '%Y-%m-%d').strftime('%d/%m/%Y')
+    except ValueError:
+        return str(v or '')
+
+def _notif_groupe(pdb, groupe, fenetre_h=None):
+    """Dernière notification du groupe (mise à jour dans les `fenetre_h` heures)."""
+    q, args = 'SELECT * FROM notifications WHERE group_key=?', [groupe]
+    if fenetre_h:
+        q += ' AND updated_at >= ?'
+        args.append(_notif_horodatage(timedelta(hours=fenetre_h)))
+    return pdb.execute(q + ' ORDER BY updated_at DESC, id DESC LIMIT 1', args).fetchone()
+
+def _notif_poser(pdb, kind, titre, corps, cibles, lien=None, data=None, groupe=None,
+                 fenetre_h=None, acteur=None):
+    """Crée une notification, ou met à jour la dernière du même `groupe` (dans la
+    fenêtre donnée), qui redevient alors non lue pour tous. `cibles` : couples
+    ('user', nom) / ('droit', clé d'onglet). L'auteur n'en est jamais destinataire.
+    Rien n'est validé ici : l'appelant enregistre (commit). Renvoie l'id, ou None
+    s'il ne reste aucun destinataire."""
+    acteur = (session.get('user') or '') if acteur is None else acteur
+    akey = _notif_cle(acteur)
+    vises = set()
+    for k, v in cibles:
+        v = _notif_cle(v) if k == 'user' else (v or '').strip()
+        if v and not (k == 'user' and v == akey):
+            vises.add((k, v))
+    if not vises:
+        return None
+    now = _notif_horodatage()
+    old = _notif_groupe(pdb, groupe, fenetre_h) if groupe else None
+    if old:
+        nid = old['id']
+        pdb.execute('''UPDATE notifications SET kind=?, title=?, body=?, link=?, data=?, actor=?,
+                       actor_key=?, updated_at=? WHERE id=?''',
+                    (kind, titre, corps, _notif_json(lien), _notif_json(data), acteur, akey, now, nid))
+        pdb.execute('DELETE FROM notification_reads WHERE notification_id=?', (nid,))
+        pdb.execute('DELETE FROM notification_targets WHERE notification_id=?', (nid,))
+    else:
+        nid = pdb.execute('''INSERT INTO notifications(kind, title, body, link, data, group_key,
+                                 actor, actor_key, created_at, updated_at)
+                             VALUES(?,?,?,?,?,?,?,?,?,?)''',
+                          (kind, titre, corps, _notif_json(lien), _notif_json(data), groupe,
+                           acteur, akey, now, now)).lastrowid
+    pdb.executemany('INSERT OR IGNORE INTO notification_targets(notification_id, kind, value) VALUES(?,?,?)',
+                    [(nid, k, v) for k, v in sorted(vises)])
+    pdb.execute('DELETE FROM notifications WHERE updated_at < ?',
+                (_notif_horodatage(timedelta(days=_NOTIF_JOURS)),))
+    return nid
+
+def _notif_sur(fn, *args):
+    """Pose une notification sans jamais faire échouer l'action qui la déclenche
+    (appelée APRÈS l'enregistrement de cette action)."""
+    pdb = get_promotions_db()
+    try:
+        fn(pdb, *args)
+        pdb.commit()
+    except Exception as e:
+        pdb.rollback()
+        _audit('NOTIF_ERROR', fn=fn.__name__, error=str(e)[:300])
+
+def _notif_visibles(pdb, non_lues=False, ids=None, compter=False):
+    """Notifications de la session, les plus récentes d'abord : adressées à son nom
+    ou à un droit qu'elle a, jamais celles dont elle est l'auteur. `ids` restreint
+    à ces notifications ; `compter` renvoie leur nombre."""
+    moi, droits = _notif_moi(), _notif_droits()
+    if not moi or (ids is not None and not ids):
+        return 0 if compter else []
+    if droits is None:
+        cond, dargs = "t.kind = 'droit'", []
+    elif droits:
+        cond, dargs = "t.kind = 'droit' AND t.value IN (%s)" % ','.join('?' * len(droits)), sorted(droits)
+    else:
+        cond, dargs = '0', []
+    sql = '''SELECT %s FROM notifications n
+             LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.reader = ?
+             WHERE n.updated_at >= ? AND COALESCE(n.actor_key, '') <> ? AND COALESCE(r.hidden, 0) = 0
+               AND EXISTS (SELECT 1 FROM notification_targets t WHERE t.notification_id = n.id
+                           AND ((t.kind = 'user' AND t.value = ?) OR (%s)))''' % (
+        'COUNT(*)' if compter else 'n.*, r.read_at', cond)
+    args = [moi, _notif_horodatage(timedelta(days=_NOTIF_JOURS)), moi, moi] + dargs
+    if non_lues:
+        sql += ' AND r.read_at IS NULL'
+    if ids is not None:
+        ids = sorted(ids)
+        sql += ' AND n.id IN (%s)' % ','.join('?' * len(ids))
+        args += ids
+    if compter:
+        return pdb.execute(sql, args).fetchone()[0]
+    return pdb.execute(sql + ' ORDER BY n.updated_at DESC, n.id DESC LIMIT %d' % _NOTIF_MAX,
+                       args).fetchall()
+
+def _contraintes_deposees(annee, nom):
+    """L'enseignant a-t-il déposé ses contraintes (texte ou fichier) pour l'année ?
+    None si on ne peut pas le savoir (base absente, pas d'enseignant)."""
+    path = db_path_for_year(annee) if (annee and _is_year(annee)) else None
+    if not (nom and path and os.path.isfile(path)):
+        return None
+    ydb = _open_connection(path)
+    try:
+        row = ydb.execute('''SELECT 1 FROM teacher_constraints tc JOIN teachers t ON t.id = tc.teacher_id
+                             WHERE LOWER(t.name) = LOWER(?)
+                               AND ((tc.content IS NOT NULL AND tc.content <> '') OR tc.file_path IS NOT NULL)''',
+                          (nom,)).fetchone()
+    finally:
+        ydb.close()
+    return row is not None
+
+def _notif_items(pdb, rows):
+    """Notifications à afficher, avec l'état actuel de ce qu'elles signalent :
+    signalement traité ou non, contraintes déposées depuis le rappel."""
+    items, sig, ctr, fic = [], {}, {}, []
+    moi = _notif_moi()
+    for r in rows:
+        data = _notif_lire_json(r['data']) or {}
+        it = {'id': r['id'], 'type': r['kind'], 'titre': r['title'], 'texte': r['body'] or '',
+              'lien': _notif_lire_json(r['link']), 'auteur': r['actor'] or '',
+              'cree': r['created_at'], 'maj': r['updated_at'], 'lu': bool(r['read_at']), 'etat': None}
+        if r['kind'] == 'signalement' and str(data.get('suivi_id', '')).isdigit():
+            sig.setdefault(int(data['suivi_id']), []).append(it)
+        elif r['kind'] == 'rappel_contraintes' and data.get('annee') and _notif_cle(data.get('pour')) == moi:
+            ctr.setdefault(data['annee'], []).append(it)
+        elif r['kind'] == 'rappel_fiches' and isinstance(data.get('fiches'), list):
+            fic.append((it, [(int(f[0]), str(f[1])) for f in data['fiches']
+                             if isinstance(f, list) and len(f) == 2 and str(f[0]).isdigit()]))
+        items.append(it)
+    # Rappel des fiches d'évaluation : combien en reste-t-il à déposer ?
+    if fic:
+        deposees = {(r['student_id'], r['semestre']) for r in pdb.execute(
+            'SELECT student_id, semestre FROM alternance_depots')}
+        for it, fiches in fic:
+            reste = sum(1 for f in fiches if f not in deposees)
+            it['etat'] = ({'texte': 'Toutes déposées', 'ok': True} if not reste
+                          else {'texte': f'{reste} fiche(s) encore à déposer', 'ok': False})
+    if sig:
+        ids = sorted(sig)
+        etats = {x['id']: x for x in pdb.execute(
+            'SELECT id, statut, traite_par, traite_le FROM student_suivi WHERE id IN (%s)'
+            % ','.join('?' * len(ids)), ids)}
+        for sid, lst in sig.items():
+            x = etats.get(sid)
+            if not x:
+                etat = {'texte': 'Signalement supprimé', 'ok': True}
+            elif x['statut'] == 'TRAITE':
+                etat = {'texte': 'Traité' + (f" par {x['traite_par']}" if x['traite_par'] else '')
+                                 + (f" le {_notif_date_fr(x['traite_le'])}" if x['traite_le'] else ''), 'ok': True}
+            else:
+                etat = {'texte': 'Non traité', 'ok': False}
+            for it in lst:
+                it['etat'] = etat
+    for annee, lst in ctr.items():
+        fait = _contraintes_deposees(annee, session.get('teacher_name'))
+        if fait is None:
+            continue
+        for it in lst:
+            it['etat'] = {'texte': 'Contraintes déposées' if fait else 'À faire', 'ok': fait}
+    return items
+
+def _notif_acces():
+    if not _tab_voit('nav:notifications'):
+        return error_response('Réservé aux connexions avec mot de passe', 403)
+    return None
+
+def _notif_rappels_permis():
+    """Rappels que la session peut envoyer : contraintes (administration de l'onglet
+    Contraintes Enseignant), notes (administration des Bulletins ou du Jury)."""
+    return {'contraintes': _admin_power('svc:contraintes'),
+            'notes': _admin_power('promo:notes') or _admin_power('promo:jury'),
+            # Fiches d'évaluation des alternants : qui fixe la date limite (admin, resp. ALT)
+            'fiches': _alt_depots_droits()['echeances']}
+
+@app.route('/api/notifications', methods=['GET'])
+def get_notifications():
+    err = _notif_acces()
+    if err:
+        return err
+    pdb = get_promotions_db()
+    items = _notif_items(pdb, _notif_visibles(pdb))
+    return jsonify({'items': items, 'non_lues': sum(1 for i in items if not i['lu']),
+                    'rappels': _notif_rappels_permis(), 'annee': get_current_year() or ''})
+
+@app.route('/api/notifications/compte', methods=['GET'])
+def get_notifications_compte():
+    """Nombre de notifications non lues (pastille de l'onglet, relue régulièrement)."""
+    if not _tab_voit('nav:notifications'):
+        return jsonify({'non_lues': 0})
+    return jsonify({'non_lues': _notif_visibles(get_promotions_db(), non_lues=True, compter=True)})
+
+@app.route('/api/notifications/lu', methods=['PUT'])
+def set_notifications_lu():
+    """{ids: [...]} ou {tout: true} ; {lu: false} les remet en non lues. Seules
+    comptent les notifications que la session reçoit."""
+    err = _notif_acces()
+    if err:
+        return err
+    d = request.get_json(silent=True) or {}
+    voulus = None
+    if not d.get('tout'):
+        voulus = set()
+        for i in d.get('ids') or []:
+            try:
+                voulus.add(int(i))
+            except (TypeError, ValueError):
+                pass
+    pdb = get_promotions_db()
+    moi = _notif_moi()
+    ids = [r['id'] for r in _notif_visibles(pdb, ids=voulus)]
+    if d.get('lu', True) is False:
+        pdb.executemany('DELETE FROM notification_reads WHERE notification_id=? AND reader=?',
+                        [(i, moi) for i in ids])
+    else:
+        now = _notif_horodatage()
+        pdb.executemany('''INSERT OR IGNORE INTO notification_reads(notification_id, reader, read_at)
+                           VALUES(?,?,?)''', [(i, moi, now) for i in ids])
+    pdb.commit()
+    return jsonify({'ids': ids, 'non_lues': _notif_visibles(pdb, non_lues=True, compter=True)})
+
+@app.route('/api/notifications/masquer', methods=['PUT'])
+def masquer_notifications():
+    """Retire des notifications de SA liste : {ids: [...]} ou {lues: true} (toutes
+    celles déjà lues). Elles restent pour les autres destinataires, et reviennent
+    si l'événement se reproduit (notification mise à jour, de nouveau non lue)."""
+    err = _notif_acces()
+    if err:
+        return err
+    d = request.get_json(silent=True) or {}
+    pdb = get_promotions_db()
+    moi = _notif_moi()
+    if d.get('lues'):
+        ids = [r['id'] for r in _notif_visibles(pdb) if r['read_at']]
+    else:
+        voulus = set()
+        for i in d.get('ids') or []:
+            try:
+                voulus.add(int(i))
+            except (TypeError, ValueError):
+                pass
+        ids = [r['id'] for r in _notif_visibles(pdb, ids=voulus)]
+    now = _notif_horodatage()
+    pdb.executemany('''INSERT INTO notification_reads(notification_id, reader, read_at, hidden)
+                       VALUES(?,?,?,1)
+                       ON CONFLICT(notification_id, reader) DO UPDATE SET hidden = 1''',
+                    [(i, moi, now) for i in ids])
+    pdb.commit()
+    return jsonify({'ids': ids, 'non_lues': _notif_visibles(pdb, non_lues=True, compter=True)})
+
+# ---- Événements ----
+def _notif_signalement(pdb, person_id, eid, f):
+    """Nouveau signalement sur une fiche : la direction (droit « modifier » de la
+    liste À convoquer) est prévenue ; son état (traité ou non) se lit en direct."""
+    s = pdb.execute('SELECT nom, prenom FROM students WHERE id=?', (person_id,)).fetchone()
+    qui = ' '.join(x for x in ((s['nom'] or '').upper(), s['prenom'] or '') if x) if s else ''
+    texte = f.get('texte') or ''
+    if len(texte) > 220:
+        texte = texte[:217].rstrip() + '…'
+    entete = ' · '.join(x for x in (f"Motif : {f.get('motif') or 'Autre'}",
+                                    f"Matière : {f['matiere']}" if f.get('matiere') else '',
+                                    f"faits du {_notif_date_fr(f.get('date_fait'))}") if x)
+    _notif_poser(pdb, 'signalement', 'Signalement — ' + (qui or 'étudiant'), entete + '\n' + texte,
+                 [('droit', 'etu:convoquer')],
+                 lien={'page': 'etudiants', 'person_id': person_id, 'onglet': 'suivi'},
+                 data={'suivi_id': eid}, groupe=f'signalement:{eid}')
+
+def _notif_saisie(pdb, pid, semester, formation, groupes, changes):
+    """Saisie Notes enregistrée : pour chaque matière touchée, le référent de la
+    matière (sur la face) et l'administration des Bulletins sont prévenus. Les
+    enregistrements d'un même auteur sur la même matière en moins de 12 h
+    s'additionnent dans une seule notification.
+    changes = {clé matière: {'codes': {code: [ajoutées, modifiées, effacées]},
+                             'etat': {code: 'def' | 'prov'}}}"""
+    promo = pdb.execute('SELECT name FROM promotions WHERE id=?', (pid,)).fetchone()
+    pname = promo['name'] if promo else ''
+    acteur = session.get('user') or '-'
+    for key, ch in changes.items():
+        if not (any(any(v) for v in ch['codes'].values()) or ch['etat']):
+            continue
+        grp = groupes.get(key) or {}
+        groupe = f'saisie:{pid}:{semester}:{formation}:{key}:{_notif_cle(acteur)}'
+        old = _notif_groupe(pdb, groupe, _NOTIF_REGROUPE_H)
+        cumul = (_notif_lire_json(old['data']) if old else None) or {}
+        cumul.setdefault('codes', {})
+        cumul.setdefault('etat', {})
+        for code, (a, m, e) in ch['codes'].items():
+            c = cumul['codes'].get(code) or [0, 0, 0]
+            cumul['codes'][code] = [c[0] + a, c[1] + m, c[2] + e]
+        cumul['etat'].update(ch['etat'])
+        lignes = []
+        for code in sorted(set(cumul['codes']) | set(cumul['etat'])):
+            a, m, e = cumul['codes'].get(code) or [0, 0, 0]
+            parts = [f'{a} ajoutée(s)' if a else '', f'{m} modifiée(s)' if m else '',
+                     f'{e} effacée(s)' if e else '',
+                     {'def': '✓ passée en définitif', 'prov': 'repassée en provisoire'}.get(cumul['etat'].get(code), '')]
+            parts = [p for p in parts if p]
+            if parts:
+                lignes.append(f"{code} : {', '.join(parts)}")
+        if not lignes:
+            continue
+        label = grp.get('label') or key
+        titre = f'Notes {key}' + (f' {label}' if label != key else '') + f' · {semester} {formation} · {pname}'
+        cibles = [('droit', 'promo:notes')] + ([('user', grp['referent'])] if grp.get('referent') else [])
+        _notif_poser(pdb, 'saisie', titre, f'Saisie Notes — {acteur} :\n' + '\n'.join(lignes), cibles,
+                     lien={'page': 'saisie', 'pid': pid, 'semestre': semester, 'face': formation},
+                     data=cumul, groupe=groupe, fenetre_h=_NOTIF_REGROUPE_H, acteur=acteur)
+
+def _notif_depot_alternance(pdb, s, sem, yg, tuteur, fichier):
+    """Fiche d'évaluation déposée (Alternance › Dépôts) : l'admin, le responsable ALT
+    et le responsable FTP sont prévenus. Un nouveau dépôt du même semestre remplace
+    la notification, qui redevient non lue ; supprimer la fiche la retire."""
+    p = pdb.execute('SELECT start_year FROM promotions WHERE id=?', (s['promotion_id'],)).fetchone()
+    annee = f"{p['start_year'] + yg - 1}-{p['start_year'] + yg}" if p else ''
+    limite = _alt_echeances(pdb, annee)[_alt_parite(sem)] if annee else None
+    qui = ' '.join(x for x in ((s['nom'] or '').upper(), s['prenom'] or '') if x)
+    corps = ' · '.join([f"Promotion {s['promotion']}", f"{yg}{'re' if yg == 1 else 'e'} année",
+                        f'tuteur : {tuteur}' if tuteur else 'sans tuteur universitaire', fichier])
+    if limite:
+        retard = datetime.now().strftime('%Y-%m-%d') > limite
+        corps += (f"\n{'Déposée après la date limite' if retard else 'Dans les délais'}"
+                  f" (date limite : {_notif_date_fr(limite)})")
+    _notif_poser(pdb, 'depot_alternance', f"Fiche d'évaluation {sem} — {qui or 'alternant'}", corps,
+                 [('droit', 'role:admin'), ('droit', 'role:resp_alt'), ('droit', 'role:resp_ftp')],
+                 lien={'page': 'alternance', 'onglet': 'depots', 'annee': annee},
+                 data={'student_id': s['id'], 'semestre': sem},
+                 groupe=f"depot_alternance:{s['id']}:{sem}")
+
+def _notif_contraintes_lues(pdb):
+    """L'enseignant vient de déposer ses contraintes : le rappel de l'année est lu."""
+    moi = _notif_moi()
+    row = _notif_groupe(pdb, f'rappel_contraintes:{get_current_year()}:{moi}')
+    if row:
+        pdb.execute('''INSERT OR IGNORE INTO notification_reads(notification_id, reader, read_at)
+                       VALUES(?,?,?)''', (row['id'], moi, _notif_horodatage()))
+
+# ---- Rappels envoyés par l'administration ----
+def _notif_annee(v):
+    """Année universitaire demandée si sa base existe, sinon l'année active ; None sinon."""
+    y = (v or '').strip()
+    if not (y and _is_year(y)):
+        y = get_current_year() or ''
+    return y if (y and os.path.isfile(db_path_for_year(y))) else None
+
+def _rappel_contraintes_cibles(annee):
+    """Enseignants de l'année (au moins une séance) sans contraintes déposées."""
+    ydb = _open_connection(db_path_for_year(annee))
+    try:
+        rows = ydb.execute('''SELECT t.name FROM teachers t
+            WHERE EXISTS (SELECT 1 FROM course_sessions cs WHERE cs.teacher_id = t.id
+                          AND (cs.nb_sessions > 0 OR cs.total_hours > 0))
+              AND NOT EXISTS (SELECT 1 FROM teacher_constraints tc WHERE tc.teacher_id = t.id
+                          AND ((tc.content IS NOT NULL AND tc.content <> '') OR tc.file_path IS NOT NULL))
+            ORDER BY t.name''').fetchall()
+    finally:
+        ydb.close()
+    return [{'nom': r['name'], 'detail': [], 'manque': 0} for r in rows]
+
+def _rappel_notes_cibles(pdb, annee, semestres):
+    """Enseignants à qui il reste des notes à saisir : grilles de l'année (cohortes
+    × semestres × faces), sous-matières comptées et non définitives, notes
+    manquantes attribuées aux intervenants — et au référent quand l'admin lui a
+    confié la saisie de la matière."""
+    par = {}
+    for pid, pname, sem in _saisie_scope(pdb, annee):
+        if semestres and sem not in semestres:
+            continue
+        for face in _SUBCOHORTS:
+            p = _saisie_payload(pdb, pid, sem, face, None)
+            if not (p.get('available') and p['groups'] and p['students']):
+                continue
+            sids = [s['id'] for s in p['students']]
+            for grp in p['groups']:
+                for sub in grp['subs']:
+                    if not sub['counted'] or sub['definitive']:
+                        continue
+                    manque = sum(1 for sid in sids if f"{sid}_{sub['code']}" not in p['marks'])
+                    if not manque:
+                        continue
+                    qui = set(sub['teachers'])
+                    if grp.get('referent_saisit') and grp.get('referent'):
+                        qui.add(grp['referent'])
+                    for nom in qui:
+                        e = par.setdefault(_notif_cle(nom), {'nom': nom, 'detail': [], 'manque': 0})
+                        e['detail'].append({'promotion': pname, 'semestre': sem, 'face': face,
+                                            'code': sub['code'], 'libelle': sub['name'] or '',
+                                            'manque': manque, 'total': len(sids)})
+                        e['manque'] += manque
+    return sorted(par.values(), key=lambda e: e['nom'].lower())
+
+def _rappel_fiches_cibles(pdb, annee, semestres):
+    """Tuteurs universitaires dont des fiches d'évaluation manquent (Alternance ›
+    Dépôts) pour l'année et les semestres demandés (tous si aucun), avec leurs
+    alternants concernés ; et le nombre de fiches manquantes sans tuteur."""
+    try:
+        start = int(annee[:4])
+    except (TypeError, ValueError):
+        return [], 0
+    par, sans_tuteur = {}, 0
+    for pid, nom, yg in _suivi_cohorts(pdb, start):
+        gens = [s for s in (_tuteurs_students(pdb, pid, yg) or {'students': []})['students']
+                if _suivi_concerne('alternance', s['formation'], yg)]
+        ids = [s['id'] for s in gens]
+        deposees = {(r['student_id'], r['semestre']) for r in pdb.execute(
+            f"SELECT student_id, semestre FROM alternance_depots WHERE student_id IN ({','.join('?' * len(ids))})",
+            ids)} if ids else set()
+        for s in gens:
+            for sem in (f'S{2 * yg - 1}', f'S{2 * yg}'):
+                if (semestres and sem not in semestres) or (s['id'], sem) in deposees:
+                    continue
+                if not s['tuteur_univ']:
+                    sans_tuteur += 1
+                    continue
+                e = par.setdefault(_suivi_key(s['tuteur_univ']), {'nom': s['tuteur_univ'], 'detail': [], 'manque': 0})
+                e['detail'].append({'sid': s['id'], 'semestre': sem, 'promotion': nom, 'annee_etude': yg,
+                                    'etudiant': ' '.join(x for x in ((s['nom'] or '').upper(), s['prenom'] or '') if x)})
+                e['manque'] += 1
+    return sorted(par.values(), key=lambda e: e['nom'].lower()), sans_tuteur
+
+def _rappel_cibles(type_, annee, semestres):
+    if type_ == 'contraintes':
+        cibles = _rappel_contraintes_cibles(annee)
+    elif type_ == 'fiches':
+        cibles, _ = _rappel_fiches_cibles(get_promotions_db(), annee, semestres)
+    else:
+        cibles = _rappel_notes_cibles(get_promotions_db(), annee, semestres)
+    # Seuls ceux qui ont un mot de passe voient l'onglet Notifications
+    ydb = _open_connection(db_path_for_year(annee))
+    try:
+        mdp = {_notif_cle(r['name']) for r in ydb.execute(
+            'SELECT name FROM teachers WHERE password_hash IS NOT NULL')}
+    finally:
+        ydb.close()
+    for c in cibles:
+        c['mdp'] = _notif_cle(c['nom']) in mdp
+    return cibles
+
+def _rappel_controle(type_):
+    if type_ not in ('contraintes', 'notes', 'fiches'):
+        return error_response('Type de rappel inconnu', 400)
+    if not _notif_rappels_permis()[type_]:
+        return error_response('Rappel non autorisé pour votre profil', 403)
+    return None
+
+def _rappel_semestres(v):
+    v = v.split(',') if isinstance(v, str) else (v or [])
+    return [s for s in _PROMO_SEMESTERS if s in v]
+
+@app.route('/api/notifications/rappel', methods=['GET'])
+def apercu_rappel():
+    """Aperçu d'un rappel (?type=contraintes|notes&annee=&semestres=S1,S3) : qui le
+    recevrait, ce qui lui manque, et s'il a un mot de passe pour le lire."""
+    type_ = request.args.get('type')
+    err = _rappel_controle(type_)
+    if err:
+        return err
+    annee = _notif_annee(request.args.get('annee'))
+    if not annee:
+        return error_response('Année universitaire introuvable', 404)
+    semestres = _rappel_semestres(request.args.get('semestres') or '')
+    out = {'type': type_, 'annee': annee, 'semestres': semestres,
+           'cibles': _rappel_cibles(type_, annee, semestres)}
+    if type_ == 'fiches':
+        # Fiches manquantes d'alternants sans tuteur universitaire : personne à relancer
+        out['sans_tuteur'] = _rappel_fiches_cibles(get_promotions_db(), annee, semestres)[1]
+        out['echeances'] = _alt_echeances(get_promotions_db(), annee)
+    return jsonify(out)
+
+@app.route('/api/notifications/rappel', methods=['POST'])
+def envoyer_rappel():
+    """Envoie le rappel {type, annee, semestres, message, exclus: [noms]} : une
+    notification par enseignant, qui remplace son rappel précédent de l'année."""
+    d = request.get_json(silent=True) or {}
+    type_ = d.get('type')
+    err = _rappel_controle(type_)
+    if err:
+        return err
+    annee = _notif_annee(d.get('annee'))
+    if not annee:
+        return error_response('Année universitaire introuvable', 404)
+    semestres = _rappel_semestres(d.get('semestres'))
+    message = str(d.get('message') or '').strip()[:1000]
+    exclus = {_notif_cle(n) for n in (d.get('exclus') or []) if isinstance(n, str)}
+    cibles = [c for c in _rappel_cibles(type_, annee, semestres) if _notif_cle(c['nom']) not in exclus]
+    pdb = get_promotions_db()
+    echeances = _alt_echeances(pdb, annee) if type_ == 'fiches' else {}
+    envoyes = sans_mdp = 0
+    for c in cibles:
+        data = {'annee': annee, 'pour': c['nom'], 'manque': c['manque']}
+        if type_ == 'contraintes':
+            titre = f"Contraintes d'emploi du temps à déposer ({annee})"
+            corps = (f"Merci de déposer vos contraintes d'emploi du temps pour {annee} "
+                     "(Service › Contraintes Enseignant) : texte libre et/ou fichier.")
+            lien = {'page': 'contraintes', 'annee': annee}
+        elif type_ == 'fiches':
+            titre = f"Fiches d'évaluation à déposer ({annee}) : {c['manque']} fiche(s)"
+            parites = sorted({_alt_parite(x['semestre']) for x in c['detail']}, key=_ALT_PARITES.index)
+            limites = ' ; '.join(
+                f"semestres {p}s : " + (f'le {_notif_date_fr(echeances[p])}' if echeances.get(p) else 'non fixée')
+                for p in parites)
+            corps = (f"Fiches d'évaluation de vos alternants à déposer dans Alternance › Dépôts "
+                     f"(date limite — {limites}) :\n" + '\n'.join(
+                         f"{x['semestre']} · {x['promotion']} · {x['etudiant']}" for x in c['detail']))
+            lien = {'page': 'alternance', 'onglet': 'depots', 'annee': annee}
+            data['fiches'] = [[x['sid'], x['semestre']] for x in c['detail']]
+        else:
+            titre = f"Notes à saisir ({annee}) : {c['manque']} note(s)"
+            corps = 'Il vous reste des notes à saisir (Saisie Notes) :\n' + '\n'.join(
+                f"{x['semestre']} {x['face']} · {x['promotion']} · {x['code']}"
+                + (f" {x['libelle']}" if x['libelle'] else '')
+                + f" : {x['manque']} manquante(s) sur {x['total']}" for x in c['detail'])
+            lien = {'page': 'saisie'}
+        if message:
+            corps = message + '\n\n' + corps
+        nid = _notif_poser(pdb, 'rappel_' + type_, titre, corps, [('user', c['nom'])], lien=lien,
+                           data=data, groupe=f"rappel_{type_}:{annee}:{_notif_cle(c['nom'])}")
+        if nid:
+            envoyes += 1
+            sans_mdp += 0 if c['mdp'] else 1
+    pdb.commit()
+    _audit('NOTIF_RAPPEL', ip=_client_ip(), user=session.get('user'), type=type_, annee=annee,
+           semestres=','.join(semestres) or '-', envoyes=envoyes)
+    return jsonify({'envoyes': envoyes, 'sans_mdp': sans_mdp})
 
 # ======================= GESTION DES NOTES (admin) =======================
 # Onglet admin : import d'un fichier Apogée par promo (roster + ELP), saisie des
@@ -6868,11 +7546,13 @@ def add_student_suivi(person_id):
     f.update(person_id=person_id, kind=kind, auteur=session.get('user') or '-',
              statut='OUVERT' if kind == 'SIGNAL' else None)
     cols = list(f)
-    pdb.execute('INSERT INTO student_suivi (%s) VALUES (%s)' % (', '.join(cols), ','.join('?' * len(cols))),
-                [f[c] for c in cols])
+    eid = pdb.execute('INSERT INTO student_suivi (%s) VALUES (%s)' % (', '.join(cols), ','.join('?' * len(cols))),
+                      [f[c] for c in cols]).lastrowid
     if kind == 'ENTRETIEN':
         _sp_marquer(pdb, person_id, 'RECU', f['date_fait'])
     pdb.commit()
+    if kind == 'SIGNAL':
+        _notif_sur(_notif_signalement, person_id, eid, f)
     return jsonify(_sp_payload(pdb, person_id))
 
 @app.route('/api/students/<int:person_id>/suivi/<int:eid>', methods=['PUT', 'DELETE'])
@@ -6890,6 +7570,8 @@ def edit_student_suivi(person_id, eid):
         return error_response('Seuls son auteur et la direction peuvent la modifier', 403)
     if request.method == 'DELETE':
         pdb.execute('DELETE FROM student_suivi WHERE id=?', (eid,))
+        if r['kind'] == 'SIGNAL':   # sa notification n'a plus d'objet
+            pdb.execute('DELETE FROM notifications WHERE group_key=?', (f'signalement:{eid}',))
     else:
         data = request.get_json(silent=True) or {}
         if set(data) == {'statut'}:
@@ -8177,6 +8859,274 @@ def delete_alternance_document(cle):
     pdb.execute('DELETE FROM alternance_documents WHERE cle=?', (cle,))
     pdb.commit()
     return jsonify({'deleted': True})
+
+# ----- Alternance › Dépôts -----
+# La fiche d'évaluation de chaque alternant, par semestre de son année d'étude
+# (S1/S2 en 1re année, S3/S4, S5/S6), déposée par son tuteur universitaire (fiche
+# de suivi de l'année, héritée comprise). La date limite, par parité de semestre,
+# est fixée pour l'année universitaire par l'administration de l'onglet Alternance
+# (admin, responsable ALT) et rappelée dans l'onglet ; un dépôt après la date reste
+# accepté, signalé « en retard ». Récapitulatif de tous les dépôts (et de ce qui
+# manque) : admin, responsable ALT, responsable FTP. Chaque dépôt est notifié à ces
+# trois rôles (onglet Notifications). Fichiers dans promotions.db (sauvegarde).
+_ALT_PARITES = ('impair', 'pair')
+
+def _alt_parite(sem):
+    return 'impair' if int(sem[1]) % 2 else 'pair'
+
+def _alt_depots_droits():
+    """{voir, tout, recap, echeances} pour la session. voir : l'onglet Alternance
+    (l'enseignant n'y trouve que ses alternants) ; tout : déposer pour n'importe
+    quel alternant (administration de l'onglet) ; recap : tous les dépôts et ce
+    qui manque (administration de l'onglet, sa vue d'administration, responsable
+    FTP) ; echeances : fixer les dates limites (administration de l'onglet)."""
+    tabs = _session_tabs()
+    if tabs is None:
+        return {'voir': True, 'tout': True, 'recap': True, 'echeances': True}
+    key = _SUIVI_KINDS['alternance'][0]
+    if key not in tabs['visible']:
+        return {'voir': False, 'tout': False, 'recap': False, 'echeances': False}
+    power = key in tabs['power']
+    recap = power or key in tabs['admin_view'] or 'ftp' in (session.get('resp') or [])
+    return {'voir': True, 'tout': power, 'recap': recap, 'echeances': power}
+
+def _alt_echeances(pdb, annee):
+    out = {p: None for p in _ALT_PARITES}
+    for r in pdb.execute('SELECT parite, date FROM alternance_echeances WHERE annee=?', (annee,)):
+        out[r['parite']] = r['date']
+    return out
+
+def _alt_retard(depose_le, limite):
+    """Déposé après la date limite (comprise) ? `depose_le` : horodatage SQLite (UTC)."""
+    return bool(limite and depose_le and str(depose_le)[:10] > limite)
+
+@app.route('/api/alternance/depots', methods=['GET'])
+def get_alternance_depots():
+    """Les alternants de l'année ?annee=AAAA-AAAA (défaut : celle de la session) avec,
+    pour les deux semestres de leur année d'étude, la fiche déposée (sans son
+    contenu) ; l'enseignant ne reçoit que ceux dont il est le tuteur universitaire.
+    Avec les dates limites de l'année et les droits de la session."""
+    droits = _alt_depots_droits()
+    if not droits['voir']:
+        return error_response('Accès réservé', 403)
+    annee, start = _alt_docs_annee()
+    if start is None:
+        return error_response('Année universitaire inconnue', 400)
+    pdb = get_promotions_db()
+    moi = _suivi_key(session.get('teacher_name'))
+    echeances = _alt_echeances(pdb, annee)
+    etudiants = []
+    for pid, nom, yg in _suivi_cohorts(pdb, start):
+        data = _tuteurs_students(pdb, pid, yg) or {'students': []}
+        gens = [s for s in data['students'] if _suivi_concerne('alternance', s['formation'], yg)]
+        ids = [s['id'] for s in gens]
+        fichiers = {}
+        if ids:
+            for r in pdb.execute(f'''SELECT student_id, semestre, nom, taille, auteur, updated_at
+                                     FROM alternance_depots WHERE student_id IN ({','.join('?' * len(ids))})''', ids):
+                fichiers[(r['student_id'], r['semestre'])] = dict(r)
+        for s in gens:
+            mien = bool(moi) and _suivi_key(s['tuteur_univ']) == moi
+            if not (droits['recap'] or droits['tout'] or mien):
+                continue
+            sems = [f'S{2 * yg - 1}', f'S{2 * yg}']
+            depots = {}
+            for sem in sems:
+                f = fichiers.get((s['id'], sem))
+                if f:
+                    f = {k: f[k] for k in ('nom', 'taille', 'auteur', 'updated_at')}
+                    f['retard'] = _alt_retard(f['updated_at'], echeances[_alt_parite(sem)])
+                depots[sem] = f
+            etudiants.append({'id': s['id'], 'person_id': s.get('person_id'), 'nom': s['nom'],
+                              'prenom': s['prenom'], 'pid': pid, 'promotion': nom, 'annee_etude': yg,
+                              'tuteur_univ': s['tuteur_univ'] or '', 'mien': mien,
+                              'semestres': sems, 'depots': depots})
+    return jsonify({'annee': annee, 'echeances': echeances, 'droits': droits,
+                    'aujourdhui': datetime.now().strftime('%Y-%m-%d'), 'etudiants': etudiants})
+
+def _alt_depot_cible(pdb, sid, sem, ecrire):
+    """(étudiant, tuteur universitaire, année d'étude, erreur) d'une fiche à lire ou
+    à déposer. Lire : le tuteur, et qui a le récapitulatif ; déposer, supprimer :
+    le tuteur, et l'administration de l'onglet. Le semestre doit être l'un des deux
+    de l'année d'étude de l'alternant l'année universitaire ?annee= (défaut : celle
+    de la session) ; il doit y être alternant."""
+    droits = _alt_depots_droits()
+    if not droits['voir']:
+        return None, None, None, error_response('Accès réservé', 403)
+    if sem not in _PROMO_SEMESTERS:
+        return None, None, None, error_response('Semestre inconnu', 404)
+    annee, start = _alt_docs_annee()
+    if start is None:
+        return None, None, None, error_response('Année universitaire inconnue', 400)
+    # Nom et prénom : au registre (students), auquel la fiche de cohorte renvoie
+    s = pdb.execute('''SELECT ps.id, ps.promotion_id, st.nom, st.prenom, p.name AS promotion,
+                              p.start_year
+                       FROM promotion_students ps JOIN promotions p ON p.id = ps.promotion_id
+                       LEFT JOIN students st ON st.id = ps.person_id
+                       WHERE ps.id = ?''', (sid,)).fetchone()
+    if not s:
+        return None, None, None, error_response('Étudiant introuvable', 404)
+    yg = (int(sem[1]) + 1) // 2
+    if s['start_year'] is None or start - s['start_year'] + 1 != yg:
+        return None, None, None, error_response(
+            f"{sem} n'est pas un semestre de l'alternant en {annee}", 400)
+    if _year_formation_map(pdb, s['promotion_id'], yg).get(sid) != 'ALT':
+        return None, None, None, error_response("Cet étudiant n'est pas alternant cette année-là", 400)
+    tuteur = _suivi_tuteur_univ(pdb, sid, yg, 'ALT')
+    mien = bool(session.get('teacher_name')) and _suivi_key(tuteur) == _suivi_key(session.get('teacher_name'))
+    if not (mien or droits['tout'] or (droits['recap'] and not ecrire)):
+        return None, None, None, error_response(
+            "Réservé au tuteur universitaire de l'alternant" + ('' if ecrire else ' et aux responsables'), 403)
+    return s, tuteur, yg, None
+
+def _zip_nom(t, n=90):
+    """Morceau de chemin sûr dans une archive (ni séparateur ni caractère réservé)."""
+    t = ''.join('_' if (c in '\\/:*?"<>|' or not c.isprintable()) else c for c in str(t or ''))
+    return ' '.join(t.split()).strip(' .')[:n] or '_'
+
+@app.route('/api/alternance/depots/zip', methods=['GET'])
+def zip_alternance_depots():
+    """Archive des fiches déposées pour l'année ?annee=AAAA-AAAA (défaut : celle de la
+    session) : toutes, celles d'une promotion (?pid=) ou d'un alternant (?sid=),
+    d'une parité de semestre si ?parite=impair|pair. Réservé au récapitulatif
+    (admin, responsables ALT et FTP). Rangement : promotion / alternant / fiche."""
+    if not _alt_depots_droits()['recap']:
+        return error_response("Réservé à l'admin et aux responsables ALT et FTP", 403)
+    annee, start = _alt_docs_annee()
+    if start is None:
+        return error_response('Année universitaire inconnue', 400)
+    pid_f, sid_f = request.args.get('pid', type=int), request.args.get('sid', type=int)
+    parite = request.args.get('parite') if request.args.get('parite') in _ALT_PARITES else None
+    pdb = get_promotions_db()
+    voulus, titre = [], ''
+    for pid, nom, yg in _suivi_cohorts(pdb, start):
+        if pid_f and pid != pid_f:
+            continue
+        for s in (_tuteurs_students(pdb, pid, yg) or {'students': []})['students']:
+            if not _suivi_concerne('alternance', s['formation'], yg) or (sid_f and s['id'] != sid_f):
+                continue
+            qui = _zip_nom(f"{(s['nom'] or '').upper()} {s['prenom'] or ''}")
+            for sem in (f'S{2 * yg - 1}', f'S{2 * yg}'):
+                if not parite or _alt_parite(sem) == parite:
+                    voulus.append((f"{nom} ({yg}{'re' if yg == 1 else 'e'} année)", qui, s['id'], sem))
+            titre = qui if sid_f else (nom if pid_f else '')
+    if (pid_f or sid_f) and not voulus:
+        return error_response("Rien de tel dans les alternants de l'année", 404)
+    tmp = tempfile.SpooledTemporaryFile(max_size=50 * 1024 * 1024)
+    n, vus = 0, set()
+    with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as z:
+        for promo, qui, sid, sem in voulus:
+            r = pdb.execute('SELECT nom, data FROM alternance_depots WHERE student_id=? AND semestre=?',
+                            (sid, sem)).fetchone()
+            if not r:
+                continue
+            chemin = f'{sem} - {_zip_nom(r["nom"], 120)}'
+            if not sid_f:
+                chemin = f'{qui}/{chemin}'
+            if not (pid_f or sid_f):
+                chemin = f'{_zip_nom(promo)}/{chemin}'
+            base, k = chemin, 2
+            while chemin in vus:
+                chemin, k = f'{base} ({k})', k + 1
+            vus.add(chemin)
+            z.writestr(chemin, r['data'])
+            n += 1
+    if not n:
+        tmp.close()
+        return error_response('Aucune fiche déposée pour cette sélection', 404)
+    tmp.seek(0)
+    _audit('ALT_DEPOTS_ZIP', ip=_client_ip(), user=session.get('user'), annee=annee,
+           pid=pid_f or '-', etudiant=sid_f or '-', parite=parite or '-', fichiers=n)
+    nom = ' '.join(x for x in ("Fiches d'evaluation", titre, parite and f'semestres {parite}s', annee) if x)
+    return send_file(tmp, as_attachment=True, download_name=_zip_nom(nom, 150) + '.zip',
+                     mimetype='application/zip')
+
+@app.route('/api/alternance/depots/<int:sid>/<sem>', methods=['GET'])
+def get_alternance_depot(sid, sem):
+    pdb = get_promotions_db()
+    s, _, _, err = _alt_depot_cible(pdb, sid, sem, ecrire=False)
+    if err:
+        return err
+    r = pdb.execute('SELECT nom, data FROM alternance_depots WHERE student_id=? AND semestre=?',
+                    (sid, sem)).fetchone()
+    if not r:
+        return error_response('Aucune fiche déposée', 404)
+    # Toujours en téléchargement : un fichier déposé ne s'exécute jamais dans la page
+    return send_file(io.BytesIO(r['data']), as_attachment=True, download_name=r['nom'])
+
+@app.route('/api/alternance/depots/<int:sid>/<sem>', methods=['PUT'])
+def put_alternance_depot(sid, sem):
+    """Dépose (ou remplace) la fiche d'évaluation d'un alternant pour un semestre."""
+    pdb = get_promotions_db()
+    s, tuteur, yg, err = _alt_depot_cible(pdb, sid, sem, ecrire=True)
+    if err:
+        return err
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return error_response('Aucun fichier reçu', 400)
+    # Sans chemin ni caractère de contrôle : ce nom repart dans l'en-tête du téléchargement
+    nom = ''.join(c for c in re.split(r'[\\/]', f.filename)[-1] if c.isprintable()).strip()
+    base, ext = os.path.splitext(nom)
+    if ext.lower() not in _ALT_DOC_EXT:
+        return error_response('Type de fichier non autorisé (PDF, Word, Excel ou OpenDocument)', 400)
+    data = f.read(_ALT_DOC_MAX + 1)
+    if len(data) > _ALT_DOC_MAX:
+        return error_response('Fichier trop volumineux (15 Mo au plus)', 400)
+    if not data:
+        return error_response('Fichier vide', 400)
+    nom = base[:140] + ext
+    pdb.execute('''INSERT INTO alternance_depots (student_id, semestre, nom, taille, data, auteur)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (student_id, semestre) DO UPDATE SET nom = excluded.nom,
+                       taille = excluded.taille, data = excluded.data, auteur = excluded.auteur,
+                       updated_at = CURRENT_TIMESTAMP''',
+                (sid, sem, nom, len(data), sqlite3.Binary(data), session.get('user')))
+    pdb.commit()
+    _audit('ALT_DEPOT', ip=_client_ip(), user=session.get('user'), etudiant=sid, semestre=sem, fichier=nom)
+    _notif_sur(_notif_depot_alternance, s, sem, yg, tuteur, nom)
+    return jsonify({'nom': nom, 'taille': len(data)})
+
+@app.route('/api/alternance/depots/<int:sid>/<sem>', methods=['DELETE'])
+def delete_alternance_depot(sid, sem):
+    pdb = get_promotions_db()
+    _, _, _, err = _alt_depot_cible(pdb, sid, sem, ecrire=True)
+    if err:
+        return err
+    pdb.execute('DELETE FROM alternance_depots WHERE student_id=? AND semestre=?', (sid, sem))
+    # La notification du dépôt n'a plus d'objet
+    pdb.execute('DELETE FROM notifications WHERE group_key=?', (f'depot_alternance:{sid}:{sem}',))
+    pdb.commit()
+    _audit('ALT_DEPOT_SUPPR', ip=_client_ip(), user=session.get('user'), etudiant=sid, semestre=sem)
+    return jsonify({'deleted': True})
+
+@app.route('/api/alternance/echeances', methods=['PUT'])
+def put_alternance_echeances():
+    """Dates limites de dépôt {annee, impair, pair} (AAAA-MM-JJ, vide = aucune)."""
+    if not _alt_depots_droits()['echeances']:
+        return error_response("Réservé à l'admin et au responsable de l'alternance", 403)
+    d = request.get_json(silent=True) or {}
+    annee = str(d.get('annee') or '').strip()
+    if not _is_year(annee):
+        return error_response('Année universitaire inconnue', 400)
+    pdb = get_promotions_db()
+    for p in _ALT_PARITES:
+        if p not in d:
+            continue
+        v = str(d.get(p) or '').strip()
+        if not v:
+            pdb.execute('DELETE FROM alternance_echeances WHERE annee=? AND parite=?', (annee, p))
+            continue
+        try:
+            v = datetime.strptime(v, '%Y-%m-%d').strftime('%Y-%m-%d')
+        except ValueError:
+            return error_response(f'Date invalide pour le semestre {p}', 400)
+        pdb.execute('''INSERT INTO alternance_echeances (annee, parite, date, auteur) VALUES (?, ?, ?, ?)
+                       ON CONFLICT (annee, parite) DO UPDATE SET date = excluded.date, auteur = excluded.auteur''',
+                    (annee, p, v, session.get('user')))
+    pdb.commit()
+    _audit('ALT_ECHEANCES', ip=_client_ip(), user=session.get('user'), annee=annee,
+           impair=d.get('impair', '-'), pair=d.get('pair', '-'))
+    return jsonify({'annee': annee, 'echeances': _alt_echeances(pdb, annee)})
 
 @app.route('/api/promotions/<int:pid>/effectif/<int:year>/students', methods=['POST'])
 def add_year_student(pid, year):
@@ -12804,12 +13754,26 @@ def save_promotion_saisie(pid, semester):
     editable = {s['code']: grp['key'] for grp in payload['groups']
                 for s in grp['subs'] if s['editable']}
     valid_sids = {s['id'] for s in payload['students']}
+    # État avant enregistrement, pour dire ce qui change (onglet Notifications)
+    codes_in = sorted({(c.get('code') or '').strip() for c in (data.get('columns') or [])} & set(editable))
+    avant, avant_def = {}, {}
+    if codes_in:
+        ph = ','.join('?' * len(codes_in))
+        avant = {(r['student_id'], r['code']): (r['note'], r['mention'] or None) for r in pdb.execute(
+            f'''SELECT student_id, code, note, mention FROM submatiere_marks WHERE promotion_id=?
+                AND semester=? AND note IS NOT NULL AND code IN ({ph})''', [pid, semester] + codes_in)}
+        avant_def = {r['code']: bool(r['definitive']) for r in pdb.execute(
+            f'''SELECT code, definitive FROM submatiere_meta WHERE promotion_id=? AND semester=?
+                AND formation=? AND code IN ({ph})''', [pid, semester, formation] + codes_in)}
+    changes = {}   # {clé matière: {'codes': {code: [ajoutées, modifiées, effacées]}, 'etat': {…}}}
     keys = set()
     for col in (data.get('columns') or []):
         code = (col.get('code') or '').strip()
         if code not in editable:
             return error_response(f'Sous-matière {code} non modifiable', 403)
         keys.add(editable[code])
+        chg = changes.setdefault(editable[code], {'codes': {}, 'etat': {}})
+        cpt = chg['codes'].setdefault(code, [0, 0, 0])
         for sid_s, val in (col.get('notes') or {}).items():
             try:
                 sid = int(sid_s)
@@ -12817,10 +13781,13 @@ def save_promotion_saisie(pid, semester):
                 continue
             if sid not in valid_sids:
                 continue
+            old = avant.get((sid, code))
             if val in (None, ''):
                 pdb.execute('''DELETE FROM submatiere_marks WHERE promotion_id=?
                                AND semester=? AND student_id=? AND code=?''',
                             (pid, semester, sid, code))
+                if old is not None:
+                    cpt[2] += 1
                 continue
             if isinstance(val, str) and val.strip().upper() == 'ABI':
                 note, mention = 0.0, 'ABI'
@@ -12829,23 +13796,32 @@ def save_promotion_saisie(pid, semester):
                     note, mention = float(val), None
                 except (TypeError, ValueError):
                     continue
+            if old is None:
+                cpt[0] += 1
+            elif (float(old[0]), old[1]) != (note, mention):
+                cpt[1] += 1
             pdb.execute('''INSERT INTO submatiere_marks(promotion_id, semester, student_id, code, note, mention)
                            VALUES(?,?,?,?,?,?)
                            ON CONFLICT(promotion_id, semester, student_id, code)
                            DO UPDATE SET note=excluded.note, mention=excluded.mention''',
                         (pid, semester, sid, code, note, mention))
         if 'definitive' in col:
+            definitive = bool(col.get('definitive'))
+            if definitive != avant_def.get(code, False):
+                chg['etat'][code] = 'def' if definitive else 'prov'
             pdb.execute('''INSERT INTO submatiere_meta(promotion_id, semester, formation, code, weight, definitive)
                            VALUES(?,?,?,?,NULL,?)
                            ON CONFLICT(promotion_id, semester, formation, code)
                            DO UPDATE SET definitive=excluded.definitive''',
-                        (pid, semester, formation, code, 1 if col.get('definitive') else 0))
+                        (pid, semester, formation, code, 1 if definitive else 0))
     pdb.commit()
     _recompute_matiere_marks(pdb, pid, semester, keys)
     _reconcile_red_transfers(pdb, pid)
     _audit('SAISIE_NOTES', ip=_client_ip(), user=session.get('user'),
            promo=pid, semester=semester, formation=formation,
            cols=len(data.get('columns') or []))
+    _notif_sur(_notif_saisie, pid, semester, formation,
+               {grp['key']: grp for grp in payload['groups']}, changes)
     return jsonify(_saisie_payload(pdb, pid, semester, formation, teacher))
 
 @app.route('/api/promotions/<int:pid>/saisie/<semester>/weights', methods=['PUT'])
