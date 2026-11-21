@@ -848,7 +848,7 @@ function _aideService() {
 
     { id: 'rep-jour', rub: R, titre: 'Répartition journalière (semaine par semaine)', chemin: 'Service › Répartition Calendaire › Répartition journalière',
       onglet: 'rep:jour', cible: 'repartition/jour',
-      mots: 'journalière semaine posée optimisée hyperplanning avancement cohorte mut reste à poser',
+      mots: 'journalière semaine posée optimisée hyperplanning avancement cohorte mut reste à poser générer edt emploi du temps automatique solveur aperçu',
       html: `
         <p>La vue de travail pour construire l'emploi du temps <b>semaine après semaine</b> : pour une année d'étude, une cohorte et une
         semaine, tous les cours à placer, et le suivi de ce qui a déjà été fait.</p>
@@ -872,6 +872,27 @@ function _aideService() {
         <b>restant à poser</b> ou <b>à optimiser</b> en pastilles cliquables. Cocher FTP ne coche ni ALT ni MUT : chaque cohorte a son suivi.</p>
         ${_aEx('construire le S1', `Année 1, cohorte FTP, semaine 37 : on dépose les cours dans Hyperplanning, on coche ${_aUi('Posée à l\'EDT')} ;
             une fois les placements arrangés, ${_aUi('Optimisée')}. Le bandeau indique alors « reste à poser : S38, S39… » — un clic sur S38 y mène.`)}
+        <h3>Générer l'EDT automatiquement</h3>
+        <p>${_aUi('Générer l\'EDT')} place les cours de la répartition à des horaires précis, jour par jour, avec leur salle : du lundi au vendredi
+        de 8 h à 20 h, le samedi de 8 h à 12 h 30. Il respecte toujours ces règles : jamais deux cours en même temps pour un enseignant, un groupe
+        ou une salle ; les dispos saisies des enseignants ; 6 h de CM/TD par jour au plus ; le <b>jeudi après-midi libre pour les FTP</b>, sauf
+        la semaine d'un jour férié, où il sert à rattraper ; aucun cours un <b>jour férié</b> (fêtes fixes, lundi de Pâques, Ascension, lundi de
+        Pentecôte). Il cherche ensuite le meilleur emploi du temps : le moins de demi-journées de présence, une pause déjeuner, les CM avant
+        les TD et les TD avant les TP d'une même matière, la salle info fixe plutôt que la mobile, et les soirées (après 18 h) et le samedi
+        seulement quand il le faut.</p>
+        <ul>
+            <li>${_aUi('Semaines')} : la semaine affichée, ou toute l'année (une dizaine de minutes, avec l'avancement à l'écran) ;</li>
+            <li>${_aUi('Années d\'étude')} : toutes (conseillé, car enseignants et salles sont partagés entre les années), ou seulement celle
+            affichée — les autres gardent alors leur EDT, et leurs créneaux sont tenus pour occupés ;</li>
+            <li>${_aUi('Aperçu seulement')} (coché d'office) : on voit le résultat sans rien enregistrer. Décoché, l'EDT généré des semaines
+            calculées est remplacé.</li>
+        </ul>
+        <p>Le bilan donne le nombre de séances placées, les <b>séances non placées</b> (à poser à la main) et des alertes : enseignant qui a plus
+        d'heures que de créneaux, semaine ALT au-delà de 40 h ou FTP hors 25–30 h. La grille montre la semaine pour l'année et la cohorte
+        choisies en haut de l'écran ; dans un calcul sur plusieurs semaines, un clic sur une semaine l'affiche.</p>
+        ${_aTip(`une semaine très chargée qui garde des séances non placées peut se relancer seule avec ${_aUi('60 s')} par semaine.`)}
+        ${_aWarn(`sans dispos saisies, un enseignant est supposé libre toute la semaine. L'EDT généré n'est pas envoyé à Hyperplanning :
+            il sert de base pour y reporter les cours.`)}
         ${_aWarn(`la vue journalière lit la répartition <b>enregistrée</b> : un brouillon en cours dans la vue annuelle est à enregistrer ou abandonner avant.`)}` },
 
     { id: 'matieres', rub: R, titre: 'Matières (volumes, séances, enseignants)', chemin: 'Service › Matières',
@@ -916,15 +937,29 @@ function _aideService() {
 
     { id: 'contraintes', rub: R, titre: "Contraintes d'emploi du temps (enseignant)", chemin: 'Service › Contraintes Enseignant',
       onglet: 'svc:contraintes', cible: 'contraintes',
-      mots: 'contraintes indisponibilité préférence fichier joint disponibilité',
+      mots: 'contraintes indisponibilité préférence fichier joint disponibilité dispos grille semaine type pinceau priorité',
       html: `
         <p>Chaque enseignant y indique ses <b>indisponibilités et préférences</b> pour l'année affichée dans le Service :</p>
         <ul>
-            <li>un <b>texte libre</b> (${_aUi('Enregistrer le texte')}), par exemple « indisponible le lundi matin ; pas de cours après 17 h le mercredi » ;</li>
+            <li>la <b>grille de ses disponibilités</b> sur une semaine type (voir plus bas) : c'est elle que lit le calcul automatique de
+            l'emploi du temps ;</li>
+            <li>un <b>texte libre</b> (${_aUi('Enregistrer le texte')}), pour ce que la grille ne dit pas : une date précise, les semaines paires… ;</li>
             <li>et/ou un <b>fichier joint</b> : PDF, Word, Excel, image… (10 Mo au plus), remplaçable et supprimable.</li>
         </ul>
+        <h3>La grille des disponibilités</h3>
+        <p>Une demi-heure par case, de 8 h à 20 h du lundi au vendredi et de 8 h à 12 h 30 le samedi (les heures où des cours sont
+        possibles ; le samedi après-midi est grisé). Choisissez un pinceau — ${_aCode('Préféré', 'background:#86efac;color:#14532d')}
+        ${_aCode('Possible', 'background:#d9f99d;color:#365314')} ${_aCode('Si besoin', 'background:#fde68a;color:#78350f')}
+        ${_aCode('Dernier recours', 'background:#fdba74;color:#7c2d12')} ${_aCode('Indisponible', 'background:#fca5a5;color:#7f1d1d')} — puis cliquez
+        ou glissez sur les cases ; un clic sur un jour ou sur une heure peint toute la colonne ou toute la ligne. ${_aUi('Tout « préféré »')} et
+        ${_aUi('Tout « indisponible »')} repartent d'une grille unie, puis ${_aUi('Enregistrer la grille')}.</p>
+        <p>Le calcul de l'emploi du temps ne place <b>jamais</b> un cours sur une case indisponible ; il évite ensuite, dans l'ordre, les
+        cases « dernier recours », « si besoin » puis « possible ». Sans grille enregistrée, l'enseignant est supposé disponible toute la semaine.</p>
+        ${_aEx('un vacataire', `${_aUi('Tout « indisponible »')}, puis le pinceau ${_aUi('Préféré')} sur le mardi matin, ${_aUi('Possible')} sur le
+            vendredi après-midi, ${_aUi('Dernier recours')} le lundi à partir de 16 h 30 — et ${_aUi('Enregistrer la grille')}.`)}
         <p>L'administration et le responsable FTP voient les contraintes de <b>tous</b> les enseignants, avec leurs fichiers et la date
-        de mise à jour ; un responsable voit d'abord les siennes, puis celles des autres.</p>
+        de mise à jour ; un responsable voit d'abord les siennes, puis celles des autres. Le bloc ${_aUi('Disponibilités (grille)')} permet
+        de choisir un enseignant (✓ = grille enregistrée) et de saisir sa grille à sa place, ses contraintes écrites affichées à côté.</p>
         ${_aTip(`pour donner ses contraintes de l'an prochain, choisissez d'abord l'année suivante dans la liste ${_aUi('Année')} du Service.`)}` },
 
     { id: 'contraintes-matiere', rub: R, titre: 'Contraintes par matière', chemin: 'Service › Contraintes Matière',

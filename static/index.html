@@ -136,6 +136,60 @@
         .modal-backdrop.open { display: flex; }
         .modal { background: #fff; border-radius: 10px; padding: 24px; width: 100%; max-width: 460px; box-shadow: 0 10px 40px rgba(0,0,0,.2); margin: auto; }
         .modal.modal-wide { max-width: 600px; }
+        /* Générer l'EDT (répartition journalière) : options, bilan, grille de la semaine */
+        .modal.modal-edtgen { max-width: 1120px; }
+        .edtg-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px 18px; margin-bottom: 6px; }
+        .edtg-opts fieldset { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 12px; }
+        .edtg-opts legend { font-size: .8rem; font-weight: 700; color: #374151; padding: 0 4px; }
+        .edtg-opts label { display: flex; gap: 6px; align-items: baseline; font-size: .85rem; margin: 3px 0; cursor: pointer; }
+        .edtg-note { color: #6b7280; font-size: .78rem; }
+        .edtg-progress { margin: 10px 0; padding: 8px 12px; border-radius: 6px; background: #eef2ff; color: #3730a3; font-size: .85rem; }
+        .edtg-progress.err { background: #fef2f2; color: #991b1b; }
+        .edtg-sum { font-size: .9rem; margin: 6px 0 10px; }
+        .edtg-sum b.ko { color: #b45309; }
+        .edtg-small td, .edtg-small th { padding: 5px 10px; font-size: .8rem; }
+        .edtg-weeks tbody tr { cursor: pointer; }
+        .edtg-weeks tbody tr.sel td { background: #eef2ff; }
+        .edtg-grid { table-layout: fixed; }
+        .edtg-grid td { vertical-align: top; padding: 6px; }
+        .edtg-grid tr:hover td { background: #fff; }
+        .edtg-slot { border-left: 3px solid #9ca3af; background: #f9fafb; border-radius: 4px; padding: 4px 6px;
+                     margin-bottom: 4px; font-size: .76rem; line-height: 1.3; }
+        .edtg-slot.t-CM { border-color: #1e40af; background: #eff6ff; }
+        .edtg-slot.t-TD { border-color: #166534; background: #f0fdf4; }
+        .edtg-slot.t-TP { border-color: #9a3412; background: #fff7ed; }
+        .edtg-slot.t-PT { border-color: #6b21a8; background: #faf5ff; }
+        .edtg-slot .edtg-meta { color: #6b7280; }
+        .edtg-alertes { font-size: .8rem; margin-top: 8px; }
+        .edtg-alertes li { margin: 2px 0 2px 18px; }
+        /* Disponibilités : grille de la semaine type (Contraintes Enseignant) */
+        .dsp-wrap { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+        .dsp-palette { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 8px 0; font-size: .8rem; font-weight: 600; color: #374151; }
+        .dsp-brush { border: 2px solid transparent; border-radius: 6px; padding: 3px 10px; font-size: .78rem; font-weight: 600; font-family: inherit; }
+        button.dsp-brush { cursor: pointer; }
+        .dsp-brush.active { border-color: #111827; box-shadow: 0 0 0 2px #fff inset; }
+        .dsp-n1, .dsp-grid td.dsp-n1 { background: #86efac; color: #14532d; }
+        .dsp-n2, .dsp-grid td.dsp-n2 { background: #d9f99d; color: #365314; }
+        .dsp-n3, .dsp-grid td.dsp-n3 { background: #fde68a; color: #78350f; }
+        .dsp-n4, .dsp-grid td.dsp-n4 { background: #fdba74; color: #7c2d12; }
+        .dsp-n0, .dsp-grid td.dsp-n0 { background: #fca5a5; color: #7f1d1d; }
+        table.dsp-grid { width: auto; border-collapse: separate; border-spacing: 2px; box-shadow: none; background: transparent; user-select: none; }
+        table.dsp-grid.dsp-edit { touch-action: none; }
+        .dsp-grid th { padding: 3px 4px; font-size: .72rem; text-align: center; text-transform: none; border: none; background: transparent; }
+        .dsp-edit th[data-j], .dsp-edit td.dsp-h { cursor: pointer; }
+        .dsp-grid td.dsp-h { font-size: .7rem; color: #6b7280; padding: 0 6px 0 0; text-align: right; border: none; white-space: nowrap;
+                             vertical-align: top; line-height: 1; background: transparent; }
+        .dsp-grid td.dsp-c { width: 86px; height: 15px; padding: 0; border: none; border-radius: 3px; }
+        .dsp-edit td.dsp-c { cursor: crosshair; }
+        .dsp-grid td.dsp-ferme { padding: 0; border: none; border-radius: 3px; height: 15px;
+                                 background: repeating-linear-gradient(45deg, #f3f4f6 0 4px, #e5e7eb 4px 8px); }
+        .dsp-grid tr:hover td.dsp-h { background: transparent; }
+        .dsp-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+        .dsp-status { font-size: .8rem; color: #6b7280; }
+        .dsp-status.dirty { color: #b45309; font-weight: 600; }
+        .dsp-texte { flex: 1; min-width: 220px; max-width: 380px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px;
+                     padding: 10px 12px; font-size: .82rem; white-space: pre-wrap; margin-top: 38px; }
+        @media (max-width: 640px) { .dsp-grid td.dsp-c { width: 48px; } }
         .modal h2 { margin-bottom: 16px; }
         .form-group { margin-bottom: 12px; }
         .form-group label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 4px; }
@@ -1460,6 +1514,11 @@
                        style="cursor:pointer;width:15px;height:15px">
                 Optimisée
             </label>
+            <button type="button" id="repj-gen-btn" class="btn btn-primary btn-sm admin-only" style="margin-left:16px"
+                    onclick="openEdtGen()"
+                    title="Placer automatiquement les cours (enseignants, salles et groupes sans chevauchement, dispos, préférences) — aperçu possible avant d'enregistrer">
+                Générer l'EDT
+            </button>
         </div>
         <div class="filters" id="rep-filters-annuelle">
             <label>Semestres :</label>
@@ -1775,6 +1834,55 @@
 
         <div class="form-actions" style="margin-top:16px">
             <button class="btn btn-secondary" onclick="closeModal('modal-ordering')">Fermer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL GÉNÉRER L'EDT (répartition journalière) ===== -->
+<div class="modal-backdrop" id="modal-edt-gen">
+    <div class="modal modal-edtgen">
+        <h2>Générer l'emploi du temps</h2>
+        <p class="edtg-note" style="margin:-8px 0 12px">
+            Place automatiquement les cours de la répartition enregistrée, du lundi au vendredi de 8 h à 20 h et le
+            samedi de 8 h à 12 h 30 : jamais deux cours en même temps pour un enseignant, un groupe ou une salle, dispos
+            des enseignants et 6 h de CM/TD par jour au plus respectées, jeudi après-midi libre pour les FTP (sauf la
+            semaine d'un jour férié), aucun cours un jour férié ; puis le moins de demi-journées possible, la pause
+            déjeuner, l'ordre CM → TD → TP, la salle info fixe plutôt que la mobile, les soirées (après 18 h) et le
+            samedi seulement si nécessaire. Rien n'est envoyé à Hyperplanning.
+        </p>
+        <div class="edtg-opts">
+            <fieldset>
+                <legend>Semaines</legend>
+                <label><input type="radio" name="edtgen-weeks" value="one" checked>
+                    <span>La semaine affichée (<b id="edtgen-week-label">—</b>)</span></label>
+                <label><input type="radio" name="edtgen-weeks" value="all">
+                    <span>Toutes les semaines de l'année <span class="edtg-note">(une dizaine de minutes)</span></span></label>
+            </fieldset>
+            <fieldset>
+                <legend>Années d'étude</legend>
+                <label><input type="radio" name="edtgen-years" value="all" checked>
+                    <span>Toutes <span class="edtg-note">(recommandé : enseignants et salles sont partagés)</span></span></label>
+                <label><input type="radio" name="edtgen-years" value="one">
+                    <span>Seulement la <b id="edtgen-year-label">—</b> <span class="edtg-note">(les autres gardent leur EDT)</span></span></label>
+            </fieldset>
+            <fieldset>
+                <legend>Calcul</legend>
+                <label><input type="checkbox" id="edtgen-preview" checked>
+                    <span>Aperçu seulement <span class="edtg-note">(rien n'est enregistré ; décoché : remplace l'EDT généré de ces semaines)</span></span></label>
+                <label style="align-items:center">Temps par semaine :
+                    <select id="edtgen-time" style="padding:3px 6px;border:1px solid #d1d5db;border-radius:6px">
+                        <option value="20" selected>20 s</option>
+                        <option value="60">60 s (semaines très chargées)</option>
+                    </select></label>
+            </fieldset>
+        </div>
+        <div id="edtgen-progress"></div>
+        <div id="edtgen-result"></div>
+        <div id="edtgen-grid"></div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" id="edtgen-stop" style="display:none" onclick="stopEdtGen()">Arrêter (après le calcul en cours)</button>
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-edt-gen')">Fermer</button>
+            <button type="button" class="btn btn-primary" id="edtgen-run" onclick="runEdtGen()">Lancer</button>
         </div>
     </div>
 </div>
@@ -2694,6 +2802,7 @@ async function api(endpoint, opts = {}) {
             && endpoint !== '/years/session' && endpoint !== '/session-mode'
             && endpoint !== '/notifications/lu'
             && !endpoint.startsWith('/my-account')
+            && !endpoint.startsWith('/constraints/me')      // ses contraintes et sa grille de dispos
             && !endpoint.startsWith('/qr-attendance')
             && !endpoint.startsWith('/salons/')
             && !/\/saisie\/S[1-6]\//.test(endpoint)
@@ -4686,7 +4795,16 @@ function renderConstraintsTeacher(d) {
                    accept=".pdf,.doc,.docx,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.png,.jpg,.jpeg">
             ${fileBlock}
             ${d.updated_at ? `<div style="margin-top:12px;color:#9ca3af;font-size:.8rem">Dernière mise à jour : ${esc(d.updated_at)}</div>` : ''}
+        </div>
+        <div class="card" style="max-width:840px;border-left-color:#16a34a;margin-top:16px">
+            <h3 style="margin:0 0 6px;color:#374151">Mes disponibilités (semaine type)</h3>
+            <p style="color:#6b7280;margin:0 0 4px">Peignez votre semaine type : choisissez un pinceau puis cliquez ou glissez sur les
+               demi-heures (un clic sur un jour ou une heure peint toute la colonne ou la ligne). Cette grille sert directement
+               au calcul automatique de l'emploi du temps ; le texte ci-dessus reste utile pour les exceptions (dates précises,
+               semaines paires…).</p>
+            <div id="dsp-me"></div>
         </div>`;
+    dspCharger('dsp-me', '/constraints/me/dispos', true);
 }
 
 async function saveMyConstraints() {
@@ -4744,10 +4862,24 @@ function renderConstraintsAdmin(list, below = false) {
     // Rappel aux enseignants de l'année affichée qui n'ont rien déposé (onglet Notifications)
     if (adminPower('svc:contraintes') && !tabHidden('nav:notifications'))
         html += `<div style="margin:0 0 10px"><button class="btn btn-secondary btn-sm" onclick="ouvrirRappel('contraintes', _serviceYear)"
-            title="Une notification à chaque enseignant de l'année qui n'a déposé ni texte ni fichier">🔔 Rappeler les enseignants sans contraintes…</button></div>`;
+            title="Une notification à chaque enseignant de l'année qui n'a déposé ni texte, ni fichier, ni grille de dispos">🔔 Rappeler les enseignants sans contraintes…</button></div>`;
+    // Grille de dispos d'un enseignant (saisie par l'admin, p. ex. d'après ses contraintes écrites)
+    html += `<div class="card" style="border-left-color:#16a34a;margin-bottom:16px">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+            <h3 style="margin:0;color:#374151">Disponibilités (grille)</h3>
+            <select id="dsp-adm-sel" onchange="dspAdminChoisir()" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+                <option value="">Chargement…</option></select>
+            <span id="dsp-adm-compte" class="edtg-note"></span>
+        </div>
+        <p class="edtg-note" style="margin:0 0 6px">✓ = grille enregistrée. Sans grille, l'enseignant est supposé disponible toute la semaine
+            pour le calcul de l'emploi du temps. Ses contraintes écrites s'affichent à côté pour les reporter.</p>
+        <div class="dsp-wrap"><div id="dsp-adm"></div><div id="dsp-adm-texte" class="dsp-texte" style="display:none"></div></div>
+    </div>`;
+    const finir = () => dspAdminInit(list);
     if (!list.length) {
         html += '<div class="empty">Aucune contrainte renseignée pour le moment.</div>';
         if (below) el.insertAdjacentHTML('beforeend', html); else el.innerHTML = html;
+        finir();
         return;
     }
     html += `<table class="pn-table"><thead><tr>
@@ -4766,6 +4898,232 @@ function renderConstraintsAdmin(list, below = false) {
         </tr>`).join('') +
         `</tbody></table>`;
     if (below) el.insertAdjacentHTML('beforeend', html); else el.innerHTML = html;
+    finir();
+}
+
+// ===== DISPONIBILITÉS (grille de la semaine type) =====
+// Grille à la demi-heure (lundi → vendredi 8 h → 20 h, samedi 8 h → 12 h 30, comme
+// les cours), rangée dans teacher_availability et lue par le solveur d'EDT
+// (« Générer l'EDT »). Niveau d'un créneau : 1 préféré, 2 possible, 3 si besoin,
+// 4 dernier recours, 0 indisponible. On peint au pinceau (clic ou glisser, souris
+// ou doigt) ; un clic sur un jour ou une heure peint la colonne ou la ligne.
+// L'enregistrement couvre toute la semaine ; le samedi après-midi est fermé.
+const _DSP_DEBUT = 8 * 60, _DSP_FIN = 20 * 60, _DSP_PAS = 30, _DSP_SAMEDI_FIN = 12 * 60 + 30;
+const _DSP_U = (_DSP_FIN - _DSP_DEBUT) / _DSP_PAS;
+const _DSP_JOURS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+const _DSP_NJ = _DSP_JOURS.length;
+function _dspOuvert(j, u) { return j < 5 || _DSP_DEBUT + (u + 1) * _DSP_PAS <= _DSP_SAMEDI_FIN; }
+const _DSP_NIVEAUX = [[1, 'Préféré'], [2, 'Possible'], [3, 'Si besoin'], [4, 'Dernier recours'], [0, 'Indisponible']];
+const _dspGrilles = {};   // id du conteneur -> { cells, url, saisie, modif, pinceau, edit }
+let _dspPeint = null;     // grille en cours de peinture (bouton enfoncé)
+let _dspTextes = {};      // vue admin : teacher_id -> contraintes écrites
+
+function _dspHeure(m) { return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); }
+function _dspMin(h) { const [a, b] = String(h).split(':'); return (+a) * 60 + (+b); }
+
+// Créneaux enregistrés -> niveau de chaque demi-heure, avec les règles du solveur :
+// une indisponibilité qui touche la demi-heure l'emporte ; sinon il faut des
+// dispos qui la couvrent entièrement (niveau le moins bon) ; une demi-heure non
+// couverte est indisponible dès qu'il existe des dispos, disponible s'il n'y a rien.
+function _dspDepuisCreneaux(creneaux) {
+    const cells = new Array(_DSP_NJ * _DSP_U).fill(null);       // null = fermé (samedi après-midi)
+    const aDesDispos = creneaux.some(c => c.niveau > 0);
+    for (let j = 0; j < _DSP_NJ; j++) for (let u = 0; u < _DSP_U; u++) {
+        if (!_dspOuvert(j, u)) continue;
+        const t0 = _DSP_DEBUT + u * _DSP_PAS, t1 = t0 + _DSP_PAS;
+        const touche = creneaux.filter(c => c.jour === j && _dspMin(c.debut) < t1 && _dspMin(c.fin) > t0);
+        let niv;
+        if (touche.some(c => c.niveau === 0)) niv = 0;
+        else {
+            const ok = touche.map(c => [_dspMin(c.debut), _dspMin(c.fin), c.niveau]).sort((a, b) => a[0] - b[0]);
+            let fin = t0;
+            ok.forEach(([s, e]) => { if (s <= fin) fin = Math.max(fin, e); });
+            niv = (ok.length && fin >= t1) ? Math.max(...ok.map(o => o[2])) : (aDesDispos ? 0 : 1);
+        }
+        cells[j * _DSP_U + u] = niv;
+    }
+    return cells;
+}
+
+// Niveaux -> créneaux à enregistrer (demi-heures voisines de même niveau fusionnées)
+function _dspVersCreneaux(cells) {
+    const out = [];
+    for (let j = 0; j < _DSP_NJ; j++) {
+        for (let u = 0; u < _DSP_U;) {
+            const niv = cells[j * _DSP_U + u];
+            let v = u + 1;
+            while (v < _DSP_U && cells[j * _DSP_U + v] === niv) v++;
+            if (niv !== null)                                   // pas de créneau sur le fermé
+                out.push({ jour: j, debut: _dspHeure(_DSP_DEBUT + u * _DSP_PAS),
+                           fin: _dspHeure(_DSP_DEBUT + v * _DSP_PAS), niveau: niv });
+            u = v;
+        }
+    }
+    return out;
+}
+
+async function dspCharger(id, url, edit) {
+    const zone = document.getElementById(id);
+    if (!zone) return;
+    zone.innerHTML = '<div class="spinner">Chargement…</div>';
+    try {
+        const cr = (await api(url + svcQ())).creneaux || [];
+        _dspGrilles[id] = { cells: _dspDepuisCreneaux(cr), url, saisie: cr.length > 0, modif: false,
+                            pinceau: (_dspGrilles[id] || {}).pinceau ?? 0, edit };
+        dspRendre(id);
+    } catch (e) {
+        zone.innerHTML = `<div class="empty">Erreur : ${esc(e.message)}</div>`;
+    }
+}
+
+function _dspStatut(g) {
+    return g.modif ? '<span class="dsp-status dirty">Modifications non enregistrées</span>'
+        : g.saisie ? '<span class="dsp-status">Grille enregistrée</span>'
+        : '<span class="dsp-status">Aucune grille enregistrée : disponible toute la semaine par défaut</span>';
+}
+
+function dspRendre(id) {
+    const g = _dspGrilles[id], zone = document.getElementById(id);
+    if (!g || !zone) return;
+    const legende = _DSP_NIVEAUX.map(([n, lib]) => g.edit
+        ? `<button type="button" class="dsp-brush dsp-n${n}${g.pinceau === n ? ' active' : ''}" onclick="dspPinceau('${id}', ${n})">${lib}</button>`
+        : `<span class="dsp-brush dsp-n${n}">${lib}</span>`).join('');
+    const entete = `<tr><th></th>${_DSP_JOURS.map((j, i) => `<th data-j="${i}"${g.edit ? ' title="Peindre toute la journée"' : ''}>${j}</th>`).join('')}</tr>`;
+    let lignes = '';
+    for (let u = 0; u < _DSP_U; u++) {
+        const m = _DSP_DEBUT + u * _DSP_PAS;
+        lignes += `<tr><td class="dsp-h" data-u="${u}">${m % 60 ? '' : _dspHeure(m)}</td>${_DSP_JOURS.map((jour, j) =>
+            _dspOuvert(j, u)
+                ? `<td class="dsp-c dsp-n${g.cells[j * _DSP_U + u]}" data-j="${j}" data-u="${u}" title="${jour} ${_dspHeure(m)}–${_dspHeure(m + _DSP_PAS)}"></td>`
+                : '<td class="dsp-ferme" title="Samedi après-midi : pas de cours"></td>').join('')}</tr>`;
+    }
+    const actions = g.edit ? `
+        <button type="button" class="btn btn-secondary btn-sm" onclick="dspTout('${id}', 1)">Tout « préféré »</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="dspTout('${id}', 0)">Tout « indisponible »</button>
+        ${g.saisie ? `<button type="button" class="btn btn-secondary btn-sm" style="color:#b91c1c" onclick="dspEffacer('${id}')">Supprimer la grille</button>` : ''}
+        <button type="button" class="btn btn-primary btn-sm" onclick="dspEnregistrer('${id}')">Enregistrer la grille</button>` : '';
+    zone.innerHTML = `<div class="dsp-palette">${g.edit ? 'Pinceau :' : ''} ${legende}</div>
+        <table class="dsp-grid${g.edit ? ' dsp-edit' : ''}">${entete}${lignes}</table>
+        <div class="dsp-actions">${actions} ${_dspStatut(g)}</div>`;
+    if (g.edit) _dspBrancher(zone.querySelector('table.dsp-grid'), id);
+}
+
+function _dspModif(id) {
+    const g = _dspGrilles[id];
+    g.modif = true;
+    const s = document.querySelector(`#${id} .dsp-status`);
+    if (s) s.outerHTML = _dspStatut(g);
+}
+
+function _dspPeindre(id, td) {
+    const g = _dspGrilles[id], k = (+td.dataset.j) * _DSP_U + (+td.dataset.u);
+    if (g.cells[k] === g.pinceau) return;
+    g.cells[k] = g.pinceau;
+    td.className = 'dsp-c dsp-n' + g.pinceau;
+    if (!g.modif) _dspModif(id);
+}
+
+// Peinture au pinceau : clic ou glisser (pointeurs → souris, stylet et doigt)
+function _dspBrancher(table, id) {
+    table.addEventListener('pointerdown', ev => {
+        const g = _dspGrilles[id];
+        const td = ev.target.closest('td.dsp-c');
+        if (td) { ev.preventDefault(); _dspPeint = id; _dspPeindre(id, td); return; }
+        const h = ev.target.closest('td.dsp-h'), th = ev.target.closest('th[data-j]');
+        if (!h && !th) return;
+        for (let j = 0; j < _DSP_NJ; j++) for (let u = 0; u < _DSP_U; u++)
+            if (_dspOuvert(j, u) && ((h && u === +h.dataset.u) || (th && j === +th.dataset.j)))
+                g.cells[j * _DSP_U + u] = g.pinceau;
+        g.modif = true;
+        dspRendre(id);
+    });
+    table.addEventListener('pointermove', ev => {
+        if (_dspPeint !== id) return;
+        const el = document.elementFromPoint(ev.clientX, ev.clientY);
+        const td = el && el.closest && el.closest('td.dsp-c');
+        if (td && table.contains(td)) _dspPeindre(id, td);
+    });
+}
+window.addEventListener('pointerup', () => { _dspPeint = null; });
+window.addEventListener('pointercancel', () => { _dspPeint = null; });
+
+function dspPinceau(id, n) { _dspGrilles[id].pinceau = n; dspRendre(id); }
+
+function dspTout(id, n) {
+    const g = _dspGrilles[id];
+    g.cells = g.cells.map(c => (c === null ? null : n));        // le fermé reste fermé
+    g.modif = true;
+    dspRendre(id);
+}
+
+async function dspEnregistrer(id) {
+    const g = _dspGrilles[id];
+    try {
+        const r = await api(g.url + svcQ(), { method: 'PUT', body: JSON.stringify({ creneaux: _dspVersCreneaux(g.cells) }) });
+        g.cells = _dspDepuisCreneaux(r.creneaux || []);
+        g.saisie = (r.creneaux || []).length > 0;
+        g.modif = false;
+        dspRendre(id);
+        toast('Disponibilités enregistrées');
+        if (id === 'dsp-adm') _dspAdminCoche(true);
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+async function dspEffacer(id) {
+    if (!confirm('Supprimer la grille ? Sans grille, l\'enseignant est supposé disponible toute la semaine.')) return;
+    const g = _dspGrilles[id];
+    try {
+        await api(g.url + svcQ(), { method: 'PUT', body: JSON.stringify({ creneaux: [] }) });
+        toast('Grille supprimée');
+        if (id === 'dsp-adm') _dspAdminCoche(false);
+        dspCharger(id, g.url, g.edit);
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+// Vue admin : liste des enseignants (✓ = grille enregistrée) et grille de celui choisi
+async function dspAdminInit(list) {
+    _dspTextes = Object.fromEntries((list || []).map(c => [String(c.teacher_id), c.content || '']));
+    const sel = document.getElementById('dsp-adm-sel');
+    if (!sel) return;
+    try {
+        const ens = await api('/constraints/dispos' + svcQ());
+        sel.innerHTML = '<option value="">— Choisir un enseignant —</option>' + ens.map(e =>
+            `<option value="${e.teacher_id}" data-nom="${esc(e.teacher_name)}">${e.saisie ? '✓ ' : ''}${esc(e.teacher_name)}${
+                e.status ? ' (' + esc(e.status) + ')' : ''}</option>`).join('');
+        document.getElementById('dsp-adm-compte').textContent =
+            `${ens.filter(e => e.saisie).length} / ${ens.length} enseignant(s) avec une grille`;
+    } catch (e) {
+        sel.innerHTML = '<option value="">Erreur de chargement</option>';
+    }
+}
+
+function dspAdminChoisir() {
+    const tid = document.getElementById('dsp-adm-sel').value;
+    const txt = document.getElementById('dsp-adm-texte');
+    if (!tid) {
+        document.getElementById('dsp-adm').innerHTML = '';
+        txt.style.display = 'none';
+        return;
+    }
+    const t = _dspTextes[tid];
+    txt.style.display = '';
+    txt.innerHTML = t ? `<b>Ses contraintes écrites</b>\n${esc(t)}` : '<span class="edtg-note">Pas de contraintes écrites.</span>';
+    dspCharger('dsp-adm', `/constraints/${tid}/dispos`, adminPower('svc:contraintes'));
+}
+
+// Met à jour la coche ✓ de l'enseignant affiché et le compteur
+function _dspAdminCoche(saisie) {
+    const sel = document.getElementById('dsp-adm-sel');
+    const opt = sel && sel.options[sel.selectedIndex];
+    if (!opt || !opt.value) return;
+    opt.textContent = (saisie ? '✓ ' : '') + opt.textContent.replace(/^✓ /, '');
+    const n = [...sel.options].filter(o => o.value && o.textContent.startsWith('✓ ')).length;
+    document.getElementById('dsp-adm-compte').textContent =
+        `${n} / ${sel.options.length - 1} enseignant(s) avec une grille`;
 }
 
 // ===== CONTRAINTES PAR MATIÈRE =====
@@ -18531,6 +18889,207 @@ async function toggleRepJourStatus(kind) {
     } finally {
         syncRepJourStatusBoxes();
     }
+}
+
+// ----- Générer l'EDT (solveur PuLP du serveur, solveur_edt.py) -----
+// Place les cours de la répartition enregistrée : la semaine affichée ou toutes,
+// toutes les années d'étude ou seulement celle affichée (les autres gardent leurs
+// créneaux, qui bloquent enseignants et salles). Le serveur rend la main au bout
+// d'environ 100 s avec les semaines qui restent : on relance jusqu'au bout. En
+// aperçu rien n'est écrit ; sinon l'EDT généré de ces semaines est remplacé
+// (table timetable_slots — Hyperplanning n'est pas touché).
+const _EDTG_JOURS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+let _edtGen = { run: false, stop: false, agg: null, apercu: true, semaine: null };
+
+function _edtgAnneeLabel() {
+    const sel = document.getElementById('repj-annee');
+    return sel.options[sel.selectedIndex].text.replace(/\s*\(.*\)$/, '');
+}
+
+function openEdtGen() {
+    if (state.resp && state.resp.length) {
+        toast('La génération est réservée à la session administrateur', 'error');
+        return;
+    }
+    const w = parseInt(document.getElementById('repj-week').value);
+    document.getElementById('edtgen-week-label').textContent = w ? 'S' + w : '—';
+    document.getElementById('edtgen-year-label').textContent = _edtgAnneeLabel();
+    openModal('modal-edt-gen');
+    if (_edtGen.run) return;                  // calcul en cours : on retrouve son avancement
+    document.getElementById('edtgen-progress').innerHTML = '';
+    document.getElementById('edtgen-result').innerHTML = '';
+    _edtGen.agg = null;
+    if (w) edtGenAfficherSemaine(w, false);   // EDT déjà enregistré de la semaine, s'il y en a un
+}
+
+function stopEdtGen() {
+    _edtGen.stop = true;
+    document.getElementById('edtgen-stop').disabled = true;
+}
+
+function _edtgProgress(html, err) {
+    document.getElementById('edtgen-progress').innerHTML =
+        html ? `<div class="edtg-progress${err ? ' err' : ''}">${html}</div>` : '';
+}
+
+async function runEdtGen() {
+    if (_edtGen.run) return;
+    const w = parseInt(document.getElementById('repj-week').value);
+    const yg = parseInt(document.getElementById('repj-annee').value) || 1;
+    const toutes = document.querySelector('input[name="edtgen-weeks"]:checked').value === 'all';
+    const uneAnnee = document.querySelector('input[name="edtgen-years"]:checked').value === 'one';
+    const apercu = document.getElementById('edtgen-preview').checked;
+    const temps = parseInt(document.getElementById('edtgen-time').value) || 20;
+    if (!toutes && !w) { toast('Choisissez une semaine', 'error'); return; }
+    const agg = { semaines: [], conflicts: [], avert: [], charges: [], creneaux: [], ecrits: 0, duree: 0, solveur: '' };
+    _edtGen = { run: true, stop: false, agg, apercu, semaine: toutes ? null : w };
+    const btnRun = document.getElementById('edtgen-run'), btnStop = document.getElementById('edtgen-stop');
+    btnRun.disabled = true;
+    btnStop.style.display = toutes ? '' : 'none';
+    btnStop.disabled = false;
+    document.getElementById('edtgen-result').innerHTML = '';
+    document.getElementById('edtgen-grid').innerHTML = '';
+    let pending = toutes ? [] : [w];
+    let premier = true;
+    const t0 = Date.now();
+    try {
+        while (premier || pending.length) {
+            if (_edtGen.stop) break;
+            const faites = agg.semaines.length;
+            _edtgProgress(`⏳ Calcul en cours${faites ? ` — ${faites} semaine(s) faite(s)` : ''}`
+                + `${pending.length ? `, ${pending.length} à faire` : ''}… `
+                + `<span class="edtg-note">(${Math.round((Date.now() - t0) / 1000)} s ; jusqu'à ${temps} s par semaine)</span>`);
+            const body = { moteur: 'pulp', semaines: pending, simulation: apercu, temps_max: temps };
+            if (uneAnnee) body.annees = [yg];
+            const res = await api('/generate-timetable' + svcQ(), { method: 'POST', body: JSON.stringify(body) });
+            premier = false;
+            agg.semaines.push(...(res.semaines || []));
+            agg.conflicts.push(...(res.conflicts || []));
+            agg.avert.push(...(res.avertissements || []));
+            agg.charges.push(...(res.charges || []));
+            if (apercu) agg.creneaux.push(...(res.creneaux || []));
+            else agg.ecrits += res.generated_slots || 0;
+            agg.duree += res.duree_s || 0;
+            agg.solveur = res.solveur || agg.solveur;
+            const reste = res.semaines_restantes || [];
+            if (reste.length && !(res.semaines || []).length)
+                throw new Error("le serveur n'a traité aucune semaine (temps de calcul trop court ?)");
+            pending = reste;
+            edtGenRendre();
+        }
+        _edtgProgress(_edtGen.stop && pending.length
+            ? `⏹ Arrêté : ${pending.length} semaine(s) non traitée(s) (S${pending.join(', S')}).`
+            : `✓ Terminé en ${Math.round((Date.now() - t0) / 1000)} s.`);
+    } catch (e) {
+        _edtgProgress('Erreur : ' + esc(e.message), true);
+    } finally {
+        _edtGen.run = false;
+        btnRun.disabled = false;
+        btnStop.style.display = 'none';
+        edtGenRendre();
+        const traitees = agg.semaines.filter(s => s.places != null).map(s => s.semaine);
+        const voir = traitees.includes(w) ? w : traitees[0];
+        if (voir) edtGenAfficherSemaine(voir, apercu);
+        if (!apercu && traitees.length) toast(`EDT enregistré : ${agg.ecrits} créneaux`);
+    }
+}
+
+// Bilan : séances placées, semaine par semaine, non placées, alertes
+function edtGenRendre() {
+    const agg = _edtGen.agg;
+    const zone = document.getElementById('edtgen-result');
+    if (!agg || !agg.semaines.length) { zone.innerHTML = ''; return; }
+    const faites = agg.semaines.filter(s => s.places != null);
+    const placees = faites.reduce((n, s) => n + s.places, 0);
+    const total = agg.semaines.reduce((n, s) => n + (s.seances || 0), 0);
+    const manque = total - placees;
+    let html = `<div class="edtg-sum"><b>${placees}</b> séance(s) placée(s) sur ${total}`
+        + (manque ? ` — <b class="ko">${manque} non placée(s)</b>` : ' — toutes placées')
+        + ` · ${faites.length} semaine(s) · ${Math.round(agg.duree)} s de calcul (${esc(agg.solveur)})`
+        + (_edtGen.apercu ? ' · <b>aperçu, rien n\'est enregistré</b>' : ` · ${agg.ecrits} créneaux enregistrés`)
+        + '</div>';
+    if (agg.semaines.length > 1) {
+        html += `<div class="section-title">Semaines <span class="edtg-note">(clic : voir la semaine)</span></div>
+            <div style="max-height:180px;overflow:auto"><table class="edtg-small edtg-weeks"><thead><tr>
+            <th>Semaine</th><th>Placées</th><th>Résultat</th><th>Durée</th></tr></thead><tbody>${
+            agg.semaines.map(s => `<tr data-w="${s.semaine}" class="${s.semaine === _edtGen.semaine ? 'sel' : ''}"
+                onclick="edtGenAfficherSemaine(${s.semaine}, ${_edtGen.apercu})">
+                <td>S${s.semaine}</td><td>${s.places != null ? s.places + ' / ' + s.seances : (s.seances || 0)}</td>
+                <td title="${esc(s.statut || '')}">${esc(s.statut_edt
+                    || (s.statut === 'vide' ? 'aucun cours'
+                        : s.non_places ? s.non_places + ' non placée(s)' : 'complète'))}</td>
+                <td>${s.duree_s != null ? Math.round(s.duree_s) + ' s' : ''}</td></tr>`).join('')
+            }</tbody></table></div>`;
+    }
+    if (agg.conflicts.length) {
+        const c = [...agg.conflicts].sort((a, b) => a.week - b.week || String(a.course).localeCompare(String(b.course)));
+        html += `<div class="section-title">Séances non placées (${c.length}) — à poser à la main</div>
+            <div style="max-height:200px;overflow:auto"><table class="edtg-small"><thead><tr>
+            <th>Sem.</th><th>Matière</th><th>Type</th><th>Gr.</th><th>Durée</th><th>Enseignant</th></tr></thead><tbody>${
+            c.map(k => `<tr><td>S${k.week}</td><td>${esc(k.course)}</td><td>${esc(k.type)}</td>
+                <td>${k.group != null ? k.group : ''}</td><td>${k.hours != null ? k.hours + ' h' : ''}</td>
+                <td>${esc(k.teacher_name || '')}</td></tr>`).join('')
+            }</tbody></table></div>
+            <p class="edtg-note">Causes habituelles : plus d'heures que de créneaux pour un enseignant, une salle de TP
+            saturée, des dispos trop étroites. Relancer la semaine avec « 60 s » aide quand elle est très chargée.</p>`;
+    }
+    const alertes = agg.avert.filter(a => !/salle info mobile/.test(a));
+    const mobiles = agg.avert.length - alertes.length;
+    const charges = agg.charges.map(c => `S${c.semaine} · ${c.annee}A ${c.formation} : ${c.heures} h prévues (${c.alerte})`);
+    if (alertes.length || charges.length || mobiles) {
+        html += `<details class="edtg-alertes"><summary>Alertes (${alertes.length + charges.length})${
+            mobiles ? ` · ${mobiles} séance(s) en salle info mobile` : ''}</summary><ul>${
+            [...alertes, ...charges].map(a => `<li>${esc(a)}</li>`).join('')}</ul></details>`;
+    }
+    zone.innerHTML = html;
+}
+
+// Grille d'une semaine pour l'année d'étude et la cohorte affichées : l'aperçu
+// calculé, ou l'EDT enregistré (GET /timetable/week)
+async function edtGenAfficherSemaine(w, apercu) {
+    _edtGen.semaine = w;
+    document.querySelectorAll('.edtg-weeks tbody tr').forEach(tr =>
+        tr.classList.toggle('sel', parseInt(tr.dataset.w) === w));
+    const zone = document.getElementById('edtgen-grid');
+    let slots;
+    if (apercu) {
+        slots = ((_edtGen.agg && _edtGen.agg.creneaux) || []).filter(s => s.week_number === w);
+    } else {
+        zone.innerHTML = '<div class="spinner">Chargement…</div>';
+        try { slots = (await api('/timetable/week/' + w + svcQ())).slots || []; }
+        catch (e) { zone.innerHTML = `<div class="empty">Erreur : ${esc(e.message)}</div>`; return; }
+    }
+    zone.innerHTML = edtGenGrilleHtml(slots, w, apercu);
+}
+
+function edtGenGrilleHtml(slots, w, apercu) {
+    const yg = parseInt(document.getElementById('repj-annee').value) || 1;
+    const cohorte = document.getElementById('repj-cohorte').value;
+    const garde = s => s.year_group === yg && (cohorte === 'MUT' || s.form_type === 2
+        || s.form_type === (cohorte === 'FTP' ? 0 : 1));
+    const titre = `S${w} · ${esc(_edtgAnneeLabel())} · ${cohorte}`
+        + (apercu ? ' — aperçu' : ' — EDT enregistré');
+    const vus = slots.filter(garde);
+    if (!vus.length) {
+        return `<div class="section-title">${titre}</div><div class="empty">${slots.length
+            ? 'Aucun cours pour cette année et cette cohorte (changez-les en haut de l\'écran).'
+            : (apercu ? 'Aucun cours placé.' : 'Aucun EDT généré pour cette semaine.')}</div>`;
+    }
+    // Le samedi (matin) n'apparaît que s'il porte des cours
+    const nomsJours = _EDTG_JOURS.slice(0, vus.some(s => s.day_of_week === 5) ? 6 : 5);
+    const jours = nomsJours.map((_, d) => vus.filter(s => s.day_of_week === d)
+        .sort((a, b) => a.start_time.localeCompare(b.start_time) || String(a.course_code).localeCompare(String(b.course_code))));
+    const bloc = s => {
+        const tt = String(s.teaching_type || '').toUpperCase();
+        const gr = s.group_index != null ? ` gr${s.group_index}` : '';
+        const form = { 0: 'FTP', 1: 'ALT', 2: 'MUT' }[s.form_type] || '';
+        return `<div class="edtg-slot t-${esc(tt.slice(0, 2))}"><b>${esc(s.start_time)}–${esc(s.end_time)}</b>
+            ${esc(s.course_code || '')} ${esc(tt)}${gr} <span class="edtg-meta">${form}</span><br>
+            <span class="edtg-meta">${esc(s.teacher_name || 'sans enseignant')} · ${esc(s.room_name || 'salle à choisir')}</span></div>`;
+    };
+    return `<div class="section-title">${titre} <span class="edtg-note">(${vus.length} cours)</span></div>
+        <table class="edtg-grid"><thead><tr>${nomsJours.map(j => `<th>${j}</th>`).join('')}</tr></thead>
+        <tbody><tr>${jours.map(js => `<td>${js.map(bloc).join('') || '<span class="edtg-note">—</span>'}</td>`).join('')}</tr></tbody></table>`;
 }
 
 // Bandeau d'avancement de la cohorte affichée : combien de semaines posées puis

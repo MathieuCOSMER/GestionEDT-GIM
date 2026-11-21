@@ -3079,7 +3079,7 @@ import re as _re
 # Reconnaît /api/courses/<id>/content et /constraints (autorisés aux intervenants en écriture)
 _COURSE_CONTENT_RE = _re.compile(r'^/api/courses/\d+/(content|constraints)$')
 # Reconnaît /api/constraints/me[...] (l'enseignant gère SES propres contraintes)
-_CONSTRAINTS_SELF_RE = _re.compile(r'^/api/constraints/me(/file)?$')
+_CONSTRAINTS_SELF_RE = _re.compile(r'^/api/constraints/me(/file|/dispos)?$')
 # Reconnaît la saisie de notes par sous-matière (onglet Saisie Notes) : ouverte
 # aux enseignants avec promo_access, l'autorisation fine (colonne éditable,
 # référent) est vérifiée dans les handlers.
@@ -3153,6 +3153,8 @@ _YEAR_OVERRIDE_PREFIXES = (
     '/api/external-hours',       # heures hors GIM publiques (admin, Bilan Global)
     '/api/qr-attendance',        # appel par QR code, choisi dans le Bilan Global
     '/api/edt-planned-weeks',    # suivi posées / optimisées (répartition journalière)
+    '/api/generate-timetable',   # bouton « Générer l'EDT » (répartition journalière)
+    '/api/timetable/',           # EDT généré, affiché après la génération
     '/api/export/repartition',
     '/api/import/repartition',
     '/api/compare/hyperplanning',  # comparaison d'un export Hyperplanning
@@ -3676,7 +3678,8 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     (r'^/api/(checks|export)/repartition$', ['rep:annuelle'], 'readlike'),
     (r'^/api/edt-planned-weeks$', ['rep:jour'], ''),
     (r'^/api/compare/hyperplanning$', ['svc:comparaison'], 'readlike'),
-    (r'^/api/constraints/me(/file)?$', ['svc:contraintes'], ''),
+    (r'^/api/constraints/me(/file|/dispos)?$', ['svc:contraintes'], ''),
+    (r'^/api/constraints/\d+/dispos$', ['svc:contraintes'], 'strict'),
     (r'^/api/qr-attendance$', ['svc:repartition-enseignant'], ''),
     (r'^/api/my-account(/.*)?$', ['nav:mon-compte'], ''),
     (r'^/api/(special-calendar|week-comments|category-codes|config)$', ['promo:calendrier'], ''),
@@ -4292,6 +4295,115 @@ def download_constraint_file(teacher_id):
         return error_response('Aucun fichier', 404)
     return _send_constraint_file(row)
 
+# ----- Disponibilités structurées (grille de la semaine type) -----
+# Grille à la demi-heure, lundi → vendredi, rangée dans teacher_availability et lue
+# par le solveur d'EDT (solveur_edt.py). Niveau d'un créneau : 0 = indisponible
+# (available=0), 1 = préféré, 2 = possible, 3 = si besoin, 4 = dernier recours
+# (available=1, priority=niveau). L'écran enregistre toujours la semaine entière :
+# pas de créneau « non dit ». Pas de ligne du tout = toujours disponible.
+_DISPO_HEURE_RE = _re.compile(r'^([01]?\d|2[0-3]):([0-5]\d)$')
+
+def _dispo_minutes(v):
+    m = _DISPO_HEURE_RE.match(str(v or '').strip())
+    return int(m.group(1)) * 60 + int(m.group(2)) if m else None
+
+def _dispos_lire(teacher_id):
+    rows = get_db().execute('''SELECT day_of_week, start_time, end_time, available, priority
+                               FROM teacher_availability WHERE teacher_id = ?
+                               ORDER BY day_of_week, start_time''', (teacher_id,)).fetchall()
+    return [{'jour': r['day_of_week'], 'debut': r['start_time'], 'fin': r['end_time'],
+             'niveau': (int(r['priority'] or 1) if r['available'] else 0)} for r in rows]
+
+def _dispos_ecrire(teacher_id, creneaux):
+    """Remplace la grille de l'enseignant. Renvoie un message d'erreur, ou None."""
+    if not isinstance(creneaux, list) or len(creneaux) > 500:
+        return 'Grille invalide'
+    propres = []
+    for c in creneaux:
+        if not isinstance(c, dict):
+            return 'Créneau invalide'
+        try:
+            jour, niveau = int(c.get('jour')), int(c.get('niveau'))
+        except (TypeError, ValueError):
+            return 'Créneau invalide'
+        d, f = _dispo_minutes(c.get('debut')), _dispo_minutes(c.get('fin'))
+        if d is None or f is None or not (0 <= jour <= 5) or niveau not in (0, 1, 2, 3, 4) or d >= f:
+            return 'Créneau invalide'
+        propres.append((jour, d, f, niveau))
+    for jour in range(6):
+        plages = sorted((d, f) for j, d, f, _ in propres if j == jour)
+        if any(a[1] > b[0] for a, b in zip(plages, plages[1:])):
+            return 'Deux créneaux se chevauchent'
+    db = get_db()
+    db.execute('DELETE FROM teacher_availability WHERE teacher_id = ?', (teacher_id,))
+    db.executemany('''INSERT INTO teacher_availability
+                          (teacher_id, day_of_week, start_time, end_time, available, priority)
+                      VALUES (?,?,?,?,?,?)''',
+                   [(teacher_id, j, f'{d // 60:02d}:{d % 60:02d}', f'{f // 60:02d}:{f % 60:02d}',
+                     1 if niveau else 0, niveau or 1) for j, d, f, niveau in propres])
+    db.commit()
+    return None
+
+@app.route('/api/constraints/me/dispos', methods=['GET'])
+def get_my_dispos():
+    tid = _current_teacher_id()
+    if not tid:
+        return error_response('Réservé aux enseignants', 403)
+    return jsonify({'creneaux': _dispos_lire(tid)})
+
+@app.route('/api/constraints/me/dispos', methods=['PUT'])
+def save_my_dispos():
+    tid = _current_teacher_id()
+    if not tid:
+        return error_response('Réservé aux enseignants', 403)
+    creneaux = (request.get_json(silent=True) or {}).get('creneaux')
+    err = _dispos_ecrire(tid, creneaux)
+    if err:
+        return error_response(err, 400)
+    _audit('DISPOS_SAVE', ip=_client_ip(), user=session.get('user'), creneaux=len(creneaux))
+    if creneaux:
+        _notif_sur(_notif_contraintes_lues)
+    return jsonify({'creneaux': _dispos_lire(tid)})
+
+@app.route('/api/constraints/dispos', methods=['GET'])
+def list_dispos():
+    """Enseignants de l'année et état de leur grille (vue d'administration de l'onglet)."""
+    if not _admin_view('svc:contraintes'):
+        return error_response('Accès réservé à l\'administrateur', 403)
+    rows = get_db().execute('''
+        SELECT t.id, t.name, t.status,
+               (SELECT COUNT(*) FROM teacher_availability ta WHERE ta.teacher_id = t.id) AS nb
+        FROM teachers t ORDER BY t.name''').fetchall()
+    return jsonify([{'teacher_id': r['id'], 'teacher_name': r['name'], 'status': r['status'] or '',
+                     'saisie': r['nb'] > 0} for r in rows])
+
+@app.route('/api/constraints/<int:teacher_id>/dispos', methods=['GET'])
+def get_teacher_dispos(teacher_id):
+    if not _admin_view('svc:contraintes'):
+        return error_response('Accès réservé à l\'administrateur', 403)
+    if not get_db().execute('SELECT 1 FROM teachers WHERE id = ?', (teacher_id,)).fetchone():
+        return error_response('Enseignant introuvable', 404)
+    return jsonify({'creneaux': _dispos_lire(teacher_id)})
+
+@app.route('/api/constraints/<int:teacher_id>/dispos', methods=['PUT'])
+def save_teacher_dispos(teacher_id):
+    """L'admin (ou le responsable qui a la main sur l'onglet) saisit la grille d'un
+    enseignant, par exemple d'après ses contraintes écrites."""
+    if not _admin_view('svc:contraintes'):
+        return error_response('Accès réservé à l\'administrateur', 403)
+    err = _require_admin()
+    if err:
+        return err
+    if not get_db().execute('SELECT 1 FROM teachers WHERE id = ?', (teacher_id,)).fetchone():
+        return error_response('Enseignant introuvable', 404)
+    creneaux = (request.get_json(silent=True) or {}).get('creneaux')
+    err = _dispos_ecrire(teacher_id, creneaux)
+    if err:
+        return error_response(err, 400)
+    _audit('DISPOS_SAVE', ip=_client_ip(), user=session.get('user'), teacher=teacher_id,
+           creneaux=len(creneaux))
+    return jsonify({'creneaux': _dispos_lire(teacher_id)})
+
 # ======================= NOTIFICATIONS =======================
 # Onglet Notifications : ce que le site signale à chaque utilisateur connecté avec
 # un mot de passe (enseignant, responsable, admin), à la place de mails :
@@ -4467,8 +4579,11 @@ def _contraintes_deposees(annee, nom):
     try:
         row = ydb.execute('''SELECT 1 FROM teacher_constraints tc JOIN teachers t ON t.id = tc.teacher_id
                              WHERE LOWER(t.name) = LOWER(?)
-                               AND ((tc.content IS NOT NULL AND tc.content <> '') OR tc.file_path IS NOT NULL)''',
-                          (nom,)).fetchone()
+                               AND ((tc.content IS NOT NULL AND tc.content <> '') OR tc.file_path IS NOT NULL)
+                             UNION ALL
+                             SELECT 1 FROM teacher_availability ta JOIN teachers t ON t.id = ta.teacher_id
+                             WHERE LOWER(t.name) = LOWER(?)''',
+                          (nom, nom)).fetchone()
     finally:
         ydb.close()
     return row is not None
@@ -4714,6 +4829,7 @@ def _rappel_contraintes_cibles(annee):
                           AND (cs.nb_sessions > 0 OR cs.total_hours > 0))
               AND NOT EXISTS (SELECT 1 FROM teacher_constraints tc WHERE tc.teacher_id = t.id
                           AND ((tc.content IS NOT NULL AND tc.content <> '') OR tc.file_path IS NOT NULL))
+              AND NOT EXISTS (SELECT 1 FROM teacher_availability ta WHERE ta.teacher_id = t.id)
             ORDER BY t.name''').fetchall()
     finally:
         ydb.close()
@@ -18761,7 +18877,39 @@ def compare_hyperplanning():
 
 @app.route('/api/generate-timetable', methods=['POST'])
 def generate_timetable():
-    """Generate timetable with constraint-based scheduling.
+    """Génère l'EDT des semaines demandées dans timetable_slots.
+
+    Moteur par défaut : solveur PuLP de solveur_edt.py (programmation linéaire en
+    nombres entiers, contraintes calquées sur flop!). Réglages du corps JSON :
+    voir solveur_edt.lire_reglages (semaines, annees, temps_max, simulation,
+    poids…). {"moteur": "glouton"}, ou PuLP absent, garde l'ancien placement."""
+    data = request.get_json(silent=True) or {}
+    data.setdefault('annee_universitaire', get_current_year())   # dates des semaines (jours fériés)
+    moteur = str(data.get('moteur') or data.get('engine') or '').lower()
+    if moteur != 'glouton':
+        try:
+            import solveur_edt
+        except ImportError:
+            solveur_edt = None
+        if solveur_edt is not None and solveur_edt.solveur_disponible():
+            try:
+                return jsonify(solveur_edt.generer(get_db(), data)), 200
+            except ValueError as e:
+                return error_response(str(e), 400)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return error_response(f'Erreur du solveur : {e}', 500)
+        # Moteur PuLP demandé (bouton « Générer l'EDT », aperçu compris) : pas de
+        # repli silencieux sur le glouton, qui écrirait dans la base
+        if moteur == 'pulp' or data.get('simulation'):
+            return error_response('Solveur PuLP non installé sur le serveur '
+                                  '(pip install -r requirements.txt)', 503)
+    return _generate_timetable_glouton()
+
+
+def _generate_timetable_glouton():
+    """Ancien générateur glouton (secours quand PuLP n'est pas installé).
 
     Constraints:
     - ALT: max 40h/week
