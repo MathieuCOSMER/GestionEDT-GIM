@@ -3,8 +3,11 @@
 Place, semaine par semaine, les heures de la répartition (`weekly_hours`) sur une
 grille au pas de 30 min — lundi → vendredi de 8 h à 20 h, samedi de 8 h à 12 h 30,
 soirées (après 18 h) et samedi pris en dernier —, puis attribue les salles.
-Règles du département : jeudi après-midi libre pour les FTP, sauf la semaine d'un
-jour férié ; jours fériés (fixes et mobiles, calculés) fermés à tous les cours.
+Règles du département : jeudi après-midi (dès 12 h 30) libre pour les FTP, sauf la
+semaine d'un jour férié ou d'un pont ; jours fériés et ponts fermés à tous les cours.
+Ces jours se définissent par année (app_settings['jours_fermes'], écran « Jours
+fériés et ponts ») ; tant que la liste n'est pas enregistrée, les jours fériés
+légaux (fixes et mobiles, calculés) sont pris, sans pont.
 
 La modélisation suit celle de flop! (https://framagit.org/flopedt/flopedt) : une
 variable binaire « la séance e commence au créneau s », des contraintes dures, et
@@ -32,6 +35,12 @@ Correspondance avec les contraintes de flop! :
                                    course_sequences (même semaine)
   CourseStartTimeConstraint        heures de début autorisées par durée de séance
   fixed courses / other depts      créneaux déjà posés des années non recalculées
+  (règle du département)           espacement d'une matière pour les mêmes étudiants :
+                                   pas deux séances le même jour, si possible pas deux
+                                   jours de suite — idéal : 2 ou 3 jours d'écart
+
+Les poids des préférences (POIDS_DEFAUT) se règlent dans la fenêtre « Générer
+l'EDT » (réglage du site « edt_poids », lu par app.py) ou dans la requête (poids).
 
 Conventions de données (celles d'app.py) :
   * formation_type : 0 = FTP, 1 = ALT, 2 = MUT (FTP + ALT ensemble), 3 = autre.
@@ -101,9 +110,38 @@ POIDS_DEFAUT = {
     'salle_info_mobile': 0.5,       # par 30 min passées en salle info mobile
     'ordre_cm_td_tp': 5.0,          # par paire inversée (TD un jour avant son CM, TP avant son TD)
     'enchainement': 20.0,           # idem pour course_sequences (même semaine)
-    'etalement': 1.0,               # deux séances d'un même groupe le même jour
+    # Espacement d'une matière pour un même groupe d'étudiants (CM, TD et TP confondus)
+    'matiere_meme_jour': 10.0,      # par séance en trop le même jour
+    'matiere_lendemain': 3.0,       # par paire de jours consécutifs (lundi puis mardi)
+    'matiere_ecart_long': 1.0,      # 4 jours ou plus sans elle entre deux séances (lundi puis vendredi)
     'soir_samedi': 1.0,             # par 30 min de cours après 18 h ou le samedi (permis, mais en dernier)
 }
+# Ancien nom → nouveau (requêtes ou réglages enregistrés avant le renommage)
+POIDS_ALIAS = {'etalement': 'matiere_meme_jour'}
+
+# Poids réglables dans la fenêtre « Générer l'EDT » : (clé, libellé, unité, explication).
+# « non_place » n'y figure pas : le placement passe toujours avant les préférences
+# (phase 1 du calcul, puis niveau imposé à la phase 2), son poids n'y change rien.
+POIDS_INFOS = [
+    ('matiere_meme_jour', 'Même matière deux fois le même jour', 'par séance en trop',
+     "Pour un même groupe d'étudiants, CM, TD et TP confondus. Poids fort : c'est le minimum d'un jour d'écart."),
+    ('matiere_lendemain', 'Même matière deux jours de suite', 'par paire de jours',
+     "Lundi puis mardi, par exemple. L'idéal est 2 ou 3 jours d'écart."),
+    ('matiere_ecart_long', 'Même matière à 4 jours ou plus d’écart', 'par écart',
+     'Lundi puis vendredi, sans séance entre les deux.'),
+    ('pref_enseignant', "Créneau non préféré d'un enseignant", 'par 30 min',
+     'Créneaux de niveau 2 à 4 de sa grille de dispos (coût moyen 1).'),
+    ('demi_journee_enseignant', "Demi-journée de présence d'un enseignant", 'par demi-journée',
+     'Plus il est fort, plus les cours de chacun sont regroupés.'),
+    ('demi_journee_groupe', "Demi-journée de présence d'un groupe", 'par demi-journée',
+     'Idem pour les étudiants.'),
+    ('dejeuner', 'Pause déjeuner manquante', 'par 30 min', "Moins d'une heure libre entre 12 h et 14 h."),
+    ('ordre_cm_td_tp', 'Ordre CM → TD → TP non respecté', 'par paire', 'TD placé un jour avant son CM, TP avant son TD.'),
+    ('enchainement', 'Enchaînement imposé non respecté', 'par paire', 'Ordres saisis dans Contraintes Matière.'),
+    ('salle_info_mobile', 'Salle info mobile plutôt que fixe', 'par 30 min', ''),
+    ('soir_samedi', 'Cours après 18 h ou le samedi', 'par 30 min', 'Permis, mais pris en dernier.'),
+]
+POIDS_MAX = 1000.0
 
 
 # ───────────────────────── outils ─────────────────────────
@@ -179,8 +217,8 @@ class Reglages:
     jours: list = field(default_factory=lambda: [0, 1, 2, 3, 4, 5])
     samedi_fin: int = 12 * 60 + 30   # samedi : le matin seulement, 8 h → 12 h 30
     soiree: int = 18 * 60            # au-delà : créneau permis mais pénalisé (poids soir_samedi)
-    jeudi_ftp_libre: int | None = 13 * 60   # jeudi après-midi libre pour les FTP à partir de…
-    feries: bool = True              # jours fériés fermés ; leur semaine rouvre le jeudi après-midi
+    jeudi_ftp_libre: int | None = 12 * 60 + 30   # jeudi après-midi libre pour les FTP à partir de…
+    feries: bool = True              # jours fériés et ponts fermés ; leur semaine rouvre le jeudi après-midi
     annee_universitaire: str = ''    # « 2026-2027 » : dates des semaines (jours fériés)
     dejeuner: tuple | None = (12 * 60, 14 * 60, 60)   # (début, fin, minutes libres)
     temps_max: float = 20.0      # secondes par semaine (au-delà, gain constaté nul)
@@ -237,6 +275,25 @@ class Reglages:
                 if (m - self.debut) % self.pas == 0 and 0 <= (m - self.debut) // self.pas <= U - lon}
 
 
+def lire_poids(poids):
+    """Poids valides {clé: float} d'après un dict (anciens noms acceptés) ; ValueError sinon."""
+    if not isinstance(poids, dict):
+        raise ValueError('poids : objet {nom: valeur} attendu')
+    out = {}
+    for cle, val in poids.items():
+        cle = POIDS_ALIAS.get(cle, cle)
+        if cle not in POIDS_DEFAUT:
+            raise ValueError(f'Poids inconnu : {cle}')
+        try:
+            v = float(val)
+        except (TypeError, ValueError):
+            raise ValueError(f'Poids {cle} : nombre attendu') from None
+        if not (0 <= v <= POIDS_MAX):     # rejette aussi NaN
+            raise ValueError(f'Poids {cle} : entre 0 et {POIDS_MAX:g}')
+        out[cle] = v
+    return out
+
+
 def lire_reglages(data):
     """Construit les réglages depuis le JSON de la requête (clés FR, alias EN)."""
     data = data or {}
@@ -249,8 +306,8 @@ def lire_reglages(data):
         reg.jours = sorted({int(j) for j in g('jours', defaut=[0, 1, 2, 3, 4, 5])})
         reg.samedi_fin = _minutes(g('samedi_fin', defaut='12:30'))
         reg.soiree = _minutes(g('soiree', defaut='18:00'))
-        jeudi = data.get('jeudi_ftp_libre', '13:00')
-        reg.jeudi_ftp_libre = None if jeudi in (None, False, '') else _minutes('13:00' if jeudi is True else jeudi)
+        jeudi = data.get('jeudi_ftp_libre', '12:30')
+        reg.jeudi_ftp_libre = None if jeudi in (None, False, '') else _minutes('12:30' if jeudi is True else jeudi)
         reg.feries = bool(g('feries', defaut=True))
         reg.annee_universitaire = str(g('annee_universitaire', defaut=''))
         dej = data.get('pause_dejeuner', 'defaut')
@@ -277,10 +334,7 @@ def lire_reglages(data):
         reg.blocages = list(g('blocages', defaut=[]))
         reg.simulation = bool(g('simulation', 'dry_run', defaut=False))
         reg.solveur = g('solveur')
-        for cle, val in (g('poids', defaut={}) or {}).items():
-            if cle not in POIDS_DEFAUT:
-                raise ValueError(f'Poids inconnu : {cle}')
-            reg.poids[cle] = float(val)
+        reg.poids.update(lire_poids(g('poids', defaut={}) or {}))
     except (TypeError, ValueError, AttributeError) as e:
         raise ValueError(f'Réglage invalide : {e}') from e
     if reg.pas not in (5, 10, 15, 20, 30, 60) or reg.fin <= reg.debut or (reg.fin - reg.debut) % reg.pas:
@@ -380,6 +434,11 @@ class Donnees:
             fichier = next((r[2] for r in db.execute('PRAGMA database_list').fetchall() if r[1] == 'main'), '') or ''
             m = re.search(r'(\d{4})-(\d{4})', fichier.replace('\\', '/').rsplit('/', 1)[-1])
             self.annee_univ = m.group(0) if m else ''
+        # Jours fériés et ponts de l'année : {date: libellé}, ou None (liste pas encore définie)
+        liste = lire_jours_fermes(db)
+        self.jours_fermes = None if liste is None else {
+            date.fromisoformat(j['date']): j['libelle'] or ('pont' if j['type'] == 'pont' else 'férié')
+            for j in liste}
 
     def _dispos(self, lignes):
         """(créneaux interdits, coût par créneau, dispos saisies ?) d'un enseignant.
@@ -531,6 +590,27 @@ def occupations_fixes(db, don, semaine):
         WHERE ts.week_number = ? AND s.year_group NOT IN ({pl})''', (semaine, *sorted(reg.annees)))
 
 
+def publics_creneaux(db, creneaux, don=None):
+    """Ajoute à chaque créneau enregistré (course_session_id, group_index) ses publics :
+    [[année, 'FTP'|'ALT'], …] — mêmes règles de groupes que le solveur (un TP mutualisé
+    à TP communs n'est que FTP ou qu'ALT selon son groupe). Sert à la vue Planning."""
+    don = don or Donnees(db, lire_reglages({}))
+    info = {r['sid']: r for r in _rows(db, '''
+        SELECT cs.id AS sid, cs.teaching_type, cs.formation_type, c.tp_type, s.code AS sem, s.year_group
+        FROM course_sessions cs JOIN courses c ON c.id = cs.course_id JOIN semesters s ON s.id = c.semester_id''')}
+    for c in creneaux:
+        r = info.get(c.get('course_session_id'))
+        if not r:
+            c['publics'] = []
+            continue
+        tt = _norm_type(r['teaching_type'])
+        ft = r['formation_type'] if r['formation_type'] is not None else 0
+        g = int(c.get('group_index') or 1)
+        n = max(_nb_groupes(don.sg, don.mut, don.tpsep, r['sem'], ft, tt, r['tp_type']), g)
+        c['publics'] = sorted({(a, f) for a, f, _, _ in don.public(r['year_group'], ft, g, n, r['sem'], tt)})
+    return creneaux
+
+
 # ───────────────────────── modèle d'une semaine ─────────────────────────
 
 def _atomes(evts):
@@ -548,6 +628,53 @@ def _atomes(evts):
             if membres:
                 atomes.setdefault(membres, (an, face, lo, hi))
     return atomes
+
+
+def _espacement_matieres(evts, maximaux):
+    """Séances d'une même matière qu'un même groupe d'étudiants suit dans la semaine.
+
+    Pour chaque partie d'effectif indivisible (atome maximal) et chaque matière
+    (course_id : CM, TD et TP confondus), l'ensemble de ses séances qui touchent
+    cette partie ; seuls les ensembles d'au moins deux séances et non inclus dans
+    un autre de la même matière comptent (sinon un même écart serait payé
+    plusieurs fois). Ex. : {CM, TD1, TP1} pour les étudiants du TP1."""
+    par_mat = defaultdict(set)
+    for a in maximaux:
+        groupes = defaultdict(set)
+        for i in a:
+            groupes[evts[i].course_id].add(i)
+        for c, s in groupes.items():
+            if len(s) > 1:
+                par_mat[c].add(frozenset(s))
+    return [s for c in sorted(par_mat) for s in sorted(par_mat[c], key=sorted)
+            if not any(s < t for t in par_mat[c])]
+
+
+def bilan_espacement(evts, espacement, jours_de):
+    """Écarts constatés dans un placement {idx: jour} : (même jour, jours consécutifs,
+    4 jours ou plus), et le détail des cas « même jour » et « lendemain »."""
+    mj = ld = lg = 0
+    cas = []
+    for ens in espacement:
+        jours = sorted(jours_de[i] for i in ens if i in jours_de)
+        if len(jours) < 2:
+            continue
+        e0 = evts[min(ens)]
+        fin = max((evts[i] for i in ens), key=lambda e: e.nb_groupes)   # le groupe le plus petit
+        qui = ', '.join(sorted({f'{a}A {f}' for i in ens for a, f, _, _ in evts[i].public})) \
+            + (f' gr{fin.groupe} de {fin.type}' if fin.nb_groupes > 1 else '')
+        uniques = sorted(set(jours))
+        for d in uniques:
+            if jours.count(d) > 1:
+                mj += jours.count(d) - 1
+                cas.append(('meme_jour', e0.code, qui, JOURS[d]))
+        for d, d2 in zip(uniques, uniques[1:]):
+            if d2 - d == 1:
+                ld += 1
+                cas.append(('lendemain', e0.code, qui, f'{JOURS[d]} et {JOURS[d2]}'))
+            elif d2 - d >= 4:
+                lg += 1
+    return mj, ld, lg, cas
 
 
 def _paques(an):
@@ -574,6 +701,43 @@ def jours_feries(an):
             date(an, 11, 1): 'Toussaint', date(an, 11, 11): 'Armistice', date(an, 12, 25): 'Noël'}
 
 
+CLE_JOURS_FERMES = 'jours_fermes'   # app_settings de la base de l'année : liste JSON
+TYPES_JOUR_FERME = {'ferie': 'Férié', 'pont': 'Pont'}
+
+
+def lire_jours_fermes(db):
+    """Jours fériés et ponts enregistrés pour l'année : [{date, type, libelle}], ou None
+    tant que la liste n'a jamais été enregistrée (liste vide = aucun jour fermé)."""
+    if not _table_existe(db, 'app_settings'):
+        return None
+    r = db.execute('SELECT value FROM app_settings WHERE key = ?', (CLE_JOURS_FERMES,)).fetchone()
+    if not r:
+        return None
+    try:
+        brut = json.loads(r[0])
+    except (TypeError, ValueError):
+        return None
+    out = []
+    for j in brut if isinstance(brut, list) else []:
+        try:
+            d = date.fromisoformat(str(j.get('date')))
+        except (AttributeError, ValueError):
+            continue
+        out.append({'date': d.isoformat(), 'type': j.get('type') if j.get('type') in TYPES_JOUR_FERME else 'ferie',
+                    'libelle': str(j.get('libelle') or '')})
+    return out
+
+
+def feries_legaux_periode(debut, fin):
+    """Jours fériés légaux du `debut` au `fin` (dates), hors dimanches : [{date, type, libelle}]."""
+    out = []
+    for an in range(debut.year, fin.year + 1):
+        for d, lib in sorted(jours_feries(an).items()):
+            if debut <= d <= fin and d.weekday() != 6:
+                out.append({'date': d.isoformat(), 'type': 'ferie', 'libelle': lib})
+    return out
+
+
 def dates_semaine(semaine, annee_univ, debut_annee):
     """Dates du lundi au samedi de la semaine ISO `semaine` de l'année « 2026-2027 », ou None."""
     m = re.match(r'^(\d{4})-(\d{4})$', annee_univ or '')
@@ -587,14 +751,16 @@ def dates_semaine(semaine, annee_univ, debut_annee):
 
 
 def calendrier_semaine(don, semaine):
-    """Créneaux fermés de la semaine (samedi après-midi, jours fériés) et jours fériés.
+    """Créneaux fermés de la semaine (samedi après-midi, jours fériés et ponts) et ces jours.
 
-    Retour : (fermés {(jour, pas)}, férié un jour de semaine ?, ["mercredi 11/11 (Armistice)", …])."""
+    Jours fermés : la liste de l'année (don.jours_fermes), ou à défaut les jours
+    fériés légaux. Retour : (fermés {(jour, pas)}, jour fermé du lundi au vendredi ?,
+    ["mercredi 11/11 (Armistice)", …], [jours fermés 0-5])."""
     reg = don.reg
     feries = {}
     dates = dates_semaine(semaine, don.annee_univ, don.debut_annee) if reg.feries else None
     for d, jd in enumerate(dates or []):
-        lib = jours_feries(jd.year).get(jd)
+        lib = (jours_feries(jd.year) if don.jours_fermes is None else don.jours_fermes).get(jd)
         if lib and d in reg.jours:
             feries[d] = f'{JOURS[d]} {jd:%d/%m} ({lib})'
     ferme = set()
@@ -602,14 +768,14 @@ def calendrier_semaine(don, semaine):
         for u in range(reg.nb_pas):
             if d in feries or (d == 5 and reg.debut + (u + 1) * reg.pas > reg.samedi_fin):
                 ferme.add((d, u))
-    return ferme, any(d <= 4 for d in feries), list(feries.values())
+    return ferme, any(d <= 4 for d in feries), list(feries.values()), sorted(feries)
 
 
 def _blocages_unites(reg, cle_public, ferie_semaine=False):
     """Créneaux interdits aux étudiants de (année, face) : {(jour, pas)}.
 
     Règle du département : le jeudi après-midi est libre pour les FTP
-    (reg.jeudi_ftp_libre), sauf la semaine d'un jour férié, qui le rouvre.
+    (reg.jeudi_ftp_libre), sauf la semaine d'un jour férié ou d'un pont, qui le rouvre.
     Autres blocages : blocages = [{"jour": 3, "debut": "13:30", "fin": "18:00",
     "annee": 1, "formation": "FTP", "sauf_ferie": true}, …] (annee, formation et
     sauf_ferie facultatifs : sans eux, le blocage vaut pour tous, toujours)."""
@@ -679,10 +845,10 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
     """Construit et résout le PLNE d'une semaine. Retourne (placements, non placés, infos).
 
     calendrier = calendrier_semaine(don, semaine) : créneaux fermés à tous (samedi
-    après-midi, jours fériés) et présence d'un jour férié dans la semaine."""
+    après-midi, jours fériés et ponts) et présence d'un tel jour dans la semaine."""
     reg, P = don.reg, don.reg.poids
     U, J = reg.nb_pas, reg.jours
-    ferme, ferie_semaine, _ = calendrier or calendrier_semaine(don, semaine)
+    ferme, ferie_semaine = (calendrier or calendrier_semaine(don, semaine))[:2]
     rang_jour = {d: i for i, d in enumerate(J)}
     M = len(J) * U + 1
 
@@ -743,6 +909,7 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
         chaines[(e.session_id, e.groupe)].append(e)
     for es in chaines.values():
         es.sort(key=lambda e: e.rang)
+    espacement = _espacement_matieres(evts, maximaux)
     coupure = (reg.dejeuner[0] + reg.dejeuner[1]) // 2 if reg.dejeuner else 13 * 60
     b = max(0, min(U, math.ceil((coupure - reg.debut) / reg.pas)))
 
@@ -903,17 +1070,43 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
                                 prob += pulp.lpSum(termes) <= tolere + s
                                 cout['dejeuner'].append(P['dejeuner'] * s)
 
-        # Étalement : pas deux séances du même groupe le même jour
-        if P['etalement']:
-            for (sid, g), es in chaines.items():
-                if len(es) < 2:
+        # Espacement d'une matière pour un même groupe d'étudiants (CM, TD, TP confondus) :
+        # pas deux séances le même jour (s), si possible pas deux jours de suite (l),
+        # ni 4 jours ou plus sans elle entre deux séances (lg) — idéal : 2 ou 3 jours.
+        # z[d] = la matière a cours ce jour-là (exact : borné par le haut et par le bas).
+        p_mj, p_ld, p_lg = P['matiere_meme_jour'], P['matiere_lendemain'], P['matiere_ecart_long']
+        for n, ens in enumerate(espacement):
+            es = [evts[i] for i in sorted(ens) if vars_de[i]]
+            if len(es) < 2:
+                continue
+            z = {}
+            for d in J:
+                par_seance = [[v for dd, _, v in vars_de[e.idx] if dd == d] for e in es]
+                par_seance = [vs for vs in par_seance if vs]
+                if not par_seance:
                     continue
-                for d in J:
-                    termes = [v for e in es for dd, _, v in vars_de[e.idx] if dd == d]
-                    if len(termes) > 1:
-                        s = pulp.LpVariable(f'etal_{sid}_{g}_{d}', lowBound=0)
-                        prob += pulp.lpSum(termes) <= 1 + s
-                        cout['etalement'].append(P['etalement'] * s)
+                termes = [v for vs in par_seance for v in vs]
+                if p_mj and len(par_seance) > 1:
+                    s = pulp.LpVariable(f'mj_{n}_{d}', lowBound=0)
+                    prob += pulp.lpSum(termes) <= 1 + s
+                    cout['matiere_meme_jour'].append(p_mj * s)
+                if p_ld or p_lg:
+                    z[d] = pulp.LpVariable(f'zm_{n}_{d}', lowBound=0, upBound=1)
+                    for vs in par_seance:
+                        prob += z[d] >= pulp.lpSum(vs)
+                    prob += z[d] <= pulp.lpSum(termes)
+            jours_z = sorted(z)
+            for i, d in enumerate(jours_z):
+                for d2 in jours_z[i + 1:]:
+                    entre = [z[j] for j in jours_z if d < j < d2]
+                    if d2 - d == 1 and p_ld:
+                        lv = pulp.LpVariable(f'ld_{n}_{d}', lowBound=0)
+                        prob += lv >= z[d] + z[d2] - 1
+                        cout['matiere_lendemain'].append(p_ld * lv)
+                    elif d2 - d >= 4 and p_lg:
+                        gv = pulp.LpVariable(f'lg_{n}_{d}_{d2}', lowBound=0)
+                        prob += gv >= z[d] + z[d2] - 1 - pulp.lpSum(entre)
+                        cout['matiere_ecart_long'].append(p_lg * gv)
 
         def precede(avant, apres, cat, nom):
             """ConsiderDependencies (souple, au jour près) : `apres` ne tombe pas un jour avant `avant`.
@@ -973,8 +1166,11 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
 
         Sert de solution de départ : le solveur ne peut alors jamais faire moins
         bien. Chaînes les plus contraintes d'abord ; chaque séance va au créneau
-        possible le moins chargé pour ses groupes et son enseignant ce jour-là."""
+        possible qui espace le mieux sa matière pour ses groupes (pas le même jour,
+        puis pas la veille ni le lendemain), puis le moins chargé pour ses groupes
+        et son enseignant ce jour-là."""
         occ, charge, cmtd = defaultdict(int), defaultdict(int), defaultdict(int)
+        matj = defaultdict(int)    # (atome, matière, jour) -> séances déjà posées
         cap_std = lambda d, w: don.nb_std - salle_reduite[(('STD',), d, w)]   # noqa: E731
         choisi = {}
         ordre = sorted(chaines.values(), key=lambda es: (min(len(debuts[e.idx]) for e in es),
@@ -1014,7 +1210,11 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
                         if not ok:
                             break
                     if ok:
-                        score = (max(charge[(c, d)] for c in cles) if cles else 0, u)
+                        ats = atomes_de[e.idx]
+                        meme = max((matj[(k, e.course_id, d)] for k in ats), default=0)
+                        voisin = max((matj[(k, e.course_id, d - 1)] + matj[(k, e.course_id, d + 1)]
+                                      for k in ats), default=0)
+                        score = (meme, voisin, max(charge[(c, d)] for c in cles) if cles else 0, u)
                         if meilleur is None or score < meilleur[0]:
                             meilleur = (score, d, u)
                 if meilleur is None:
@@ -1027,6 +1227,8 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
                         occ[(c, d, w)] += 1
                 for c in cles:
                     charge[(c, d)] += e.lon
+                for k in atomes_de[e.idx]:
+                    matj[(k, e.course_id, d)] += 1
                 if max_pas is not None:
                     cmtd[(e.enseignant, d)] += e.lon
                 fin_prec = rang_jour[d] * U + u + e.lon
@@ -1035,6 +1237,77 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
 
     def niveau_de(prob_obj, sol):
         return sum(coef * sol.get(v.name, 0) for v, coef in prob_obj.items())
+
+    # Voisinages de l'amélioration : les séances d'une année d'étude, puis d'une
+    # promotion (année × FTP/ALT) ; un voisinage qui couvre presque toute la semaine
+    # (calcul d'une seule année) est remplacé par ses promotions.
+    voisinages = []
+    for a in sorted({e.annee for e in evts}):
+        voisinages.append(frozenset(e.idx for e in evts if e.annee == a))
+    for a, f in sorted({(a, f) for e in evts for a, f, _, _ in e.public}):
+        voisinages.append(frozenset(e.idx for e in evts if any(a2 == a and f2 == f for a2, f2, _, _ in e.public)))
+    voisinages = [v for i, v in enumerate(voisinages)
+                  if v and v not in voisinages[:i] and (len(v) <= 0.7 * len(evts) or len(evts) <= 40)]
+    if not voisinages:
+        voisinages = [frozenset(e.idx for e in evts)]
+
+    def ameliorer(prob2, x2, depart, fin):
+        """Optimise les préférences par voisinages (« fix-and-optimize »).
+
+        Le modèle complet est trop gros pour que HiGHS améliore la solution de départ
+        dans le temps imparti (constaté : la relaxation de la racine prend tout le
+        temps, aucune heuristique ne tourne). On libère donc un voisinage à la fois —
+        les séances d'une année ou d'une promotion —, tout le reste figé à la
+        solution courante, et on garde le résultat s'il ne coûte pas plus. Le niveau
+        de placement reste imposé (contrainte niveau_placement).
+        Retourne (statut du dernier calcul retenu, nombre de calculs) ; statut None
+        si rien n'a pu être évalué."""
+        par_evt = defaultdict(list)
+        for (i, _, _), v in x2.items():
+            par_evt[i].append(v)
+        courant, valeur, statut, n = dict(depart), None, None, 0
+
+        def resoudre(libres, limite):
+            for i, vs in par_evt.items():
+                for v in vs:
+                    if i in libres:
+                        v.lowBound, v.upBound = 0, 1
+                    else:
+                        v.lowBound = v.upBound = courant.get(v.name, 0)
+            st = prob2.solve(_solveur(nom_solveur, limite, reg.ecart, courant, x2))
+            if any(v.varValue is None for v in x2.values()):
+                return st, None, None
+            return st, {v.name: round(v.varValue) for v in x2.values()}, pulp.value(prob2.objective) or 0.0
+
+        # Évaluation du départ (tout figé : un simple calcul linéaire)
+        st, sol, val = resoudre(frozenset(), max(2.0, fin - time.monotonic()))
+        if sol is None:
+            return None, 0
+        courant, valeur, statut = sol, val, st
+        sans_gain = 0
+        k = 0
+        while sans_gain < len(voisinages):
+            reste = fin - time.monotonic()
+            if reste < 1.5:
+                break
+            libres = voisinages[k % len(voisinages)]
+            k += 1
+            st, sol, val = resoudre(libres, min(reste - 0.3, max(3.0, reste / 3)))
+            n += 1
+            if sol is not None and val <= valeur + 1e-6:
+                sans_gain = 0 if val < valeur - 1e-6 else sans_gain + 1
+                courant, valeur, statut = sol, val, st
+            else:
+                sans_gain += 1
+                # valeurs du solveur incohérentes avec la solution courante : on la rétablit
+                st, sol, val = resoudre(frozenset(), 5.0)
+                if sol is None:
+                    break
+        for vs in par_evt.values():
+            for v in vs:
+                v.lowBound, v.upBound = 0, 1
+                v.varValue = courant.get(v.name, 0)
+        return statut, n
 
     # Résolution en deux phases, chacune partant d'une solution connue.
     # Phase 1 : modèle allégé (contraintes dures seules), placer le plus d'heures
@@ -1051,19 +1324,21 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
     prob.setObjective(obj1)
     statut = prob.solve(_solveur(nom_solveur, max(3.0, temps * 0.5), min(reg.ecart, 0.001)))
     sol1 = {v.name: round(v.varValue) for v in x.values() if v.varValue is not None}
-    if sol1 and niveau_de(obj1, sol1) <= niveau_de(obj1, depart):
+    # À placement égal, le glouton reste le départ : lui tient compte de l'espacement
+    # des matières et de la charge des journées, la phase 1 de rien d'autre que le placement
+    if sol1 and niveau_de(obj1, sol1) < niveau_de(obj1, depart) - 1e-6:
         depart = sol1
     else:                                      # solveur pire que le glouton : on garde le glouton
         for v in x.values():
             v.varValue = depart.get(v.name, 0)
+    tours = 0
     if temps - (time.monotonic() - t0) > 3:
         prob2, x2, vars_de2, cout2 = construire(True)
         obj2 = pulp.lpSum(cout2['placement'])
         prob2 += obj2 <= niveau_de(obj2, depart) + 1e-6, 'niveau_placement'
         prob2.setObjective(pulp.lpSum(t for cat, termes in cout2.items() if cat != 'placement' for t in termes))
-        reste = max(2.0, temps - (time.monotonic() - t0))
-        statut2 = prob2.solve(_solveur(nom_solveur, reste, reg.ecart, depart, x2))
-        if any(v.varValue is not None for v in x2.values()):
+        statut2, tours = ameliorer(prob2, x2, depart, t0 + temps)
+        if statut2 is not None:
             prob, x, vars_de, cout, statut = prob2, x2, vars_de2, cout2, statut2
     duree = round(time.monotonic() - t0, 1)
 
@@ -1083,9 +1358,13 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
             val = round(sum(pulp.value(t) or 0 for t in termes), 1)
             if val:
                 penalites[cat] = val
+    mj, ld, lg, cas = bilan_espacement(evts, espacement, {e.idx: d for e, d, _ in placements})
     infos = {'statut': _statut(prob, statut), 'duree_s': duree,
              'variables': len(x), 'contraintes': len(prob.constraints),
-             'cout_preferences': round(sum(penalites.values()), 1), 'penalites': penalites}
+             'cout_preferences': round(sum(penalites.values()), 1), 'penalites': penalites,
+             'voisinages_calcules': tours,
+             'espacement': {'meme_jour': mj, 'lendemain': ld, 'ecart_long': lg,
+                            'cas': [{'type': t, 'matiere': m, 'public': p, 'jours': j} for t, m, p, j in cas[:60]]}}
     return placements, non_places, infos
 
 
@@ -1206,8 +1485,12 @@ def generer(db, data):
     if sans_dispo:
         avert.append(f'{len(sans_dispo)} enseignant(s) sans dispos saisies, supposés toujours disponibles : '
                      + ', '.join(sans_dispo[:12]) + (' …' if len(sans_dispo) > 12 else ''))
+    if reg.feries and don.jours_fermes is None:
+        avert.append(f'Jours fériés et ponts {don.annee_univ or "de l’année"} pas encore enregistrés : jours fériés '
+                     'légaux pris, sans pont (Répartition journalière › Jours fériés et ponts)')
 
     rapport, conflits, charges, creneaux, ok, restantes = [], [], [], [], [], []
+    noms_cours = {r[0]: r[1] for r in db.execute('SELECT id, name FROM courses')}
     for w in semaines:
         restant = reg.temps_total - (time.monotonic() - t_debut)
         if restant < 8:
@@ -1221,10 +1504,12 @@ def generer(db, data):
         charges.extend(_charges(w, evts, reg))
         fixes = occupations_fixes(db, don, w)
         cal = calendrier_semaine(don, w)
-        ferme, ferie_semaine, feries = cal
+        ferme, ferie_semaine, feries, jours_fermes = cal
         if feries:
-            avert.append(f'S{w} · férié : {", ".join(feries)} — aucun cours ce jour-là'
-                         + (', jeudi après-midi ouvert aux FTP' if ferie_semaine and reg.jeudi_ftp_libre is not None else ''))
+            rouvert = ferie_semaine and reg.jeudi_ftp_libre is not None and 3 not in jours_fermes
+            avert.append(f'S{w} · {"jour fermé" if len(feries) == 1 else "jours fermés"} : {", ".join(feries)} — '
+                         f'aucun cours {"ce jour-là" if len(feries) == 1 else "ces jours-là"}'
+                         + (', jeudi après-midi ouvert aux FTP' if rouvert else ''))
         # Contrôle préalable (pré-analyse de flop!) : assez de dispos pour ses heures ?
         ouverts = {(d, u) for d in reg.jours for u in range(reg.nb_pas)} - ferme
         for tid in {e.enseignant for e in evts if e.enseignant}:
@@ -1238,6 +1523,7 @@ def generer(db, data):
         infos.update({'semaine': w, 'seances': len(evts)})
         if feries:
             infos['feries'] = feries
+            infos['jours_fermes'] = jours_fermes
         if placements is None:
             infos['statut_edt'] = 'sans solution dans le temps imparti'
             rapport.append(infos)
@@ -1258,7 +1544,10 @@ def generer(db, data):
                 # mêmes champs que GET /api/timetable/week (affichage de l'aperçu)
                 'libelle': e.libelle, 'course_code': e.code, 'teaching_type': e.type,
                 'form_type': e.formation, 'year_group': e.annee, 'semester_code': e.semestre,
-                'teacher_name': nom_ens(e.enseignant), 'room_name': nom_salle.get(rid)})
+                'teacher_name': nom_ens(e.enseignant), 'room_name': nom_salle.get(rid),
+                'course_name': noms_cours.get(e.course_id),
+                # promotions concernées (vue Planning) : [[année, 'FTP'|'ALT'], …]
+                'publics': sorted({(a, f) for a, f, _, _ in e.public})})
         for e in non_places:
             conflits.append({'week': w, 'session_id': e.session_id, 'course': e.code, 'type': e.type,
                              'group': e.groupe if e.nb_groupes > 1 else None, 'teacher_id': e.enseignant,

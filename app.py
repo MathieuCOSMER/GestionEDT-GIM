@@ -3134,6 +3134,7 @@ def _daily_backup_hook():
 _YEAR_OVERRIDE_PATHS = {
     '/api/special-calendar', '/api/config', '/api/week-comments',
     '/api/category-codes', '/api/semester-groups',
+    '/api/jours-fermes',         # jours fériés et ponts (répartition journalière)
 }
 _YEAR_OVERRIDE_PREFIXES = (
     '/api/repartition',          # tableaux annuel + journalier
@@ -3550,11 +3551,14 @@ _TALL = [_TA, _TP, _TT]
 _TRESP = [_RF, _RA, _RS]
 _TRESP_ALL = _TRESP + [_RSL]
 
-def _tn(key, label, view, edit=None, never=(), children=None):
-    """edit=None : onglet sans modification propre (consultation seule)."""
+def _tn(key, label, view, edit=None, never=(), children=None, place=None):
+    """edit=None : onglet sans modification propre (consultation seule).
+    place : où l'onglet s'affiche quand il n'est pas dans la barre principale
+    (sous-onglet d'un regroupement, icône à droite) — simple indication pour le
+    réglage des accès et l'aide, sans effet sur les droits."""
     return {'key': key, 'label': label, 'view': list(view),
             'edit': None if edit is None else list(edit),
-            'never': list(never), 'children': children or []}
+            'never': list(never), 'children': children or [], 'place': place}
 
 # Défauts des responsabilités (ajoutés à la session normale de l'enseignant) :
 #   • FTP  : EDT (répartition, calendrier), matières, services et contraintes,
@@ -3568,7 +3572,11 @@ def _tn(key, label, view, edit=None, never=(), children=None):
 # Ce qui éclaire ces tâches (programme, bulletins, statistiques…) s'affiche en
 # consultation. Le partage des tuteurs entre alternants et stagiaires est vérifié
 # par _tuteurs_formations().
-# Ordre des nœuds de premier niveau = ordre de la barre d'onglets.
+# Ordre des nœuds de premier niveau = ordre de la barre d'onglets. La barre regroupe
+# des onglets (static/index.html, _NAV_GROUPS) : Enseignants et Salles s'ouvrent dans
+# Service, Stages et Alternance dans Étudiants, Paramètres et Journal sous l'icône ⚙ ;
+# Notifications, Mon Compte et Aide sont des icônes à droite. Ce regroupement n'est
+# qu'un affichage : chaque onglet garde sa clé et ses droits (place = où il est).
 _TAB_TREE = [
     _tn('nav:saisie', 'Saisie Notes', [_TP], [_TP], never=[_TA, _TT] + _TRESP_ALL),
     _tn('nav:service', 'Service', _TALL + [_RF], children=[
@@ -3576,12 +3584,15 @@ _TAB_TREE = [
         _tn('svc:repartition', 'Répartition Calendaire', _TALL + [_RF], children=[
             _tn('rep:annuelle', 'Répartition annuelle', _TALL + [_RF], [_TA, _RF]),
             _tn('rep:jour', 'Répartition journalière', [_TA, _RF], [_TA, _RF]),
+            _tn('rep:planning', 'Planning (EDT généré)', [_TA, _RF]),
         ]),
         _tn('svc:matieres', 'Matières', [_TA, _RF], [_TA, _RF]),
         _tn('svc:contraintes', 'Contraintes Enseignant', _TALL + [_RF], _TALL + [_RF]),
         _tn('svc:contraintes-matiere', 'Contraintes Matière', _TALL + [_RF], _TALL + [_RF]),
         _tn('svc:comparaison', 'Comparaison', [_TA, _RF]),
     ]),
+    _tn('nav:enseignants', 'Enseignants', [_TA, _RF], [_TA], place='dans Service'),
+    _tn('nav:salles', 'Salles', [_TA], [_TA], place='dans Service'),
     _tn('nav:promotions', 'Promotions', [_TA, _TP] + _TRESP, children=[
         _tn('promo:effectif', 'Effectifs', [_TA, _TP] + _TRESP, [_TA, _RF]),
         _tn('promo:groupes', 'Groupes', [_TA, _TP] + _TRESP, [_TA, _RF]),
@@ -3603,8 +3614,8 @@ _TAB_TREE = [
     ]),
     # Enseignant avec mot de passe : tout voir, modifier les fiches qu'il suit
     # comme tuteur universitaire (contrôle dans set_year_tuteurs)
-    _tn('nav:stages', 'Stages', [_TA, _RS, _TP], [_TA, _RS, _TP]),
-    _tn('nav:alternance', 'Alternance', [_TA, _RA, _TP], [_TA, _RA, _TP]),
+    _tn('nav:stages', 'Stages', [_TA, _RS, _TP], [_TA, _RS, _TP], place='dans Étudiants'),
+    _tn('nav:alternance', 'Alternance', [_TA, _RA, _TP], [_TA, _RA, _TP], place='dans Étudiants'),
     _tn('nav:programme', 'Programme', _TALL + _TRESP, children=[
         _tn('prog:coeff', 'Coefficients', _TALL + _TRESP, [_TA]),
         _tn('prog:matieres', 'Matières', _TALL + _TRESP, [_TA]),
@@ -3621,23 +3632,21 @@ _TAB_TREE = [
         _tn('st:enseignement', 'Enseignement', _TALL + _TRESP),
         _tn('st:annees', 'Années', _TALL + _TRESP),
     ]),
-    _tn('nav:enseignants', 'Enseignant', [_TA, _RF], [_TA]),
-    _tn('nav:salles', 'Salles', [_TA], [_TA]),
-    _tn('nav:journal', 'Journal (audit, sauvegardes)', [], []),
-    _tn('nav:parametres', 'Paramètres', [_TA], never=[_TP, _TT] + _TRESP_ALL),
     # Salons étudiants (salons, forums, portes ouvertes) de l'année : le responsable
     # des salons et l'admin tiennent le calendrier, les présents et les comptes
     # rendus ; tout enseignant le consulte. Le droit « modifier » de l'enseignant ne
     # couvre que son inscription (titulaire) et le compte rendu des salons où il est
     # inscrit — contrôle dans les handlers (_salons_droits).
     _tn('nav:salons', 'Salons', [_TA, _RSL, _TP, _TT], [_TA, _RSL, _TP, _TT]),
-    _tn('nav:mon-compte', 'Mon Compte', [_TP, _TT], [_TP, _TT]),
     # Ce que le site signale à chacun (signalements, saisies de notes, rappels) :
     # réservé aux connexions avec mot de passe — n'importe qui peut se connecter
     # sous le seul nom d'un enseignant. Marquer comme lu n'y est pas une modification.
-    _tn('nav:notifications', 'Notifications', [_TA, _TP] + _TRESP_ALL, never=[_TT]),
+    _tn('nav:notifications', 'Notifications', [_TA, _TP] + _TRESP_ALL, never=[_TT], place='icône 🔔'),
+    _tn('nav:mon-compte', 'Mon Compte', [_TP, _TT], [_TP, _TT], place='icône 👤'),
+    _tn('nav:parametres', 'Paramètres', [_TA], never=[_TP, _TT] + _TRESP_ALL, place='icône ⚙'),
+    _tn('nav:journal', 'Journal (audit, sauvegardes)', [], [], place='icône ⚙'),
     # Mode d'emploi du site : ouvert à tous, rien à y modifier
-    _tn('nav:aide', 'Aide', _TALL + _TRESP_ALL),
+    _tn('nav:aide', 'Aide', _TALL + _TRESP_ALL, place='icône ?'),
 ]
 _TAB_NODES = {}
 def _index_tab_tree(nodes):
@@ -3871,7 +3880,7 @@ def aide_acces():
 
     def arbre(nodes):
         return [{'key': n['key'], 'label': n['label'], 'consultation': n['edit'] is None,
-                 'children': arbre(n['children'])} for n in nodes]
+                 'place': n['place'], 'children': arbre(n['children'])} for n in nodes]
     return jsonify({
         'profiles': list(_TAB_PROFILES), 'tree': arbre(_TAB_TREE),
         'acces': {k: {'voir': [p for p in _TAB_PROFILES if k in effs[p]['visible']],
@@ -16823,6 +16832,153 @@ def set_special_calendar():
     except Exception as e:
         return error_response(str(e), 500)
 
+# ======================= JOURS FÉRIÉS ET PONTS (année) =======================
+# Jours sans aucun cours de l'année universitaire, pour toutes les promotions, lus
+# par le solveur d'EDT (solveur_edt.py) ; une semaine qui en compte un, du lundi au
+# vendredi, rouvre le jeudi après-midi aux FTP. Liste JSON dans
+# app_settings['jours_fermes'] de la base de l'année. Tant qu'elle n'a jamais été
+# enregistrée, le solveur prend les jours fériés légaux, sans pont.
+
+def _jours_fermes_bornes(annee):
+    """Premier et dernier jour de cours possibles de l'année : lundi de la semaine de
+    rentrée, samedi de la dernière semaine (plages des années d'étude comprises)."""
+    from datetime import date
+    y1 = int(annee[:4])
+    cfg = get_year_config()
+    fin_sem = max([cfg['academic_end_week']] + [r['end'] for r in cfg['academic_ranges'].values()])
+    try:
+        debut = date.fromisocalendar(y1, cfg['academic_start_week'], 1)
+    except ValueError:
+        debut = date(y1, 8, 15)
+    try:
+        fin = date.fromisocalendar(y1 + 1, fin_sem, 6)
+    except ValueError:
+        fin = date(y1 + 1, 7, 31)
+    return debut, fin
+
+def _jours_fermes_etat(db):
+    import solveur_edt
+    annee = get_current_year()
+    debut, fin = _jours_fermes_bornes(annee)
+    legaux = solveur_edt.feries_legaux_periode(debut, fin)
+    jours = solveur_edt.lire_jours_fermes(db)
+
+    def enrichi(liste):
+        from datetime import date
+        out = []
+        for j in liste:
+            d = date.fromisoformat(j['date'])
+            out.append({**j, 'jour': d.weekday(), 'semaine': d.isocalendar()[1]})
+        return out
+    return {'annee': annee, 'definie': jours is not None,
+            'jours': enrichi(legaux if jours is None else jours), 'legaux': enrichi(legaux),
+            'debut': debut.isoformat(), 'fin': fin.isoformat()}
+
+@app.route('/api/jours-fermes', methods=['GET'])
+def get_jours_fermes():
+    """Jours fériés et ponts de l'année : {annee, definie, jours, legaux, debut, fin}.
+    Liste pas encore enregistrée (definie = false) : `jours` = les jours fériés légaux."""
+    return jsonify(_jours_fermes_etat(get_db()))
+
+@app.route('/api/jours-fermes', methods=['PUT'])
+def put_jours_fermes():
+    """Remplace la liste de l'année. Corps : {jours: [{date: 'AAAA-MM-JJ', type: 'ferie'|'pont',
+    libelle}]} ; liste vide = aucun jour fermé."""
+    from datetime import date
+    err = _require_admin()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    jours = data.get('jours')
+    if not isinstance(jours, list) or len(jours) > 80:
+        return error_response('Liste de jours invalide', 400)
+    annee = get_current_year()
+    debut, fin = _jours_fermes_bornes(annee)
+    out, vus = [], set()
+    for j in jours:
+        if not isinstance(j, dict):
+            return error_response('Jour invalide', 400)
+        try:
+            d = date.fromisoformat(str(j.get('date') or ''))
+        except ValueError:
+            return error_response(f'Date invalide : {str(j.get("date") or "(vide)")[:20]}', 400)
+        if not debut <= d <= fin:
+            return error_response(f'{d:%d/%m/%Y} est hors de l\'année {annee} '
+                                  f'(cours du {debut:%d/%m/%Y} au {fin:%d/%m/%Y})', 400)
+        if d.weekday() == 6:
+            return error_response(f'{d:%d/%m/%Y} est un dimanche : il n\'y a jamais cours ce jour-là', 400)
+        if d in vus:
+            return error_response(f'{d:%d/%m/%Y} figure deux fois', 400)
+        t = j.get('type') or 'ferie'
+        if t not in ('ferie', 'pont'):
+            return error_response('Type de jour invalide (férié ou pont)', 400)
+        vus.add(d)
+        out.append({'date': d.isoformat(), 'type': t, 'libelle': str(j.get('libelle') or '').strip()[:80]})
+    out.sort(key=lambda x: x['date'])
+    db = get_db()
+    db.execute('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)',
+               ('jours_fermes', json.dumps(out, ensure_ascii=False)))
+    db.commit()
+    _audit('JOURS_FERMES_SAVE', ip=_client_ip(), user=session.get('user'), annee=annee, jours=len(out))
+    return jsonify(_jours_fermes_etat(db))
+
+# ===== Poids du calcul de l'EDT (solveur_edt) =====
+# Réglage du site (edt_settings.json, « edt_poids » : {nom: valeur}), commun à toutes
+# les années : ce sont des préférences du département, pas des données d'une année.
+# Seuls les écarts aux valeurs par défaut du solveur (POIDS_DEFAUT) sont gardés ;
+# « Générer l'EDT » les applique quand la requête ne donne pas ses propres poids.
+
+def _edt_poids_enregistres():
+    """Poids enregistrés, valides (anciens noms convertis) ; {} si aucun ou illisibles."""
+    try:
+        import solveur_edt
+        return solveur_edt.lire_poids(get_settings().get('edt_poids') or {})
+    except Exception:
+        return {}
+
+def _edt_poids_etat():
+    import solveur_edt
+    enr = _edt_poids_enregistres()
+    reglables = [c for c, *_ in solveur_edt.POIDS_INFOS]
+    defauts = {c: solveur_edt.POIDS_DEFAUT[c] for c in reglables}
+    return {'poids': {c: enr.get(c, defauts[c]) for c in reglables}, 'defauts': defauts,
+            'max': solveur_edt.POIDS_MAX, 'modifies': sorted(c for c in reglables if c in enr),
+            'infos': [{'cle': c, 'libelle': l, 'unite': u, 'aide': a} for c, l, u, a in solveur_edt.POIDS_INFOS]}
+
+@app.route('/api/edt-poids', methods=['GET'])
+def get_edt_poids():
+    err = _require_admin()
+    if err:
+        return err
+    return jsonify(_edt_poids_etat())
+
+@app.route('/api/edt-poids', methods=['PUT'])
+def put_edt_poids():
+    """Enregistre les poids (corps : {"poids": {nom: valeur}}) ; {} = valeurs par défaut."""
+    err = _require_admin()
+    if err:
+        return err
+    import solveur_edt
+    data = request.get_json(silent=True) or {}
+    try:
+        poids = solveur_edt.lire_poids(data.get('poids') if data.get('poids') is not None else {})
+    except ValueError as e:
+        return error_response(str(e), 400)
+    reglables = {c for c, *_ in solveur_edt.POIDS_INFOS}
+    hors = sorted(set(poids) - reglables)
+    if hors:
+        return error_response(f'Poids non réglable : {", ".join(hors)}', 400)
+    ecarts = {c: v for c, v in poids.items() if v != solveur_edt.POIDS_DEFAUT[c]}
+    s = get_settings()
+    if ecarts:
+        s['edt_poids'] = ecarts
+    else:
+        s.pop('edt_poids', None)
+    save_settings(s)
+    _audit('EDT_POIDS_SAVE', ip=_client_ip(), user=session.get('user'),
+           poids=','.join(f'{c}={v:g}' for c, v in sorted(ecarts.items())) or 'défaut')
+    return jsonify(_edt_poids_etat())
+
 @app.route('/api/week-comments', methods=['GET'])
 def get_week_comments():
     """Retourne les commentaires par semaine :
@@ -18885,6 +19041,9 @@ def generate_timetable():
     poids…). {"moteur": "glouton"}, ou PuLP absent, garde l'ancien placement."""
     data = request.get_json(silent=True) or {}
     data.setdefault('annee_universitaire', get_current_year())   # dates des semaines (jours fériés)
+    # Poids du calcul : ceux de la requête, sinon ceux enregistrés (fenêtre « Générer l'EDT »)
+    if data.get('poids') is None:
+        data['poids'] = _edt_poids_enregistres()
     moteur = str(data.get('moteur') or data.get('engine') or '').lower()
     if moteur != 'glouton':
         try:
@@ -19151,6 +19310,46 @@ def get_timetable_week(week_number):
         }), 200
     except Exception as e:
         return error_response(f'Error fetching timetable: {str(e)}', 500)
+
+# ----- Vue Planning (Répartition Calendaire › Planning) : l'EDT généré enregistré,
+# semaine par semaine, en grille horaire par promotion -----
+
+@app.route('/api/timetable/weeks', methods=['GET'])
+def get_timetable_weeks():
+    """Semaines de l'année (ordre scolaire) et nombre de créneaux de l'EDT généré de chacune."""
+    db = get_db()
+    cfg = get_year_config()
+    debut = cfg['academic_start_week']
+    ordre = lambda w: (w < debut, w)   # noqa: E731
+    n = {r[0]: r[1] for r in db.execute('SELECT week_number, COUNT(*) FROM timetable_slots GROUP BY week_number')}
+    toutes = sorted(get_valid_school_weeks(debut, cfg['academic_end_week'], cfg['academic_max_week']) | set(n), key=ordre)
+    return jsonify({'annee': get_current_year(), 'debut_annee': debut,
+                    'semaines': [{'semaine': w, 'creneaux': n.get(w, 0)} for w in toutes]})
+
+@app.route('/api/timetable/planning/<int:week_number>', methods=['GET'])
+def get_timetable_planning(week_number):
+    """EDT généré enregistré d'une semaine ; chaque créneau porte ses publics
+    [[année, 'FTP'|'ALT'], …], calculés avec les règles de groupes du solveur."""
+    import solveur_edt
+    db = get_db()
+    slots = rows_to_list(db.execute('''
+        SELECT ts.*, cs.teaching_type, cs.formation_type AS form_type,
+               c.code AS course_code, c.name AS course_name,
+               s.code AS semester_code, s.year_group,
+               t.name AS teacher_name, r.name AS room_name
+        FROM timetable_slots ts
+        JOIN course_sessions cs ON ts.course_session_id = cs.id
+        JOIN courses c ON cs.course_id = c.id
+        JOIN semesters s ON c.semester_id = s.id
+        LEFT JOIN teachers t ON ts.teacher_id = t.id
+        LEFT JOIN rooms r ON ts.room_id = r.id
+        WHERE ts.week_number = ?
+        ORDER BY ts.day_of_week, ts.start_time''', (week_number,)).fetchall())
+    try:
+        solveur_edt.publics_creneaux(db, slots)
+    except Exception as e:      # base ancienne : l'affichage retombe sur l'année et la formation
+        app.logger.warning('publics_creneaux : %s', e)
+    return jsonify({'semaine': week_number, 'slots': slots})
 
 @app.route('/api/timetable/teacher/<int:teacher_id>/week/<int:week_number>', methods=['GET'])
 def get_teacher_timetable_week(teacher_id, week_number):

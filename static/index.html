@@ -150,18 +150,78 @@
         .edtg-small td, .edtg-small th { padding: 5px 10px; font-size: .8rem; }
         .edtg-weeks tbody tr { cursor: pointer; }
         .edtg-weeks tbody tr.sel td { background: #eef2ff; }
-        .edtg-grid { table-layout: fixed; }
-        .edtg-grid td { vertical-align: top; padding: 6px; }
-        .edtg-grid tr:hover td { background: #fff; }
-        .edtg-slot { border-left: 3px solid #9ca3af; background: #f9fafb; border-radius: 4px; padding: 4px 6px;
-                     margin-bottom: 4px; font-size: .76rem; line-height: 1.3; }
-        .edtg-slot.t-CM { border-color: #1e40af; background: #eff6ff; }
-        .edtg-slot.t-TD { border-color: #166534; background: #f0fdf4; }
-        .edtg-slot.t-TP { border-color: #9a3412; background: #fff7ed; }
-        .edtg-slot.t-PT { border-color: #6b21a8; background: #faf5ff; }
-        .edtg-slot .edtg-meta { color: #6b7280; }
         .edtg-alertes { font-size: .8rem; margin-top: 8px; }
         .edtg-alertes li { margin: 2px 0 2px 18px; }
+        /* Poids du calcul (fenêtre Générer l'EDT) */
+        .edtg-poids { border: 1px solid #e5e7eb; border-radius: 8px; padding: 6px 12px; margin: 4px 0 8px; font-size: .85rem; }
+        .edtg-poids > summary { cursor: pointer; font-weight: 700; font-size: .8rem; color: #374151; }
+        .edtg-poids table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+        .edtg-poids td { padding: 3px 6px; border-bottom: 1px solid #f3f4f6; vertical-align: middle; }
+        .edtg-poids td.pv { white-space: nowrap; width: 1%; }
+        .edtg-poids input[type=number] { width: 72px; padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 6px; text-align: right; }
+        .edtg-poids input.modif { border-color: #6366f1; background: #eef2ff; font-weight: 700; }
+        .edtg-poids .pdef { color: #9ca3af; font-size: .75rem; white-space: nowrap; }
+        .edtg-poids .pactions { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+        .edtg-fermes { font-size: .82rem; margin: 0 0 10px; padding: 6px 10px; border-radius: 6px; background: #fffbeb; color: #78350f; }
+        .edtg-fermes a { cursor: pointer; text-decoration: underline; }
+        /* Emploi du temps en grille horaire (Planning, fenêtre « Générer l'EDT ») : jours en colonnes,
+           heures en lignes, un rectangle par cours, couleur par matière, cours simultanés côte à côte */
+        .pl-edt { --pl-axe: 46px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; overflow: hidden;
+                  font-size: .68rem; color: #111827; }
+        .pl-tete, .pl-corps { display: grid; grid-template-columns: var(--pl-axe) repeat(var(--pl-nj), minmax(0, 1fr)); }
+        .pl-tete { background: #f1f5f9; border-bottom: 1px solid #cbd5e1; }
+        .pl-jour-t { padding: 5px 4px; font-weight: 700; font-size: .76rem; color: #334155; text-align: center; border-left: 1px solid #cbd5e1; }
+        .pl-jour-t span { display: block; font-weight: 600; font-size: .66rem; color: #92400e; }
+        .pl-jour-t.ferme { background: #fef3c7; }
+        .pl-corps { position: relative; }
+        .pl-axe { position: relative; background: #f8fafc; border-right: 1px solid #cbd5e1; }
+        .pl-h { position: absolute; right: 5px; margin-top: 2px; font-size: .64rem; color: #64748b; }
+        .pl-col { position: relative; border-left: 1px solid #e2e8f0;
+                  background-image: linear-gradient(#e2e8f0 1px, transparent 1px), linear-gradient(#f5f7fa 1px, transparent 1px);
+                  background-size: 100% calc(var(--pl-h) * 2), 100% var(--pl-h); }
+        .pl-col.ferme { background: repeating-linear-gradient(45deg, #fafaf9 0 6px, #f1efe9 6px 12px); }
+        .pl-ferme-txt { position: absolute; top: 38%; left: 0; right: 0; text-align: center; font-weight: 600; color: #92400e; }
+        .pl-libre, .pl-hors { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
+        .pl-libre { background: repeating-linear-gradient(45deg, rgba(203,213,225,.35) 0 5px, transparent 5px 10px);
+                    color: #94a3b8; font-size: .62rem; text-align: center; padding-top: 3px; }
+        .pl-hors { background: #eef2f6; }
+        .pl-cours { position: absolute; box-sizing: border-box; overflow: hidden; border-radius: 3px; padding: 2px 4px; line-height: 1.22;
+                    background: hsl(var(--pl-t) 72% 89%); border: 1px solid hsl(var(--pl-t) 40% 66%);
+                    border-left: 4px solid hsl(var(--pl-t) 55% 40%); cursor: default; }
+        .pl-cours > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .pl-cours .pl-c2 { color: #374151; }
+        .pl-cours .pl-c3 { color: #4b5563; }
+        .pl-semaines { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; margin: 4px 0 12px; }
+        .pl-sem, .pl-nav { border: 1px solid #e2e8f0; background: #fff; color: #94a3b8; border-radius: 4px; min-width: 30px;
+                           padding: 3px 4px; font: inherit; font-size: .74rem; cursor: pointer; }
+        .pl-sem.edt { background: #e0e7ff; border-color: #c7d2fe; color: #3730a3; font-weight: 600; }
+        .pl-sem.fer { box-shadow: inset 0 -3px 0 #f59e0b; }
+        .pl-sem.sel { background: #4338ca; border-color: #4338ca; color: #fff; }
+        .pl-nav { color: #334155; }
+        .pl-nav:disabled { opacity: .35; cursor: default; }
+        .pl-promos { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+        .pl-promo-btn { border: 1px solid #cbd5e1; background: #fff; color: #64748b; border-radius: 999px; padding: 3px 10px;
+                        font: inherit; font-size: .78rem; cursor: pointer; }
+        .pl-promo-btn.on { background: #eef2ff; border-color: #6366f1; color: #3730a3; font-weight: 600; }
+        .pl-titre { font-size: 1rem; font-weight: 700; color: #1f2937; margin: 0 0 10px; }
+        .pl-promo { margin-bottom: 18px; }
+        .pl-promo-t { font-weight: 700; color: #334155; margin: 0 0 6px; }
+        .edtg-vue { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin: 12px 0 4px; font-size: .85rem; }
+        .edtg-vue select { padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 6px; font: inherit; }
+        .edtg-vue .pl-nav { min-width: 28px; }
+        /* Jours fériés et ponts de l'année (répartition journalière) */
+        .jf-statut { font-size: .84rem; margin: 0 0 10px; padding: 7px 10px; border-radius: 6px; background: #f3f4f6; color: #374151; }
+        .jf-statut.non { background: #fffbeb; color: #78350f; }
+        table.jf-table { width: 100%; border-collapse: collapse; box-shadow: none; }
+        .jf-table th { font-size: .74rem; text-align: left; padding: 4px 6px; }
+        .jf-table td { padding: 3px 6px; vertical-align: middle; font-size: .82rem; }
+        .jf-table input, .jf-table select { padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 6px; font: inherit; font-size: .82rem; }
+        .jf-table input.jf-lib { width: 100%; min-width: 120px; }
+        .jf-table .jf-jour { color: #6b7280; white-space: nowrap; }
+        .jf-table tr.jf-pont td { background: #fff7ed; }
+        .jf-table .jf-sup { border: none; background: none; cursor: pointer; color: #9ca3af; font-size: 1rem; padding: 0 4px; }
+        .jf-table .jf-sup:hover { color: #b91c1c; }
+        @media (max-width: 640px) { .jf-table .jf-jour { display: none; } }
         /* Disponibilités : grille de la semaine type (Contraintes Enseignant) */
         .dsp-wrap { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
         .dsp-palette { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 8px 0; font-size: .8rem; font-weight: 600; color: #374151; }
@@ -613,11 +673,16 @@
         body.tab-teacher .rep-tool-restricted { display: none !important; }
         /* Le sous-onglet Matières du Service reste réservé à l'admin. */
         body.role-teacher #svc-tab-matieres { display: none !important; }
-        /* Barre de sous-onglets Service enseignant (sous la nav) */
-        #service-bar { display: flex; align-items: center; gap: 4px; padding: 6px 16px;
-                       background: #f3f4f6; border-bottom: 1px solid #e5e7eb; }
+        /* Barres de sous-onglets des onglets regroupés (Service, Étudiants, ⚙), sous la nav */
+        .nav-subbar { display: flex; align-items: center; gap: 4px; padding: 6px 16px; flex-wrap: wrap;
+                      background: #f3f4f6; border-bottom: 1px solid #e5e7eb; }
+        .nav-subbar .subbar-sep { width: 1px; align-self: stretch; margin: 4px 6px; background: #d1d5db; }
         #service-bar .svc-year { margin-left: auto; display: flex; align-items: center; gap: 6px;
                                  font-size: .85rem; color: #6b7280; white-space: nowrap; }
+        /* Icônes à droite de la barre : notifications, mon compte, réglages, aide */
+        nav button.nav-icon { padding: 5px 9px; min-width: 34px; font-size: 1rem; line-height: 1.2; position: relative; }
+        nav button.nav-icon .notif-pill { position: absolute; top: -6px; right: -8px; margin-left: 0; }
+        .tv-place { font-weight: 400; font-size: .75rem; color: #9ca3af; margin-left: 6px; }
         /* Case « Taux horaires » + Export : réservés à l'admin et aux titulaires */
         body.role-vacataire .rates-toggle,
         body.role-vacataire .export-btn { display: none !important; }
@@ -780,25 +845,26 @@
 <nav>
     <strong>EDT Manager</strong>
     <!-- Ordre unique des onglets, quel que soit le rôle : chacun s'affiche ou non
-         selon les droits (applyRole, Paramètres › Accès aux onglets) -->
+         selon les droits (applyRole, Paramètres › Accès aux onglets). Les boutons
+         « grp-… » ouvrent un regroupement (_NAV_GROUPS) : ses pages sont dans la
+         barre de sous-onglets en dessous, et il s'affiche si l'une d'elles est ouverte. -->
     <button onclick="showPage('saisie')" id="nav-saisie" style="display:none">Saisie Notes</button>
-    <button onclick="showServicePage()" class="active" id="nav-service">Service</button>
+    <button onclick="showNavGroup('service')" class="active" id="grp-service"
+            title="Services des enseignants et emploi du temps ; listes des enseignants et des salles">Service</button>
     <button onclick="showPage('promotions')" id="nav-promotions">Promotions</button>
-    <button onclick="showPage('etudiants')" id="nav-etudiants">Étudiants</button>
-    <button onclick="showPage('stages')" id="nav-stages">Stages</button>
-    <button onclick="showPage('alternance')" id="nav-alternance">Alternance</button>
+    <button onclick="showNavGroup('etudiants')" id="grp-etudiants" style="display:none"
+            title="Registre des étudiants, suivi des stages et de l'alternance">Étudiants</button>
     <button onclick="showPage('programme')" id="nav-programme">Programme</button>
     <button onclick="showPage('statistiques')" id="nav-statistiques">Statistiques</button>
-    <button onclick="showPage('enseignants')" id="nav-enseignants">Enseignant</button>
-    <button onclick="showPage('salles')" id="nav-salles">Salles</button>
-    <button onclick="showPage('journal')" id="nav-journal" class="admin-only superadmin-only">Journal</button>
-    <button onclick="showPage('parametres')" id="nav-parametres" class="admin-only">Paramètres</button>
     <button onclick="showPage('salons')" id="nav-salons" title="Salons étudiants, forums et portes ouvertes de l'année : calendrier, inscriptions, comptes rendus">Salons</button>
-    <button onclick="showPage('mon-compte')" id="nav-mon-compte" style="display:none">Mon Compte</button>
-    <button onclick="showPage('notifications')" id="nav-notifications" style="display:none"
-            title="Signalements, saisies de notes et rappels qui vous concernent">🔔 Notifications<span id="notif-pill" class="notif-pill" style="display:none"></span></button>
-    <button onclick="showPage('aide')" id="nav-aide" title="Mode d'emploi du site : chaque écran expliqué, avec des exemples">Aide</button>
     <div id="nav-right" style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto">
+        <button onclick="showPage('notifications')" id="nav-notifications" class="nav-icon" style="display:none"
+                title="Notifications : signalements, saisies de notes et rappels qui vous concernent">🔔<span id="notif-pill" class="notif-pill" style="display:none"></span></button>
+        <button onclick="showPage('mon-compte')" id="nav-mon-compte" class="nav-icon" style="display:none"
+                title="Mon Compte : vos coordonnées et vos heures hors GIM">👤</button>
+        <button onclick="showNavGroup('reglages')" id="grp-reglages" class="nav-icon" style="display:none"
+                title="Paramètres du site (et journal, pour le superadmin)">⚙</button>
+        <button onclick="showPage('aide')" id="nav-aide" class="nav-icon" title="Aide : le mode d'emploi du site, chaque écran expliqué, avec des exemples">?</button>
         <span id="role-badge" class="role-badge" style="display:none"></span>
         <button id="mode-switch-btn" class="btn btn-secondary btn-sm" onclick="switchSessionMode(this.dataset.mode)"
                 style="display:none;white-space:nowrap"></button>
@@ -811,20 +877,44 @@
     </div>
 </nav>
 
-<!-- Sous-onglets Service enseignant + année de consultation (n'impacte que ces vues) -->
-<div id="service-bar" style="display:none">
+<!-- Sous-onglets Service enseignant + année de consultation (n'impacte que ces vues).
+     Enseignants et Salles, rangés ici, restent sur l'année active. -->
+<div id="service-bar" class="nav-subbar" style="display:none">
     <button type="button" id="svc-tab-repartition-enseignant" class="subtab" onclick="showPage('repartition-enseignant')">Bilan Global</button>
     <button type="button" id="svc-tab-repartition" class="subtab" onclick="showPage('repartition')">Répartition Calendaire</button>
     <button type="button" id="svc-tab-matieres" class="subtab" onclick="showPage('matieres')">Matières</button>
     <button type="button" id="svc-tab-contraintes" class="subtab" onclick="showPage('contraintes')">Contraintes Enseignant</button>
     <button type="button" id="svc-tab-contraintes-matiere" class="subtab" onclick="showPage('contraintes-matiere')">Contraintes Matière</button>
     <button type="button" id="svc-tab-comparaison" class="subtab admin-only" onclick="showPage('comparaison')">Comparaison</button>
-    <span class="svc-year">Année :
+    <span class="subbar-sep" id="service-bar-sep"></span>
+    <button type="button" id="nav-enseignants" class="subtab" onclick="showPage('enseignants')"
+            title="Liste des enseignants de l'année active : coordonnées, statut, accès">Enseignants</button>
+    <button type="button" id="nav-salles" class="subtab" onclick="showPage('salles')"
+            title="Liste des salles de l'année active">Salles</button>
+    <span class="svc-year" id="service-year-choix">Année :
         <select id="service-year-select" onchange="switchServiceYear()"
                 style="padding:4px 10px;border-radius:6px;border:1px solid #c7d2fe;background:#eef2ff;color:#4f46e5;font-weight:700;font-size:.88rem;cursor:pointer">
             <option>…</option>
         </select>
     </span>
+    <span class="svc-year" id="service-year-active" style="display:none"
+          title="Les listes des enseignants et des salles suivent l'année active (réglée dans Paramètres), pas l'année choisie pour le service">
+        Année active : <b id="service-year-active-val" style="color:#4f46e5"></b></span>
+</div>
+<!-- Sous-onglets Étudiants : le registre, le suivi des stages et de l'alternance -->
+<div id="etu-bar" class="nav-subbar" style="display:none">
+    <button type="button" id="nav-etudiants" class="subtab" onclick="showPage('etudiants')"
+            title="Registre des étudiants : liste, trombinoscope, délégués, à convoquer, signalements, fiches">Liste et fiches</button>
+    <button type="button" id="nav-stages" class="subtab" onclick="showPage('stages')"
+            title="Stagiaires FTP : tuteurs, entreprises, statistiques">Stages</button>
+    <button type="button" id="nav-alternance" class="subtab" onclick="showPage('alternance')"
+            title="Alternants : tuteurs, visites, évaluation entreprise, documents, statistiques">Alternance</button>
+</div>
+<!-- Sous-onglets de l'icône ⚙ : Paramètres et, pour le superadmin, Journal -->
+<div id="reg-bar" class="nav-subbar" style="display:none">
+    <button type="button" id="nav-parametres" class="subtab admin-only" onclick="showPage('parametres')">Paramètres</button>
+    <button type="button" id="nav-journal" class="subtab admin-only superadmin-only" onclick="showPage('journal')"
+            title="Journal d'activité et sauvegardes">Journal</button>
 </div>
 
 <main>
@@ -1519,6 +1609,18 @@
                     title="Placer automatiquement les cours (enseignants, salles et groupes sans chevauchement, dispos, préférences) — aperçu possible avant d'enregistrer">
                 Générer l'EDT
             </button>
+            <button type="button" class="btn btn-secondary btn-sm admin-only" style="margin-left:6px"
+                    onclick="openJoursFermes()"
+                    title="Jours sans aucun cours de l'année (jours fériés, ponts), pour toutes les promotions — lus par « Générer l'EDT »">
+                Jours fériés et ponts
+            </button>
+        </div>
+        <!-- Filtres du sous-onglet Planning -->
+        <div class="filters" id="rep-filters-planning" style="display:none">
+            <label>Promotions :</label>
+            <span id="pl-promos" class="pl-promos"></span>
+            <button type="button" class="btn btn-secondary btn-sm" style="margin-left:12px" onclick="plImprimer()"
+                    title="Imprimer (ou enregistrer en PDF) la semaine affichée : une promotion par page">Imprimer</button>
         </div>
         <div class="filters" id="rep-filters-annuelle">
             <label>Semestres :</label>
@@ -1576,6 +1678,8 @@
     <div class="subtabs" id="rep-subtabs">
         <button type="button" id="rep-subtab-annuelle" class="subtab active" onclick="showRepTab('annuelle')">Répartition annuelle</button>
         <button type="button" id="rep-subtab-jour" class="subtab admin-only" onclick="showRepTab('jour')">Répartition journalière</button>
+        <button type="button" id="rep-subtab-planning" class="subtab admin-only" onclick="showRepTab('planning')"
+                title="L'EDT généré enregistré, semaine par semaine, en grille horaire par promotion">Planning</button>
         <span id="rep-click-hint" class="rep-click-hint" style="display:none" title="Maj + clic retire aussi une séance. Clic droit sur le libellé d'une ligne, la colonne Form. ou la ligne bleue d'une matière : vider la ligne, la formation ou la matière.">Clic : + 1 séance · clic droit : − 1 · clic droit sur un libellé : vider</span>
         <!-- Brouillon de la répartition annuelle : rien n'est enregistré avant « Enregistrer » -->
         <div id="rep-draft-bar" class="rep-draft-bar admin-only" style="display:none">
@@ -1596,6 +1700,11 @@
     </div>
     <div id="rep-pane-jour" style="display:none">
         <div id="repj-content"><div class="empty">Choisissez une promo et une semaine.</div></div>
+    </div>
+    <!-- Planning : l'EDT généré enregistré (timetable_slots), en grille horaire par promotion -->
+    <div id="rep-pane-planning" style="display:none">
+        <div id="pl-semaines" class="pl-semaines"></div>
+        <div id="pl-content"><div class="spinner">Chargement…</div></div>
     </div>
 </div>
 
@@ -1845,11 +1954,14 @@
         <p class="edtg-note" style="margin:-8px 0 12px">
             Place automatiquement les cours de la répartition enregistrée, du lundi au vendredi de 8 h à 20 h et le
             samedi de 8 h à 12 h 30 : jamais deux cours en même temps pour un enseignant, un groupe ou une salle, dispos
-            des enseignants et 6 h de CM/TD par jour au plus respectées, jeudi après-midi libre pour les FTP (sauf la
-            semaine d'un jour férié), aucun cours un jour férié ; puis le moins de demi-journées possible, la pause
-            déjeuner, l'ordre CM → TD → TP, la salle info fixe plutôt que la mobile, les soirées (après 18 h) et le
-            samedi seulement si nécessaire. Rien n'est envoyé à Hyperplanning.
+            des enseignants et 6 h de CM/TD par jour au plus respectées, jeudi après-midi (dès 12 h 30) libre pour les
+            FTP (sauf la semaine d'un jour férié ou d'un pont), aucun cours un jour férié ou un pont ; puis une même
+            matière espacée pour un groupe (pas deux fois le même jour, idéalement 2 ou 3 jours d'écart), le moins de
+            demi-journées possible, la pause déjeuner, l'ordre CM → TD → TP, la salle info fixe plutôt que la mobile,
+            les soirées (après 18 h) et le samedi seulement si nécessaire — selon les poids ci-dessous. Rien n'est
+            envoyé à Hyperplanning.
         </p>
+        <div class="edtg-fermes" id="edtgen-fermes">Jours fériés et ponts : chargement…</div>
         <div class="edtg-opts">
             <fieldset>
                 <legend>Semaines</legend>
@@ -1876,6 +1988,13 @@
                     </select></label>
             </fieldset>
         </div>
+        <!-- Poids des préférences (GET/PUT /api/edt-poids, réglage du site) : plus un poids
+             est fort, plus le calcul évite ce qu'il pénalise. Les valeurs affichées servent
+             au prochain calcul, même non enregistrées. -->
+        <details class="edtg-poids" id="edtgen-poids">
+            <summary>Poids du calcul <span class="edtg-note" id="edtgen-poids-resume"></span></summary>
+            <div id="edtgen-poids-corps"><div class="spinner">Chargement…</div></div>
+        </details>
         <div id="edtgen-progress"></div>
         <div id="edtgen-result"></div>
         <div id="edtgen-grid"></div>
@@ -1883,6 +2002,28 @@
             <button type="button" class="btn btn-secondary" id="edtgen-stop" style="display:none" onclick="stopEdtGen()">Arrêter (après le calcul en cours)</button>
             <button type="button" class="btn btn-secondary" onclick="closeModal('modal-edt-gen')">Fermer</button>
             <button type="button" class="btn btn-primary" id="edtgen-run" onclick="runEdtGen()">Lancer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL JOURS FÉRIÉS ET PONTS (année, répartition journalière) ===== -->
+<div class="modal-backdrop" id="modal-jours-fermes">
+    <div class="modal" style="max-width:760px">
+        <h2>Jours fériés et ponts — <span id="jf-annee">—</span></h2>
+        <p class="edtg-note" style="margin:-8px 0 10px">
+            Aucun cours ces jours-là, pour toutes les promotions. Une semaine qui en compte un du lundi au vendredi
+            rouvre le jeudi après-midi aux FTP, pour rattraper. Lu par « Générer l'EDT ».
+        </p>
+        <div id="jf-statut" class="jf-statut"></div>
+        <div id="jf-liste"></div>
+        <div class="dsp-actions">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="jfAjouter()">+ Ajouter un jour</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="jf-legaux" onclick="jfLegaux()">Ajouter les jours fériés légaux manquants</button>
+            <span class="dsp-status" id="jf-modif"></span>
+        </div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-jours-fermes')">Fermer</button>
+            <button type="button" class="btn btn-primary" id="jf-save" onclick="jfEnregistrer()">Enregistrer</button>
         </div>
     </div>
 </div>
@@ -3047,12 +3188,14 @@ function applyRole(me) {
     }
     // Enseignant : onglets Service enseignant (Bilan Global / Calendaire /
     // Contraintes), Programme (consultation), Statistiques (agrégées), Salons et Mon Compte.
-    const teacherTabs = ['nav-service', 'nav-programme', 'nav-statistiques', 'nav-salons',
+    // (Les sous-onglets du Service, svc-tab-…, suivent les droits de leurs clés.)
+    const teacherTabs = ['nav-programme', 'nav-statistiques', 'nav-salons',
                          'nav-mon-compte', 'nav-aide'];
     // Connexion avec mot de passe : Promotions en lecture seule (Effectifs/Notes/Jury)
     if (role === 'teacher' && state.promoAccess) teacherTabs.push('nav-saisie', 'nav-promotions', 'nav-etudiants',
                                                                   'nav-stages', 'nav-alternance');
-    document.querySelectorAll('nav button[id^="nav-"]').forEach(b => {
+    // Onglets de la barre et ceux rangés dans les barres de sous-onglets (regroupements)
+    document.querySelectorAll('nav button[id^="nav-"], .nav-subbar button[id^="nav-"]').forEach(b => {
         let show;
         // Enseignants seuls (session normale d'un responsable comprise)
         if (b.id === 'nav-mon-compte') show = role === 'teacher' || state.resp.length > 0;
@@ -3065,6 +3208,7 @@ function applyRole(me) {
         b.style.display = show ? '' : 'none';
     });
     applyTabVisibility();
+    _syncNavGroups();
     notifDemarrer();
     // Bouton « ? » (aide de l'écran affiché) : suit l'onglet Aide, que le superadmin peut fermer
     const aideBtn = document.getElementById('aide-flottant');
@@ -3148,12 +3292,11 @@ function _firstVisibleTab(prefix, tabs, allowed = () => true) {
 }
 // Page réellement affichable : repli sur la première page visible si `name` est masquée
 function _visiblePage(name) {
+    // Sous-onglet du Service affichable (clé ouverte et bouton présent pour le rôle)
+    const svcShown = p => !tabHidden('svc:' + p) && _pageShown(p);
     if (_servicePages.includes(name)) {
         if (!tabHidden('svc:' + name) && !tabHidden('nav:service')) return name;
-        const alt = _servicePages.find(p => {
-            const b = document.getElementById('svc-tab-' + p);
-            return !tabHidden('svc:' + p) && b && getComputedStyle(b).display !== 'none';
-        });
+        const alt = _servicePages.find(svcShown);
         if (alt && !tabHidden('nav:service')) return alt;
     } else if (!tabHidden('nav:' + name)) {
         return name;
@@ -3161,14 +3304,15 @@ function _visiblePage(name) {
     const order = ['service', 'programme', 'statistiques', 'mon-compte', 'saisie', 'promotions',
                    'etudiants', 'stages', 'alternance', 'salles', 'enseignants', 'parametres', 'salons', 'aide'];
     for (const p of order) {
+        // Le Service n'a plus de bouton propre (regroupement grp-service) : ses sous-onglets
+        if (p === 'service') {
+            const alt = tabHidden('nav:service') ? null : _servicePages.find(svcShown);
+            if (alt) return alt;
+            continue;
+        }
         const b = document.getElementById('nav-' + p);
         if (!b || b.style.display === 'none' || tabHidden('nav:' + p)) continue;
-        if (p !== 'service') return p;
-        const alt = _servicePages.find(sp => {
-            const sb = document.getElementById('svc-tab-' + sp);
-            return !tabHidden('svc:' + sp) && sb && getComputedStyle(sb).display !== 'none';
-        });
-        if (alt) return alt;
+        return p;
     }
     return name;
 }
@@ -3230,7 +3374,9 @@ function renderTabVisibility() {
             }
             return view + edit;
         }).join('');
-        rows.push(`<tr class="${depth === 0 ? 'tv-top' : ''}"><td style="padding-left:${8 + depth * 18}px">${esc(n.label)}</td>${cells}</tr>`);
+        // place : onglet rangé dans un regroupement ou en icône (affichage seulement)
+        rows.push(`<tr class="${depth === 0 ? 'tv-top' : ''}"><td style="padding-left:${8 + depth * 18}px">${esc(n.label)}${
+            n.place ? `<span class="tv-place">${esc(n.place)}</span>` : ''}</td>${cells}</tr>`);
         walk(n.children, depth + 1, parents.concat(n.key));
     });
     walk(_tabAccess.tree, 0, []);
@@ -3838,7 +3984,74 @@ function svcQ(sep = '?') {
     return _serviceYear ? sep + 'year=' + encodeURIComponent(_serviceYear) : '';
 }
 
-function showServicePage() { showPage(_serviceTab); }
+function showServicePage() { showNavGroup('service'); }
+
+// ===== Onglets regroupés =====
+// Un bouton de la barre principale (grp-…) ouvre un regroupement de pages, listées
+// dans une barre de sous-onglets sous la nav. Les pages gardent leur bouton (même id
+// qu'avant : nav-… ou svc-tab-…) et leur clé d'accès (_TAB_TREE) : le regroupement
+// n'est qu'un affichage. Le bouton du regroupement s'affiche si l'une de ses pages
+// est ouverte à la session ; la barre, si elle en propose au moins deux (toujours
+// pour le Service, à cause du choix de l'année).
+const _NAV_GROUPS = {
+    service:   { btn: 'grp-service', bar: 'service-bar', last: null,
+                 pages: [..._servicePages, 'enseignants', 'salles'] },
+    etudiants: { btn: 'grp-etudiants', bar: 'etu-bar', last: null,
+                 pages: ['etudiants', 'stages', 'alternance'] },
+    reglages:  { btn: 'grp-reglages', bar: 'reg-bar', last: null,
+                 pages: ['parametres', 'journal'] },
+};
+function _navGroupOf(page) {
+    return Object.keys(_NAV_GROUPS).find(g => _NAV_GROUPS[g].pages.includes(page)) || null;
+}
+// Bouton d'une page dans la barre (principale ou de sous-onglets)
+function _pageBtn(page) {
+    return document.getElementById((_servicePages.includes(page) ? 'svc-tab-' : 'nav-') + page);
+}
+// Page proposée à la session : son bouton n'est masqué ni par le rôle ni par les droits
+function _pageShown(page) {
+    const b = _pageBtn(page);
+    return !!b && getComputedStyle(b).display !== 'none';
+}
+function _syncNavGroups() {
+    Object.values(_NAV_GROUPS).forEach(g => {
+        const b = document.getElementById(g.btn);
+        if (b) b.style.display = g.pages.some(_pageShown) ? '' : 'none';
+    });
+    // Séparateur du Service : seulement si Enseignants ou Salles suivent
+    const sep = document.getElementById('service-bar-sep');
+    if (sep) sep.style.display = _pageShown('enseignants') || _pageShown('salles') ? '' : 'none';
+}
+// Ouvre la dernière page visitée du regroupement, sinon sa première page ouverte
+function showNavGroup(id) {
+    const g = _NAV_GROUPS[id];
+    const page = g.last && _pageShown(g.last) ? g.last
+        : (id === 'service' && _pageShown(_serviceTab) ? _serviceTab : g.pages.find(_pageShown));
+    showPage(page || g.pages[0]);
+}
+// Barre principale et barres de sous-onglets pour la page affichée
+function _syncNavBars(name) {
+    const grp = _navGroupOf(name);
+    if (grp) _NAV_GROUPS[grp].last = name;
+    const navBtn = document.getElementById(grp ? _NAV_GROUPS[grp].btn : 'nav-' + name);
+    if (navBtn) navBtn.classList.add('active');
+    Object.entries(_NAV_GROUPS).forEach(([id, g]) => {
+        const bar = document.getElementById(g.bar);
+        if (bar) bar.style.display = id === grp
+            && (id === 'service' || g.pages.filter(_pageShown).length > 1) ? '' : 'none';
+        g.pages.forEach(p => { const b = _pageBtn(p); if (b) b.classList.toggle('active', p === name); });
+    });
+    // Service : le choix de l'année ne vaut que pour ses vues ; Enseignants et Salles
+    // montrent l'année active
+    const svcVue = _servicePages.includes(name);
+    const choix = document.getElementById('service-year-choix');
+    const active = document.getElementById('service-year-active');
+    if (choix) choix.style.display = svcVue ? '' : 'none';
+    if (active) {
+        active.style.display = grp === 'service' && !svcVue ? '' : 'none';
+        document.getElementById('service-year-active-val').textContent = state.defaultYear || '…';
+    }
+}
 
 // ===== Modifications non enregistrées =====
 // Les grilles qui exigent un clic sur « Enregistrer » sont surveillées : toute
@@ -3945,15 +4158,8 @@ function _showPage(name) {
     document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
     // « Saisie Notes » (enseignant) : la page Promotions réduite à ce sous-onglet
     document.getElementById('page-' + (name === 'saisie' ? 'promotions' : name)).classList.add('active');
-    const isService = _servicePages.includes(name);
-    if (isService) _serviceTab = name;
-    const navBtn = document.getElementById(isService ? 'nav-service' : 'nav-' + name);
-    if (navBtn) navBtn.classList.add('active');
-    document.getElementById('service-bar').style.display = isService ? '' : 'none';
-    _servicePages.forEach(p => {
-        const b = document.getElementById('svc-tab-' + p);
-        if (b) b.classList.toggle('active', name === p);
-    });
+    if (_servicePages.includes(name)) _serviceTab = name;
+    _syncNavBars(name);
     refreshTabEditMode();
     loadPage(name);
 }
@@ -4056,8 +4262,9 @@ async function loadPage(name, forceReload) {
         else if (name === 'aide') { await aideCharger(); }
         else if (name === 'repartition') {
             await loadRepartition();
-            if (tabHidden('rep:' + _repTab)) _showRepTab(_repTab === 'jour' ? 'annuelle' : 'jour');
+            if (tabHidden('rep:' + _repTab)) _showRepTab(_firstVisibleTab('rep:', ['annuelle', 'jour', 'planning']));
             else if (_repTab === 'jour') await loadRepJour();
+            else if (_repTab === 'planning') await loadPlanning();
         }
     } catch (e) {
         toast('Erreur de chargement : ' + e.message, 'error');
@@ -16994,13 +17201,13 @@ function repDraftReset() {
 // quelque chose à enregistrer ou à annuler
 function repDraftBar() {
     const hint = document.getElementById('rep-click-hint');
-    if (hint) hint.style.display = (editUI('rep:annuelle') && _repTab !== 'jour') ? '' : 'none';
+    if (hint) hint.style.display = (editUI('rep:annuelle') && _repTab === 'annuelle') ? '' : 'none';
     const bar = document.getElementById('rep-draft-bar');
     if (!bar) return;
     const n = _repDraft.cells.size, busy = _repDraft.saving;
     const last = _repDraft.undo[_repDraft.undo.length - 1];
     const next = _repDraft.redo[_repDraft.redo.length - 1];
-    bar.style.display = (editUI('rep:annuelle') && _repTab !== 'jour' && (n || last || next)) ? '' : 'none';
+    bar.style.display = (editUI('rep:annuelle') && _repTab === 'annuelle' && (n || last || next)) ? '' : 'none';
     bar.classList.toggle('is-dirty', n > 0);
     document.getElementById('rep-draft-status').textContent = busy ? 'Enregistrement…'
         : n ? `${n} modification${n > 1 ? 's' : ''} non enregistrée${n > 1 ? 's' : ''}`
@@ -18701,18 +18908,18 @@ function showRepTab(tab) {
     else _showRepTab(tab);
 }
 
+const _REP_TABS = ['annuelle', 'jour', 'planning'];
 function _showRepTab(tab) {
     _repTab = tab;
     refreshTabEditMode();
     repDraftBar();
-    document.getElementById('rep-subtab-annuelle').classList.toggle('active', tab === 'annuelle');
-    document.getElementById('rep-subtab-jour').classList.toggle('active', tab === 'jour');
-    const isJour = tab === 'jour';
-    document.getElementById('rep-filters-annuelle').style.display = isJour ? 'none' : '';
-    document.getElementById('rep-filters-jour').style.display = isJour ? '' : 'none';
-    document.getElementById('rep-pane-annuelle').style.display = isJour ? 'none' : '';
-    document.getElementById('rep-pane-jour').style.display = isJour ? '' : 'none';
-    if (isJour) loadRepJour();
+    _REP_TABS.forEach(t => {
+        document.getElementById('rep-subtab-' + t).classList.toggle('active', tab === t);
+        document.getElementById('rep-filters-' + t).style.display = tab === t ? '' : 'none';
+        document.getElementById('rep-pane-' + t).style.display = tab === t ? '' : 'none';
+    });
+    if (tab === 'jour') loadRepJour();
+    else if (tab === 'planning') loadPlanning();
 }
 
 // Numéro de semaine ISO de la date courante (présélection de la semaine)
@@ -18906,7 +19113,7 @@ function _edtgAnneeLabel() {
     return sel.options[sel.selectedIndex].text.replace(/\s*\(.*\)$/, '');
 }
 
-function openEdtGen() {
+async function openEdtGen() {
     if (state.resp && state.resp.length) {
         toast('La génération est réservée à la session administrateur', 'error');
         return;
@@ -18915,11 +19122,106 @@ function openEdtGen() {
     document.getElementById('edtgen-week-label').textContent = w ? 'S' + w : '—';
     document.getElementById('edtgen-year-label').textContent = _edtgAnneeLabel();
     openModal('modal-edt-gen');
+    if (!_edtgPoids) _edtgChargerPoids();     // une fois : les saisies non enregistrées restent
     if (_edtGen.run) return;                  // calcul en cours : on retrouve son avancement
+    // Promotion affichée au départ : celle choisie en haut de l'écran
+    _edtgVue = { yg: parseInt(document.getElementById('repj-annee').value) || 1,
+                 cohorte: document.getElementById('repj-cohorte').value };
+    _edtgCache = null;
+    _edtGen.agg = null;
     document.getElementById('edtgen-progress').innerHTML = '';
     document.getElementById('edtgen-result').innerHTML = '';
-    _edtGen.agg = null;
+    document.getElementById('edtgen-grid').innerHTML = '<div class="spinner">Chargement…</div>';
+    // Jours fériés et ponts de l'année (rappel, dates, jours grisés) ; semaines déjà enregistrées
+    const [fermes, sem] = await Promise.all([api('/jours-fermes' + svcQ()).catch(() => null),
+                                             api('/timetable/weeks' + svcQ()).catch(() => null)]);
+    _edtgFermes(fermes);
+    _edtgSemEnr = sem ? sem.semaines.filter(s => s.creneaux > 0).map(s => s.semaine) : [];
+    if (_edtGen.run) return;                  // « Lancer » cliqué entre-temps : le calcul affiche son résultat
     if (w) edtGenAfficherSemaine(w, false);   // EDT déjà enregistré de la semaine, s'il y en a un
+    else document.getElementById('edtgen-grid').innerHTML = '';
+}
+
+// ----- Poids du calcul (GET/PUT /api/edt-poids) -----
+// Réglage du site, commun à toutes les années. Les champs affichés servent au
+// prochain calcul même s'ils ne sont pas enregistrés (essais) ; « Enregistrer »
+// les garde pour tous les calculs.
+let _edtgPoids = null;   // { poids (enregistrés), defauts, max, modifies, infos: [{cle, libelle, unite, aide}] }
+
+async function _edtgChargerPoids() {
+    const corps = document.getElementById('edtgen-poids-corps');
+    try { _edtgPoids = await api('/edt-poids'); }
+    catch (e) { corps.innerHTML = `<div class="empty">Poids indisponibles : ${esc(e.message)}</div>`; return; }
+    _edtgRendrePoids(_edtgPoids.poids);
+}
+
+function _edtgRendrePoids(valeurs) {
+    const P = _edtgPoids;
+    document.getElementById('edtgen-poids-corps').innerHTML = `<table><tbody>${P.infos.map(i => `<tr>
+            <td><b>${esc(i.libelle)}</b>${i.aide ? `<div class="edtg-note">${esc(i.aide)}</div>` : ''}</td>
+            <td class="pv"><input type="number" min="0" max="${P.max}" step="0.5" id="edtgp-${i.cle}"
+                value="${valeurs[i.cle]}" oninput="edtgPoidsMaj()" aria-label="${esc(i.libelle)}">
+                <span class="edtg-note">${esc(i.unite)}</span></td>
+            <td class="pv pdef">défaut ${P.defauts[i.cle]}</td></tr>`).join('')}</tbody></table>
+        <div class="pactions">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="edtgPoidsDefaut()">Valeurs par défaut</button>
+            <button type="button" class="btn btn-primary btn-sm" id="edtgp-save" onclick="edtgPoidsEnregistrer()">Enregistrer ces poids</button>
+            <span class="edtg-note" id="edtgp-statut"></span>
+        </div>
+        <p class="edtg-note" style="margin-top:6px">Plus un poids est fort, plus le calcul évite ce qu'il pénalise ;
+        0 l'ignore. Placer toutes les séances passe toujours avant. Les valeurs affichées servent au prochain calcul,
+        même sans les enregistrer ; enregistrées, elles valent pour tous les calculs, de toutes les années.</p>`;
+    edtgPoidsMaj();
+}
+
+// Valeurs saisies {clé: nombre} ; Error si l'une est vide ou hors bornes
+function _edtgPoidsSaisis() {
+    const out = {};
+    for (const i of _edtgPoids.infos) {
+        const el = document.getElementById('edtgp-' + i.cle);
+        const v = el ? Number(el.value) : NaN;
+        if (!el || el.value.trim() === '' || !Number.isFinite(v) || v < 0 || v > _edtgPoids.max)
+            throw new Error(`Poids « ${i.libelle} » : un nombre de 0 à ${_edtgPoids.max} est attendu`);
+        out[i.cle] = v;
+    }
+    return out;
+}
+
+// Champs différents du défaut en évidence ; état : par défaut, enregistrés, ou modifiés non enregistrés
+function edtgPoidsMaj() {
+    const P = _edtgPoids;
+    if (!P) return;
+    let saisis = null;
+    try { saisis = _edtgPoidsSaisis(); } catch (e) { /* valeur invalide : signalée ci-dessous */ }
+    P.infos.forEach(i => {
+        const el = document.getElementById('edtgp-' + i.cle);
+        if (el) el.classList.toggle('modif', el.value.trim() !== '' && Number(el.value) !== P.defauts[i.cle]);
+    });
+    const nonEnr = !!saisis && P.infos.some(i => saisis[i.cle] !== P.poids[i.cle]);
+    const ecarts = saisis ? P.infos.filter(i => saisis[i.cle] !== P.defauts[i.cle]).length : 0;
+    const statut = document.getElementById('edtgp-statut');
+    if (statut) statut.textContent = !saisis ? '⚠ valeur invalide'
+        : nonEnr ? 'Modifiés, non enregistrés : ils serviront au prochain calcul.'
+        : P.modifies.length ? 'Poids enregistrés.' : 'Valeurs par défaut.';
+    document.getElementById('edtgen-poids-resume').textContent = !saisis ? '— valeur invalide'
+        : `— ${ecarts ? ecarts + ' différent(s) des valeurs par défaut' : 'valeurs par défaut'}${nonEnr ? ', non enregistré(s)' : ''}`;
+}
+
+function edtgPoidsDefaut() { if (_edtgPoids) _edtgRendrePoids(_edtgPoids.defauts); }
+
+async function edtgPoidsEnregistrer() {
+    let poids;
+    try { poids = _edtgPoidsSaisis(); } catch (e) { toast(e.message, 'error'); return; }
+    const btn = document.getElementById('edtgp-save');
+    btn.disabled = true;
+    try {
+        _edtgPoids = await api('/edt-poids', { method: 'PUT', body: JSON.stringify({ poids }) });
+        _edtgRendrePoids(_edtgPoids.poids);
+        toast('Poids du calcul enregistrés');
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+        btn.disabled = false;
+    }
 }
 
 function stopEdtGen() {
@@ -18941,6 +19243,12 @@ async function runEdtGen() {
     const apercu = document.getElementById('edtgen-preview').checked;
     const temps = parseInt(document.getElementById('edtgen-time').value) || 20;
     if (!toutes && !w) { toast('Choisissez une semaine', 'error'); return; }
+    // Poids affichés (enregistrés ou non) ; pas encore chargés : le serveur prend ceux enregistrés
+    let poids = null;
+    if (_edtgPoids) {
+        try { poids = _edtgPoidsSaisis(); }
+        catch (e) { document.getElementById('edtgen-poids').open = true; toast(e.message, 'error'); return; }
+    }
     const agg = { semaines: [], conflicts: [], avert: [], charges: [], creneaux: [], ecrits: 0, duree: 0, solveur: '' };
     _edtGen = { run: true, stop: false, agg, apercu, semaine: toutes ? null : w };
     const btnRun = document.getElementById('edtgen-run'), btnStop = document.getElementById('edtgen-stop');
@@ -18961,6 +19269,7 @@ async function runEdtGen() {
                 + `<span class="edtg-note">(${Math.round((Date.now() - t0) / 1000)} s ; jusqu'à ${temps} s par semaine)</span>`);
             const body = { moteur: 'pulp', semaines: pending, simulation: apercu, temps_max: temps };
             if (uneAnnee) body.annees = [yg];
+            if (poids) body.poids = poids;
             const res = await api('/generate-timetable' + svcQ(), { method: 'POST', body: JSON.stringify(body) });
             premier = false;
             agg.semaines.push(...(res.semaines || []));
@@ -18987,6 +19296,11 @@ async function runEdtGen() {
         btnRun.disabled = false;
         btnStop.style.display = 'none';
         edtGenRendre();
+        if (!apercu) {    // EDT enregistré : relu à l'affichage, liste des semaines à jour
+            _edtgCache = null;
+            try { _edtgSemEnr = (await api('/timetable/weeks' + svcQ())).semaines.filter(s => s.creneaux > 0).map(s => s.semaine); }
+            catch (e) { /* la liste reste celle d'avant */ }
+        }
         const traitees = agg.semaines.filter(s => s.places != null).map(s => s.semaine);
         const voir = traitees.includes(w) ? w : traitees[0];
         if (voir) edtGenAfficherSemaine(voir, apercu);
@@ -19033,6 +19347,24 @@ function edtGenRendre() {
             <p class="edtg-note">Causes habituelles : plus d'heures que de créneaux pour un enseignant, une salle de TP
             saturée, des dispos trop étroites. Relancer la semaine avec « 60 s » aide quand elle est très chargée.</p>`;
     }
+    // Espacement des matières : cas restants (même jour d'abord), semaine par semaine
+    const esp = { mj: 0, ld: 0, cas: [] };
+    faites.forEach(s => {
+        const e = s.espacement;
+        if (!e) return;
+        esp.mj += e.meme_jour || 0;
+        esp.ld += e.lendemain || 0;
+        (e.cas || []).forEach(c => esp.cas.push(Object.assign({ semaine: s.semaine }, c)));
+    });
+    if (faites.some(s => s.espacement)) {
+        esp.cas.sort((a, b) => (a.type === 'meme_jour' ? 0 : 1) - (b.type === 'meme_jour' ? 0 : 1) || a.semaine - b.semaine);
+        html += `<details class="edtg-alertes"><summary>Espacement des matières : <b>${esp.mj}</b> fois le même jour,
+            <b>${esp.ld}</b> fois deux jours de suite <span class="edtg-note">(pour un même groupe ; une matière
+            vue 4 fois dans la semaine ne peut pas éviter deux jours de suite)</span></summary><ul>${
+            esp.cas.map(c => `<li>S${c.semaine} · ${esc(c.matiere)} · ${esc(c.public)} : ${
+                c.type === 'meme_jour' ? '<b>deux fois le ' + esc(c.jours) + '</b>' : esc(c.jours)}</li>`).join('')
+            || '<li>aucun cas</li>'}</ul></details>`;
+    }
     const alertes = agg.avert.filter(a => !/salle info mobile/.test(a));
     const mobiles = agg.avert.length - alertes.length;
     const charges = agg.charges.map(c => `S${c.semaine} · ${c.annee}A ${c.formation} : ${c.heures} h prévues (${c.alerte})`);
@@ -19044,52 +19376,472 @@ function edtGenRendre() {
     zone.innerHTML = html;
 }
 
-// Grille d'une semaine pour l'année d'étude et la cohorte affichées : l'aperçu
-// calculé, ou l'EDT enregistré (GET /timetable/week)
+// Grille d'une semaine dans la fenêtre : l'aperçu calculé, ou l'EDT enregistré
+// (GET /timetable/planning, créneaux avec leurs promotions). La promotion et la
+// semaine se changent au-dessus de la grille, sans perdre l'aperçu.
+let _edtgVue = { yg: 1, cohorte: 'FTP' };   // promotion affichée dans la fenêtre
+let _edtgMode = true;                        // grille affichée : aperçu (true) ou EDT enregistré
+let _edtgCache = null;                       // { w, slots } : EDT enregistré déjà lu
+let _edtgSemEnr = [];                        // semaines qui ont un EDT enregistré
+
 async function edtGenAfficherSemaine(w, apercu) {
     _edtGen.semaine = w;
+    _edtgMode = apercu;
     document.querySelectorAll('.edtg-weeks tbody tr').forEach(tr =>
         tr.classList.toggle('sel', parseInt(tr.dataset.w) === w));
     const zone = document.getElementById('edtgen-grid');
     let slots;
     if (apercu) {
         slots = ((_edtGen.agg && _edtGen.agg.creneaux) || []).filter(s => s.week_number === w);
+    } else if (_edtgCache && _edtgCache.w === w) {
+        slots = _edtgCache.slots;
     } else {
         zone.innerHTML = '<div class="spinner">Chargement…</div>';
-        try { slots = (await api('/timetable/week/' + w + svcQ())).slots || []; }
+        try { slots = (await api('/timetable/planning/' + w + svcQ())).slots || []; }
         catch (e) { zone.innerHTML = `<div class="empty">Erreur : ${esc(e.message)}</div>`; return; }
+        _edtgCache = { w, slots };
     }
     zone.innerHTML = edtGenGrilleHtml(slots, w, apercu);
 }
 
+// Changement de promotion dans la fenêtre (« 2-ALT ») : même semaine, même mode
+function edtgVue(v) {
+    const [yg, cohorte] = v.split('-');
+    _edtgVue = { yg: parseInt(yg), cohorte };
+    if (_edtGen.semaine) edtGenAfficherSemaine(_edtGen.semaine, _edtgMode);
+}
+
+// Barre au-dessus de la grille : promotion, semaine précédente / suivante
+function _edtgBarre(w, apercu) {
+    const calc = apercu ? ((_edtGen.agg && _edtGen.agg.semaines) || []).filter(s => s.places != null).map(s => s.semaine)
+                        : _edtgSemEnr;
+    const liste = calc.includes(w) ? calc : [w, ...calc];
+    const i = liste.indexOf(w);
+    const aller = x => x != null ? `onclick="edtGenAfficherSemaine(${x}, ${apercu})"` : 'disabled';
+    const promos = [1, 2, 3].flatMap(yg => ['FTP', 'ALT', 'MUT'].map(c => {
+        const v = yg + '-' + c, sel = yg === _edtgVue.yg && c === _edtgVue.cohorte;
+        return `<option value="${v}"${sel ? ' selected' : ''}>${_PL_ANNEES[yg]} · ${c === 'MUT' ? 'promo entière' : c}</option>`;
+    })).join('');
+    return `<div class="edtg-vue">
+        <label>Promotion : <select onchange="edtgVue(this.value)">${promos}</select></label>
+        <span>Semaine :
+            <button type="button" class="pl-nav" ${aller(liste[i - 1])} title="Semaine précédente">◀</button>
+            <select onchange="edtGenAfficherSemaine(parseInt(this.value), ${apercu})">${
+                liste.map(x => `<option value="${x}"${x === w ? ' selected' : ''}>S${x}</option>`).join('')}</select>
+            <button type="button" class="pl-nav" ${aller(liste[i + 1])} title="Semaine suivante">▶</button>
+        </span></div>`;
+}
+
 function edtGenGrilleHtml(slots, w, apercu) {
-    const yg = parseInt(document.getElementById('repj-annee').value) || 1;
-    const cohorte = document.getElementById('repj-cohorte').value;
-    const garde = s => s.year_group === yg && (cohorte === 'MUT' || s.form_type === 2
-        || s.form_type === (cohorte === 'FTP' ? 0 : 1));
-    const titre = `S${w} · ${esc(_edtgAnneeLabel())} · ${cohorte}`
-        + (apercu ? ' — aperçu' : ' — EDT enregistré');
-    const vus = slots.filter(garde);
+    const { yg, cohorte } = _edtgVue;
+    const dates = _plDates(w, _edtgFermesEtat), fermes = _plFermes(w, _edtgFermesEtat);
+    const titre = `S${w}${dates ? ` (du ${_plJJMM(dates[0])} au ${_plJJMM(dates[5])})` : ''} · ${_PL_ANNEES[yg]} · `
+        + (cohorte === 'MUT' ? 'promo entière' : cohorte) + (apercu ? ' — aperçu' : ' — EDT enregistré');
+    const barre = _edtgBarre(w, apercu);
+    const vus = slots.filter(s => plDansPromo(s, yg, cohorte));
     if (!vus.length) {
-        return `<div class="section-title">${titre}</div><div class="empty">${slots.length
-            ? 'Aucun cours pour cette année et cette cohorte (changez-les en haut de l\'écran).'
+        return barre + `<div class="section-title">${titre}</div><div class="empty">${slots.length
+            ? 'Aucun cours pour cette promotion cette semaine.'
             : (apercu ? 'Aucun cours placé.' : 'Aucun EDT généré pour cette semaine.')}</div>`;
     }
-    // Le samedi (matin) n'apparaît que s'il porte des cours
-    const nomsJours = _EDTG_JOURS.slice(0, vus.some(s => s.day_of_week === 5) ? 6 : 5);
-    const jours = nomsJours.map((_, d) => vus.filter(s => s.day_of_week === d)
-        .sort((a, b) => a.start_time.localeCompare(b.start_time) || String(a.course_code).localeCompare(String(b.course_code))));
-    const bloc = s => {
-        const tt = String(s.teaching_type || '').toUpperCase();
-        const gr = s.group_index != null ? ` gr${s.group_index}` : '';
-        const form = { 0: 'FTP', 1: 'ALT', 2: 'MUT' }[s.form_type] || '';
-        return `<div class="edtg-slot t-${esc(tt.slice(0, 2))}"><b>${esc(s.start_time)}–${esc(s.end_time)}</b>
-            ${esc(s.course_code || '')} ${esc(tt)}${gr} <span class="edtg-meta">${form}</span><br>
-            <span class="edtg-meta">${esc(s.teacher_name || 'sans enseignant')} · ${esc(s.room_name || 'salle à choisir')}</span></div>`;
+    const rouvre = !fermes[3] && Object.keys(fermes).some(d => d <= 4) && cohorte !== 'ALT'
+        ? ' · jour fermé : jeudi après-midi ouvert aux FTP' : '';
+    return barre + `<div class="section-title">${titre} <span class="edtg-note">(${vus.length} cours${rouvre})</span></div>`
+        + plEdtHtml(slots, { yg, cohorte, dates, fermes });
+}
+
+// ----- Emploi du temps en grille horaire (Planning et fenêtre « Générer l'EDT ») -----
+// Jours en colonnes, heures en lignes (8 h → 20 h, demi-heures), un rectangle par
+// cours à sa place et à sa hauteur, une couleur par matière ; les cours simultanés
+// (groupes de TP en parallèle) se partagent la largeur du jour.
+const _PL_ANNEES = { 1: '1ère année', 2: '2ème année', 3: '3ème année' };
+const _PL_PROMOS = [[1, 'FTP'], [1, 'ALT'], [2, 'FTP'], [2, 'ALT'], [3, 'FTP'], [3, 'ALT']];
+const _PL_DEBUT = 8 * 60, _PL_FIN = 20 * 60, _PL_H = 21;   // hauteur d'une demi-heure (px)
+
+function _plMin(t) { const [h, m] = String(t || '0:0').split(':'); return parseInt(h) * 60 + parseInt(m || 0); }
+function _plJJMM(d) { return String(d.getUTCDate()).padStart(2, '0') + '/' + String(d.getUTCMonth() + 1).padStart(2, '0'); }
+
+// Le cours concerne-t-il la promotion (année, FTP | ALT | MUT = promo entière) ?
+// `publics` (serveur) suit les groupes : un TP mutualisé n'est que FTP ou qu'ALT.
+function plDansPromo(s, yg, cohorte) {
+    if (Array.isArray(s.publics) && s.publics.length)
+        return s.publics.some(p => p[0] === yg && (cohorte === 'MUT' || p[1] === cohorte));
+    return s.year_group === yg && (cohorte === 'MUT' || s.form_type === 2
+        || s.form_type === (cohorte === 'FTP' ? 0 : 1));
+}
+
+// Teinte stable par matière (code sans sa lettre de sous-matière : R1.05a et R1.05b ensemble)
+function _plTeinte(code) {
+    let h = 7;
+    for (const c of String(code || '').replace(/[a-z]$/, '')) h = (Math.imul(h, 31) + c.charCodeAt(0)) | 0;
+    return Math.round(((h >>> 0) * 137.508) % 360);
+}
+
+// Dates du lundi au samedi de la semaine `w`, d'après l'année des jours fermés (GET /jours-fermes)
+function _plDates(w, etat) {
+    if (!etat || !/^\d{4}-\d{4}$/.test(etat.annee || '')) return null;
+    const deb = _jfInfo(etat.debut);
+    const an = parseInt(etat.annee) + (deb && w < deb.sem ? 1 : 0);
+    const j4 = new Date(Date.UTC(an, 0, 4));
+    const lundi = Date.UTC(an, 0, 4 - (j4.getUTCDay() + 6) % 7 + (w - 1) * 7);
+    return [0, 1, 2, 3, 4, 5].map(i => new Date(lundi + i * 86400000));
+}
+
+// Jours fermés de la semaine : { jour (0 = lundi) : {type, libelle} }
+function _plFermes(w, etat) {
+    const f = {};
+    ((etat && etat.jours) || []).forEach(j => { if (j.semaine === w && j.jour <= 5) f[j.jour] = j; });
+    return f;
+}
+
+// Voies des cours d'un jour : les cours qui se chevauchent se partagent la largeur
+function _plVoies(cours) {
+    const res = [];
+    let paquet = [], fin = -1;
+    const clore = () => {
+        const voies = [];
+        paquet.forEach(x => {
+            let v = voies.findIndex(f => f <= x.d);
+            if (v < 0) { v = voies.length; voies.push(0); }
+            voies[v] = x.f;
+            x.voie = v;
+        });
+        paquet.forEach(x => { x.nb = voies.length; });
+        res.push(...paquet);
+        paquet = [];
     };
-    return `<div class="section-title">${titre} <span class="edtg-note">(${vus.length} cours)</span></div>
-        <table class="edtg-grid"><thead><tr>${nomsJours.map(j => `<th>${j}</th>`).join('')}</tr></thead>
-        <tbody><tr>${jours.map(js => `<td>${js.map(bloc).join('') || '<span class="edtg-note">—</span>'}</td>`).join('')}</tr></tbody></table>`;
+    cours.forEach(x => {
+        if (paquet.length && x.d >= fin) clore();
+        paquet.push(x);
+        fin = Math.max(fin, x.f);
+    });
+    if (paquet.length) clore();
+    return res;
+}
+
+function _plBloc(x) {
+    const s = x.s, H = _PL_H;
+    const tt = String(s.teaching_type || '').toUpperCase();
+    const gr = s.group_index != null ? ' gr' + s.group_index : '';
+    const larg = 100 / x.nb;
+    const info = [`${s.course_code || ''}${s.course_name ? ' — ' + s.course_name : ''}`,
+        `${tt}${gr} · ${s.start_time}–${s.end_time}`, s.teacher_name || 'sans enseignant',
+        s.room_name ? 'Salle ' + s.room_name : 'salle à choisir'].join('\n');
+    return `<div class="pl-cours" title="${esc(info)}" style="--pl-t:${_plTeinte(s.course_code)};top:${(x.d - _PL_DEBUT) / 30 * H}px;`
+        + `height:${(x.f - x.d) / 30 * H - 1}px;left:calc(${x.voie * larg}% + 1px);width:calc(${larg}% - 2px)">
+        <div><b>${esc(s.course_code || '')}</b> ${esc(tt)}${gr}</div>
+        ${s.course_name ? `<div class="pl-c2">${esc(s.course_name)}</div>` : ''}
+        <div class="pl-c3">${esc(s.teacher_name || '—')}</div>
+        <div class="pl-c3">${esc(s.room_name || '')}</div></div>`;
+}
+
+// o = { yg, cohorte, dates: [Date ×6] | null, fermes: {jour: {type, libelle}} }
+function plEdtHtml(slots, o) {
+    const vus = slots.filter(s => plDansPromo(s, o.yg, o.cohorte));
+    const fermes = o.fermes || {};
+    const nj = vus.some(s => s.day_of_week === 5) ? 6 : 5;   // le samedi (matin) s'il porte des cours
+    const H = _PL_H, haut = (_PL_FIN - _PL_DEBUT) / 30 * H;
+    const jeudiOuvert = !!Object.keys(fermes).find(d => d <= 4);
+    let tete = '<div></div>', cols = '';
+    for (let d = 0; d < nj; d++) {
+        const f = fermes[d], dt = o.dates && o.dates[d];
+        tete += `<div class="pl-jour-t${f ? ' ferme' : ''}">${_EDTG_JOURS[d]}${dt ? ' ' + _plJJMM(dt) : ''}${
+            f ? `<span>${f.type === 'pont' ? 'Pont' : 'Férié'}${f.libelle ? ' · ' + esc(f.libelle) : ''}</span>` : ''}</div>`;
+        const cours = vus.filter(s => s.day_of_week === d)
+            .map(s => ({ s, d: _plMin(s.start_time), f: _plMin(s.end_time) }))
+            .sort((a, b) => a.d - b.d || b.f - a.f);
+        let h = f ? '<div class="pl-ferme-txt">Aucun cours</div>' : '';
+        if (d === 3 && !f && o.cohorte === 'FTP' && !jeudiOuvert)
+            h += `<div class="pl-libre" style="top:${(12 * 60 + 30 - _PL_DEBUT) / 30 * H}px">après-midi libre</div>`;
+        if (d === 5) h += `<div class="pl-hors" style="top:${(12 * 60 + 30 - _PL_DEBUT) / 30 * H}px"></div>`;
+        h += _plVoies(cours).map(_plBloc).join('');
+        cols += `<div class="pl-col${f ? ' ferme' : ''}">${h}</div>`;
+    }
+    let axe = '';
+    for (let m = _PL_DEBUT; m < _PL_FIN; m += 60) axe += `<div class="pl-h" style="top:${(m - _PL_DEBUT) / 30 * H}px">${m / 60}h00</div>`;
+    return `<div class="pl-edt" style="--pl-nj:${nj};--pl-h:${H}px"><div class="pl-tete">${tete}</div>
+        <div class="pl-corps" style="height:${haut}px"><div class="pl-axe">${axe}</div>${cols}</div></div>`;
+}
+
+// ----- Sous-onglet Planning : l'EDT généré enregistré, semaine par semaine -----
+// Barre des semaines de l'année (en couleur : un EDT est enregistré ; trait orange :
+// jour férié ou pont), puis une grille par promotion choisie ; impression d'une
+// promotion par page.
+let _pl = { semaines: [], semaine: null, slots: [], fermes: null, annee: '', promos: null };
+
+function _plPromosChoisies() {
+    try {
+        const v = JSON.parse(localStorage.getItem('pl-promos') || 'null');
+        if (Array.isArray(v) && v.length) return new Set(v);
+    } catch (e) { /* stockage indisponible : toutes */ }
+    return new Set(_PL_PROMOS.map(p => p.join('-')));
+}
+
+function _plRendrePromos() {
+    document.getElementById('pl-promos').innerHTML = _PL_PROMOS.map(([yg, c]) => {
+        const k = yg + '-' + c;
+        return `<button type="button" class="pl-promo-btn${_pl.promos.has(k) ? ' on' : ''}" onclick="plPromo('${k}')"
+            title="${_PL_ANNEES[yg]} ${c} : afficher / masquer">${yg}A ${c}</button>`;
+    }).join('');
+}
+
+function plPromo(k) {
+    if (_pl.promos.has(k)) _pl.promos.delete(k); else _pl.promos.add(k);
+    try { localStorage.setItem('pl-promos', JSON.stringify([..._pl.promos])); } catch (e) { /* sans mémoire */ }
+    _plRendrePromos();
+    _plRendre();
+}
+
+async function loadPlanning() {
+    const zone = document.getElementById('pl-content');
+    zone.innerHTML = '<div class="spinner">Chargement…</div>';
+    if (!_pl.promos) _pl.promos = _plPromosChoisies();
+    _plRendrePromos();
+    try {
+        const [sem, fermes] = await Promise.all([api('/timetable/weeks' + svcQ()),
+                                                 api('/jours-fermes' + svcQ()).catch(() => null)]);
+        _pl.semaines = sem.semaines || [];
+        _pl.annee = sem.annee;
+        _pl.fermes = fermes;
+        const avec = _pl.semaines.filter(s => s.creneaux > 0).map(s => s.semaine);
+        let w = _pl.semaine;
+        if (!avec.includes(w)) {   // la semaine en cours (ou la suivante) qui a un EDT, sinon la première
+            const ordre = _pl.semaines.map(s => s.semaine), i = ordre.indexOf(_isoWeekNow());
+            w = (i >= 0 ? ordre.slice(i).find(x => avec.includes(x)) : null) || avec[0] || ordre[0] || null;
+        }
+        if (w == null) { zone.innerHTML = '<div class="empty">Aucune semaine pour cette année.</div>'; return; }
+        await plSemaine(w);
+    } catch (e) {
+        zone.innerHTML = `<div class="empty">Erreur : ${esc(e.message)}</div>`;
+    }
+}
+
+async function plSemaine(w) {
+    _pl.semaine = w;
+    _plRendreSemaines();
+    const s = _pl.semaines.find(x => x.semaine === w);
+    if (!s || !s.creneaux) { _pl.slots = []; _plRendre(); return; }
+    document.getElementById('pl-content').innerHTML = '<div class="spinner">Chargement…</div>';
+    try {
+        const r = await api('/timetable/planning/' + w + svcQ());
+        if (_pl.semaine !== w) return;           // une autre semaine a été choisie entre-temps
+        _pl.slots = r.slots || [];
+        _plRendre();
+    } catch (e) {
+        document.getElementById('pl-content').innerHTML = `<div class="empty">Erreur : ${esc(e.message)}</div>`;
+    }
+}
+
+function _plRendreSemaines() {
+    const ss = _pl.semaines, i = ss.findIndex(s => s.semaine === _pl.semaine);
+    const fer = new Set(((_pl.fermes && _pl.fermes.jours) || []).filter(j => j.jour <= 5).map(j => j.semaine));
+    const prec = ss.slice(0, Math.max(i, 0)).reverse().find(s => s.creneaux > 0);
+    const suiv = ss.slice(i + 1).find(s => s.creneaux > 0);
+    const nav = (s, sens) => `<button type="button" class="pl-nav" ${s ? `onclick="plSemaine(${s.semaine})"` : 'disabled'}
+        title="Semaine ${sens} qui a un EDT">${sens === 'précédente' ? '◀' : '▶'}</button>`;
+    document.getElementById('pl-semaines').innerHTML = nav(prec, 'précédente') + ss.map(s => {
+        const d = _plDates(s.semaine, _pl.fermes);
+        const t = `S${s.semaine}${d ? ' · du ' + _plJJMM(d[0]) + ' au ' + _plJJMM(d[5]) : ''}`
+            + (s.creneaux ? ` · ${s.creneaux} créneaux` : " · pas d'EDT généré") + (fer.has(s.semaine) ? ' · jour férié ou pont' : '');
+        return `<button type="button" class="pl-sem${s.creneaux ? ' edt' : ''}${fer.has(s.semaine) ? ' fer' : ''}${
+            s.semaine === _pl.semaine ? ' sel' : ''}" title="${t}" onclick="plSemaine(${s.semaine})">${s.semaine}</button>`;
+    }).join('') + nav(suiv, 'suivante');
+}
+
+function _plRendre() {
+    const zone = document.getElementById('pl-content'), w = _pl.semaine;
+    const dates = _plDates(w, _pl.fermes), fermes = _plFermes(w, _pl.fermes);
+    let html = `<div class="pl-titre">Semaine ${w}${dates ? ` — du ${_plJJMM(dates[0])} au ${_plJJMM(dates[5])}/${dates[5].getUTCFullYear()}` : ''}
+        <span class="edtg-note">· EDT généré enregistré${_pl.annee ? ' · ' + esc(_pl.annee) : ''}</span></div>`;
+    if (!_pl.slots.length) {
+        zone.innerHTML = html + `<div class="empty">Pas d'EDT généré enregistré pour cette semaine. Il se calcule dans
+            Répartition journalière › « Générer l'EDT », « Aperçu seulement » décoché.</div>`;
+        return;
+    }
+    const choisies = _PL_PROMOS.filter(([yg, c]) => _pl.promos.has(yg + '-' + c));
+    if (!choisies.length) { zone.innerHTML = html + '<div class="empty">Choisissez au moins une promotion.</div>'; return; }
+    html += choisies.map(([yg, c]) => {
+        const n = _pl.slots.filter(s => plDansPromo(s, yg, c)).length;
+        return `<div class="pl-promo"><div class="pl-promo-t">${_PL_ANNEES[yg]} — ${c} <span class="edtg-note">${n} cours</span></div>${
+            n ? plEdtHtml(_pl.slots, { yg, cohorte: c, dates, fermes }) : '<div class="empty" style="padding:10px">Aucun cours cette semaine.</div>'}</div>`;
+    }).join('');
+    zone.innerHTML = html;
+}
+
+// Impression : la semaine affichée, une promotion par page (A4 paysage), dans une fenêtre à part
+function plImprimer() {
+    if (!_pl.slots.length) { toast('Rien à imprimer pour cette semaine', 'error'); return; }
+    const f = window.open('', '_blank');
+    if (!f) { toast('Fenêtre bloquée par le navigateur : autorisez les fenêtres pour ce site', 'error'); return; }
+    let css = '';
+    for (const feuille of document.styleSheets) {
+        let regles;
+        try { regles = feuille.cssRules; } catch (e) { continue; }
+        for (const r of regles) if (r.selectorText && /\.pl-|\.edtg-note|\.empty/.test(r.selectorText)) css += r.cssText + '\n';
+    }
+    css += `body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; margin: 0; color: #111827; }
+        @page { size: A4 landscape; margin: 8mm; }
+        * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        .pl-promo { break-inside: avoid; break-after: page; }
+        .pl-promo:last-child { break-after: auto; }`;
+    f.document.write(`<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>EDT S${_pl.semaine} ${esc(_pl.annee || '')}</title>
+        <style>${css}</style></head><body>${document.getElementById('pl-content').innerHTML}</body></html>`);
+    f.document.close();
+    f.focus();
+    setTimeout(() => f.print(), 300);
+}
+
+// ----- Jours fériés et ponts de l'année -----
+// Jours sans aucun cours, pour toutes les promotions, enregistrés dans la base de
+// l'année (GET/PUT /api/jours-fermes) et lus par le solveur. Tant que la liste n'a
+// pas été enregistrée, le serveur propose les jours fériés légaux, que le solveur
+// prend alors tels quels (sans pont).
+let _edtgFermesEtat = null;
+let _jf = { etat: null, jours: [], modif: false };
+const _JF_JOURS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
+
+// Rappel en tête de la fenêtre « Générer l'EDT »
+function _edtgFermes(etat) {
+    _edtgFermesEtat = etat;
+    const el = document.getElementById('edtgen-fermes');
+    if (!etat) { el.textContent = 'Jours fériés et ponts : liste indisponible.'; return; }
+    const nP = etat.jours.filter(j => j.type === 'pont').length, nF = etat.jours.length - nP;
+    el.innerHTML = etat.definie
+        ? `Jours fériés et ponts ${esc(etat.annee)} : ${nF} jour(s) férié(s), ${nP} pont(s) · <a onclick="openJoursFermes()">voir ou modifier</a>`
+        : `Jours fériés et ponts ${esc(etat.annee)} <b>pas encore enregistrés</b> : les ${nF} jours fériés légaux
+           sont pris, sans pont · <a onclick="openJoursFermes()">les définir</a>`;
+}
+
+async function openJoursFermes() {
+    if (state.resp && state.resp.length) {
+        toast('Réservé à la session administrateur', 'error');
+        return;
+    }
+    openModal('modal-jours-fermes');
+    document.getElementById('jf-statut').innerHTML = '';
+    document.getElementById('jf-liste').innerHTML = '<div class="spinner">Chargement…</div>';
+    try {
+        _jfEtat(await api('/jours-fermes' + svcQ()));
+    } catch (e) {
+        document.getElementById('jf-liste').innerHTML = `<div class="empty">Erreur : ${esc(e.message)}</div>`;
+    }
+}
+
+function _jfEtat(etat) {
+    _jf = { etat, jours: etat.jours.map(j => ({ date: j.date, type: j.type, libelle: j.libelle || '' })), modif: false };
+    document.getElementById('jf-annee').textContent = etat.annee;
+    _jfRendre();
+}
+
+// Jour de la semaine (0 = lundi) et semaine ISO d'une date AAAA-MM-JJ, ou null
+function _jfInfo(s) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || '');
+    if (!m) return null;
+    const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+    if (isNaN(d)) return null;
+    const jour = (d.getUTCDay() + 6) % 7;
+    const jeudi = new Date(d);
+    jeudi.setUTCDate(d.getUTCDate() + 3 - jour);
+    const s1 = new Date(Date.UTC(jeudi.getUTCFullYear(), 0, 4));
+    return { jour, sem: 1 + Math.round(((jeudi - s1) / 86400000 - 3 + (s1.getUTCDay() + 6) % 7) / 7) };
+}
+
+function _jfRendre() {
+    const { etat, jours } = _jf;
+    const st = document.getElementById('jf-statut');
+    const nP = etat.jours.filter(j => j.type === 'pont').length;
+    st.className = 'jf-statut' + (etat.definie ? '' : ' non');
+    st.innerHTML = etat.definie
+        ? `Liste enregistrée pour ${esc(etat.annee)} : ${etat.jours.length - nP} jour(s) férié(s), ${nP} pont(s).`
+        : `<b>Pas encore enregistrée pour ${esc(etat.annee)}</b> : le calcul prend les jours fériés légaux ci-dessous,
+           sans pont. Vérifiez-les (le lundi de Pentecôte, par exemple), ajoutez les ponts, puis enregistrez.`;
+    const fmt = s => s.split('-').reverse().join('/');
+    const lignes = jours.map((j, i) => {
+        const inf = _jfInfo(j.date);
+        const hors = inf && (j.date < etat.debut || j.date > etat.fin);
+        const note = !inf ? '' : inf.jour === 6 ? '<b style="color:#b91c1c">dimanche : à retirer</b>'
+            : `${_JF_JOURS[inf.jour]} · S${inf.sem}${hors ? ' · <b style="color:#b91c1c">hors de l\'année</b>' : ''}`;
+        const exemple = j.type === 'pont' ? "ex. pont de l'Ascension" : 'ex. Armistice';
+        return `<tr class="${j.type === 'pont' ? 'jf-pont' : ''}">
+            <td><input type="date" value="${esc(j.date)}" min="${esc(etat.debut)}" max="${esc(etat.fin)}"
+                       onchange="jfMaj(${i}, 'date', this.value)"></td>
+            <td class="jf-jour">${note}</td>
+            <td><select onchange="jfMaj(${i}, 'type', this.value)">
+                <option value="ferie"${j.type === 'ferie' ? ' selected' : ''}>Férié</option>
+                <option value="pont"${j.type === 'pont' ? ' selected' : ''}>Pont</option></select></td>
+            <td><input class="jf-lib" maxlength="80" value="${esc(j.libelle)}" placeholder="${esc(exemple)}"
+                       oninput="jfMaj(${i}, 'libelle', this.value, true)"></td>
+            <td><button type="button" class="jf-sup" title="Retirer ce jour" onclick="jfRetirer(${i})">✕</button></td></tr>`;
+    }).join('');
+    document.getElementById('jf-liste').innerHTML = jours.length
+        ? `<table class="jf-table"><thead><tr><th>Date</th><th></th><th>Type</th><th>Libellé</th><th></th></tr></thead>
+           <tbody>${lignes}</tbody></table>`
+        : `<div class="empty">Aucun jour fermé : des cours sont possibles tous les jours de l'année
+           (du ${fmt(etat.debut)} au ${fmt(etat.fin)}).</div>`;
+    const m = document.getElementById('jf-modif');
+    m.textContent = _jf.modif ? 'Modifications non enregistrées' : '';
+    m.classList.toggle('dirty', _jf.modif);
+}
+
+function jfMaj(i, champ, valeur, sansRendu) {
+    _jf.jours[i][champ] = valeur;
+    _jf.modif = true;
+    if (sansRendu) {
+        const m = document.getElementById('jf-modif');
+        m.textContent = 'Modifications non enregistrées';
+        m.classList.add('dirty');
+    } else {
+        _jfRendre();
+    }
+}
+
+function _jfTrier() {
+    _jf.jours.sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999'));
+}
+
+function jfAjouter() {
+    _jf.jours.push({ date: '', type: 'pont', libelle: '' });
+    _jf.modif = true;
+    _jfRendre();
+    const champs = document.querySelectorAll('#jf-liste input[type="date"]');
+    if (champs.length) champs[champs.length - 1].focus();
+}
+
+function jfLegaux() {
+    const vus = new Set(_jf.jours.map(j => j.date));
+    const manquants = _jf.etat.legaux.filter(j => !vus.has(j.date));
+    if (!manquants.length) { toast('Tous les jours fériés légaux de l\'année sont déjà dans la liste'); return; }
+    manquants.forEach(j => _jf.jours.push({ date: j.date, type: 'ferie', libelle: j.libelle }));
+    _jfTrier();
+    _jf.modif = true;
+    _jfRendre();
+    toast(`${manquants.length} jour(s) férié(s) ajouté(s)`);
+}
+
+function jfRetirer(i) {
+    _jf.jours.splice(i, 1);
+    _jf.modif = true;
+    _jfRendre();
+}
+
+async function jfEnregistrer() {
+    if (_jf.jours.some(j => !j.date)) {
+        toast('Indiquez la date de chaque jour, ou retirez la ligne', 'error');
+        return;
+    }
+    const btn = document.getElementById('jf-save');
+    btn.disabled = true;
+    try {
+        _jfTrier();
+        const etat = await api('/jours-fermes' + svcQ(), { method: 'PUT', body: JSON.stringify({ jours: _jf.jours }) });
+        _jfEtat(etat);
+        _edtgFermes(etat);
+        toast('Jours fériés et ponts enregistrés');
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    } finally {
+        btn.disabled = false;
+    }
 }
 
 // Bandeau d'avancement de la cohorte affichée : combien de semaines posées puis
