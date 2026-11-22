@@ -492,7 +492,7 @@ function _aideConstruire() {
 
 // Les onglets que la session voit dans la barre, avec leur libellé
 function _aideMesOnglets() {
-    return [...document.querySelectorAll('nav > button[id^="nav-"]')]
+    return [...document.querySelectorAll('nav > button[id^="nav-"], nav > button[id^="grp-"]')]
         .filter(b => getComputedStyle(b).display !== 'none' && b.id !== 'nav-aide')
         .map(b => _aUi(esc(b.textContent.trim()))).join(' ');
 }
@@ -518,7 +518,7 @@ function _aideTableAcces() {
         if (!state.superadmin && !_aideOngletOuvert(n.key)) return;   // ni lui, ni ses sous-onglets
         const a = d.acces[n.key] || { voir: [], modifier: [] };
         rows.push(`<tr><td style="padding-left:${8 + depth * 16}px;white-space:nowrap${depth ? '' : ';font-weight:700'}">${
-            esc(n.label)}</td>${d.profiles.map(p => {
+            esc(n.label)}${n.place ? `<span class="tv-place">${esc(n.place)}</span>` : ''}</td>${d.profiles.map(p => {
                 const m = a.modifier.includes(p), v = a.voir.includes(p);
                 return `<td style="text-align:center${moi.has(p) ? ';background:#eef2ff' : ''}" title="${
                     m ? 'Voir et modifier' : v ? 'Voir (consultation)' : 'Fermé'}">${
@@ -566,21 +566,24 @@ function _aideDemarrer() {
         </div>
         <h3>Vos onglets</h3>
         <table><thead><tr><th>Onglet</th><th>À quoi il sert</th></tr></thead><tbody>${_aLignes([
-            ['nav:service', _aUi('Service'), `Les heures d'enseignement : bilan des services, répartition semaine par semaine, contraintes d'emploi du temps. ${_aLien('service-vue', 'En savoir plus')}`],
             [['nav:saisie', 'promo:saisie'], _aUi('Saisie Notes'), `Saisir les notes des sous-matières. ${_aLien('promo-saisie', 'En savoir plus')}`],
+            ['nav:service', _aUi('Service'), `Les heures d'enseignement : bilan des services, répartition semaine par semaine, contraintes d'emploi du temps. ${_aLien('service-vue', 'En savoir plus')}`],
+            [['nav:enseignants', 'nav:salles'], `${_aOng('Service')} › ` + [_aSi('nav:enseignants', _aUi('Enseignants')), _aSi('nav:salles', _aUi('Salles'))].filter(Boolean).join(' '),
+             `Les listes de référence de l'année active. ${_aLien('enseignants', 'En savoir plus')}`],
             ['nav:promotions', _aUi('Promotions'), `Les cohortes : effectifs, groupes, bulletins, jury… ${_aLien('promo-vue', 'En savoir plus')}`],
-            ['nav:etudiants', _aUi('Étudiants'), `Le registre des étudiants, leur fiche, leurs photos et le trombinoscope, leur suivi. ${_aLien('etu-liste', 'En savoir plus')}`],
-            [['nav:stages', 'nav:alternance'], _aSi('nav:stages', _aUi('Stages')) + ' ' + _aSi('nav:alternance', _aUi('Alternance')),
+            ['nav:etudiants', _aUi('Étudiants'), `${_aUi('Liste et fiches')} : le registre des étudiants, leur fiche, leurs photos et le trombinoscope, leur suivi. ${_aLien('etu-liste', 'En savoir plus')}`],
+            [['nav:stages', 'nav:alternance'], `${_aOng('Étudiants')} › ` + [_aSi('nav:stages', _aUi('Stages')), _aSi('nav:alternance', _aUi('Alternance'))].filter(Boolean).join(' '),
              `Les fiches de suivi : entreprise, tuteurs, mission. ${_aLien('suivi-fiches', 'En savoir plus')}`],
             ['nav:programme', _aUi('Programme'), `Le programme national : coefficients, matières, volumes, contenus. ${_aLien('prog-vue', 'En savoir plus')}`],
             ['nav:statistiques', _aUi('Statistiques'), `Le tableau de bord du département. ${_aLien('stats-apercu', 'En savoir plus')}`],
-            [['nav:enseignants', 'nav:salles'], _aSi('nav:enseignants', _aUi('Enseignant')) + ' ' + _aSi('nav:salles', _aUi('Salles')),
-             `Les listes de référence de l'année. ${_aLien('enseignants', 'En savoir plus')}`],
-            [['nav:journal', 'nav:parametres'], _aSi('nav:journal', _aUi('Journal')) + ' ' + _aSi('nav:parametres', _aUi('Paramètres')),
-             `Sauvegardes et réglages du site. ${_aLien('parametres', 'En savoir plus')}`],
             ['nav:salons', _aUi('Salons'), `Les salons étudiants, forums et portes ouvertes de l'année : qui tient le stand, le compte rendu, le bilan. ${_aLien('salons-vue', 'En savoir plus')}`],
-            ['nav:mon-compte', _aUi('Mon Compte'), `Vos coordonnées et vos heures hors GIM. ${_aLien('mon-compte', 'En savoir plus')}`],
+            ['nav:notifications', _aUi('🔔'), `Notifications : ce que le site vous signale (signalements, saisies de notes, rappels). ${_aLien('notifications', 'En savoir plus')}`],
+            ['nav:mon-compte', _aUi('👤'), `Mon Compte : vos coordonnées et vos heures hors GIM. ${_aLien('mon-compte', 'En savoir plus')}`],
+            [['nav:journal', 'nav:parametres'], _aUi('⚙'), `${[_aSi('nav:parametres', 'Paramètres'), _aSi('nav:journal', 'Journal')].filter(Boolean).join(' et ')} : sauvegardes et réglages du site. ${_aLien('parametres', 'En savoir plus')}`],
+            ['nav:aide', _aUi('?'), `Aide : ce mode d'emploi.`],
         ])}</tbody></table>
+        <p>Les icônes sont à droite de la barre, à côté de ${_aUi('Déconnexion')}. ${_aOng('Service')} et ${_aOng('Étudiants')}
+        ouvrent une barre grise de sous-onglets, juste sous la barre principale.</p>
         ${_aTip(`le bouton rond ${_aUi('?')} en bas à droite de chaque écran ouvre directement l'aide de cet écran.
             L'aide ne décrit que les écrans que votre session ouvre.`)}` },
 
@@ -594,10 +597,10 @@ function _aideDemarrer() {
         <h3>Avec ou sans mot de passe ?</h3>
         <p>Pour un enseignant, le mot de passe est <b>facultatif</b>, mais il change ce que l'on peut faire :</p>
         <table><thead><tr><th>Connexion</th><th>Ce qui est ouvert</th></tr></thead><tbody>
-            <tr><td>Nom seul, sans mot de passe</td><td>${_aUi('Service')} (son bilan, la répartition, ses contraintes), ${_aUi('Programme')} en consultation, ${_aUi('Statistiques')}, ${_aUi('Salons')} (s'y inscrire), ${_aUi('Mon Compte')}. Comme n'importe qui peut taper un nom, cette connexion ne reçoit <b>jamais</b> de droit de modification supplémentaire.</td></tr>
+            <tr><td>Nom seul, sans mot de passe</td><td>${_aUi('Service')} (son bilan, la répartition, ses contraintes), ${_aUi('Programme')} en consultation, ${_aUi('Statistiques')}, ${_aUi('Salons')} (s'y inscrire), ${_aUi('👤 Mon Compte')}. Comme n'importe qui peut taper un nom, cette connexion ne reçoit <b>jamais</b> de droit de modification supplémentaire.</td></tr>
             <tr><td>Nom + mot de passe</td><td>${state.role === 'teacher' && !state.promoAccess
                 ? `Des onglets en plus, selon les droits que l'administration vous ouvre — et l'aide qui va avec, qui n'apparaît qu'une fois connecté avec votre mot de passe.`
-                : `En plus : ${_aUi('Saisie Notes')}, ${_aUi('Promotions')}, ${_aUi('Étudiants')}, ${_aUi('Stages')} et ${_aUi('Alternance')}, selon les droits ouverts au profil.`}
+                : `En plus : ${_aUi('Saisie Notes')}, ${_aUi('Promotions')} et ${_aUi('Étudiants')} (avec ${_aUi('Stages')} et ${_aUi('Alternance')}), selon les droits ouverts au profil.`}
                 C'est aussi la seule connexion qui active des droits d'administration ou des responsabilités.</td></tr>
         </tbody></table>
         <h3>Première connexion : créer son mot de passe</h3>
@@ -639,7 +642,7 @@ function _aideDemarrer() {
             la session admin, la vue de tous les enseignants. Une modification de vos droits prend effet au prochain changement de session ou à la prochaine connexion.`)}
         <h3>Qui voit et modifie quoi, aujourd'hui</h3>
         <p>Le tableau ci-dessous est lu en direct : il tient compte des réglages du superadmin
-        (${_aOng('Paramètres › Accès aux onglets')}). Dans chaque section de l'aide, les mêmes informations sont
+        (${_aOng('⚙ Paramètres › Accès aux onglets')}). Dans chaque section de l'aide, les mêmes informations sont
         rappelées par des pastilles : <span class="aide-prof modif">vert</span> = peut modifier,
         <span class="aide-prof">gris</span> = consulte ; la pastille entourée est la vôtre.</p>
         ${_aideTableAcces()}
@@ -651,7 +654,7 @@ function _aideDemarrer() {
       html: () => `
         <p>Le site garde une base par année universitaire (2025-2026, 2026-2027…). Ces réglages disent laquelle vous regardez :</p>
         <table><thead><tr><th>Réglage</th><th>Où</th><th>Ce qu'il change</th></tr></thead><tbody>
-            <tr><td><b>Année active</b></td><td>Réglée par le superadmin${_aSi('nav:parametres', ` (${_aOng('Paramètres')})`)}</td><td>L'année de travail du site, l'année « en cours » : c'est elle qu'ouvrent les onglets qui n'ont pas leur propre sélecteur.</td></tr>
+            <tr><td><b>Année active</b></td><td>Réglée par le superadmin${_aSi('nav:parametres', ` (${_aOng('⚙ Paramètres')})`)}</td><td>L'année de travail du site, l'année « en cours » : c'est elle qu'ouvrent les onglets qui n'ont pas leur propre sélecteur.</td></tr>
             ${_aSi('nav:service', `<tr><td><b>Année du Service</b></td><td>Liste ${_aUi('Année')} à droite de la barre du ${_aOng('Service')}</td><td>Seulement les vues du Service. Elle permet de consulter ou de préparer une autre année <b>sans rien changer pour les autres</b>. Elle part de l'année active.</td></tr>`)}
             ${_aSi('nav:promotions', `<tr><td><b>Année de la cohorte</b></td><td>${_aOng('Promotions')}</td><td>Une promotion vit trois ans : on choisit son année d'étude (1, 2 ou 3), affichée avec l'année universitaire correspondante.
                 Au choix d'une promotion, c'est son année en cours qui s'ouvre ; pour une promotion terminée, sa dernière année (3) ; dans les Bulletins, le semestre en cours.</td></tr>`)}
@@ -732,10 +735,16 @@ function _aideService() {
             ['svc:contraintes', _aUi('Contraintes Enseignant'), `Les indisponibilités et préférences de chacun. ${_aLien('contraintes', 'Voir')}`],
             ['svc:contraintes-matiere', _aUi('Contraintes Matière'), `Les contraintes propres à une matière (salle, ordre, période) et la répartition souhaitée des séances semaine après semaine. ${_aLien('contraintes-matiere', 'Voir')}`],
             ['svc:comparaison', _aUi('Comparaison'), `Confronter un export Hyperplanning aux heures saisies ici. ${_aLien('comparaison', 'Voir')}`],
+            ['nav:enseignants', _aUi('Enseignants'), `La liste des enseignants de l'année active : coordonnées, statut, accès. ${_aLien('enseignants', 'Voir')}`],
+            ['nav:salles', _aUi('Salles'), `La liste des salles de l'année active. ${_aLien('salles', 'Voir')}`],
         ])}</tbody></table>
         <p>À droite de la barre, la liste ${_aUi('Année')} choisit l'année universitaire <b>affichée dans le Service seulement</b> :
         on peut consulter l'année passée ou préparer la suivante sans rien changer aux autres onglets
-        (${_aLien('annees', 'les années')}).</p>
+        (${_aLien('annees', 'les années')}).${(() => {
+            const l = [_aSi('nav:enseignants', _aUi('Enseignants')), _aSi('nav:salles', _aUi('Salles'))].filter(Boolean);
+            return l.length ? ` ${l.join(' et ')}, au bout de la barre, n'en ${l.length > 1 ? 'dépendent' : 'dépend'} pas :
+                toujours l'${_aUi('Année active')}.` : '';
+        })()}</p>
         ${_aTip(`un enseignant arrive sur son ${_aUi('Bilan Global')}, l'administration sur la ${_aUi('Répartition Calendaire')}.`)}` },
 
     { id: 'bilan', rub: R, titre: 'Bilan Global (service des enseignants)', chemin: 'Service › Bilan Global',
@@ -774,7 +783,7 @@ function _aideService() {
 
     { id: 'rep-annuelle', rub: R, titre: 'Répartition annuelle (heures par semaine)', chemin: 'Service › Répartition Calendaire › Répartition annuelle',
       onglet: 'rep:annuelle', cible: 'repartition/annuelle',
-      mots: 'répartition calendaire planning semaine placer heures reste h module brouillon retour arrière taux horaire vacances orange',
+      mots: 'répartition calendaire planning semaine placer heures reste h module brouillon retour arrière taux horaire vacances orange jours fériés ponts',
       html: () => `
         <p>Le tableau de bord de l'emploi du temps : pour chaque matière, chaque type d'enseignement et chaque groupe, les heures
         placées sur chacune des semaines de l'année.</p>
@@ -787,8 +796,11 @@ function _aideService() {
             <li>Une ligne bleue par <b>matière</b>, puis une ligne par formation (MUT, FTP, ALT) et par type. Les <b>TD</b> et les <b>TP</b> partagés en groupes ont <b>une ligne par groupe</b>, avec son numéro (gr.1, gr.2… ; ALT pour les groupes d'apprentis d'un TP mutualisé) et son enseignant : chaque groupe se place à part, deux groupes de TD peuvent donc avoir la même séance des semaines différentes.</li>
             <li>${_aUi('H. module')} : le volume à placer ; ${_aUi('Reste')} : ce qu'il reste à placer, <b>en rouge tant qu'il n'est pas à zéro</b>. Le reste compte toutes les semaines, même celles qu'un filtre masque.</li>
             <li>Les semaines <b style="color:#c2410c">orange</b> sont des semaines de vacances, de stage (FTP) ou d'entreprise (ALT), d'après le ${_aLien('promo-calendrier', 'calendrier')} de la promotion.</li>
-            <li>En haut, les <b>taux horaires</b> (FTP1, ALT1… FTP3, ALT3) donnent les heures de cours d'un étudiant de chaque promo, semaine par semaine. Filtré sur un enseignant ou une salle, le tableau ajoute sa charge hebdomadaire.</li>
+            <li>En haut, les <b>taux horaires</b> (FTP1, ALT1… FTP3, ALT3) donnent les heures de cours d'un étudiant de chaque promo, semaine par semaine : celles du <b>groupe le plus chargé</b> de la semaine, TD et TP compris (un étudiant ne suit qu'un groupe de TD et un de TP ; le survol d'une case dit lequel). Ce sont les mêmes heures que la charge des promotions du ${_aUi('Contrôle')} et de ${_aUi('Optimiser…')}. Filtré sur un enseignant ou une salle, le tableau ajoute sa charge hebdomadaire.</li>
             <li>La ligne des <b>commentaires</b> de semaine (écrits dans le calendrier) s'affiche au-dessus des semaines.</li>
+            <li>Une semaine qui a un <b>jour férié</b> ou un <b>pont</b> porte un repère à côté de son numéro : <span class="jf-rep">F</span>
+                pour un jour férié, <span class="jf-rep pont">P</span> pour un pont ; le survol donne les dates, et leur nom s'ajoute à la
+                ligne des commentaires. Ils se définissent dans le ${_aLien('promo-calendrier', 'calendrier')}.</li>
         </ul>
         ${_aSiModif('rep:annuelle', `<h3>Placer des heures</h3>
         ${_aSteps([
@@ -818,7 +830,7 @@ function _aideService() {
         ou l'année demande quoi en faire.</p>`)}
         <h3>Ordre entre matières</h3>
         <p>Une matière concernée par une contrainte d'ordre (« le CM de R1.03b terminé avant le TD de R1.03a », posée dans
-        ${_aUi('Ordonnancement')} ou dans ${_aOng('Contraintes Matière')}) porte un repère sur sa ligne bleue, mis à jour à chaque clic :</p>
+        ${_aOng('Contraintes Matière')}, volet ${_aUi('Matières à placer avant')}) porte un repère sur sa ligne bleue, mis à jour à chaque clic :</p>
         <ul>
             <li><span class="ord-badge ord-ok">🔗2 ✓</span> les contraintes sont respectées (ou pas encore placées) ;</li>
             <li><span class="ord-badge ord-bad">🔗2 ✗1</span> une contrainte n'est pas respectée : les cases en cause portent un
@@ -827,28 +839,91 @@ function _aideService() {
         </ul>
         <p>Le survol du repère détaille chaque contrainte (« le CM de R1.03b finit S45, le TD de R1.03a commence S40 »). Le côté FTP et le côté ALT
         sont vérifiés séparément, le mutualisé comptant pour les deux ; un TD ou un TP en groupes ne commence qu'une fois
-        <b>tous</b> les groupes d'avant terminés. ${_aUi('Contrôle')} les liste aussi : un clic sur une ligne amène à la matière.</p>
+        <b>tous</b> les groupes d'avant terminés. ${_aUi('Contrôle')} les liste aussi : un clic sur une ligne amène à la matière.${
+        _aSi('svc:contraintes-matiere', ` Un clic sur le repère 🔗 (ou sur le repère vœu) ouvre la matière dans ${_aOng('Contraintes Matière')},
+        seul endroit où ces contraintes se posent, se modifient et se retirent ; un brouillon en cours demande d'abord quoi en faire.`)}</p>
         <h3>Répartition souhaitée par l'enseignant</h3>
         <p>Quand un enseignant a donné l'enchaînement voulu de ses séances (${_aOng('Contraintes Matière')}), la ligne bleue de la matière
         porte <span class="wish-badge ord-ok">vœu ✓</span> ; le survol rappelle cet enchaînement (« CM → TD → CM + TD → TP… »).
-        Seul l'<b>ordre</b> compte, la place dans le calendrier reste votre choix. Une séance placée alors qu'une séance que le vœu
-        met avant elle ne l'est pas encore (au plus tard la même semaine) prend un <b>cadre rouge pointillé</b>, avec le rappel au survol,
-        et le repère passe à <span class="wish-badge ord-bad">vœu ✗1</span>. Exemple : vœu « CM → TD → CM », deux CM placés d'affilée :
-        le second est encadré tant qu'aucun TD (dans chaque groupe) n'est placé avant lui ou la même semaine.
-        ${_aUi('Contrôle')} liste aussi les matières en écart.</p>
+        Le vœu se lit de deux façons :</p>
+        <ul>
+            <li>l'<b>ordre</b> : une séance placée alors qu'une séance que le vœu met avant elle ne l'est pas encore (au plus tard la
+            même semaine) prend un <b>cadre rouge pointillé</b>, avec le rappel au survol, et le repère passe à
+            <span class="wish-badge ord-bad">vœu ✗1</span>. Exemple : vœu « CM → TD → CM », deux CM placés d'affilée : le second est
+            encadré tant qu'aucun TD (dans chaque groupe) n'est placé avant lui ou la même semaine ;</li>
+            <li>la <b>grille</b>, semaine par semaine : une colonne du vœu est une semaine disponible de la face (sans vacances ni stage
+            pour les FTP, sans entreprise pour les ALT), à partir d'une semaine de début — une pour les FTP et le mutualisé, une pour
+            les ALT —, celle qui colle le mieux à la répartition. Chaque séance décalée d'une semaine compte 1 : le repère passe à
+            <span class="wish-badge ord-warn">vœu ~3</span> et les semaines où la grille veut un autre nombre de séances prennent un
+            <b>cadre orange</b> (« 1 CM voulu cette semaine, 0 placé »). Le survol du repère donne la semaine de début retenue.</li>
+        </ul>
+        <p>${_aUi('Contrôle')} liste les matières en écart, à l'ordre (en rouge) ou à la grille (en orange).</p>
+        <p>Quand le vœu met <b>plus d'une séance de TP dans une semaine</b> — ou de TD, si la face n'a qu'<b>un seul groupe de TD</b> —, les
+        semaines qui se suivent forment une <b>période libre</b> : ses séances peuvent se placer n'importe où dans la période. Elles
+        n'attendent que ce que le vœu met avant la période ; ce qui est placé pendant la période n'attend aucune d'elles ; ce qui la suit
+        les attend toutes ; la grille n'en fixe que le total. Le survol l'indique d'un bloc (« 5 TP sur 4 sem. »).
+        ${_aUi('Optimiser…')} applique les mêmes règles.</p>
         <h3>Outils de la barre</h3>
         <ul>
             ${_aSiModif('rep:annuelle', `<li>${_aUi('Contrôle')} : un panneau à droite liste la <b>charge des enseignants par semaine</b> (orange au-delà de 20 h, rouge au-delà de 30 h) , les <b>conflits de salle</b> (plus de 2 matières la même semaine) et les <b>contraintes d'ordre non respectées</b>. Le brouillon est compris dans le contrôle.</li>
-            <li>${_aUi('Ordonnancement')} : des règles d'ordre entre matières, ou entre parties de matières (« le CM de R1.01 terminé avant le TD de R1.05, avec au moins 2 semaines d'écart »), à respecter dans le placement. On y retrouve aussi celles posées par les enseignants dans ${_aOng('Contraintes Matière')}, avec leur auteur.</li>`)}
+            <li>${_aUi('Optimiser…')} : propose un placement des semestres affichés (voir ci-dessous).</li>`)}
             <li>${_aUi('Export Excel')} : exactement ce qui est affiché (semestres, formation, enseignant)${_aSiModif('rep:annuelle', ', brouillon compris')}.</li>
             ${_aSiModif('rep:annuelle', `<li>${_aUi('Import Excel')} : recharge des heures depuis un fichier au format de l'export — elles <b>remplacent</b> les heures existantes, après confirmation.</li>`)}
             <li>${_aUi('Taux horaires')} : la case masque les lignes de taux pour gagner de la place.</li>
         </ul>
         ${_aTip(`les vacataires ne voient ni les taux horaires ni l'export.`)}` },
 
+    { id: 'rep-optimiser', rub: R, titre: 'Optimiser la répartition annuelle', chemin: 'Service › Répartition Calendaire › Répartition annuelle › Optimiser…',
+      onglet: 'rep:annuelle', cible: 'repartition/annuelle', pour: 'modifier',
+      mots: 'optimiser optimisation optimiseur ordonnancement répartition souhaitée vœu grille automatique placer calculer brouillon interruption surcharge charge poids',
+      html: `
+        <p>${_aUi('Optimiser…')} propose un placement des séances, semaine par semaine, pour les <b>semestres affichés</b> (et le
+        filtre ${_aUi('Formation')} : les lignes MUT en font toujours partie). Les autres semestres ne bougent pas, mais leurs heures
+        comptent dans les charges et dans les ordonnancements.</p>
+        <h3>Ce qu'il respecte</h3>
+        <ul>
+            <li><b>toujours</b> : le calendrier de chaque face — aucune séance FTP en vacances ou en stage, aucune séance ALT en entreprise,
+            les deux pour le mutualisé — et le nombre de séances par semaine de chaque séance (fiche Matières) ;</li>
+            <li>les semaines de la matière (son semestre) : une séance n'en sort pas — en mode ${_aUi('Bouger le moins possible')}, celle
+            que vous y avez déjà mise dehors reste où elle est ;</li>
+            <li>puis, du plus important au moins important : placer toutes les séances ; les <b>ordonnancements</b> (« A terminé avant B »,
+            écart compris) ; la <b>répartition souhaitée</b> par les enseignants — un groupe ne commence pas avant la fin de ce que le vœu
+            met tout entier avant lui (pas de TP avant la fin des CM, par exemple), puis la <b>grille</b> du vœu semaine par semaine, à
+            partir de la semaine de début la plus favorable (FTP et ALT chacun la leur) ; la charge des promotions (au-delà de 30 h par
+            semaine en FTP, de 40 h en ALT, groupe par groupe) et des enseignants (au-delà de 20 h) ; des matières sans interruption —
+            sauf celles qui suivent un vœu, dont la grille fixe le rythme.</li>
+        </ul>
+        <h3>Poids du calcul</h3>
+        <p>${_aUi('Poids du calcul')}, dans la fenêtre, affiche et règle l'importance de chacune de ces préférences : séance non placée
+        (100 par séance), ordonnancement (100 par semaine de retard), ordre de la répartition souhaitée (30 par semaine d'avance),
+        grille du vœu (5 par séance et par semaine de décalage), séance hors des semaines de la matière (30), surcharge d'une
+        promotion (3 par heure) ou d'un enseignant (1 par heure), interruption (3), séance déplacée (2, mode
+        ${_aUi('Bouger le moins possible')}), semaine la plus chargée (0,2 par heure). Plus un poids est fort, plus le calcul évite ce
+        qu'il pénalise ; 0 l'ignore. Les valeurs affichées servent au prochain calcul ; ${_aUi('Enregistrer ces poids')} les garde pour
+        tous les calculs, de toutes les années, et ${_aUi('Valeurs par défaut')} y revient.</p>
+        <h3>Deux modes</h3>
+        <ul>
+            <li>${_aUi('Bouger le moins possible')} : part de la répartition actuelle (brouillon compris) et ne déplace une séance que si
+            cela règle une contrainte ou une vraie surcharge. Le total placé de chaque ligne ne change pas ; une séance que vous avez
+            mise hors de la plage de sa matière y reste. ${_aUi('Placer aussi les lignes encore vides')} les remplit d'après la fiche
+            Matières.</li>
+            <li>${_aUi('Repartir de zéro')} : recalcule tout le périmètre d'après la fiche Matières, sans tenir compte de l'actuel.</li>
+        </ul>
+        <p>Le calcul dure le temps choisi (60 s pour un semestre, 90 s pour une année ; 30 s pour un essai rapide, moins abouti). Il affiche ensuite un bilan <b>avant / après</b>.
+        ${_aUi('Poser dans le brouillon')} remplace les cases du périmètre par la proposition, en un seul pas : les repères se mettent à
+        jour, ${_aUi('Contrôle')} la vérifie, <kbd>Ctrl</kbd>+<kbd>Z</kbd> l'annule. Rien n'est enregistré avant ${_aUi('Enregistrer')}.</p>
+        ${_aEx('régler un ordonnancement', `Une matière de S1 doit être terminée avant une matière de S2 qui commence trop tôt : on coche
+            S1 et S2, ${_aUi('Optimiser…')}, ${_aUi('Bouger le moins possible')}, ${_aUi('Lancer')}. Le bilan indique « Ordonnancements non
+            respectés : 1 → 0 » et le nombre de séances déplacées ; ${_aUi('Poser dans le brouillon')}, un coup d'œil aux repères, puis
+            ${_aUi('Enregistrer')}.`)}
+        ${_aEx('suivre les vœux', `Les matières de S2 portent <span class="wish-badge ord-warn">vœu ~12</span> : leurs séances ne suivent
+            pas la grille des enseignants. ${_aUi('Optimiser…')} sur S2 : le bilan donne « décalages à la grille » avant / après et liste
+            les matières encore décalées, avec leur semaine de début. Pour que la grille l'emporte sur la charge des promotions,
+            augmenter son poids dans ${_aUi('Poids du calcul')} avant de relancer.`)}` },
+
     { id: 'rep-jour', rub: R, titre: 'Répartition journalière (semaine par semaine)', chemin: 'Service › Répartition Calendaire › Répartition journalière',
       onglet: 'rep:jour', cible: 'repartition/jour',
-      mots: 'journalière semaine posée optimisée hyperplanning avancement cohorte mut reste à poser',
+      mots: 'journalière semaine posée optimisée hyperplanning avancement cohorte mut reste à poser générer edt emploi du temps automatique jours fériés ponts pont férié solveur aperçu',
       html: `
         <p>La vue de travail pour construire l'emploi du temps <b>semaine après semaine</b> : pour une année d'étude, une cohorte et une
         semaine, tous les cours à placer, et le suivi de ce qui a déjà été fait.</p>
@@ -872,7 +947,60 @@ function _aideService() {
         <b>restant à poser</b> ou <b>à optimiser</b> en pastilles cliquables. Cocher FTP ne coche ni ALT ni MUT : chaque cohorte a son suivi.</p>
         ${_aEx('construire le S1', `Année 1, cohorte FTP, semaine 37 : on dépose les cours dans Hyperplanning, on coche ${_aUi('Posée à l\'EDT')} ;
             une fois les placements arrangés, ${_aUi('Optimisée')}. Le bandeau indique alors « reste à poser : S38, S39… » — un clic sur S38 y mène.`)}
+        <h3>Générer l'EDT automatiquement</h3>
+        <p>${_aUi('Générer l\'EDT')} place les cours de la répartition à des horaires précis, jour par jour, avec leur salle : du lundi au vendredi
+        de 8 h à 20 h, le samedi de 8 h à 12 h 30. Il respecte toujours ces règles : jamais deux cours en même temps pour un enseignant, un groupe
+        ou une salle ; les dispos saisies des enseignants ; 6 h de CM/TD par jour au plus ; le <b>jeudi après-midi libre pour les FTP</b>
+        (dès 12 h 30), sauf la semaine d'un jour férié ou d'un pont, où il sert à rattraper ; aucun cours un <b>jour férié</b> ni un
+        <b>pont</b>. Il cherche ensuite le meilleur emploi du temps : une même matière <b>espacée</b> pour un groupe (jamais deux fois le
+        même jour si on peut l'éviter, idéalement 2 ou 3 jours d'écart), le moins de demi-journées de présence, une pause déjeuner, les CM
+        avant les TD et les TD avant les TP d'une même matière, la salle info fixe plutôt que la mobile, et les soirées (après 18 h) et le
+        samedi seulement quand il le faut.</p>
+        <p>${_aUi('Poids du calcul')}, dans la fenêtre, règle l'importance de chacune de ces préférences : plus un poids est fort, plus
+        le calcul évite ce qu'il pénalise ; 0 l'ignore. Placer toutes les séances passe toujours avant. Les valeurs affichées servent au
+        calcul suivant, même sans les enregistrer : on peut essayer en aperçu. ${_aUi('Enregistrer ces poids')} les garde pour tous les
+        calculs ; ${_aUi('Valeurs par défaut')} revient au réglage d'origine. Après le calcul, ${_aUi('Espacement des matières')} liste
+        les cas restants. L'espacement compte CM, TD et TP ensemble, matière par matière : R1.01a et R1.01b sont deux matières.</p>
+        ${_aEx('une matière trop resserrée', `L'aperçu montre encore beaucoup de matières vues deux jours de suite : on monte
+            ${_aUi('Même matière deux jours de suite')} de 3 à 6, on relance l'aperçu, on compare le bilan
+            ${_aUi('Espacement des matières')} et le reste de la semaine, puis on enregistre si c'est mieux.`)}
+        <p>Les <b>jours fériés et ponts</b> de l'année se définissent dans ${_aOng('Promotions › Calendrier')} : le haut de la fenêtre
+        en rappelle le nombre, avec un lien vers cet écran. Tant que la liste n'est pas enregistrée, le calcul prend les jours fériés
+        légaux, sans pont. Dans la grille du résultat, ces jours apparaissent grisés.</p>
+        <ul>
+            <li>${_aUi('Semaines')} : la semaine affichée, ou toute l'année (une dizaine de minutes, avec l'avancement à l'écran) ;</li>
+            <li>${_aUi('Années d\'étude')} : toutes (conseillé, car enseignants et salles sont partagés entre les années), ou seulement celle
+            affichée — les autres gardent alors leur EDT, et leurs créneaux sont tenus pour occupés ;</li>
+            <li>${_aUi('Aperçu seulement')} (coché d'office) : on voit le résultat sans rien enregistrer. Décoché, l'EDT généré des semaines
+            calculées est remplacé.</li>
+        </ul>
+        <p>Le bilan donne le nombre de séances placées, les <b>séances non placées</b> (à poser à la main) et des alertes : enseignant qui a plus
+        d'heures que de créneaux, semaine ALT au-delà de 40 h ou FTP hors 25–30 h. Dessous, l'emploi du temps de la semaine en grille
+        horaire (un rectangle par cours, une couleur par matière) ; ${_aUi('Promotion')} et les flèches de ${_aUi('Semaine')}, juste
+        au-dessus, passent d'une promotion ou d'une semaine à l'autre sans perdre l'aperçu. Une fois enregistré, l'EDT se consulte
+        aussi dans le sous-onglet ${_aUi('Planning')}.</p>
+        ${_aTip(`une semaine très chargée qui garde des séances non placées peut se relancer seule avec ${_aUi('60 s')} par semaine.`)}
+        ${_aWarn(`sans dispos saisies, un enseignant est supposé libre toute la semaine. L'EDT généré n'est pas envoyé à Hyperplanning :
+            il sert de base pour y reporter les cours.`)}
         ${_aWarn(`la vue journalière lit la répartition <b>enregistrée</b> : un brouillon en cours dans la vue annuelle est à enregistrer ou abandonner avant.`)}` },
+
+    { id: 'rep-planning', rub: R, titre: 'Planning (EDT généré, par promotion)', chemin: 'Service › Répartition Calendaire › Planning',
+      onglet: 'rep:planning', cible: 'repartition/planning',
+      mots: 'planning emploi du temps edt grille semaine promotion imprimer pdf généré enregistré couleur matière',
+      html: `
+        <p>L'emploi du temps <b>généré et enregistré</b> (${_aUi('Générer l\'EDT')}, « Aperçu seulement » décoché), présenté comme dans
+        un logiciel d'emploi du temps : les jours en colonnes, les heures de 8 h à 20 h en lignes, un rectangle par cours (matière, type
+        et groupe, enseignant, salle), une couleur par matière ; les groupes de TP en parallèle se partagent la largeur du jour. Le détail
+        d'un cours s'affiche au survol.</p>
+        <ul>
+            <li>La barre des semaines suit l'année : en couleur, les semaines qui ont un EDT enregistré ; soulignées en orange, celles
+            d'un jour férié ou d'un pont ; les flèches vont à la semaine précédente ou suivante qui a un EDT ;</li>
+            <li>${_aUi('Promotions')} : 1A FTP, 1A ALT, 2A FTP… à afficher ou masquer (choix gardé par le navigateur). Une promotion voit
+            ses cours et les cours mutualisés ; un TP mutualisé partagé en groupes n'apparaît que chez les étudiants de ses groupes ;</li>
+            <li>les jours fériés et les ponts sont grisés ; le jeudi après-midi des FTP est hachuré quand il doit rester libre ;</li>
+            <li>${_aUi('Imprimer')} ouvre la semaine prête à imprimer ou à enregistrer en PDF, une promotion par page.</li>
+        </ul>
+        ${_aWarn(`c'est l'EDT calculé dans le site, pas celui d'Hyperplanning : il sert de base pour y reporter les cours.`)}` },
 
     { id: 'matieres', rub: R, titre: 'Matières (volumes, séances, enseignants)', chemin: 'Service › Matières',
       onglet: 'svc:matieres', cible: 'matieres',
@@ -916,15 +1044,46 @@ function _aideService() {
 
     { id: 'contraintes', rub: R, titre: "Contraintes d'emploi du temps (enseignant)", chemin: 'Service › Contraintes Enseignant',
       onglet: 'svc:contraintes', cible: 'contraintes',
-      mots: 'contraintes indisponibilité préférence fichier joint disponibilité',
+      mots: 'contraintes indisponibilité préférence fichier joint disponibilité dispos grille semaine type semaines particulières barre des semaines paires impaires hyperplanning pinceau priorité',
       html: `
         <p>Chaque enseignant y indique ses <b>indisponibilités et préférences</b> pour l'année affichée dans le Service :</p>
         <ul>
-            <li>un <b>texte libre</b> (${_aUi('Enregistrer le texte')}), par exemple « indisponible le lundi matin ; pas de cours après 17 h le mercredi » ;</li>
+            <li>la <b>grille de ses disponibilités</b>, pour toutes les semaines ou semaine par semaine (voir plus bas) : c'est elle que
+            lit le calcul automatique de l'emploi du temps ;</li>
+            <li>un <b>texte libre</b> (${_aUi('Enregistrer le texte')}), pour ce que la grille ne dit pas ;</li>
             <li>et/ou un <b>fichier joint</b> : PDF, Word, Excel, image… (10 Mo au plus), remplaçable et supprimable.</li>
         </ul>
+        <h3>La grille des disponibilités</h3>
+        <p>Une demi-heure par case, de 8 h à 20 h du lundi au vendredi et de 8 h à 12 h 30 le samedi (les heures où des cours sont
+        possibles ; le samedi après-midi est grisé). Choisissez un pinceau — ${_aCode('Préféré', 'background:#86efac;color:#14532d')}
+        ${_aCode('Possible', 'background:#d9f99d;color:#365314')} ${_aCode('Si besoin', 'background:#fde68a;color:#78350f')}
+        ${_aCode('Dernier recours', 'background:#fdba74;color:#7c2d12')} ${_aCode('Indisponible', 'background:#fca5a5;color:#7f1d1d')} — puis cliquez
+        ou glissez sur les cases ; un clic sur un jour ou sur une heure peint toute la colonne ou toute la ligne. ${_aUi('Tout « préféré »')} et
+        ${_aUi('Tout « indisponible »')} repartent d'une grille unie, puis ${_aUi('Enregistrer')}.</p>
+        <h3>Semaine par semaine, comme dans Hyperplanning</h3>
+        <p>Au-dessus de la grille, la <b>barre des semaines</b> de l'année choisit les semaines que l'on peint :</p>
+        <ul>
+            <li>un <b>clic</b> : cette semaine seule (ses dates s'affichent alors au-dessus des jours, et un jour férié ou un pont y est signalé) ;</li>
+            <li><b>Ctrl+clic</b> : ajouter ou retirer une semaine ; <b>Maj+clic</b> ou <b>glisser</b> : toute une plage ;</li>
+            <li>${_aUi('Toutes')}, ${_aUi('Paires')}, ${_aUi('Impaires')} : en un clic.</li>
+        </ul>
+        <p>Toutes les semaines choisies, c'est la <b>semaine type</b> : ce qu'on y peint vaut pour toute l'année. Une semaine peinte à part
+        garde sa propre grille (point rouge dans la barre) ; ce qu'on peint ensuite sur toutes les semaines s'y applique aussi, sans effacer
+        le reste de ses différences. Une case <b>hachurée</b> n'a pas le même niveau dans toutes les semaines choisies : la peindre la rend
+        uniforme. ${_aUi('Revenir à la semaine type')} efface la grille propre des semaines choisies. Dans la barre, les semaines où vous avez
+        des cours prévus sont en gras, et celles d'un jour férié ou d'un pont soulignées.</p>
+        <p>Le calcul de l'emploi du temps ne place <b>jamais</b> un cours sur une case indisponible de la semaine concernée ; il évite
+        ensuite, dans l'ordre, les cases « dernier recours », « si besoin » puis « possible ». Sans grille enregistrée, l'enseignant est
+        supposé disponible toutes les semaines.</p>
+        ${_aEx('un vacataire', `${_aUi('Toutes')}, ${_aUi('Tout « indisponible »')}, puis le pinceau ${_aUi('Préféré')} sur le mardi matin et
+            ${_aUi('Possible')} sur le vendredi après-midi : c'est sa semaine type. Absent les semaines 50 et 51 : clic sur 50, Maj+clic
+            sur 51, ${_aUi('Tout « indisponible »')}. Et ${_aUi('Enregistrer')}.`)}
+        ${_aEx('une semaine sur deux', `Le mercredi matin pris les semaines paires : ${_aUi('Paires')}, pinceau
+            ${_aUi('Indisponible')}, glisser sur le mercredi de 8 h à 12 h, puis ${_aUi('Enregistrer')}.`)}
         <p>L'administration et le responsable FTP voient les contraintes de <b>tous</b> les enseignants, avec leurs fichiers et la date
-        de mise à jour ; un responsable voit d'abord les siennes, puis celles des autres.</p>
+        de mise à jour ; un responsable voit d'abord les siennes, puis celles des autres. Le bloc ${_aUi('Disponibilités (grille)')} permet
+        de choisir un enseignant (✓ = grille enregistrée, « n sem. » = semaines avec leur propre grille) et de saisir sa grille à sa
+        place, semaine par semaine si besoin, ses contraintes écrites affichées à côté.</p>
         ${_aTip(`pour donner ses contraintes de l'an prochain, choisissez d'abord l'année suivante dans la liste ${_aUi('Année')} du Service.`)}` },
 
     { id: 'contraintes-matiere', rub: R, titre: 'Contraintes par matière', chemin: 'Service › Contraintes Matière',
@@ -943,17 +1102,33 @@ function _aideService() {
             `${_aUi('+ 1 semaine')} / ${_aUi('− 1 semaine')} règlent le nombre de colonnes. ${_aUi('Copier FTP → ALT')} reprend pour les
              alternants le rythme des séances FTP.`,
         ])}
+        <p>Le nombre de semaines est limité à celles <b>disponibles dans le semestre</b>, qui ne sont pas les mêmes pour chaque face :
+        les semaines du semestre moins les vacances et le stage pour les FTP, moins l'entreprise pour les ALT ; le mutualisé n'a que les
+        semaines communes aux deux (Calendrier de la promotion). Le décompte s'affiche sous la grille (« Semaines disponibles en S1 :
+        FTP 16 · ALT 11 »). Au-delà, les cases d'une face sont <b>hachurées</b> et ne prennent pas de séance. Une séance qui s'y trouve
+        déjà (calendrier modifié depuis, ou ${_aUi('Copier FTP → ALT')} d'un rythme trop long) apparaît en <b>rouge</b>, compte encore dans
+        ${_aUi('Reste')}, et un clic la retire : l'enregistrement est refusé tant qu'il en reste.</p>
+        <p>Plus d'une séance de TP dans une semaine (souvent pour tenir dans les semaines des ALT), ou de TD quand la face n'a
+        qu'<b>un seul groupe de TD</b> : les semaines qui se suivent forment une <b>période libre</b>, signalée sous la grille — ses
+        séances peuvent se placer n'importe où dans la période, seul compte ce qui vient avant et après.</p>
         <p>Un TD ou un TP à plusieurs groupes suit le même rythme pour chaque groupe. Le titre du volet indique si la répartition est
-        renseignée, par qui et quand. C'est un <b>vœu</b> : rien n'est placé dans la répartition calendaire, mais l'administration y
-        voit l'enchaînement voulu et les séances placées dans un autre ordre.</p>
+        renseignée, par qui et quand. C'est un <b>vœu</b> : rien n'est placé tout seul dans la répartition calendaire, mais
+        l'administration y voit l'enchaînement voulu, les séances placées dans un autre ordre (cadre rouge) et les semaines qui
+        s'écartent de la grille (cadre orange) — une colonne est une semaine disponible de la face, la semaine de début restant
+        son choix —, et ${_aUi('Optimiser…')} la suit.</p>
         <p>Le volet ${_aUi('Matières à placer avant')} liste les matières qui doivent être <b>terminées avant le début</b> de celle-ci.
         ${_aUi('+ Ajouter une matière à placer avant')} propose toutes les matières de l'année (celles du même semestre d'abord) ;
-        on peut viser une partie de chaque côté : « le CM de R1.01 terminé avant le TD de cette matière ». Chaque contrainte est
+        on peut viser une partie de chaque côté : « le CM de R1.01 terminé avant le TD de cette matière », et demander un
+        ${_aUi('écart ≥')} en semaines entre la fin de l'une et le début de l'autre (0 : la semaine suivante suffit). Chaque contrainte est
         <b>enregistrée dès l'ajout</b> et ${_aUi('✕')} la retire. Une contrainte qui ferait une boucle (A avant B, B avant A) est refusée.
-        Ces contraintes servent à l'optimisation de la répartition ; l'administration les retrouve dans ${_aUi('Ordonnancement')}.</p>
+        Sous la liste, « Cette matière doit elle-même être terminée avant… » rappelle les contraintes posées sur d'autres matières :
+        un clic sur un code y amène, c'est là qu'elles se modifient.</p>
+        <p>C'est le <b>seul endroit</b> où se posent ces ordonnancements : la répartition annuelle les vérifie (repère 🔗 sur la ligne bleue,
+        qui ramène ici d'un clic, et ${_aUi('Contrôle')}) et ${_aUi('Optimiser…')} les respecte.</p>
         <p>Chaque matière a son bouton ${_aUi('Enregistrer')} (texte et répartition ensemble) ; quitter l'onglet avec des modifications non
         enregistrées demande quoi en faire. Un enseignant ne voit et ne modifie que les matières <b>où il intervient</b> ;
-        l'administration et le responsable FTP les renseignent toutes. Filtres : semestres, recherche, et ${_aUi('Avec répartition souhaitée')}.</p>` },
+        l'administration et le responsable FTP les renseignent toutes. Filtres : semestres, recherche, ${_aUi('Avec répartition souhaitée')}
+        et ${_aUi('Avec ordonnancement')} (les matières qui ont une matière à placer avant elles, ou qui doivent passer avant une autre).</p>` },
 
     { id: 'comparaison', rub: R, titre: 'Comparaison avec Hyperplanning', chemin: 'Service › Comparaison',
       onglet: 'svc:comparaison', cible: 'comparaison',
@@ -1133,7 +1308,7 @@ function _aidePromotions() {
 
     { id: 'promo-calendrier', rub: R, titre: 'Calendrier', chemin: 'Promotions › Calendrier',
       onglet: 'promo:calendrier', cible: 'promotions/calendrier',
-      mots: 'calendrier vacances stages entreprise semaines dates semestres plage commentaires 52 53 semaines',
+      mots: 'calendrier vacances stages entreprise semaines dates semestres plage commentaires 52 53 semaines jours fériés ponts pont férié',
       html: () => `
         <p>Le calendrier d'une année de la cohorte, pour FTP ou pour ALT (liste ${_aUi('Cohorte')}).</p>
         <ul>
@@ -1141,8 +1316,25 @@ function _aidePromotions() {
             <li><b>Plage de l'année</b> : première et dernière semaine de cours, et le nombre de semaines de l'année civile (52 ou 53).</li>
             <li><b>Semaines spéciales</b> : ${_aSiModif('promo:calendrier', 'cliquez sur les semaines pour les ranger dans une catégorie — ')}<b>vacances</b>
                 et <b>stages</b> pour FTP, <b>entreprise</b> pour ALT. Chaque catégorie a un <b>code</b> court, repris en tête de la répartition.</li>
-            <li><b>Commentaires</b> : une note libre par semaine (« semaine de soutenances », « pont »…), pour les formations et les années cochées.</li>
+            <li><b>Commentaires</b> : une note libre par semaine (« semaine de soutenances »…), pour les formations et les années cochées.</li>
+            <li><b>Jours fériés / ponts</b> : une ligne de la grille marque les semaines qui en ont un, <span class="jf-rep">F</span> pour un
+                jour férié, <span class="jf-rep pont">P</span> pour un pont (les dates au survol).</li>
         </ul>
+        <h3>Jours fériés et ponts</h3>
+        <p>Le bloc sous la grille est le <b>seul endroit</b> où se fixe la liste des jours sans aucun cours de l'année universitaire
+        affichée, <b>pour toutes les promotions</b> (pas seulement la cohorte choisie). Tant qu'elle n'a jamais été enregistrée, elle
+        propose les jours fériés légaux de l'année (fêtes fixes, lundi de Pâques, Ascension, lundi de Pentecôte)${_aSiModif('promo:calendrier', ` :
+        on retire ceux où l'on travaille, on ajoute les ponts (${_aUi('+ Ajouter un jour')}, type « Pont »), et
+        ${_aUi('Ajouter les jours fériés légaux manquants')} complète la liste. Ils s'enregistrent avec le reste du calendrier`)}.
+        Tant que la liste n'est pas enregistrée, « Générer l'EDT » prend les jours fériés légaux, sans pont. Une semaine qui a un jour
+        fermé du lundi au vendredi rouvre le jeudi après-midi aux FTP, pour rattraper.</p>
+        <p>Ces jours sont signalés partout où l'on répartit les matières : repère F / P sur la semaine dans la
+        ${_aLien('rep-annuelle', 'répartition annuelle')} (et leur nom dans la ligne « Commentaires »)${_aSi('rep:jour', `, « férié » ou « pont »
+        dans la liste des semaines de la ${_aLien('rep-jour', 'répartition journalière')}, avec un bandeau rappelant les jours sans cours`)},
+        dans la répartition hebdomadaire d'une matière, et grisés dans la grille de l'EDT et dans les disponibilités des enseignants.</p>
+        ${_aSiModif('promo:calendrier', _aEx('le pont de l\'Ascension', `Ascension le jeudi 6 mai : on ajoute le vendredi 7 mai, type « Pont »,
+            libellé « pont de l'Ascension », puis ${_aUi('Enregistrer')}. Cette semaine-là, ni le jeudi ni le vendredi n'ont cours, et la
+            semaine porte le repère <span class="jf-rep">FP</span> dans la répartition.`))}
         <p>${_aSiModif('promo:calendrier', `${_aUi('Enregistrer')} enregistre le tout. `)}Ces semaines apparaissent en <b style="color:#c2410c">orange</b> dans la
         ${_aLien('rep-annuelle', 'répartition annuelle')}${_aSi('rep:jour', ` et disparaissent de la liste des semaines de la ${_aLien('rep-jour', 'répartition journalière')}`)}.</p>
         ${_aSiModif('promo:calendrier', _aWarn(`le calendrier s'écrit dans la base de l'année universitaire <b>de la cohorte</b>, qui peut différer de l'année active : un bandeau jaune le signale.`))}` },
@@ -1320,7 +1512,7 @@ function _aidePromotions() {
 function _aideEtudiants() {
     const R = 'etudiants';
     return [
-    { id: 'etu-liste', rub: R, titre: 'Le registre des étudiants', chemin: 'Étudiants', onglet: 'etu:liste', cible: 'etudiants/liste',
+    { id: 'etu-liste', rub: R, titre: 'Le registre des étudiants', chemin: 'Étudiants › Liste et fiches', onglet: 'etu:liste', cible: 'etudiants/liste',
       mots: 'registre liste recherche filtre cohorte année statut sexe recrutement jury export csv apogée',
       html: () => `
         <p>Tous les étudiants qu'au moins une cohorte a connus, <b>une ligne par personne</b> — même s'il a redoublé, changé de cohorte
@@ -1341,7 +1533,7 @@ function _aideEtudiants() {
             _aSi('etu:convoquer', ` ${_aUi('À convoquer')} dresse la liste des étudiants à recevoir : voir ${_aLien('etu-convoquer', 'les étudiants à convoquer')}.`)}${
             _aSi('etu:suivi', ` ${_aUi('Signalements')} réunit ceux de toute l'équipe : voir ${_aLien('etu-signalements', 'la liste des signalements')}.`)}</p>` },
 
-    { id: 'etu-fiche', rub: R, titre: "La fiche d'un étudiant", chemin: 'Étudiants › fiche',
+    { id: 'etu-fiche', rub: R, titre: "La fiche d'un étudiant", chemin: 'Étudiants › Liste et fiches › fiche',
       onglet: 'etu:liste', cible: 'etudiants/liste',
       mots: 'fiche étudiant dossier parcours cohortes résultats relevé bulletin état civil photo parcoursup candidature',
       html: () => `
@@ -1369,7 +1561,7 @@ function _aideEtudiants() {
         ses moyennes face à sa promotion : voir ${_aLien('etu-suivi', "le suivi d'un étudiant")}.</p>`)}
         ${_aSi('promo:effectif', _aTip(`depuis les Effectifs, un clic sur un nom ouvre la fiche dans une fenêtre ; ${_aUi('Fiche complète et résultats →')} la rouvre dans l'onglet Étudiants, avec les notes.`))}` },
 
-    { id: 'etu-suivi', rub: R, titre: "Le suivi d'un étudiant", chemin: 'Étudiants › fiche › Signalement, Suivi',
+    { id: 'etu-suivi', rub: R, titre: "Le suivi d'un étudiant", chemin: 'Étudiants › Liste et fiches › fiche › Signalement, Suivi',
       onglet: 'etu:suivi', cible: 'etudiants/liste',
       mots: 'suivi évolution moyenne promotion classe écart-type courbe commentaire signalement signaler problème entretien journal baisse',
       html: () => `
@@ -1412,7 +1604,7 @@ function _aideEtudiants() {
         Tous les signalements se retrouvent dans ${_aLien('etu-signalements', 'la liste des signalements')}.</p>
         ${_aTip("l'étudiant peut demander à lire ce journal : écrivez des faits observables, sans jugement sur la personne, et rien sur sa santé ou sa vie privée.")}` },
 
-    { id: 'etu-signalements', rub: R, titre: 'La liste des signalements', chemin: 'Étudiants › Signalements',
+    { id: 'etu-signalements', rub: R, titre: 'La liste des signalements', chemin: 'Étudiants › Liste et fiches › Signalements',
       onglet: 'etu:suivi', cible: 'etudiants/signalements',
       mots: 'signalement signalements liste traité non traité clore rouvrir absences retards comportement fraude auteur export',
       html: () => `
@@ -1428,7 +1620,7 @@ function _aideEtudiants() {
         le marquer traité retire ce motif.</p>
         <p>Les commentaires et les entretiens restent dans le journal de chaque fiche.</p>` },
 
-    { id: 'etu-convoquer', rub: R, titre: 'Les étudiants à convoquer', chemin: 'Étudiants › À convoquer',
+    { id: 'etu-convoquer', rub: R, titre: 'Les étudiants à convoquer', chemin: 'Étudiants › Liste et fiches › À convoquer',
       onglet: 'etu:convoquer', cible: 'etudiants/convoquer',
       mots: 'convoquer convocation entretien alerte notes faibles ue moyenne matières chute baisse comportement fraude signalement critères seuils',
       html: () => `
@@ -1458,7 +1650,7 @@ function _aideEtudiants() {
         ${_aUi('Exporter (CSV)')} télécharge la liste affichée. La colonne Évolution trace sa moyenne des UE semestre après semestre, et en pointillé gris
         celle de sa promotion.</p>` },
 
-    { id: 'etu-photos', rub: R, titre: 'Photos et trombinoscope', chemin: 'Étudiants › Trombinoscope',
+    { id: 'etu-photos', rub: R, titre: 'Photos et trombinoscope', chemin: 'Étudiants › Liste et fiches › Trombinoscope',
       onglet: 'etu:liste', cible: 'etudiants/trombi',
       mots: 'photo trombinoscope trombi pdf grille télécharger imprimer portrait',
       html: () => `
@@ -1479,7 +1671,7 @@ function _aideEtudiants() {
         ${_aSiModif('etu:liste',`<h3>La photo d'une fiche</h3>
         <p>Sur la fiche : ${_aUi('Ajouter')} ou ${_aUi('Changer')} (n'importe quelle image — elle est convertie en JPEG et réduite automatiquement), ${_aUi('✕')} pour la retirer.</p>`)}` },
 
-    { id: 'etu-trombi-import', rub: R, titre: 'Importer un trombinoscope (photos)', chemin: 'Étudiants › Importer un trombi (PDF)',
+    { id: 'etu-trombi-import', rub: R, titre: 'Importer un trombinoscope (photos)', chemin: 'Étudiants › Liste et fiches › Importer un trombi (PDF)',
       onglet: 'etu:liste', pour: 'modifier', cible: 'etudiants/liste',
       mots: 'importer trombi pdf photos scolarité rapprochement apogée nom approché inversé',
       html: `
@@ -1503,7 +1695,7 @@ function _aideEtudiants() {
 function _aideSuivi() {
     const R = 'suivi';
     return [
-    { id: 'suivi-fiches', rub: R, titre: 'Fiches de suivi (tuteurs)', chemin: 'Stages / Alternance › Tuteurs',
+    { id: 'suivi-fiches', rub: R, titre: 'Fiches de suivi (tuteurs)', chemin: 'Étudiants › Stages / Alternance › Tuteurs',
       onglet: ['nav:stages', 'nav:alternance'], cible: ['stages/fiches', 'alternance/fiches'],
       mots: 'stage stagiaire alternance alternant tuteur universitaire tuteur entreprise entreprise mission sujet fiche suivi ville département',
       html: `
@@ -1538,7 +1730,7 @@ function _aideSuivi() {
         </ul>
         ${_aTip(`un stagiaire en mobilité internationale au semestre du stage n'a pas de stage à suivre : il est simplement signalé sous sa cohorte.`)}` },
 
-    { id: 'suivi-stats', rub: R, titre: 'Statistiques des stages et de l\'alternance', chemin: 'Stages / Alternance › Statistiques',
+    { id: 'suivi-stats', rub: R, titre: 'Statistiques des stages et de l\'alternance', chemin: 'Étudiants › Stages / Alternance › Statistiques',
       onglet: ['nav:stages', 'nav:alternance'], cible: ['stages/stats', 'alternance/stats'],
       mots: 'statistiques entreprises tuteurs départements couverture suivis par enseignant',
       html: `
@@ -1549,7 +1741,7 @@ function _aideSuivi() {
             <li>les <b>lieux par département</b> ;</li>
             <li>les <b>entreprises</b> et leurs tuteurs, pour l'année ou toutes années confondues.</li>
         </ul>` },
-    { id: 'alt-documents', rub: R, titre: 'Documents de l\'alternance', chemin: 'Alternance › Documents',
+    { id: 'alt-documents', rub: R, titre: 'Documents de l\'alternance', chemin: 'Étudiants › Alternance › Documents',
       onglet: 'nav:alternance', cible: 'alternance/documents',
       mots: 'documents livret alternance feuille de visite fiche navette évaluation saé modèle télécharger déposer remplacer émargement emargement feuille d\'appel présence apprentis',
       html: `
@@ -1566,7 +1758,7 @@ function _aideSuivi() {
         <p>Le <b>responsable de l'alternance</b> et l'<b>administrateur</b> les déposent, les remplacent et les suppriment
             (PDF, Word, Excel ou OpenDocument, 15 Mo au plus). Un nouveau dépôt remplace le fichier précédent, qui n'est pas conservé.</p>` },
 
-    { id: 'alt-visites', rub: R, titre: 'Visites en entreprise', chemin: 'Alternance › Visites',
+    { id: 'alt-visites', rub: R, titre: 'Visites en entreprise', chemin: 'Étudiants › Alternance › Visites',
       onglet: 'nav:alternance', cible: 'alternance/visites',
       mots: "visites visite entreprise pv procès-verbal proces verbal feuille de visite prérempli prerempli tuteur universitaire semestre date limite échéance",
       html: `
@@ -1587,7 +1779,7 @@ function _aideSuivi() {
         <p>Le tuteur universitaire voit ses alternants ; l'administrateur et les responsables de l'alternance et FTP les voient tous
         (recherche, ${_aUi('Mes alternants')}).</p>` },
 
-    { id: 'alt-depots', rub: R, titre: "Évaluation entreprise : dépôt des fiches", chemin: 'Alternance › Évaluation entreprise',
+    { id: 'alt-depots', rub: R, titre: "Évaluation entreprise : dépôt des fiches", chemin: 'Étudiants › Alternance › Évaluation entreprise',
       onglet: 'nav:alternance', cible: 'alternance/depots',
       mots: "évaluation entreprise dépôts depots fiche d'évaluation evaluation tuteur universitaire semestre date limite échéance retard manquantes récapitulatif",
       html: `
@@ -1609,7 +1801,7 @@ function _aideSuivi() {
         <p>${_aUi('Télécharger les fiches déposées')} : une archive ZIP de <b>toutes</b> les fiches de l'année (rangées par promotion puis par
         alternant) ou d'<b>une promotion</b> ; ${_aUi('⤓ ses fiches')}, sous le nom d'un alternant, donne les siennes. Le semestre choisi dans le
         filtre s'applique (les deux, impair ou pair).</p>
-        <p>Chaque dépôt prévient l'administrateur, le responsable de l'alternance et le responsable FTP dans l'onglet ${_aOng('Notifications')}.
+        <p>Chaque dépôt prévient l'administrateur, le responsable de l'alternance et le responsable FTP dans l'onglet ${_aOng('🔔 Notifications')}.
         ${_aUi('🔔 Rappeler les tuteurs…')} (administrateur, responsable de l'alternance) envoie à chaque tuteur dont des fiches manquent une
         notification avec la date limite et ses alternants concernés.</p>` },
     ];
@@ -1867,7 +2059,7 @@ function _aideSalons() {
 function _aideAdmin() {
     const R = 'admin';
     return [
-    { id: 'enseignants', rub: R, titre: 'Les enseignants', chemin: 'Enseignant', onglet: 'nav:enseignants', cible: 'enseignants',
+    { id: 'enseignants', rub: R, titre: 'Les enseignants', chemin: 'Service › Enseignants', onglet: 'nav:enseignants', cible: 'enseignants',
       mots: 'enseignant liste ajouter modifier supprimer corps statut titulaire vacataire mcf prag prce plp service statutaire contact',
       html: () => `
         <p>La liste des enseignants de l'<b>année active</b> : coordonnées, contact préféré (déclaré par chacun dans son onglet Mon Compte),
@@ -1879,7 +2071,7 @@ function _aideAdmin() {
         </ul>
         ${_aTip(`la liste est propre à chaque année universitaire : un enseignant arrivé en cours de route s'ajoute dans l'année concernée.`)}` },
 
-    { id: 'enseignants-acces', rub: R, titre: "Donner un accès à un enseignant", chemin: 'Enseignant › Éditer › Accès Promotions',
+    { id: 'enseignants-acces', rub: R, titre: "Donner un accès à un enseignant", chemin: 'Service › Enseignants › Éditer › Accès Promotions',
       onglet: 'nav:enseignants', pour: 'superadmin', cible: 'enseignants',
       mots: 'mot de passe autoriser réinitialiser révoquer droits d\'administration admin responsabilités resp ftp alt stages accès promotions',
       html: `
@@ -1895,13 +2087,13 @@ function _aideAdmin() {
             ils peuvent être accordés avant, mais restent « inactifs » (étiquette en pointillé dans la liste). Réinitialiser ou révoquer le mot de passe les suspend sans les retirer.`)}
         <p>Dans la liste, le superadmin voit les étiquettes ${_aCode('admin', 'background:#dcfce7;color:#166534')} et ${_aCode('resp. FTP', 'background:#ede9fe;color:#5b21b6')} à côté des noms.</p>` },
 
-    { id: 'salles', rub: R, titre: 'Les salles', chemin: 'Salles', onglet: 'nav:salles', cible: 'salles',
+    { id: 'salles', rub: R, titre: 'Les salles', chemin: 'Service › Salles', onglet: 'nav:salles', cible: 'salles',
       mots: 'salle capacité type ajouter conflit',
       html: `
         <p>La liste des salles de l'année active : <b>nom</b>, <b>type</b>, <b>capacité</b>. Elles se choisissent pour chaque type d'enseignement dans
         ${_aLien('matieres', 'Service › Matières')}, filtrent la ${_aLien('rep-annuelle', 'répartition')} et servent au ${_aUi('Contrôle')} des conflits de salle.</p>` },
 
-    { id: 'parametres', rub: R, titre: 'Paramètres du site', chemin: 'Paramètres', onglet: 'nav:parametres', cible: 'parametres',
+    { id: 'parametres', rub: R, titre: 'Paramètres du site', chemin: '⚙ › Paramètres', onglet: 'nav:parametres', cible: 'parametres',
       mots: 'paramètres année active coefficients hetd accès aux onglets voir modifier profils réglage',
       html: () => `
         ${_aSuper(`<h3>Année universitaire active</h3>
@@ -1923,24 +2115,24 @@ function _aideAdmin() {
         <h3>Sauvegarde complète du site</h3>
         <p>${_aUi('⤓ Télécharger la sauvegarde')} : voir ${_aLien('sauvegardes', 'Sauvegardes et restauration')}.</p>` },
 
-    { id: 'sauvegardes', rub: R, titre: 'Sauvegardes et restauration', chemin: 'Paramètres', onglet: 'nav:parametres', cible: 'parametres',
+    { id: 'sauvegardes', rub: R, titre: 'Sauvegardes et restauration', chemin: '⚙ › Paramètres', onglet: 'nav:parametres', cible: 'parametres',
       mots: 'sauvegarde backup zip restaurer restauration copie de sécurité avant-import automatique quotidienne',
       html: () => `
         <h3>La sauvegarde complète (.zip)</h3>
-        <p>${_aOng('Paramètres')} → ${_aUi('⤓ Télécharger la sauvegarde')} : <b>toutes</b> les données du site en un fichier — bases de toutes les années
+        <p>${_aOng('⚙ Paramètres')} → ${_aUi('⤓ Télécharger la sauvegarde')} : <b>toutes</b> les données du site en un fichier — bases de toutes les années
         (enseignants, matières, salles, emplois du temps, salons étudiants et leurs pièces jointes), promotions et effectifs (étudiants, notes, jury, tuteurs,
         photos), programmes, fichiers de notes et de contraintes, réglages et coefficients. Conservez-la <b>hors du serveur</b>.</p>
         ${_aSuper(`<p>${_aUi('⤒ Restaurer depuis un fichier…')} <b>écrase</b> les données actuelles par celles du fichier ; une copie de l'existant
         (« avant-import ») est mise de côté sur le serveur juste avant. La sauvegarde porte un inventaire de son contenu : après restauration, le site
         recompte ce qu'il a en base et signale tout écart.</p>`)}
         <h3>Les sauvegardes automatiques</h3>
-        <p>Chaque jour, la base de chaque année modifiée est copiée automatiquement (les 5 plus récentes de chaque année sont gardées).${_aSuper(` ${_aOng('Journal')} les liste, avec
+        <p>Chaque jour, la base de chaque année modifiée est copiée automatiquement (les 5 plus récentes de chaque année sont gardées).${_aSuper(` ${_aOng('⚙ Journal')} les liste, avec
         ${_aUi('Créer une sauvegarde maintenant')}, ${_aUi('Restaurer')} et ${_aUi('Supprimer')}.`)}</p>
         ${_aWarn(`ces copies quotidiennes ne contiennent que la base <b>d'une année</b> (enseignants, matières, salles, emploi du temps, salons) : les promotions,
             les notes et les photos ne sont que dans la sauvegarde complète. Téléchargez-la régulièrement, et toujours avant une opération lourde
             (restauration, changement d'année, import massif).`)}` },
 
-    { id: 'journal', rub: R, titre: 'Journal : sauvegardes et activité', chemin: 'Journal', onglet: 'nav:journal', cible: 'journal',
+    { id: 'journal', rub: R, titre: 'Journal : sauvegardes et activité', chemin: '⚙ › Journal', onglet: 'nav:journal', cible: 'journal',
       mots: 'journal audit activité connexions échecs modifications traçabilité sauvegardes',
       html: `
         <p>Réservé au superadmin, en deux sous-onglets :</p>
@@ -1957,7 +2149,7 @@ function _aideAdmin() {
         ${_aTip(`le filtre ${_aUi('Auteur')} cherche dans tout l'historique conservé (environ 6 Mo, archives comprises) : les 200 dernières lignes
             des autres utilisateurs restent visibles même après une longue séance de travail du superadmin.`)}` },
 
-    { id: 'mon-compte', rub: R, titre: 'Mon Compte', chemin: 'Mon Compte', onglet: 'nav:mon-compte', cible: 'mon-compte',
+    { id: 'mon-compte', rub: R, titre: 'Mon Compte', chemin: '👤 Mon Compte', onglet: 'nav:mon-compte', cible: 'mon-compte',
       mots: 'mon compte coordonnées email téléphone employeur préférence de contact heures hors gim hetd privé public',
       html: `
         <p>L'onglet de chaque enseignant, pour l'année active :</p>
@@ -1973,7 +2165,7 @@ function _aideAdmin() {
         </ul>
         ${_aEx('déclarer des heures', `« Dépt GEII, IUT de Toulon » — 24 HETD — Public : l'administration les voit dans votre Bilan Global, vos collègues non.`)}` },
 
-    { id: 'notifications', rub: R, titre: 'Notifications', chemin: 'Notifications', onglet: 'nav:notifications', cible: 'notifications',
+    { id: 'notifications', rub: R, titre: 'Notifications', chemin: '🔔 Notifications', onglet: 'nav:notifications', cible: 'notifications',
       mots: 'notifications cloche pastille non lues lues retirer supprimer sélection signalement saisie notes rappel contraintes fiches évaluation dépôt définitif provisoire mail',
       html: `
         <p>Ce que le site vous signale, à la place de mails. L'onglet est réservé aux connexions <b>avec mot de passe</b> ; la
@@ -2052,7 +2244,7 @@ function _aideExemples() {
             _aSiModif('svc:matieres', `<b>Les matières</b> — ${_aOng('Service › Matières')} : pour chaque sous-matière, volumes, durée de séance, salle, enseignant (par groupe si besoin). ${_aLien('matieres', 'Détail')}`),
             `<b>La répartition annuelle</b> — choisissez les semestres, placez les heures semaine par semaine (clic : + 1 séance, clic droit : − 1) jusqu'à ce que chaque ${_aUi('Reste')} soit à zéro,
              en surveillant les taux horaires des promos. ${_aLien('rep-annuelle', 'Détail')}`,
-            `<b>Contrôler</b> — ${_aUi('Contrôle')} (charge des enseignants, conflits de salle) et ${_aUi('Ordonnancement')} ; corrigez, puis ${_aUi('Enregistrer')}.`,
+            `<b>Contrôler</b> — ${_aUi('Contrôle')} (charge des enseignants, conflits de salle, ordonnancements, répartition souhaitée) ; corrigez, puis ${_aUi('Enregistrer')}.`,
             `<b>Diffuser</b> — ${_aUi('Export Excel')} de la répartition.`,
             _aSi('rep:jour', `<b>Semaine par semaine</b> — ${_aOng('Répartition journalière')} : pour chaque semaine et chaque cohorte, déposez les cours dans Hyperplanning, cochez
              ${_aUi('Posée à l\'EDT')}, puis ${_aUi('Optimisée')}. Le bandeau dit ce qu'il reste. ${_aLien('rep-jour', 'Détail')}`),
@@ -2110,7 +2302,7 @@ function _aideExemples() {
       html: () => `
         ${_aSteps([
             `${_aOng('Service › Bilan Global')} : votre nom est présélectionné ; vérifiez chaque matière, le nombre de groupes et le total d'HETD.`,
-            _aSi('nav:mon-compte', `Des heures dans un autre département ? Déclarez-les dans ${_aOng('Mon Compte')} (privées ou visibles par l'administration).`),
+            _aSi('nav:mon-compte', `Des heures dans un autre département ? Déclarez-les dans ${_aOng('👤 Mon Compte')} (privées ou visibles par l'administration).`),
             `Lisez vos heures complémentaires (titulaire dont le corps est renseigné).`,
             _aSi('svc:contraintes', `Pour l'an prochain : liste ${_aUi('Année')} du Service → année suivante, puis ${_aOng('Contraintes Enseignant')} : texte et/ou fichier.`),
             `Une erreur dans votre service ? Signalez-la à l'administration ou au responsable FTP.`])}` },
@@ -2136,17 +2328,17 @@ function _aideExemples() {
             `Prévenez-le : sur l'écran de connexion, il tape son nom de famille, clique ${_aUi('Initialiser mon mot de passe')} et choisit son mot de passe.`,
             `S'il a des responsabilités, cochez-les (Formation FTP, Formation ALT, Stages, Salons) ; s'il administre, cochez <b>Droits d'administration</b>.`,
             `À sa prochaine connexion avec mot de passe, il choisit sa session (admin ou normale).`,
-            `Pour affiner ce que chaque profil voit et modifie : ${_aOng('Paramètres › Accès aux onglets')}.`])}
+            `Pour affiner ce que chaque profil voit et modifie : ${_aOng('⚙ Paramètres › Accès aux onglets')}.`])}
         ${_aLien('enseignants-acces', 'Détail des accès')}` },
 
     { id: 'ex-annee', rub: R, titre: "Passer à une nouvelle année universitaire", onglet: 'nav:parametres', pour: 'superadmin',
       mots: 'nouvelle année universitaire basculer changer d\'année active septembre',
       html: `
         ${_aSteps([
-            `<b>Sauvegarder</b> — ${_aOng('Paramètres')}, ${_aUi('⤓ Télécharger la sauvegarde')} complète.`,
+            `<b>Sauvegarder</b> — ${_aOng('⚙ Paramètres')}, ${_aUi('⤓ Télécharger la sauvegarde')} complète.`,
             `<b>Préparer</b> — la base de la nouvelle année existe dès qu'une promotion la couvre (elle part d'une copie de l'année précédente : enseignants,
              matières, salles…). Préparez-la à l'avance depuis le Service (liste ${_aUi('Année')}) : enseignants arrivés ou partis, matières, volumes.`,
-            `<b>Basculer</b> — le moment venu, ${_aOng('Paramètres')} → ${_aUi('Année universitaire active')} → ${_aUi('Appliquer')} : tout le site travaille sur la nouvelle année.`,
+            `<b>Basculer</b> — le moment venu, ${_aOng('⚙ Paramètres')} → ${_aUi('Année universitaire active')} → ${_aUi('Appliquer')} : tout le site travaille sur la nouvelle année.`,
             `<b>Vérifier</b> — le sélecteur des promotions affiche la nouvelle année de chaque cohorte (BUT1, BUT2, BUT3, OLD).`])}` },
     ];
 }
@@ -2245,7 +2437,7 @@ function _aideFaq() {
         de l'aide disent qui peut modifier l'écran qu'elle décrit.</p>`),
     q('sauvegarde', 'Mes données sont-elles sauvegardées ?', 'sauvegarde perte données sécurité backup',
         `<p>La base de chaque année est copiée automatiquement chaque jour (5 copies gardées par année). La sauvegarde <b>complète</b> — la seule qui contienne aussi les promotions,
-        les notes et les photos — se télécharge depuis ${_aOng('Paramètres')} : à faire régulièrement. ${_aLien('sauvegardes', 'Détail')}</p>`, 'nav:parametres'),
+        les notes et les photos — se télécharge depuis ${_aOng('⚙ Paramètres')} : à faire régulièrement. ${_aLien('sauvegardes', 'Détail')}</p>`, 'nav:parametres'),
     ];
 }
 

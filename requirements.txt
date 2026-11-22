@@ -6,3 +6,7 @@ pandas>=2.0.0
 requests>=2.31.0
 gunicorn>=21.2.0
 pypdf>=5.0
+# Solveur d'EDT (solveur_edt.py). PuLP 2.x embarque CBC ; PuLP 4 change d'API.
+PuLP>=2.9,<3
+# Optionnel mais bien plus rapide que CBC : solveur HiGHS
+highspy>=1.7
