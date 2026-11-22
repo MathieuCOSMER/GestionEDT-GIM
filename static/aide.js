@@ -982,13 +982,13 @@ function _aideService() {
 
     { id: 'contraintes', rub: R, titre: "Contraintes d'emploi du temps (enseignant)", chemin: 'Service › Contraintes Enseignant',
       onglet: 'svc:contraintes', cible: 'contraintes',
-      mots: 'contraintes indisponibilité préférence fichier joint disponibilité dispos grille semaine type pinceau priorité',
+      mots: 'contraintes indisponibilité préférence fichier joint disponibilité dispos grille semaine type semaines particulières barre des semaines paires impaires hyperplanning pinceau priorité',
       html: `
         <p>Chaque enseignant y indique ses <b>indisponibilités et préférences</b> pour l'année affichée dans le Service :</p>
         <ul>
-            <li>la <b>grille de ses disponibilités</b> sur une semaine type (voir plus bas) : c'est elle que lit le calcul automatique de
-            l'emploi du temps ;</li>
-            <li>un <b>texte libre</b> (${_aUi('Enregistrer le texte')}), pour ce que la grille ne dit pas : une date précise, les semaines paires… ;</li>
+            <li>la <b>grille de ses disponibilités</b>, pour toutes les semaines ou semaine par semaine (voir plus bas) : c'est elle que
+            lit le calcul automatique de l'emploi du temps ;</li>
+            <li>un <b>texte libre</b> (${_aUi('Enregistrer le texte')}), pour ce que la grille ne dit pas ;</li>
             <li>et/ou un <b>fichier joint</b> : PDF, Word, Excel, image… (10 Mo au plus), remplaçable et supprimable.</li>
         </ul>
         <h3>La grille des disponibilités</h3>
@@ -997,14 +997,31 @@ function _aideService() {
         ${_aCode('Possible', 'background:#d9f99d;color:#365314')} ${_aCode('Si besoin', 'background:#fde68a;color:#78350f')}
         ${_aCode('Dernier recours', 'background:#fdba74;color:#7c2d12')} ${_aCode('Indisponible', 'background:#fca5a5;color:#7f1d1d')} — puis cliquez
         ou glissez sur les cases ; un clic sur un jour ou sur une heure peint toute la colonne ou toute la ligne. ${_aUi('Tout « préféré »')} et
-        ${_aUi('Tout « indisponible »')} repartent d'une grille unie, puis ${_aUi('Enregistrer la grille')}.</p>
-        <p>Le calcul de l'emploi du temps ne place <b>jamais</b> un cours sur une case indisponible ; il évite ensuite, dans l'ordre, les
-        cases « dernier recours », « si besoin » puis « possible ». Sans grille enregistrée, l'enseignant est supposé disponible toute la semaine.</p>
-        ${_aEx('un vacataire', `${_aUi('Tout « indisponible »')}, puis le pinceau ${_aUi('Préféré')} sur le mardi matin, ${_aUi('Possible')} sur le
-            vendredi après-midi, ${_aUi('Dernier recours')} le lundi à partir de 16 h 30 — et ${_aUi('Enregistrer la grille')}.`)}
+        ${_aUi('Tout « indisponible »')} repartent d'une grille unie, puis ${_aUi('Enregistrer')}.</p>
+        <h3>Semaine par semaine, comme dans Hyperplanning</h3>
+        <p>Au-dessus de la grille, la <b>barre des semaines</b> de l'année choisit les semaines que l'on peint :</p>
+        <ul>
+            <li>un <b>clic</b> : cette semaine seule (ses dates s'affichent alors au-dessus des jours, et un jour férié ou un pont y est signalé) ;</li>
+            <li><b>Ctrl+clic</b> : ajouter ou retirer une semaine ; <b>Maj+clic</b> ou <b>glisser</b> : toute une plage ;</li>
+            <li>${_aUi('Toutes')}, ${_aUi('Paires')}, ${_aUi('Impaires')} : en un clic.</li>
+        </ul>
+        <p>Toutes les semaines choisies, c'est la <b>semaine type</b> : ce qu'on y peint vaut pour toute l'année. Une semaine peinte à part
+        garde sa propre grille (point rouge dans la barre) ; ce qu'on peint ensuite sur toutes les semaines s'y applique aussi, sans effacer
+        le reste de ses différences. Une case <b>hachurée</b> n'a pas le même niveau dans toutes les semaines choisies : la peindre la rend
+        uniforme. ${_aUi('Revenir à la semaine type')} efface la grille propre des semaines choisies. Dans la barre, les semaines où vous avez
+        des cours prévus sont en gras, et celles d'un jour férié ou d'un pont soulignées.</p>
+        <p>Le calcul de l'emploi du temps ne place <b>jamais</b> un cours sur une case indisponible de la semaine concernée ; il évite
+        ensuite, dans l'ordre, les cases « dernier recours », « si besoin » puis « possible ». Sans grille enregistrée, l'enseignant est
+        supposé disponible toutes les semaines.</p>
+        ${_aEx('un vacataire', `${_aUi('Toutes')}, ${_aUi('Tout « indisponible »')}, puis le pinceau ${_aUi('Préféré')} sur le mardi matin et
+            ${_aUi('Possible')} sur le vendredi après-midi : c'est sa semaine type. Absent les semaines 50 et 51 : clic sur 50, Maj+clic
+            sur 51, ${_aUi('Tout « indisponible »')}. Et ${_aUi('Enregistrer')}.`)}
+        ${_aEx('une semaine sur deux', `Le mercredi matin pris les semaines paires : ${_aUi('Paires')}, pinceau
+            ${_aUi('Indisponible')}, glisser sur le mercredi de 8 h à 12 h, puis ${_aUi('Enregistrer')}.`)}
         <p>L'administration et le responsable FTP voient les contraintes de <b>tous</b> les enseignants, avec leurs fichiers et la date
         de mise à jour ; un responsable voit d'abord les siennes, puis celles des autres. Le bloc ${_aUi('Disponibilités (grille)')} permet
-        de choisir un enseignant (✓ = grille enregistrée) et de saisir sa grille à sa place, ses contraintes écrites affichées à côté.</p>
+        de choisir un enseignant (✓ = grille enregistrée, « n sem. » = semaines avec leur propre grille) et de saisir sa grille à sa
+        place, semaine par semaine si besoin, ses contraintes écrites affichées à côté.</p>
         ${_aTip(`pour donner ses contraintes de l'an prochain, choisissez d'abord l'année suivante dans la liste ${_aUi('Année')} du Service.`)}` },
 
     { id: 'contraintes-matiere', rub: R, titre: 'Contraintes par matière', chemin: 'Service › Contraintes Matière',

@@ -2275,6 +2275,20 @@ def _apply_migrations(db):
             FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE
         )
     ''')
+    # Disponibilités propres à une semaine (comme les indisponibilités d'Hyperplanning,
+    # posées sur une ou plusieurs semaines) : grille complète de la semaine, une case
+    # par demi-heure (cf. _DSP_*), qui remplace pour cette semaine-là la semaine type
+    # (teacher_availability). Une semaine sans ligne suit la semaine type.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS teacher_availability_weeks (
+            teacher_id  INTEGER NOT NULL,
+            week_number INTEGER NOT NULL,
+            grille      TEXT NOT NULL,
+            updated_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (teacher_id, week_number),
+            FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE
+        )
+    ''')
     try:
         db.execute('ALTER TABLE course_sessions ADD COLUMN sessions_per_week_max INTEGER DEFAULT 1')
     except sqlite3.OperationalError:
@@ -4304,13 +4318,77 @@ def download_constraint_file(teacher_id):
         return error_response('Aucun fichier', 404)
     return _send_constraint_file(row)
 
-# ----- Disponibilités structurées (grille de la semaine type) -----
-# Grille à la demi-heure, lundi → vendredi, rangée dans teacher_availability et lue
-# par le solveur d'EDT (solveur_edt.py). Niveau d'un créneau : 0 = indisponible
+# ----- Disponibilités structurées (semaine type + semaines particulières) -----
+# Grille à la demi-heure, lundi → vendredi 8 h → 20 h, samedi 8 h → 12 h 30, lue par
+# le solveur d'EDT (solveur_edt.py). Niveau d'un créneau : 0 = indisponible
 # (available=0), 1 = préféré, 2 = possible, 3 = si besoin, 4 = dernier recours
-# (available=1, priority=niveau). L'écran enregistre toujours la semaine entière :
-# pas de créneau « non dit ». Pas de ligne du tout = toujours disponible.
+# (available=1, priority=niveau).
+#   • semaine type : teacher_availability (créneaux), pour toutes les semaines ;
+#     pas de ligne du tout = toujours disponible ;
+#   • semaine particulière : teacher_availability_weeks, grille complète de cette
+#     semaine-là, qui remplace la semaine type : chaîne de _DSP_NJ × _DSP_U caractères,
+#     jour après jour, demi-heure après demi-heure ('0' … '4' ; '.' = samedi
+#     après-midi, fermé).
+# L'écran, comme Hyperplanning, peint une ou plusieurs semaines à la fois et
+# enregistre toujours le tout : semaine type et semaines particulières (une semaine
+# identique à la semaine type n'est pas gardée).
 _DISPO_HEURE_RE = _re.compile(r'^([01]?\d|2[0-3]):([0-5]\d)$')
+_DSP_DEBUT, _DSP_PAS, _DSP_U, _DSP_NJ, _DSP_SAMEDI_FIN = 8 * 60, 30, 24, 6, 12 * 60 + 30
+
+def _dsp_ouvert(j, u):
+    return j < 5 or _DSP_DEBUT + (u + 1) * _DSP_PAS <= _DSP_SAMEDI_FIN
+
+def _dsp_grille_defaut():
+    """Sans aucune grille : toujours disponible (niveau 1)."""
+    return ''.join('1' if _dsp_ouvert(j, u) else '.' for j in range(_DSP_NJ) for u in range(_DSP_U))
+
+def _dsp_grille_valide(g):
+    return isinstance(g, str) and len(g) == _DSP_NJ * _DSP_U and all(
+        (c in '01234') if _dsp_ouvert(k // _DSP_U, k % _DSP_U) else c == '.' for k, c in enumerate(g))
+
+def _dsp_grille_depuis_creneaux(creneaux):
+    """Créneaux de la semaine type → grille, avec les règles du solveur (et de l'écran) :
+    une indisponibilité qui touche la demi-heure l'emporte ; sinon il faut des dispos
+    qui la couvrent entièrement (niveau le moins bon) ; une demi-heure non couverte est
+    indisponible dès qu'il existe des dispos, disponible s'il n'y a rien."""
+    a_des_dispos = any(c['niveau'] > 0 for c in creneaux)
+    plages = [(c['jour'], _dispo_minutes(c['debut']), _dispo_minutes(c['fin']), c['niveau']) for c in creneaux]
+    out = []
+    for j in range(_DSP_NJ):
+        for u in range(_DSP_U):
+            if not _dsp_ouvert(j, u):
+                out.append('.')
+                continue
+            t0 = _DSP_DEBUT + u * _DSP_PAS
+            t1 = t0 + _DSP_PAS
+            touche = sorted((d, f, n) for jj, d, f, n in plages if jj == j and d < t1 and f > t0)
+            if any(n == 0 for _, _, n in touche):
+                niv = 0
+            else:
+                fin = t0
+                for d, f, _ in touche:
+                    if d <= fin:
+                        fin = max(fin, f)
+                niv = max(n for _, _, n in touche) if touche and fin >= t1 else (0 if a_des_dispos else 1)
+            out.append(str(niv))
+    return ''.join(out)
+
+def _dsp_grille_vers_creneaux(g):
+    """Grille → créneaux (demi-heures voisines de même niveau fusionnées)."""
+    out = []
+    for j in range(_DSP_NJ):
+        u = 0
+        while u < _DSP_U:
+            c = g[j * _DSP_U + u]
+            v = u + 1
+            while v < _DSP_U and g[j * _DSP_U + v] == c:
+                v += 1
+            if c != '.':
+                d, f = _DSP_DEBUT + u * _DSP_PAS, _DSP_DEBUT + v * _DSP_PAS
+                out.append({'jour': j, 'debut': f'{d // 60:02d}:{d % 60:02d}',
+                            'fin': f'{f // 60:02d}:{f % 60:02d}', 'niveau': int(c)})
+            u = v
+    return out
 
 def _dispo_minutes(v):
     m = _DISPO_HEURE_RE.match(str(v or '').strip())
@@ -4323,8 +4401,8 @@ def _dispos_lire(teacher_id):
     return [{'jour': r['day_of_week'], 'debut': r['start_time'], 'fin': r['end_time'],
              'niveau': (int(r['priority'] or 1) if r['available'] else 0)} for r in rows]
 
-def _dispos_ecrire(teacher_id, creneaux):
-    """Remplace la grille de l'enseignant. Renvoie un message d'erreur, ou None."""
+def _dispos_ecrire(teacher_id, creneaux, commit=True):
+    """Remplace la semaine type de l'enseignant. Renvoie un message d'erreur, ou None."""
     if not isinstance(creneaux, list) or len(creneaux) > 500:
         return 'Grille invalide'
     propres = []
@@ -4350,29 +4428,113 @@ def _dispos_ecrire(teacher_id, creneaux):
                       VALUES (?,?,?,?,?,?)''',
                    [(teacher_id, j, f'{d // 60:02d}:{d % 60:02d}', f'{f // 60:02d}:{f % 60:02d}',
                      1 if niveau else 0, niveau or 1) for j, d, f, niveau in propres])
-    db.commit()
+    if commit:
+        db.commit()
     return None
+
+def _dispos_semaines(teacher_id):
+    """Semaines particulières de l'enseignant : {semaine: grille}."""
+    return {r['week_number']: r['grille'] for r in get_db().execute(
+        'SELECT week_number, grille FROM teacher_availability_weeks WHERE teacher_id = ?', (teacher_id,))}
+
+def _dispos_semaines_de_cours(teacher_id):
+    """Semaines où la répartition lui donne des heures (enseignant de la séance, ou
+    du groupe quand course_group_teachers en désigne un autre)."""
+    try:
+        return {r[0] for r in get_db().execute('''
+            SELECT DISTINCT wh.week_number FROM weekly_hours wh
+            JOIN course_sessions cs ON cs.id = wh.course_session_id
+            LEFT JOIN course_group_teachers g ON g.course_session_id = cs.id AND g.group_index = wh.group_index
+            WHERE wh.hours > 0 AND COALESCE(g.teacher_id, cs.teacher_id) = ?''', (teacher_id,))}
+    except sqlite3.Error:
+        return set()
+
+def _dispos_etat(teacher_id):
+    """Ce que l'écran affiche : semaine type (créneaux et grille, None si aucune),
+    semaines particulières, semaines de l'année (avec ou sans cours), dates et jours
+    fermés pour la barre des semaines."""
+    db = get_db()
+    cfg = get_year_config()
+    debut_annee = cfg['academic_start_week']
+    semaines = _dispos_semaines(teacher_id)
+    ordre = lambda w: (w < debut_annee, w)   # noqa: E731
+    liste = sorted(get_valid_school_weeks(debut_annee, cfg['academic_end_week'], cfg['academic_max_week'])
+                   | set(semaines), key=ordre)
+    cours = _dispos_semaines_de_cours(teacher_id)
+    creneaux = _dispos_lire(teacher_id)
+    try:
+        fermes = _jours_fermes_etat(db)
+    except Exception:
+        fermes = {'annee': get_current_year(), 'debut': None, 'jours': []}
+    return {'creneaux': creneaux,
+            'type': _dsp_grille_depuis_creneaux(creneaux) if creneaux else None,
+            'semaines': {str(w): g for w, g in sorted(semaines.items(), key=lambda x: ordre(x[0]))},
+            'liste': [{'semaine': w, 'cours': w in cours} for w in liste],
+            'annee': fermes['annee'], 'debut': fermes['debut'],
+            'fermes': [{'semaine': j['semaine'], 'jour': j['jour'], 'type': j['type'],
+                        'libelle': j.get('libelle') or ''} for j in fermes['jours']]}
+
+def _dispos_enregistrer(teacher_id, data):
+    """Enregistre ce que l'écran envoie. Corps {type: grille | null, semaines: {n°: grille}}
+    (null = pas de semaine type : toujours disponible, hors semaines particulières),
+    ou {creneaux: […]} (ancien format : semaine type seule, semaines particulières
+    gardées). Renvoie (message d'erreur ou None, nombre de semaines particulières)."""
+    if not isinstance(data, dict):
+        return 'Requête invalide', 0
+    if 'type' not in data and 'semaines' not in data:
+        return _dispos_ecrire(teacher_id, data.get('creneaux')), None
+    typ = data.get('type')
+    if typ is not None and not _dsp_grille_valide(typ):
+        return 'Grille de la semaine type invalide', 0
+    sem = data.get('semaines') or {}
+    if not isinstance(sem, dict) or len(sem) > 60:
+        return 'Liste de semaines invalide', 0
+    ref = typ or _dsp_grille_defaut()
+    propres = {}
+    for w, g in sem.items():
+        try:
+            wi = int(w)
+        except (TypeError, ValueError):
+            return 'Semaine invalide', 0
+        if not 1 <= wi <= 53:
+            return f'Semaine {wi} invalide', 0
+        if not _dsp_grille_valide(g):
+            return f'Grille de la semaine {wi} invalide', 0
+        if g != ref:                 # identique à la semaine type : rien à garder
+            propres[wi] = g
+    db = get_db()
+    err = _dispos_ecrire(teacher_id, _dsp_grille_vers_creneaux(typ) if typ else [], commit=False)
+    if err:
+        db.rollback()
+        return err, 0
+    db.execute('DELETE FROM teacher_availability_weeks WHERE teacher_id = ?', (teacher_id,))
+    db.executemany('INSERT INTO teacher_availability_weeks (teacher_id, week_number, grille) VALUES (?,?,?)',
+                   [(teacher_id, w, g) for w, g in sorted(propres.items())])
+    db.commit()
+    return None, len(propres)
 
 @app.route('/api/constraints/me/dispos', methods=['GET'])
 def get_my_dispos():
     tid = _current_teacher_id()
     if not tid:
         return error_response('Réservé aux enseignants', 403)
-    return jsonify({'creneaux': _dispos_lire(tid)})
+    return jsonify(_dispos_etat(tid))
 
 @app.route('/api/constraints/me/dispos', methods=['PUT'])
 def save_my_dispos():
     tid = _current_teacher_id()
     if not tid:
         return error_response('Réservé aux enseignants', 403)
-    creneaux = (request.get_json(silent=True) or {}).get('creneaux')
-    err = _dispos_ecrire(tid, creneaux)
+    data = request.get_json(silent=True) or {}
+    err, nb_sem = _dispos_enregistrer(tid, data)
     if err:
         return error_response(err, 400)
-    _audit('DISPOS_SAVE', ip=_client_ip(), user=session.get('user'), creneaux=len(creneaux))
-    if creneaux:
+    etat = _dispos_etat(tid)
+    _audit('DISPOS_SAVE', ip=_client_ip(), user=session.get('user'), creneaux=len(etat['creneaux']),
+           semaines=len(etat['semaines']))
+    if etat['creneaux'] or etat['semaines']:
         _notif_sur(_notif_contraintes_lues)
-    return jsonify({'creneaux': _dispos_lire(tid)})
+    return jsonify(etat)
 
 @app.route('/api/constraints/dispos', methods=['GET'])
 def list_dispos():
@@ -4381,10 +4543,11 @@ def list_dispos():
         return error_response('Accès réservé à l\'administrateur', 403)
     rows = get_db().execute('''
         SELECT t.id, t.name, t.status,
-               (SELECT COUNT(*) FROM teacher_availability ta WHERE ta.teacher_id = t.id) AS nb
+               (SELECT COUNT(*) FROM teacher_availability ta WHERE ta.teacher_id = t.id) AS nb,
+               (SELECT COUNT(*) FROM teacher_availability_weeks tw WHERE tw.teacher_id = t.id) AS nbs
         FROM teachers t ORDER BY t.name''').fetchall()
     return jsonify([{'teacher_id': r['id'], 'teacher_name': r['name'], 'status': r['status'] or '',
-                     'saisie': r['nb'] > 0} for r in rows])
+                     'saisie': r['nb'] > 0 or r['nbs'] > 0, 'semaines_propres': r['nbs']} for r in rows])
 
 @app.route('/api/constraints/<int:teacher_id>/dispos', methods=['GET'])
 def get_teacher_dispos(teacher_id):
@@ -4392,7 +4555,7 @@ def get_teacher_dispos(teacher_id):
         return error_response('Accès réservé à l\'administrateur', 403)
     if not get_db().execute('SELECT 1 FROM teachers WHERE id = ?', (teacher_id,)).fetchone():
         return error_response('Enseignant introuvable', 404)
-    return jsonify({'creneaux': _dispos_lire(teacher_id)})
+    return jsonify(_dispos_etat(teacher_id))
 
 @app.route('/api/constraints/<int:teacher_id>/dispos', methods=['PUT'])
 def save_teacher_dispos(teacher_id):
@@ -4405,13 +4568,13 @@ def save_teacher_dispos(teacher_id):
         return err
     if not get_db().execute('SELECT 1 FROM teachers WHERE id = ?', (teacher_id,)).fetchone():
         return error_response('Enseignant introuvable', 404)
-    creneaux = (request.get_json(silent=True) or {}).get('creneaux')
-    err = _dispos_ecrire(teacher_id, creneaux)
+    err, _ = _dispos_enregistrer(teacher_id, request.get_json(silent=True) or {})
     if err:
         return error_response(err, 400)
+    etat = _dispos_etat(teacher_id)
     _audit('DISPOS_SAVE', ip=_client_ip(), user=session.get('user'), teacher=teacher_id,
-           creneaux=len(creneaux))
-    return jsonify({'creneaux': _dispos_lire(teacher_id)})
+           creneaux=len(etat['creneaux']), semaines=len(etat['semaines']))
+    return jsonify(etat)
 
 # ======================= NOTIFICATIONS =======================
 # Onglet Notifications : ce que le site signale à chaque utilisateur connecté avec
@@ -4591,8 +4754,11 @@ def _contraintes_deposees(annee, nom):
                                AND ((tc.content IS NOT NULL AND tc.content <> '') OR tc.file_path IS NOT NULL)
                              UNION ALL
                              SELECT 1 FROM teacher_availability ta JOIN teachers t ON t.id = ta.teacher_id
+                             WHERE LOWER(t.name) = LOWER(?)
+                             UNION ALL
+                             SELECT 1 FROM teacher_availability_weeks tw JOIN teachers t ON t.id = tw.teacher_id
                              WHERE LOWER(t.name) = LOWER(?)''',
-                          (nom, nom)).fetchone()
+                          (nom, nom, nom)).fetchone()
     finally:
         ydb.close()
     return row is not None
@@ -4839,6 +5005,7 @@ def _rappel_contraintes_cibles(annee):
               AND NOT EXISTS (SELECT 1 FROM teacher_constraints tc WHERE tc.teacher_id = t.id
                           AND ((tc.content IS NOT NULL AND tc.content <> '') OR tc.file_path IS NOT NULL))
               AND NOT EXISTS (SELECT 1 FROM teacher_availability ta WHERE ta.teacher_id = t.id)
+              AND NOT EXISTS (SELECT 1 FROM teacher_availability_weeks tw WHERE tw.teacher_id = t.id)
             ORDER BY t.name''').fetchall()
     finally:
         ydb.close()

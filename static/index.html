@@ -244,6 +244,23 @@
         .dsp-grid td.dsp-ferme { padding: 0; border: none; border-radius: 3px; height: 15px;
                                  background: repeating-linear-gradient(45deg, #f3f4f6 0 4px, #e5e7eb 4px 8px); }
         .dsp-grid tr:hover td.dsp-h { background: transparent; }
+        /* Case qui diffère entre les semaines choisies (hachures, comme Hyperplanning) */
+        .dsp-mixte, .dsp-grid td.dsp-mixte { background: repeating-linear-gradient(45deg, #86efac 0 3px, #fca5a5 3px 6px); color: #374151; }
+        .dsp-ferie { font-size: .65rem; font-weight: 700; color: #b45309; }
+        .dsp-sel-titre { font-size: .82rem; color: #374151; margin: 2px 0 4px; }
+        /* Barre des semaines (choix des semaines peintes) */
+        .dsp-sem-bloc { margin: 4px 0 6px; }
+        .dsp-sem-outils { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: .8rem; margin-bottom: 4px; }
+        .dsp-sem-barre { display: flex; flex-wrap: wrap; gap: 2px; user-select: none; touch-action: none; }
+        .dsp-sem-col { display: flex; flex-direction: column; }
+        .dsp-mois { font-size: .62rem; color: #6b7280; height: 12px; line-height: 12px; white-space: nowrap; }
+        .dsp-sem { position: relative; min-width: 28px; padding: 3px 0; font-size: .72rem; font-family: inherit; border: 1px solid #e2e8f0;
+                   background: #fff; color: #94a3b8; border-radius: 4px; cursor: pointer; }
+        .dsp-sem.cours { color: #1e293b; font-weight: 700; }
+        .dsp-sem.fer { box-shadow: inset 0 -3px 0 #f59e0b; }
+        .dsp-sem.propre::after { content: ''; position: absolute; top: 2px; right: 2px; width: 5px; height: 5px; border-radius: 50%; background: #dc2626; }
+        .dsp-sem.sel { background: #4338ca; border-color: #4338ca; color: #fff; }
+        .dsp-sem.sel.propre::after { background: #fecaca; }
         .dsp-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
         .dsp-status { font-size: .8rem; color: #6b7280; }
         .dsp-status.dirty { color: #b45309; font-weight: 600; }
@@ -4075,6 +4092,11 @@ const _DIRTY_ZONES = [
     // de travail (survivent au filtrage), enregistrés matière par matière
     { mark: 'page-contraintes-matiere', label: 'des contraintes de matière (texte ou répartition souhaitée)',
       isDirty: () => mcDirtyIds().length > 0, save: () => saveAllCourseConstraints(), discard: () => mcDiscardAll() },
+    // Grilles de disponibilités (Contraintes Enseignant) : la sienne, ou celle d'un enseignant (admin)
+    { mark: 'dsp-me', label: 'des disponibilités', isDirty: () => !!(_dspGrilles['dsp-me'] || {}).modif,
+      save: () => dspEnregistrer('dsp-me'), discard: () => dspAbandonner('dsp-me') },
+    { mark: 'dsp-adm', label: 'des disponibilités de l\'enseignant affiché', isDirty: () => !!(_dspGrilles['dsp-adm'] || {}).modif,
+      save: () => dspEnregistrer('dsp-adm'), discard: () => dspAbandonner('dsp-adm') },
 ];
 let _dirtyZones = {};
 
@@ -5004,11 +5026,11 @@ function renderConstraintsTeacher(d) {
             ${d.updated_at ? `<div style="margin-top:12px;color:#9ca3af;font-size:.8rem">Dernière mise à jour : ${esc(d.updated_at)}</div>` : ''}
         </div>
         <div class="card" style="max-width:840px;border-left-color:#16a34a;margin-top:16px">
-            <h3 style="margin:0 0 6px;color:#374151">Mes disponibilités (semaine type)</h3>
-            <p style="color:#6b7280;margin:0 0 4px">Peignez votre semaine type : choisissez un pinceau puis cliquez ou glissez sur les
-               demi-heures (un clic sur un jour ou une heure peint toute la colonne ou la ligne). Cette grille sert directement
-               au calcul automatique de l'emploi du temps ; le texte ci-dessus reste utile pour les exceptions (dates précises,
-               semaines paires…).</p>
+            <h3 style="margin:0 0 6px;color:#374151">Mes disponibilités</h3>
+            <p style="color:#6b7280;margin:0 0 4px">Choisissez les semaines dans la barre (toutes au départ : c'est votre semaine
+               type ; ou une, plusieurs, une plage, les paires…), puis peignez : choisissez un pinceau et cliquez ou glissez sur les
+               demi-heures (un clic sur un jour ou une heure peint toute la colonne ou la ligne). La peinture vaut pour les semaines
+               choisies. Cette grille sert directement au calcul automatique de l'emploi du temps.</p>
             <div id="dsp-me"></div>
         </div>`;
     dspCharger('dsp-me', '/constraints/me/dispos', true);
@@ -5078,8 +5100,9 @@ function renderConstraintsAdmin(list, below = false) {
                 <option value="">Chargement…</option></select>
             <span id="dsp-adm-compte" class="edtg-note"></span>
         </div>
-        <p class="edtg-note" style="margin:0 0 6px">✓ = grille enregistrée. Sans grille, l'enseignant est supposé disponible toute la semaine
-            pour le calcul de l'emploi du temps. Ses contraintes écrites s'affichent à côté pour les reporter.</p>
+        <p class="edtg-note" style="margin:0 0 6px">✓ = grille enregistrée (« n sem. » : semaines avec leur propre grille). Sans grille,
+            l'enseignant est supposé disponible toutes les semaines pour le calcul de l'emploi du temps. Ses contraintes écrites
+            s'affichent à côté pour les reporter, semaine par semaine si besoin.</p>
         <div class="dsp-wrap"><div id="dsp-adm"></div><div id="dsp-adm-texte" class="dsp-texte" style="display:none"></div></div>
     </div>`;
     const finir = () => dspAdminInit(list);
@@ -5108,25 +5131,38 @@ function renderConstraintsAdmin(list, below = false) {
     finir();
 }
 
-// ===== DISPONIBILITÉS (grille de la semaine type) =====
+// ===== DISPONIBILITÉS (semaine type et semaines particulières) =====
 // Grille à la demi-heure (lundi → vendredi 8 h → 20 h, samedi 8 h → 12 h 30, comme
-// les cours), rangée dans teacher_availability et lue par le solveur d'EDT
-// (« Générer l'EDT »). Niveau d'un créneau : 1 préféré, 2 possible, 3 si besoin,
-// 4 dernier recours, 0 indisponible. On peint au pinceau (clic ou glisser, souris
-// ou doigt) ; un clic sur un jour ou une heure peint la colonne ou la ligne.
-// L'enregistrement couvre toute la semaine ; le samedi après-midi est fermé.
+// les cours), lue par le solveur d'EDT (« Générer l'EDT »). Niveau d'un créneau :
+// 1 préféré, 2 possible, 3 si besoin, 4 dernier recours, 0 indisponible.
+// Comme dans Hyperplanning, on choisit d'abord les semaines dans la barre (clic : une
+// semaine ; Ctrl+clic : en ajouter ou en retirer une ; Maj+clic ou glisser : une
+// plage ; Toutes, Paires, Impaires), puis on peint au pinceau (clic ou glisser) : la
+// peinture vaut pour toutes les semaines choisies. Toutes les semaines choisies =
+// la semaine type ; une semaine peinte à part garde sa propre grille (point rouge
+// dans la barre). Une case qui diffère entre les semaines choisies est hachurée.
+// Le serveur garde la semaine type (teacher_availability) et la grille complète de
+// chaque semaine particulière (teacher_availability_weeks).
 const _DSP_DEBUT = 8 * 60, _DSP_FIN = 20 * 60, _DSP_PAS = 30, _DSP_SAMEDI_FIN = 12 * 60 + 30;
 const _DSP_U = (_DSP_FIN - _DSP_DEBUT) / _DSP_PAS;
 const _DSP_JOURS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
 const _DSP_NJ = _DSP_JOURS.length;
 function _dspOuvert(j, u) { return j < 5 || _DSP_DEBUT + (u + 1) * _DSP_PAS <= _DSP_SAMEDI_FIN; }
 const _DSP_NIVEAUX = [[1, 'Préféré'], [2, 'Possible'], [3, 'Si besoin'], [4, 'Dernier recours'], [0, 'Indisponible']];
-const _dspGrilles = {};   // id du conteneur -> { cells, url, saisie, modif, pinceau, edit }
+const _DSP_LIB = Object.fromEntries(_DSP_NIVEAUX);
+// id du conteneur -> { type (cases de la semaine type), typeDefini, semaines: Map(n° -> cases),
+//   liste [{semaine, cours}], sel: Set(n°), ancre, url, edit, modif, pinceau, etat {annee, debut, fermes} }
+const _dspGrilles = {};
 let _dspPeint = null;     // grille en cours de peinture (bouton enfoncé)
+let _dspSemGlisse = null; // { id } : sélection de semaines en cours (glisser)
 let _dspTextes = {};      // vue admin : teacher_id -> contraintes écrites
+let _dspAdmTid = '';      // vue admin : enseignant affiché
 
 function _dspHeure(m) { return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); }
 function _dspMin(h) { const [a, b] = String(h).split(':'); return (+a) * 60 + (+b); }
+// Grille du serveur (chaîne, '.' = fermé) <-> cases (niveau, null = fermé)
+function _dspCases(s) { return [...s].map(c => (c === '.' ? null : +c)); }
+function _dspChaine(cases) { return cases.map(c => (c === null ? '.' : String(c))).join(''); }
 
 // Créneaux enregistrés -> niveau de chaque demi-heure, avec les règles du solveur :
 // une indisponibilité qui touche la demi-heure l'emporte ; sinon il faut des
@@ -5152,64 +5188,162 @@ function _dspDepuisCreneaux(creneaux) {
     return cells;
 }
 
-// Niveaux -> créneaux à enregistrer (demi-heures voisines de même niveau fusionnées)
-function _dspVersCreneaux(cells) {
-    const out = [];
-    for (let j = 0; j < _DSP_NJ; j++) {
-        for (let u = 0; u < _DSP_U;) {
-            const niv = cells[j * _DSP_U + u];
-            let v = u + 1;
-            while (v < _DSP_U && cells[j * _DSP_U + v] === niv) v++;
-            if (niv !== null)                                   // pas de créneau sur le fermé
-                out.push({ jour: j, debut: _dspHeure(_DSP_DEBUT + u * _DSP_PAS),
-                           fin: _dspHeure(_DSP_DEBUT + v * _DSP_PAS), niveau: niv });
-            u = v;
-        }
+// État du serveur -> grille de l'écran ; la sélection de semaines est gardée si possible
+function _dspAppliquer(id, etat, garderSel) {
+    const prec = _dspGrilles[id] || {};
+    const liste = etat.liste || [];
+    const g = {
+        type: etat.type ? _dspCases(etat.type) : _dspDepuisCreneaux(etat.creneaux || []),
+        typeDefini: !!etat.type,
+        semaines: new Map(Object.entries(etat.semaines || {}).map(([w, s]) => [+w, _dspCases(s)])),
+        liste, url: prec.url, edit: prec.edit, modif: false, pinceau: prec.pinceau ?? 0,
+        etat: { annee: etat.annee, debut: etat.debut, fermes: etat.fermes || [] },
+        ancre: null, sel: new Set(liste.map(s => s.semaine)),
+    };
+    if (garderSel && prec.sel) {
+        const garde = [...prec.sel].filter(w => liste.some(s => s.semaine === w));
+        if (garde.length) { g.sel = new Set(garde); g.ancre = prec.ancre; }
     }
-    return out;
+    _dspGrilles[id] = g;
 }
 
 async function dspCharger(id, url, edit) {
     const zone = document.getElementById(id);
     if (!zone) return;
+    // Carte redessinée (fichier déposé…) avec une grille modifiée : on la garde telle quelle
+    const prec = _dspGrilles[id];
+    if (prec && prec.modif && prec.url === url && prec.type) {
+        dspRendre(id);
+        _dspBrancherZone(zone, id);
+        return;
+    }
     zone.innerHTML = '<div class="spinner">Chargement…</div>';
     try {
-        const cr = (await api(url + svcQ())).creneaux || [];
-        _dspGrilles[id] = { cells: _dspDepuisCreneaux(cr), url, saisie: cr.length > 0, modif: false,
-                            pinceau: (_dspGrilles[id] || {}).pinceau ?? 0, edit };
+        const etat = await api(url + svcQ());
+        _dspGrilles[id] = Object.assign(_dspGrilles[id] || {}, { url, edit });
+        _dspAppliquer(id, etat, false);
         dspRendre(id);
+        _dspBrancherZone(zone, id);
     } catch (e) {
         zone.innerHTML = `<div class="empty">Erreur : ${esc(e.message)}</div>`;
     }
 }
 
+// Semaines choisies, dans l'ordre de l'année ; toutes choisies = la semaine type
+function _dspSelListe(g) { return g.liste.map(s => s.semaine).filter(w => g.sel.has(w)); }
+function _dspToutes(g) { return g.sel.size === g.liste.length; }
+function _dspGrilleDe(g, w) { return g.semaines.get(w) || g.type; }
+
+// Niveau affiché d'une case pour les semaines choisies : un niveau, ou 'mixte'
+function _dspCase(g, k) {
+    const ws = _dspSelListe(g);
+    if (!ws.length) return g.type[k];
+    const v0 = _dspGrilleDe(g, ws[0])[k];
+    return ws.every(w => _dspGrilleDe(g, w)[k] === v0) ? v0 : 'mixte';
+}
+
+// Peint la case k au niveau n pour les semaines choisies
+function _dspPoser(g, k, n) {
+    if (g.type[k] === null) return;                    // le fermé reste fermé
+    if (_dspToutes(g)) {                               // semaine type : toutes les semaines
+        g.type[k] = n;
+        g.typeDefini = true;
+        g.semaines.forEach(c => { c[k] = n; });
+    } else {
+        _dspSelListe(g).forEach(w => {
+            if (!g.semaines.has(w)) g.semaines.set(w, g.type.slice());
+            g.semaines.get(w)[k] = n;
+        });
+    }
+}
+
+function _dspDates(g, w) { return _plDates(w, g.etat); }
+function _dspLibSel(g) {
+    const ws = _dspSelListe(g);
+    if (_dspToutes(g)) return '<b>Toutes les semaines</b> (semaine type)';
+    if (ws.length === 1) {
+        const d = _dspDates(g, ws[0]);
+        return `<b>S${ws[0]}</b>${d ? ` (du ${_plJJMM(d[0])} au ${_plJJMM(d[5])})` : ''}`;
+    }
+    return `<b>${ws.length} semaines</b> : S${ws.slice(0, 8).join(', S')}${ws.length > 8 ? '…' : ''}`;
+}
+
 function _dspStatut(g) {
-    return g.modif ? '<span class="dsp-status dirty">Modifications non enregistrées</span>'
-        : g.saisie ? '<span class="dsp-status">Grille enregistrée</span>'
-        : '<span class="dsp-status">Aucune grille enregistrée : disponible toute la semaine par défaut</span>';
+    if (g.modif) return '<span class="dsp-status dirty">Modifications non enregistrées</span>';
+    const propres = g.liste.map(s => s.semaine).filter(w => g.semaines.has(w));
+    if (!g.typeDefini && !propres.length)
+        return '<span class="dsp-status">Aucune grille enregistrée : disponible toutes les semaines par défaut</span>';
+    return `<span class="dsp-status">${g.typeDefini ? 'Semaine type enregistrée' : 'Pas de semaine type (disponible par défaut)'}${
+        propres.length ? ` · ${propres.length} semaine(s) particulière(s) : S${propres.slice(0, 10).join(', S')}${propres.length > 10 ? '…' : ''}` : ''}</span>`;
+}
+
+function _dspBarreSemaines(id, g) {
+    if (!g.liste.length) return '';
+    let moisPrec = null;
+    const cols = g.liste.map(({ semaine: w, cours }) => {
+        const d = _dspDates(g, w);
+        const mois = d ? d[0].toLocaleDateString('fr-FR', { month: 'short', timeZone: 'UTC' }) : '';
+        const lib = mois !== moisPrec ? mois : '';
+        moisPrec = mois;
+        const fer = g.etat.fermes.filter(f => f.semaine === w && f.jour <= 5);
+        const titre = `S${w}${d ? ` · du ${_plJJMM(d[0])} au ${_plJJMM(d[5])}` : ''}${
+            g.semaines.has(w) ? ' · grille propre' : ' · semaine type'}${cours ? ' · cours prévus' : ' · pas de cours prévu'}${
+            fer.length ? ' · ' + fer.map(f => (f.type === 'pont' ? 'pont' : 'férié') + ' ' + _DSP_JOURS[f.jour].toLowerCase()).join(', ') : ''}`;
+        return `<div class="dsp-sem-col"><span class="dsp-mois">${esc(lib)}</span><button type="button" data-w="${w}"
+            class="dsp-sem${g.sel.has(w) ? ' sel' : ''}${cours ? ' cours' : ''}${g.semaines.has(w) ? ' propre' : ''}${fer.length ? ' fer' : ''}"
+            title="${esc(titre)}">${w}</button></div>`;
+    }).join('');
+    return `<div class="dsp-sem-bloc">
+        <div class="dsp-sem-outils"><b>Semaines :</b>
+            <button type="button" class="btn btn-secondary btn-sm" data-sel="toutes">Toutes</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-sel="paires">Paires</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-sel="impaires">Impaires</button></div>
+        <div class="dsp-sem-barre">${cols}</div>
+        <div class="edtg-note" style="margin-top:3px">Clic : une semaine · Ctrl+clic : en ajouter ou en retirer une ·
+            Maj+clic ou glisser : une plage. En gras, les semaines où des cours sont prévus ; point rouge : grille
+            propre à la semaine ; souligné : jour férié ou pont.</div>
+    </div>`;
 }
 
 function dspRendre(id) {
     const g = _dspGrilles[id], zone = document.getElementById(id);
-    if (!g || !zone) return;
+    if (!g || !zone || !g.type) return;
     const legende = _DSP_NIVEAUX.map(([n, lib]) => g.edit
         ? `<button type="button" class="dsp-brush dsp-n${n}${g.pinceau === n ? ' active' : ''}" onclick="dspPinceau('${id}', ${n})">${lib}</button>`
-        : `<span class="dsp-brush dsp-n${n}">${lib}</span>`).join('');
-    const entete = `<tr><th></th>${_DSP_JOURS.map((j, i) => `<th data-j="${i}"${g.edit ? ' title="Peindre toute la journée"' : ''}>${j}</th>`).join('')}</tr>`;
+        : `<span class="dsp-brush dsp-n${n}">${lib}</span>`).join('')
+        + '<span class="dsp-brush dsp-mixte" title="La case diffère entre les semaines choisies">Diffère selon la semaine</span>';
+    // Une seule semaine choisie : les dates, et les jours fériés ou ponts signalés
+    const ws = _dspSelListe(g);
+    const une = !_dspToutes(g) && ws.length === 1 ? ws[0] : null;
+    const dates = une ? _dspDates(g, une) : null;
+    const fermes = une ? g.etat.fermes.filter(f => f.semaine === une) : [];
+    const entete = `<tr><th></th>${_DSP_JOURS.map((j, i) => {
+        const f = fermes.find(x => x.jour === i);
+        return `<th data-j="${i}"${g.edit ? ' title="Peindre toute la journée"' : ''}>${j}${dates ? '<br>' + _plJJMM(dates[i]) : ''}${
+            f ? `<br><span class="dsp-ferie">${f.type === 'pont' ? 'Pont' : 'Férié'}</span>` : ''}</th>`;
+    }).join('')}</tr>`;
     let lignes = '';
     for (let u = 0; u < _DSP_U; u++) {
         const m = _DSP_DEBUT + u * _DSP_PAS;
-        lignes += `<tr><td class="dsp-h" data-u="${u}">${m % 60 ? '' : _dspHeure(m)}</td>${_DSP_JOURS.map((jour, j) =>
-            _dspOuvert(j, u)
-                ? `<td class="dsp-c dsp-n${g.cells[j * _DSP_U + u]}" data-j="${j}" data-u="${u}" title="${jour} ${_dspHeure(m)}–${_dspHeure(m + _DSP_PAS)}"></td>`
-                : '<td class="dsp-ferme" title="Samedi après-midi : pas de cours"></td>').join('')}</tr>`;
+        lignes += `<tr><td class="dsp-h" data-u="${u}">${m % 60 ? '' : _dspHeure(m)}</td>${_DSP_JOURS.map((jour, j) => {
+            if (!_dspOuvert(j, u)) return '<td class="dsp-ferme" title="Samedi après-midi : pas de cours"></td>';
+            const v = _dspCase(g, j * _DSP_U + u);
+            const t = `${jour} ${_dspHeure(m)}–${_dspHeure(m + _DSP_PAS)}${v === 'mixte' ? ' : diffère selon la semaine' : ''}`;
+            return `<td class="dsp-c ${v === 'mixte' ? 'dsp-mixte' : 'dsp-n' + v}" data-j="${j}" data-u="${u}" title="${t}"></td>`;
+        }).join('')}</tr>`;
     }
+    const propresSel = ws.filter(w => g.semaines.has(w));
     const actions = g.edit ? `
         <button type="button" class="btn btn-secondary btn-sm" onclick="dspTout('${id}', 1)">Tout « préféré »</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="dspTout('${id}', 0)">Tout « indisponible »</button>
-        ${g.saisie ? `<button type="button" class="btn btn-secondary btn-sm" style="color:#b91c1c" onclick="dspEffacer('${id}')">Supprimer la grille</button>` : ''}
-        <button type="button" class="btn btn-primary btn-sm" onclick="dspEnregistrer('${id}')">Enregistrer la grille</button>` : '';
-    zone.innerHTML = `<div class="dsp-palette">${g.edit ? 'Pinceau :' : ''} ${legende}</div>
+        ${!_dspToutes(g) && propresSel.length ? `<button type="button" class="btn btn-secondary btn-sm" onclick="dspRevenirType('${id}')"
+            title="Ces semaines reprennent la semaine type">Revenir à la semaine type (${propresSel.length})</button>` : ''}
+        ${_dspToutes(g) && (g.typeDefini || g.semaines.size) ? `<button type="button" class="btn btn-secondary btn-sm" style="color:#b91c1c"
+            onclick="dspEffacer('${id}')">Supprimer toutes les grilles</button>` : ''}
+        <button type="button" class="btn btn-primary btn-sm" onclick="dspEnregistrer('${id}')">Enregistrer</button>` : '';
+    zone.innerHTML = `${_dspBarreSemaines(id, g)}
+        <div class="dsp-palette">${g.edit ? 'Pinceau :' : ''} ${legende}</div>
+        <div class="dsp-sel-titre">${_dspLibSel(g)}</div>
         <table class="dsp-grid${g.edit ? ' dsp-edit' : ''}">${entete}${lignes}</table>
         <div class="dsp-actions">${actions} ${_dspStatut(g)}</div>`;
     if (g.edit) _dspBrancher(zone.querySelector('table.dsp-grid'), id);
@@ -5224,9 +5358,10 @@ function _dspModif(id) {
 
 function _dspPeindre(id, td) {
     const g = _dspGrilles[id], k = (+td.dataset.j) * _DSP_U + (+td.dataset.u);
-    if (g.cells[k] === g.pinceau) return;
-    g.cells[k] = g.pinceau;
+    if (_dspCase(g, k) === g.pinceau) return;
+    _dspPoser(g, k, g.pinceau);
     td.className = 'dsp-c dsp-n' + g.pinceau;
+    td.title = td.title.replace(/ : diffère selon la semaine$/, '');
     if (!g.modif) _dspModif(id);
 }
 
@@ -5240,7 +5375,7 @@ function _dspBrancher(table, id) {
         if (!h && !th) return;
         for (let j = 0; j < _DSP_NJ; j++) for (let u = 0; u < _DSP_U; u++)
             if (_dspOuvert(j, u) && ((h && u === +h.dataset.u) || (th && j === +th.dataset.j)))
-                g.cells[j * _DSP_U + u] = g.pinceau;
+                _dspPoser(g, j * _DSP_U + u, g.pinceau);
         g.modif = true;
         dspRendre(id);
     });
@@ -5251,47 +5386,129 @@ function _dspBrancher(table, id) {
         if (td && table.contains(td)) _dspPeindre(id, td);
     });
 }
-window.addEventListener('pointerup', () => { _dspPeint = null; });
-window.addEventListener('pointercancel', () => { _dspPeint = null; });
+
+// Barre des semaines : écouteurs posés une fois sur le conteneur (son contenu est
+// redessiné à chaque changement)
+function _dspSemPlage(g, a, b) {
+    const ordre = g.liste.map(s => s.semaine);
+    const i = ordre.indexOf(a), j = ordre.indexOf(b);
+    return new Set(ordre.slice(Math.min(i, j), Math.max(i, j) + 1));
+}
+function _dspBrancherZone(zone, id) {
+    if (zone.dataset.dspBranche) return;
+    zone.dataset.dspBranche = '1';
+    // Toutes / Paires / Impaires, et semaine choisie au clavier (Entrée, Espace)
+    zone.addEventListener('click', ev => {
+        const g = _dspGrilles[id];
+        if (!g) return;
+        const raccourci = ev.target.closest('button[data-sel]');
+        if (raccourci) {
+            const ordre = g.liste.map(s => s.semaine);
+            const k = raccourci.dataset.sel;
+            const choix = ordre.filter(w => k === 'toutes' || (k === 'paires' ? w % 2 === 0 : w % 2 === 1));
+            if (choix.length) { g.sel = new Set(choix); g.ancre = null; dspRendre(id); }
+            return;
+        }
+        const b = ev.target.closest('button.dsp-sem[data-w]');
+        if (b && ev.detail === 0) _dspChoisirSemaine(id, +b.dataset.w, ev, false);
+    });
+    // Souris, stylet, doigt : clic, Ctrl+clic, Maj+clic, glisser
+    zone.addEventListener('pointerdown', ev => {
+        const b = ev.target.closest('button.dsp-sem[data-w]');
+        if (!b || !_dspGrilles[id]) return;
+        ev.preventDefault();
+        _dspChoisirSemaine(id, +b.dataset.w, ev, true);
+    });
+}
+// Clic : cette semaine seule ; Ctrl+clic : l'ajouter ou la retirer ; Maj+clic : la plage
+// depuis la dernière semaine cliquée ; glisser : une plage
+function _dspChoisirSemaine(id, w, ev, glisser) {
+    const g = _dspGrilles[id];
+    if (ev.ctrlKey || ev.metaKey) {
+        if (g.sel.has(w)) { if (g.sel.size > 1) g.sel.delete(w); } else g.sel.add(w);
+        g.ancre = w;
+    } else if (ev.shiftKey && g.ancre != null) {
+        g.sel = _dspSemPlage(g, g.ancre, w);
+    } else {
+        g.sel = new Set([w]);
+        g.ancre = w;
+        if (glisser) _dspSemGlisse = { id, w };
+    }
+    dspRendre(id);
+}
+window.addEventListener('pointermove', ev => {
+    if (!_dspSemGlisse) return;
+    const el = document.elementFromPoint(ev.clientX, ev.clientY);
+    const b = el && el.closest && el.closest('button.dsp-sem[data-w]');
+    const zone = document.getElementById(_dspSemGlisse.id);
+    if (!b || !zone || !zone.contains(b) || +b.dataset.w === _dspSemGlisse.w) return;
+    const g = _dspGrilles[_dspSemGlisse.id];
+    _dspSemGlisse.w = +b.dataset.w;
+    g.sel = _dspSemPlage(g, g.ancre, _dspSemGlisse.w);
+    dspRendre(_dspSemGlisse.id);
+});
+window.addEventListener('pointerup', () => { _dspPeint = null; _dspSemGlisse = null; });
+window.addEventListener('pointercancel', () => { _dspPeint = null; _dspSemGlisse = null; });
 
 function dspPinceau(id, n) { _dspGrilles[id].pinceau = n; dspRendre(id); }
 
 function dspTout(id, n) {
     const g = _dspGrilles[id];
-    g.cells = g.cells.map(c => (c === null ? null : n));        // le fermé reste fermé
+    for (let k = 0; k < g.type.length; k++) _dspPoser(g, k, n);     // le fermé reste fermé
     g.modif = true;
     dspRendre(id);
 }
 
+// Semaines choisies : elles abandonnent leur grille propre et suivent la semaine type
+function dspRevenirType(id) {
+    const g = _dspGrilles[id];
+    _dspSelListe(g).forEach(w => g.semaines.delete(w));
+    g.modif = true;
+    dspRendre(id);
+}
+
+// Enregistre semaine type et semaines particulières ; renvoie false en cas d'échec
+// (garde « modifications non enregistrées »)
 async function dspEnregistrer(id) {
     const g = _dspGrilles[id];
+    const corps = { type: g.typeDefini ? _dspChaine(g.type) : null,
+                    semaines: Object.fromEntries([...g.semaines].map(([w, c]) => [w, _dspChaine(c)])) };
     try {
-        const r = await api(g.url + svcQ(), { method: 'PUT', body: JSON.stringify({ creneaux: _dspVersCreneaux(g.cells) }) });
-        g.cells = _dspDepuisCreneaux(r.creneaux || []);
-        g.saisie = (r.creneaux || []).length > 0;
-        g.modif = false;
+        const etat = await api(g.url + svcQ(), { method: 'PUT', body: JSON.stringify(corps) });
+        _dspAppliquer(id, etat, true);
         dspRendre(id);
         toast('Disponibilités enregistrées');
-        if (id === 'dsp-adm') _dspAdminCoche(true);
+        if (id === 'dsp-adm') _dspAdminCoche(!!etat.type || Object.keys(etat.semaines || {}).length > 0,
+                                              Object.keys(etat.semaines || {}).length);
+        return true;
     } catch (e) {
         toast('Erreur : ' + e.message, 'error');
+        return false;
     }
 }
 
 async function dspEffacer(id) {
-    if (!confirm('Supprimer la grille ? Sans grille, l\'enseignant est supposé disponible toute la semaine.')) return;
+    if (!confirm('Supprimer la semaine type et toutes les semaines particulières ? Sans grille, l\'enseignant est supposé disponible toutes les semaines.')) return;
     const g = _dspGrilles[id];
     try {
-        await api(g.url + svcQ(), { method: 'PUT', body: JSON.stringify({ creneaux: [] }) });
-        toast('Grille supprimée');
-        if (id === 'dsp-adm') _dspAdminCoche(false);
-        dspCharger(id, g.url, g.edit);
+        const etat = await api(g.url + svcQ(), { method: 'PUT', body: JSON.stringify({ type: null, semaines: {} }) });
+        _dspAppliquer(id, etat, true);
+        dspRendre(id);
+        toast('Grilles supprimées');
+        if (id === 'dsp-adm') _dspAdminCoche(false, 0);
     } catch (e) {
         toast('Erreur : ' + e.message, 'error');
     }
 }
 
+// Quitter sans enregistrer (garde des modifications non enregistrées)
+function dspAbandonner(id) { const g = _dspGrilles[id]; if (g) g.modif = false; }
+
 // Vue admin : liste des enseignants (✓ = grille enregistrée) et grille de celui choisi
+function _dspAdminLibelle(e) {
+    return `${e.saisie ? '✓ ' : ''}${e.teacher_name}${e.status ? ' (' + e.status + ')' : ''}${
+        e.semaines_propres ? ` · ${e.semaines_propres} sem.` : ''}`;
+}
 async function dspAdminInit(list) {
     _dspTextes = Object.fromEntries((list || []).map(c => [String(c.teacher_id), c.content || '']));
     const sel = document.getElementById('dsp-adm-sel');
@@ -5299,20 +5516,28 @@ async function dspAdminInit(list) {
     try {
         const ens = await api('/constraints/dispos' + svcQ());
         sel.innerHTML = '<option value="">— Choisir un enseignant —</option>' + ens.map(e =>
-            `<option value="${e.teacher_id}" data-nom="${esc(e.teacher_name)}">${e.saisie ? '✓ ' : ''}${esc(e.teacher_name)}${
-                e.status ? ' (' + esc(e.status) + ')' : ''}</option>`).join('');
+            `<option value="${e.teacher_id}" data-nom="${esc(e.teacher_name)}" data-statut="${esc(e.status || '')}">${
+                esc(_dspAdminLibelle(e))}</option>`).join('');
         document.getElementById('dsp-adm-compte').textContent =
             `${ens.filter(e => e.saisie).length} / ${ens.length} enseignant(s) avec une grille`;
+        _dspAdmTid = '';
     } catch (e) {
         sel.innerHTML = '<option value="">Erreur de chargement</option>';
     }
 }
 
+// Changer d'enseignant : les modifications non enregistrées du précédent sont signalées
 function dspAdminChoisir() {
+    const sel = document.getElementById('dsp-adm-sel');
+    guardUnsaved(_dspAdminAfficher, () => { sel.value = _dspAdmTid; });
+}
+function _dspAdminAfficher() {
     const tid = document.getElementById('dsp-adm-sel').value;
     const txt = document.getElementById('dsp-adm-texte');
+    _dspAdmTid = tid;
     if (!tid) {
         document.getElementById('dsp-adm').innerHTML = '';
+        delete _dspGrilles['dsp-adm'];
         txt.style.display = 'none';
         return;
     }
@@ -5322,12 +5547,13 @@ function dspAdminChoisir() {
     dspCharger('dsp-adm', `/constraints/${tid}/dispos`, adminPower('svc:contraintes'));
 }
 
-// Met à jour la coche ✓ de l'enseignant affiché et le compteur
-function _dspAdminCoche(saisie) {
+// Met à jour la coche ✓ (et le nombre de semaines particulières) de l'enseignant affiché, et le compteur
+function _dspAdminCoche(saisie, nbSem) {
     const sel = document.getElementById('dsp-adm-sel');
     const opt = sel && sel.options[sel.selectedIndex];
     if (!opt || !opt.value) return;
-    opt.textContent = (saisie ? '✓ ' : '') + opt.textContent.replace(/^✓ /, '');
+    opt.textContent = _dspAdminLibelle({ saisie, teacher_name: opt.dataset.nom || '', status: opt.dataset.statut || '',
+                                         semaines_propres: nbSem });
     const n = [...sel.options].filter(o => o.value && o.textContent.startsWith('✓ ')).length;
     document.getElementById('dsp-adm-compte').textContent =
         `${n} / ${sel.options.length - 1} enseignant(s) avec une grille`;

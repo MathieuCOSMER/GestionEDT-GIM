@@ -57,6 +57,9 @@ Conventions de données (celles d'app.py) :
   * teacher_availability.day_of_week : 0 = lundi … 4 = vendredi ; priority 1 = le
     mieux ; available = 0 → indisponible. Dès qu'un enseignant a déclaré des
     créneaux disponibles, le reste de la semaine lui est fermé (« liste de dispos »).
+    C'est sa semaine type ; une semaine particulière (teacher_availability_weeks,
+    grille complète posée sur une ou plusieurs semaines, comme dans Hyperplanning)
+    la remplace cette semaine-là (Donnees.dispos_de).
   * Salles : room_name « STD » = n'importe quelle salle banale (types standard, TD,
     Amphi) ; « 123 » = salle info fixe + salle info mobile, la mobile occupant en
     plus une salle banale ; autre nom = cette salle précise ; vide = pas de salle.
@@ -421,6 +424,14 @@ class Donnees:
             for r in _rows(db, 'SELECT * FROM teacher_availability'):
                 lignes[r['teacher_id']].append(r)
         self.dispos = {tid: self._dispos(lignes.get(tid, [])) for tid in self.enseignants}
+        # Semaines particulières (grille complète de la semaine, qui remplace la
+        # semaine type) : lues ici, converties à la demande (dispos_de)
+        self.grilles_semaine = {}
+        if _table_existe(db, 'teacher_availability_weeks'):
+            self.grilles_semaine = {(r['teacher_id'], r['week_number']): r['grille'] for r in _rows(
+                db, 'SELECT teacher_id, week_number, grille FROM teacher_availability_weeks')
+                if r['teacher_id'] in self.enseignants}
+        self._dispos_sem = {}
 
         debut_annee = 36
         if _table_existe(db, 'app_settings'):
@@ -483,6 +494,21 @@ class Donnees:
                 cout = {k: (p - meilleure) / (moyenne - meilleure) for k, p in prio.items() if p > meilleure}
         return interdit, cout, True
 
+    def dispos_de(self, tid, semaine):
+        """(créneaux interdits, coût par créneau, dispos saisies ?) de l'enseignant
+        pour cette semaine : sa grille propre s'il en a une, sinon sa semaine type."""
+        g = self.grilles_semaine.get((tid, semaine))
+        if g is None:
+            return self.dispos[tid]
+        cle = (tid, semaine)
+        if cle not in self._dispos_sem:
+            self._dispos_sem[cle] = self._dispos(lignes_grille(g))
+        return self._dispos_sem[cle]
+
+    def a_des_dispos(self, tid):
+        """Semaine type ou au moins une semaine particulière saisie."""
+        return self.dispos[tid][2] or any(t == tid for t, _ in self.grilles_semaine)
+
     def salle_de(self, nom):
         n = _norm_salle(nom)
         if not n or n == 'SITE':
@@ -512,6 +538,31 @@ class Donnees:
             # CM / TD / PT mutualisés (et TP MUT distincts) : groupes mixtes FTP + ALT
             return ((annee, 'FTP', *part), (annee, 'ALT', *part))
         return ((annee, f'AUTRE{ft}', Fraction(0), Fraction(1)),)
+
+
+# Grille d'une semaine particulière (teacher_availability_weeks, cf. app.py _DSP_*) :
+# 6 jours × 24 demi-heures depuis 8 h, un caractère par demi-heure ('0' indisponible,
+# '1' … '4' niveau de préférence, '.' fermé — samedi après-midi).
+GRILLE_DEBUT, GRILLE_PAS, GRILLE_U = 8 * 60, 30, 24
+
+
+def lignes_grille(g):
+    """Grille → lignes au format de teacher_availability (demi-heures voisines de même
+    niveau fusionnées), pour Donnees._dispos."""
+    out = []
+    for j in range(len(g) // GRILLE_U):
+        u = 0
+        while u < GRILLE_U:
+            c = g[j * GRILLE_U + u]
+            v = u + 1
+            while v < GRILLE_U and g[j * GRILLE_U + v] == c:
+                v += 1
+            if c in '01234':
+                out.append({'day_of_week': j, 'start_time': _hhmm(GRILLE_DEBUT + u * GRILLE_PAS),
+                            'end_time': _hhmm(GRILLE_DEBUT + v * GRILLE_PAS),
+                            'available': 0 if c == '0' else 1, 'priority': int(c) or 1})
+            u = v
+    return out
 
 
 def _filtre_annees(reg, alias='s'):
@@ -876,7 +927,7 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
     # Débuts possibles de chaque séance (fermetures et indisponibilités exclues d'emblée)
     debuts = {}
     for e in evts:
-        interdit = don.dispos[e.enseignant][0] if e.enseignant else set()
+        interdit = don.dispos_de(e.enseignant, semaine)[0] if e.enseignant else set()
         bl = set().union(*(bloque[(an, f)] for an, f, _, _ in e.public))
         poss = []
         autorises = sorted(reg.debuts_pour(e.lon))
@@ -1005,7 +1056,7 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
 
         # MinNonPreferredTutorsSlot
         for tid, es in par_ens.items():
-            c_ens = don.dispos[tid][1]
+            c_ens = don.dispos_de(tid, semaine)[1]
             if not c_ens:
                 continue
             for e in es:
@@ -1481,7 +1532,7 @@ def generer(db, data):
         'SELECT DISTINCT week_number FROM weekly_hours WHERE hours > 0')]
     semaines = _ordre_semaines(semaines, don.debut_annee)
 
-    sans_dispo = sorted({don.enseignants[t]['name'] for t, (_, _, saisi) in don.dispos.items() if not saisi})
+    sans_dispo = sorted({don.enseignants[t]['name'] for t in don.dispos if not don.a_des_dispos(t)})
     if sans_dispo:
         avert.append(f'{len(sans_dispo)} enseignant(s) sans dispos saisies, supposés toujours disponibles : '
                      + ', '.join(sans_dispo[:12]) + (' …' if len(sans_dispo) > 12 else ''))
@@ -1514,7 +1565,7 @@ def generer(db, data):
         ouverts = {(d, u) for d in reg.jours for u in range(reg.nb_pas)} - ferme
         for tid in {e.enseignant for e in evts if e.enseignant}:
             besoin = sum(e.lon for e in evts if e.enseignant == tid)
-            offre = len(ouverts - don.dispos[tid][0])
+            offre = len(ouverts - don.dispos_de(tid, w)[0])
             if offre < besoin:
                 avert.append(f'S{w} · {don.enseignants[tid]["name"]} : {besoin * reg.pas / 60:g} h à placer '
                              f'pour {offre * reg.pas / 60:g} h de dispos')
