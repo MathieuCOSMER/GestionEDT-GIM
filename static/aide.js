@@ -783,7 +783,7 @@ function _aideService() {
 
     { id: 'rep-annuelle', rub: R, titre: 'Répartition annuelle (heures par semaine)', chemin: 'Service › Répartition Calendaire › Répartition annuelle',
       onglet: 'rep:annuelle', cible: 'repartition/annuelle',
-      mots: 'répartition calendaire planning semaine placer heures reste h module brouillon retour arrière taux horaire vacances orange',
+      mots: 'répartition calendaire planning semaine placer heures reste h module brouillon retour arrière taux horaire vacances orange jours fériés ponts',
       html: () => `
         <p>Le tableau de bord de l'emploi du temps : pour chaque matière, chaque type d'enseignement et chaque groupe, les heures
         placées sur chacune des semaines de l'année.</p>
@@ -798,6 +798,9 @@ function _aideService() {
             <li>Les semaines <b style="color:#c2410c">orange</b> sont des semaines de vacances, de stage (FTP) ou d'entreprise (ALT), d'après le ${_aLien('promo-calendrier', 'calendrier')} de la promotion.</li>
             <li>En haut, les <b>taux horaires</b> (FTP1, ALT1… FTP3, ALT3) donnent les heures de cours d'un étudiant de chaque promo, semaine par semaine. Filtré sur un enseignant ou une salle, le tableau ajoute sa charge hebdomadaire.</li>
             <li>La ligne des <b>commentaires</b> de semaine (écrits dans le calendrier) s'affiche au-dessus des semaines.</li>
+            <li>Une semaine qui a un <b>jour férié</b> ou un <b>pont</b> porte un repère à côté de son numéro : <span class="jf-rep">F</span>
+                pour un jour férié, <span class="jf-rep pont">P</span> pour un pont ; le survol donne les dates, et leur nom s'ajoute à la
+                ligne des commentaires. Ils se définissent dans le ${_aLien('promo-calendrier', 'calendrier')}.</li>
         </ul>
         ${_aSiModif('rep:annuelle', `<h3>Placer des heures</h3>
         ${_aSteps([
@@ -827,7 +830,7 @@ function _aideService() {
         ou l'année demande quoi en faire.</p>`)}
         <h3>Ordre entre matières</h3>
         <p>Une matière concernée par une contrainte d'ordre (« le CM de R1.03b terminé avant le TD de R1.03a », posée dans
-        ${_aUi('Ordonnancement')} ou dans ${_aOng('Contraintes Matière')}) porte un repère sur sa ligne bleue, mis à jour à chaque clic :</p>
+        ${_aOng('Contraintes Matière')}, volet ${_aUi('Matières à placer avant')}) porte un repère sur sa ligne bleue, mis à jour à chaque clic :</p>
         <ul>
             <li><span class="ord-badge ord-ok">🔗2 ✓</span> les contraintes sont respectées (ou pas encore placées) ;</li>
             <li><span class="ord-badge ord-bad">🔗2 ✗1</span> une contrainte n'est pas respectée : les cases en cause portent un
@@ -836,7 +839,9 @@ function _aideService() {
         </ul>
         <p>Le survol du repère détaille chaque contrainte (« le CM de R1.03b finit S45, le TD de R1.03a commence S40 »). Le côté FTP et le côté ALT
         sont vérifiés séparément, le mutualisé comptant pour les deux ; un TD ou un TP en groupes ne commence qu'une fois
-        <b>tous</b> les groupes d'avant terminés. ${_aUi('Contrôle')} les liste aussi : un clic sur une ligne amène à la matière.</p>
+        <b>tous</b> les groupes d'avant terminés. ${_aUi('Contrôle')} les liste aussi : un clic sur une ligne amène à la matière.${
+        _aSi('svc:contraintes-matiere', ` Un clic sur le repère 🔗 (ou sur le repère vœu) ouvre la matière dans ${_aOng('Contraintes Matière')},
+        seul endroit où ces contraintes se posent, se modifient et se retirent ; un brouillon en cours demande d'abord quoi en faire.`)}</p>
         <h3>Répartition souhaitée par l'enseignant</h3>
         <p>Quand un enseignant a donné l'enchaînement voulu de ses séances (${_aOng('Contraintes Matière')}), la ligne bleue de la matière
         porte <span class="wish-badge ord-ok">vœu ✓</span> ; le survol rappelle cet enchaînement (« CM → TD → CM + TD → TP… »).
@@ -848,12 +853,44 @@ function _aideService() {
         <h3>Outils de la barre</h3>
         <ul>
             ${_aSiModif('rep:annuelle', `<li>${_aUi('Contrôle')} : un panneau à droite liste la <b>charge des enseignants par semaine</b> (orange au-delà de 20 h, rouge au-delà de 30 h) , les <b>conflits de salle</b> (plus de 2 matières la même semaine) et les <b>contraintes d'ordre non respectées</b>. Le brouillon est compris dans le contrôle.</li>
-            <li>${_aUi('Ordonnancement')} : des règles d'ordre entre matières, ou entre parties de matières (« le CM de R1.01 terminé avant le TD de R1.05, avec au moins 2 semaines d'écart »), à respecter dans le placement. On y retrouve aussi celles posées par les enseignants dans ${_aOng('Contraintes Matière')}, avec leur auteur.</li>`)}
+            <li>${_aUi('Optimiser…')} : propose un placement des semestres affichés (voir ci-dessous).</li>`)}
             <li>${_aUi('Export Excel')} : exactement ce qui est affiché (semestres, formation, enseignant)${_aSiModif('rep:annuelle', ', brouillon compris')}.</li>
             ${_aSiModif('rep:annuelle', `<li>${_aUi('Import Excel')} : recharge des heures depuis un fichier au format de l'export — elles <b>remplacent</b> les heures existantes, après confirmation.</li>`)}
             <li>${_aUi('Taux horaires')} : la case masque les lignes de taux pour gagner de la place.</li>
         </ul>
         ${_aTip(`les vacataires ne voient ni les taux horaires ni l'export.`)}` },
+
+    { id: 'rep-optimiser', rub: R, titre: 'Optimiser la répartition annuelle', chemin: 'Service › Répartition Calendaire › Répartition annuelle › Optimiser…',
+      onglet: 'rep:annuelle', cible: 'repartition/annuelle', pour: 'modifier',
+      mots: 'optimiser optimisation optimiseur ordonnancement répartition souhaitée automatique placer calculer brouillon interruption surcharge charge',
+      html: `
+        <p>${_aUi('Optimiser…')} propose un placement des séances, semaine par semaine, pour les <b>semestres affichés</b> (et le
+        filtre ${_aUi('Formation')} : les lignes MUT en font toujours partie). Les autres semestres ne bougent pas, mais leurs heures
+        comptent dans les charges et dans les ordonnancements.</p>
+        <h3>Ce qu'il respecte</h3>
+        <ul>
+            <li><b>toujours</b> : le calendrier de chaque face — aucune séance FTP en vacances ou en stage, aucune séance ALT en entreprise,
+            les deux pour le mutualisé — et le nombre de séances par semaine de chaque séance (fiche Matières) ;</li>
+            <li>puis, du plus important au moins important : placer toutes les séances ; les <b>ordonnancements</b> (« A terminé avant B »,
+            écart compris) et la <b>répartition souhaitée</b> par les enseignants, avec les mêmes règles que les repères 🔗 et les cadres
+            rouges ; la plage de semaines de la matière (son semestre) ; la charge des promotions (au-delà de 30 h par semaine en FTP,
+            de 40 h en ALT, groupe par groupe) et des enseignants (au-delà de 20 h) ; des matières sans interruption.</li>
+        </ul>
+        <h3>Deux modes</h3>
+        <ul>
+            <li>${_aUi('Bouger le moins possible')} : part de la répartition actuelle (brouillon compris) et ne déplace une séance que si
+            cela règle une contrainte ou une vraie surcharge. Le total placé de chaque ligne ne change pas ; une séance que vous avez
+            mise hors de la plage de sa matière y reste. ${_aUi('Placer aussi les lignes encore vides')} les remplit d'après la fiche
+            Matières.</li>
+            <li>${_aUi('Repartir de zéro')} : recalcule tout le périmètre d'après la fiche Matières, sans tenir compte de l'actuel.</li>
+        </ul>
+        <p>Le calcul dure le temps choisi (30 s pour un semestre, 60 s pour une année). Il affiche ensuite un bilan <b>avant / après</b>.
+        ${_aUi('Poser dans le brouillon')} remplace les cases du périmètre par la proposition, en un seul pas : les repères se mettent à
+        jour, ${_aUi('Contrôle')} la vérifie, <kbd>Ctrl</kbd>+<kbd>Z</kbd> l'annule. Rien n'est enregistré avant ${_aUi('Enregistrer')}.</p>
+        ${_aEx('régler un ordonnancement', `Une matière de S1 doit être terminée avant une matière de S2 qui commence trop tôt : on coche
+            S1 et S2, ${_aUi('Optimiser…')}, ${_aUi('Bouger le moins possible')}, ${_aUi('Lancer')}. Le bilan indique « Ordonnancements non
+            respectés : 1 → 0 » et le nombre de séances déplacées ; ${_aUi('Poser dans le brouillon')}, un coup d'œil aux repères, puis
+            ${_aUi('Enregistrer')}.`)}` },
 
     { id: 'rep-jour', rub: R, titre: 'Répartition journalière (semaine par semaine)', chemin: 'Service › Répartition Calendaire › Répartition journalière',
       onglet: 'rep:jour', cible: 'repartition/jour',
@@ -898,13 +935,9 @@ function _aideService() {
         ${_aEx('une matière trop resserrée', `L'aperçu montre encore beaucoup de matières vues deux jours de suite : on monte
             ${_aUi('Même matière deux jours de suite')} de 3 à 6, on relance l'aperçu, on compare le bilan
             ${_aUi('Espacement des matières')} et le reste de la semaine, puis on enregistre si c'est mieux.`)}
-        <p>${_aUi('Jours fériés et ponts')}, à côté, fixe la liste des jours sans aucun cours de l'année affichée, pour toutes les
-        promotions. À la première ouverture, elle propose les jours fériés légaux de l'année (fêtes fixes, lundi de Pâques, Ascension,
-        lundi de Pentecôte) : on retire ceux où l'on travaille, on ajoute les ponts (${_aUi('+ Ajouter un jour')}, type « Pont »),
-        puis on enregistre. Tant qu'elle n'est pas enregistrée, le calcul prend les jours fériés légaux, sans pont. Dans la grille du
-        résultat, ces jours apparaissent grisés.</p>
-        ${_aEx('le pont de l\'Ascension', `Ascension le jeudi 6 mai : on ajoute le vendredi 7 mai, type « Pont », libellé « pont de
-            l'Ascension ». Cette semaine-là, ni le jeudi ni le vendredi n'ont cours.`)}
+        <p>Les <b>jours fériés et ponts</b> de l'année se définissent dans ${_aOng('Promotions › Calendrier')} : le haut de la fenêtre
+        en rappelle le nombre, avec un lien vers cet écran. Tant que la liste n'est pas enregistrée, le calcul prend les jours fériés
+        légaux, sans pont. Dans la grille du résultat, ces jours apparaissent grisés.</p>
         <ul>
             <li>${_aUi('Semaines')} : la semaine affichée, ou toute l'année (une dizaine de minutes, avec l'avancement à l'écran) ;</li>
             <li>${_aUi('Années d\'étude')} : toutes (conseillé, car enseignants et salles sont partagés entre les années), ou seulement celle
@@ -1040,17 +1073,28 @@ function _aideService() {
             `${_aUi('+ 1 semaine')} / ${_aUi('− 1 semaine')} règlent le nombre de colonnes. ${_aUi('Copier FTP → ALT')} reprend pour les
              alternants le rythme des séances FTP.`,
         ])}
+        <p>Le nombre de semaines est limité à celles <b>disponibles dans le semestre</b>, qui ne sont pas les mêmes pour chaque face :
+        les semaines du semestre moins les vacances et le stage pour les FTP, moins l'entreprise pour les ALT ; le mutualisé n'a que les
+        semaines communes aux deux (Calendrier de la promotion). Le décompte s'affiche sous la grille (« Semaines disponibles en S1 :
+        FTP 16 · ALT 11 »). Au-delà, les cases d'une face sont <b>hachurées</b> et ne prennent pas de séance. Une séance qui s'y trouve
+        déjà (calendrier modifié depuis, ou ${_aUi('Copier FTP → ALT')} d'un rythme trop long) apparaît en <b>rouge</b>, compte encore dans
+        ${_aUi('Reste')}, et un clic la retire : l'enregistrement est refusé tant qu'il en reste.</p>
         <p>Un TD ou un TP à plusieurs groupes suit le même rythme pour chaque groupe. Le titre du volet indique si la répartition est
         renseignée, par qui et quand. C'est un <b>vœu</b> : rien n'est placé dans la répartition calendaire, mais l'administration y
         voit l'enchaînement voulu et les séances placées dans un autre ordre.</p>
         <p>Le volet ${_aUi('Matières à placer avant')} liste les matières qui doivent être <b>terminées avant le début</b> de celle-ci.
         ${_aUi('+ Ajouter une matière à placer avant')} propose toutes les matières de l'année (celles du même semestre d'abord) ;
-        on peut viser une partie de chaque côté : « le CM de R1.01 terminé avant le TD de cette matière ». Chaque contrainte est
+        on peut viser une partie de chaque côté : « le CM de R1.01 terminé avant le TD de cette matière », et demander un
+        ${_aUi('écart ≥')} en semaines entre la fin de l'une et le début de l'autre (0 : la semaine suivante suffit). Chaque contrainte est
         <b>enregistrée dès l'ajout</b> et ${_aUi('✕')} la retire. Une contrainte qui ferait une boucle (A avant B, B avant A) est refusée.
-        Ces contraintes servent à l'optimisation de la répartition ; l'administration les retrouve dans ${_aUi('Ordonnancement')}.</p>
+        Sous la liste, « Cette matière doit elle-même être terminée avant… » rappelle les contraintes posées sur d'autres matières :
+        un clic sur un code y amène, c'est là qu'elles se modifient.</p>
+        <p>C'est le <b>seul endroit</b> où se posent ces ordonnancements : la répartition annuelle les vérifie (repère 🔗 sur la ligne bleue,
+        qui ramène ici d'un clic, et ${_aUi('Contrôle')}) et ${_aUi('Optimiser…')} les respecte.</p>
         <p>Chaque matière a son bouton ${_aUi('Enregistrer')} (texte et répartition ensemble) ; quitter l'onglet avec des modifications non
         enregistrées demande quoi en faire. Un enseignant ne voit et ne modifie que les matières <b>où il intervient</b> ;
-        l'administration et le responsable FTP les renseignent toutes. Filtres : semestres, recherche, et ${_aUi('Avec répartition souhaitée')}.</p>` },
+        l'administration et le responsable FTP les renseignent toutes. Filtres : semestres, recherche, ${_aUi('Avec répartition souhaitée')}
+        et ${_aUi('Avec ordonnancement')} (les matières qui ont une matière à placer avant elles, ou qui doivent passer avant une autre).</p>` },
 
     { id: 'comparaison', rub: R, titre: 'Comparaison avec Hyperplanning', chemin: 'Service › Comparaison',
       onglet: 'svc:comparaison', cible: 'comparaison',
@@ -1230,7 +1274,7 @@ function _aidePromotions() {
 
     { id: 'promo-calendrier', rub: R, titre: 'Calendrier', chemin: 'Promotions › Calendrier',
       onglet: 'promo:calendrier', cible: 'promotions/calendrier',
-      mots: 'calendrier vacances stages entreprise semaines dates semestres plage commentaires 52 53 semaines',
+      mots: 'calendrier vacances stages entreprise semaines dates semestres plage commentaires 52 53 semaines jours fériés ponts pont férié',
       html: () => `
         <p>Le calendrier d'une année de la cohorte, pour FTP ou pour ALT (liste ${_aUi('Cohorte')}).</p>
         <ul>
@@ -1238,8 +1282,25 @@ function _aidePromotions() {
             <li><b>Plage de l'année</b> : première et dernière semaine de cours, et le nombre de semaines de l'année civile (52 ou 53).</li>
             <li><b>Semaines spéciales</b> : ${_aSiModif('promo:calendrier', 'cliquez sur les semaines pour les ranger dans une catégorie — ')}<b>vacances</b>
                 et <b>stages</b> pour FTP, <b>entreprise</b> pour ALT. Chaque catégorie a un <b>code</b> court, repris en tête de la répartition.</li>
-            <li><b>Commentaires</b> : une note libre par semaine (« semaine de soutenances », « pont »…), pour les formations et les années cochées.</li>
+            <li><b>Commentaires</b> : une note libre par semaine (« semaine de soutenances »…), pour les formations et les années cochées.</li>
+            <li><b>Jours fériés / ponts</b> : une ligne de la grille marque les semaines qui en ont un, <span class="jf-rep">F</span> pour un
+                jour férié, <span class="jf-rep pont">P</span> pour un pont (les dates au survol).</li>
         </ul>
+        <h3>Jours fériés et ponts</h3>
+        <p>Le bloc sous la grille est le <b>seul endroit</b> où se fixe la liste des jours sans aucun cours de l'année universitaire
+        affichée, <b>pour toutes les promotions</b> (pas seulement la cohorte choisie). Tant qu'elle n'a jamais été enregistrée, elle
+        propose les jours fériés légaux de l'année (fêtes fixes, lundi de Pâques, Ascension, lundi de Pentecôte)${_aSiModif('promo:calendrier', ` :
+        on retire ceux où l'on travaille, on ajoute les ponts (${_aUi('+ Ajouter un jour')}, type « Pont »), et
+        ${_aUi('Ajouter les jours fériés légaux manquants')} complète la liste. Ils s'enregistrent avec le reste du calendrier`)}.
+        Tant que la liste n'est pas enregistrée, « Générer l'EDT » prend les jours fériés légaux, sans pont. Une semaine qui a un jour
+        fermé du lundi au vendredi rouvre le jeudi après-midi aux FTP, pour rattraper.</p>
+        <p>Ces jours sont signalés partout où l'on répartit les matières : repère F / P sur la semaine dans la
+        ${_aLien('rep-annuelle', 'répartition annuelle')} (et leur nom dans la ligne « Commentaires »)${_aSi('rep:jour', `, « férié » ou « pont »
+        dans la liste des semaines de la ${_aLien('rep-jour', 'répartition journalière')}, avec un bandeau rappelant les jours sans cours`)},
+        dans la répartition hebdomadaire d'une matière, et grisés dans la grille de l'EDT et dans les disponibilités des enseignants.</p>
+        ${_aSiModif('promo:calendrier', _aEx('le pont de l\'Ascension', `Ascension le jeudi 6 mai : on ajoute le vendredi 7 mai, type « Pont »,
+            libellé « pont de l'Ascension », puis ${_aUi('Enregistrer')}. Cette semaine-là, ni le jeudi ni le vendredi n'ont cours, et la
+            semaine porte le repère <span class="jf-rep">FP</span> dans la répartition.`))}
         <p>${_aSiModif('promo:calendrier', `${_aUi('Enregistrer')} enregistre le tout. `)}Ces semaines apparaissent en <b style="color:#c2410c">orange</b> dans la
         ${_aLien('rep-annuelle', 'répartition annuelle')}${_aSi('rep:jour', ` et disparaissent de la liste des semaines de la ${_aLien('rep-jour', 'répartition journalière')}`)}.</p>
         ${_aSiModif('promo:calendrier', _aWarn(`le calendrier s'écrit dans la base de l'année universitaire <b>de la cohorte</b>, qui peut différer de l'année active : un bandeau jaune le signale.`))}` },
@@ -2149,7 +2210,7 @@ function _aideExemples() {
             _aSiModif('svc:matieres', `<b>Les matières</b> — ${_aOng('Service › Matières')} : pour chaque sous-matière, volumes, durée de séance, salle, enseignant (par groupe si besoin). ${_aLien('matieres', 'Détail')}`),
             `<b>La répartition annuelle</b> — choisissez les semestres, placez les heures semaine par semaine (clic : + 1 séance, clic droit : − 1) jusqu'à ce que chaque ${_aUi('Reste')} soit à zéro,
              en surveillant les taux horaires des promos. ${_aLien('rep-annuelle', 'Détail')}`,
-            `<b>Contrôler</b> — ${_aUi('Contrôle')} (charge des enseignants, conflits de salle) et ${_aUi('Ordonnancement')} ; corrigez, puis ${_aUi('Enregistrer')}.`,
+            `<b>Contrôler</b> — ${_aUi('Contrôle')} (charge des enseignants, conflits de salle, ordonnancements, répartition souhaitée) ; corrigez, puis ${_aUi('Enregistrer')}.`,
             `<b>Diffuser</b> — ${_aUi('Export Excel')} de la répartition.`,
             _aSi('rep:jour', `<b>Semaine par semaine</b> — ${_aOng('Répartition journalière')} : pour chaque semaine et chaque cohorte, déposez les cours dans Hyperplanning, cochez
              ${_aUi('Posée à l\'EDT')}, puis ${_aUi('Optimisée')}. Le bandeau dit ce qu'il reste. ${_aLien('rep-jour', 'Détail')}`),

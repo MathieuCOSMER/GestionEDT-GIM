@@ -2295,8 +2295,8 @@ def _apply_migrations(db):
         pass
     # Ordonnancement : la partie visée de la matière « pred » (toute la matière si
     # '', sinon CM / TD / TP / PT) doit être terminée avant le début de la partie
-    # visée de la matière « succ ». Posé par l'admin (Ordonnancement) ou par les
-    # intervenants de la matière « succ » (Contraintes Matière).
+    # visée de la matière « succ ». Posé dans Contraintes Matière, sur la matière
+    # « succ », par ses intervenants ou l'admin (/api/courses/<id>/orderings).
     _ORDERING_DDL = '''
         CREATE TABLE IF NOT EXISTS {name} (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3148,7 +3148,7 @@ def _daily_backup_hook():
 _YEAR_OVERRIDE_PATHS = {
     '/api/special-calendar', '/api/config', '/api/week-comments',
     '/api/category-codes', '/api/semester-groups',
-    '/api/jours-fermes',         # jours fériés et ponts (répartition journalière)
+    '/api/jours-fermes',         # jours fériés et ponts (Calendrier, tableaux de répartition)
 }
 _YEAR_OVERRIDE_PREFIXES = (
     '/api/repartition',          # tableaux annuel + journalier
@@ -3156,12 +3156,12 @@ _YEAR_OVERRIDE_PREFIXES = (
     '/api/weekly-hours',         # édition des heures depuis la répartition
     '/api/course-sessions',
     '/api/teachers',
-    '/api/courses',              # onglet Matières + modal d'ordonnancement
+    '/api/courses',              # onglets Matières et Contraintes Matière
     '/api/semesters',
     '/api/rooms',                # listes du modal matière
     '/api/matieres-programme',
     '/api/matiere-referents',
-    '/api/course-orderings',
+    '/api/course-orderings',     # lecture seule (répartition, Contraintes Matière)
     '/api/hetd-coeffs',
     '/api/constraints',
     '/api/my-account',           # onglet Mon Compte (contact + heures hors GIM)
@@ -3687,7 +3687,6 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     (r'^/api/teachers/\d+/availability$', ['nav:enseignants'], ''),
     (r'^/api/courses/\d+/content$', ['prog:contenu'], ''),
     (r'^/api/courses/\d+/(constraints|wishes|orderings(/\d+)?)$', ['svc:contraintes-matiere'], ''),
-    (r'^/api/course-orderings(/\d+)?$', ['svc:contraintes-matiere'], 'strict'),
     (r'^/api/courses(/\d+)?$', ['svc:matieres'], ''),
     (r'^/api/courses/\d+/(teaching-hours|weekly-distribution)$', ['svc:matieres'], ''),
     (r'^/api/course-sessions(/\d+)?$', ['svc:matieres'], ''),
@@ -3698,6 +3697,9 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     (r'^/api/weekly-hours(/.*)?$', ['rep:annuelle'], ''),
     (r'^/api/import/repartition$', ['rep:annuelle'], ''),
     (r'^/api/optimize$', ['rep:annuelle'], ''),
+    # Optimiseur de la répartition : rien n'est écrit (proposition pour le brouillon),
+    # mais seul qui administre la répartition annuelle s'en sert
+    (r'^/api/repartition/optimiser$', ['rep:annuelle'], 'strict'),
     (r'^/api/(checks|export)/repartition$', ['rep:annuelle'], 'readlike'),
     (r'^/api/edt-planned-weeks$', ['rep:jour'], ''),
     (r'^/api/compare/hyperplanning$', ['svc:comparaison'], 'readlike'),
@@ -3705,7 +3707,8 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     (r'^/api/constraints/\d+/dispos$', ['svc:contraintes'], 'strict'),
     (r'^/api/qr-attendance$', ['svc:repartition-enseignant'], ''),
     (r'^/api/my-account(/.*)?$', ['nav:mon-compte'], ''),
-    (r'^/api/(special-calendar|week-comments|category-codes|config)$', ['promo:calendrier'], ''),
+    # Calendrier de la promotion, jours fériés et ponts de l'année compris (Promotions › Calendrier)
+    (r'^/api/(special-calendar|week-comments|category-codes|config|jours-fermes)$', ['promo:calendrier'], ''),
     (r'^/api/programmes/\d+/data(/reset)?$', ['prog:coeff', 'prog:matieres'], ''),
     (r'^/api/programmes(/.*)?$', ['prog:actions'], ''),
     (r'^/api/promotions/\d+/saisie/S[1-6]/(notes|weights|import)$', ['nav:saisie', 'promo:saisie'], ''),
@@ -17004,7 +17007,9 @@ def set_special_calendar():
 # par le solveur d'EDT (solveur_edt.py) ; une semaine qui en compte un, du lundi au
 # vendredi, rouvre le jeudi après-midi aux FTP. Liste JSON dans
 # app_settings['jours_fermes'] de la base de l'année. Tant qu'elle n'a jamais été
-# enregistrée, le solveur prend les jours fériés légaux, sans pont.
+# enregistrée, le solveur prend les jours fériés légaux, sans pont. Se définit dans
+# Promotions › Calendrier (droit « modifier » du Calendrier) ; les tableaux de
+# répartition la lisent pour signaler les semaines concernées.
 
 def _jours_fermes_bornes(annee):
     """Premier et dernier jour de cours possibles de l'année : lundi de la semaine de
@@ -17639,6 +17644,41 @@ _WISH_FORMATIONS = {2: 'MUT', 0: 'FTP', 1: 'ALT'}   # ordre d'affichage : MUT, F
 _WISH_MAX_WEEKS = 40
 _WISH_MAX_PER_WEEK = 9
 
+def _wish_semaines_dispo(db):
+    """Semaines disponibles de chaque semestre, par face, pour la répartition
+    souhaitée : les semaines du semestre (config Calendrier, impair / pair, dans la
+    plage de son année d'études), moins les vacances et le stage côté FTP, moins
+    l'entreprise côté ALT ; le mutualisé n'a que les semaines communes aux deux.
+    {code semestre: {'FTP': n, 'ALT': n, 'MUT': n}}"""
+    cfg = get_year_config()
+    sc = {}
+    for r in db.execute('SELECT week_number, week_type FROM special_calendar').fetchall():
+        sc.setdefault(r['week_type'], set()).add(r['week_number'])
+    out = {}
+    for r in db.execute('SELECT code FROM semesters').fetchall():
+        code = r['code'] or ''
+        digits = ''.join(ch for ch in code if ch.isdigit())
+        debut, fin = semester_default_weeks(code, cfg)
+        if not digits or not debut or not fin:
+            continue
+        yg = (int(digits) + 1) // 2           # S1, S2 → 1 ; S3, S4 → 2 ; S5, S6 → 3
+        a_debut, a_fin, a_max = year_range_for_yg(cfg, yg)
+        sem = get_valid_school_weeks(debut, fin, a_max) & get_valid_school_weeks(a_debut, a_fin, a_max)
+        ftp = sem - sc.get(f'vacation_ftp_y{yg}', set()) - sc.get(f'stage_ftp_y{yg}', set())
+        alt = sem - sc.get(f'company_alt_y{yg}', set())
+        out[code] = {'FTP': len(ftp), 'ALT': len(alt), 'MUT': len(ftp & alt)}
+    return out
+
+def _wish_depassement(sem, face, typ, lim):
+    """Message : séances d'une ligne au-delà des semaines disponibles de sa face."""
+    qui = {'FTP': 'les FTP', 'ALT': 'les ALT',
+           'MUT': 'le mutualisé (semaines communes aux FTP et aux ALT)'}[face]
+    if lim <= 0:
+        return f"{face} · {typ} : {sem} n'a aucune semaine disponible pour {qui}"
+    pl = 's' if lim > 1 else ''
+    return (f"{face} · {typ} : des séances au-delà de la {lim}{'re' if lim == 1 else 'e'} semaine, "
+            f"or {sem} n'a que {lim} semaine{pl} disponible{pl} pour {qui}")
+
 def _wish_row_from_db(r):
     if not r:
         return None
@@ -17651,13 +17691,14 @@ def _wish_row_from_db(r):
 
 @app.route('/api/courses/wishes', methods=['GET'])
 def get_course_wishes():
-    """Séances de chaque matière (face × type, nb de séances, durée, groupes) et
-    vœux de répartition enregistrés.
-    {course_id: {sessions: [...], wish: {...} | null}}"""
+    """Séances de chaque matière (face × type, nb de séances, durée, groupes), vœux
+    de répartition enregistrés et semaines disponibles de son semestre par face.
+    {course_id: {sessions: [...], wish: {...} | null, semestre, limites: {FTP, ALT, MUT} | null}}"""
     try:
         db = get_db()
         sg_map, mut_set, tpsep_set = _load_semester_groups(db)
         rank_ft = {ft: i for i, ft in enumerate(_WISH_FORMATIONS)}
+        dispo = _wish_semaines_dispo(db)
         out = {}
         for r in db.execute('''
                 SELECT c.id AS course_id, c.tp_type, s.code AS semester_code,
@@ -17671,7 +17712,9 @@ def get_course_wishes():
             ft, tt = r['formation_type'], (r['teaching_type'] or '').upper()
             if ft not in _WISH_FORMATIONS or tt not in _WISH_TYPES:
                 continue
-            entry = out.setdefault(r['course_id'], {'sessions': [], 'wish': None})
+            entry = out.setdefault(r['course_id'], {'sessions': [], 'wish': None,
+                                                    'semestre': r['semester_code'],
+                                                    'limites': dispo.get(r['semester_code'])})
             slot = r['slot_duration'] or 1.5
             nb = r['nb_sessions'] or (round((r['total_hours'] or 0) / slot) if slot > 0 else 0)
             try:
@@ -17734,6 +17777,26 @@ def save_course_wishes(course_id):
             clean += [0] * (n_weeks - len(clean))
             if any(clean):
                 rows[key] = clean
+
+        # Pas au-delà des semaines disponibles du semestre, face par face (FTP et
+        # ALT n'en ont pas le même nombre) ; colonnes vides en trop retirées
+        sem = db.execute('''SELECT s.code FROM courses c JOIN semesters s ON s.id = c.semester_id
+                            WHERE c.id = ?''', (course_id,)).fetchone()
+        lim = _wish_semaines_dispo(db).get(sem['code']) if sem else None
+        if lim:
+            def face_de(key):
+                ft = key.split(':')[0]
+                return _WISH_FORMATIONS.get(int(ft)) if ft.isdigit() else None
+            for key, counts in rows.items():
+                face = face_de(key)
+                dernier = max(i + 1 for i, v in enumerate(counts) if v)
+                if face and dernier > lim[face]:
+                    return error_response(_wish_depassement(sem['code'], face, key.split(':')[1], lim[face]), 400)
+            faces = {face_de(k) for k in valid_keys} - {None}
+            max_cols = max(1, max((lim[f] for f in faces), default=n_weeks))
+            if n_weeks > max_cols:
+                n_weeks = max_cols
+                rows = {k: v[:n_weeks] for k, v in rows.items()}
 
         who = session.get('teacher_name') or session.get('user') or ''
         if rows:
@@ -19713,210 +19776,325 @@ def put_hetd_coeffs():
 @app.route('/api/repartition', methods=['GET'])
 def get_repartition():
     """Tableau pivot : pour un semestre donné, heures par cours et par semaine"""
-    semester_code = request.args.get('semester', '')
     try:
-        cfg = get_year_config()
-        start_week = cfg['academic_start_week']
-        end_week_cfg = cfg['academic_end_week']
-        max_week = cfg['academic_max_week']
-        _key = lambda w: school_week_key(w, start_week, max_week)
-
-        # Colonnes = plage complète de l'année académique (identique pour tous les semestres)
-        weeks = sorted(get_valid_school_weeks(start_week, end_week_cfg, max_week), key=_key)
-
-        db = get_db()
-        cursor = db.cursor()
-
-        # Détecter l'année de promotion à partir du code semestre
-        year_group = None
-        if semester_code:
-            s_code = semester_code.split('+')[0]  # ex: "S1+S2" → "S1"
-            try:
-                sn = int(s_code[1])          # S1→1, S3→3, S5→5
-                year_group = (sn + 1) // 2   # 1,2→1 ; 3,4→2 ; 5,6→3
-            except Exception:
-                pass
-
-        # Plage des colonnes = plage propre à l'année de progression du semestre
-        # (début/fin + nb de semaines 52/53), repli global si non définie.
-        if year_group:
-            start_week, end_week_cfg, max_week = year_range_for_yg(cfg, year_group)
-            _key = lambda w: school_week_key(w, start_week, max_week)
-            weeks = sorted(get_valid_school_weeks(start_week, end_week_cfg, max_week), key=_key)
-
-        # Charger le calendrier spécial global
-        cursor.execute('SELECT week_number, week_type FROM special_calendar ORDER BY week_type, week_number')
-        sc = {t: [] for t in _SPECIAL_TYPES}
-        for r in cursor.fetchall():
-            if r['week_type'] in sc:
-                sc[r['week_type']].append(r['week_number'])
-
-        special_weeks = {
-            'vacation_ftp': sc.get(f'vacation_ftp_y{year_group}', []) if year_group else [],
-            'stage_ftp':    sc.get(f'stage_ftp_y{year_group}', []) if year_group else [],
-            'company_alt':  sc.get(f'company_alt_y{year_group}', []) if year_group else [],
-        }
-
-        # Lignes de données avec heures hebdomadaires
-        if semester_code:
-            cursor.execute('''
-                SELECT cs.id AS session_id, c.id AS course_id,
-                       c.code AS course_code, c.name AS course_name,
-                       c.tp_type,
-                       s.code AS semester_code,
-                       cs.teaching_type, cs.formation_type,
-                       cs.total_hours, cs.nb_sessions, cs.slot_duration,
-                       cs.room_name, cs.teacher_id,
-                       t.name AS teacher_name,
-                       wh.week_number, wh.semester_week, wh.hours, wh.group_index
-                FROM course_sessions cs
-                JOIN courses c ON cs.course_id = c.id
-                JOIN semesters s ON c.semester_id = s.id
-                LEFT JOIN teachers t ON cs.teacher_id = t.id
-                LEFT JOIN weekly_hours wh ON wh.course_session_id = cs.id
-                WHERE s.code = ? AND (cs.nb_sessions > 0 OR cs.total_hours > 0)
-                ORDER BY c.code,
-                         CASE cs.teaching_type WHEN 'CM' THEN 0 WHEN 'TD' THEN 1 WHEN 'TP' THEN 2 WHEN 'PT' THEN 3 ELSE 4 END,
-                         cs.formation_type, wh.week_number
-            ''', (semester_code,))
-        else:
-            cursor.execute('''
-                SELECT cs.id AS session_id, c.id AS course_id,
-                       c.code AS course_code, c.name AS course_name,
-                       c.tp_type,
-                       s.code AS semester_code,
-                       cs.teaching_type, cs.formation_type,
-                       cs.total_hours, cs.nb_sessions, cs.slot_duration,
-                       cs.room_name, cs.teacher_id,
-                       t.name AS teacher_name,
-                       wh.week_number, wh.semester_week, wh.hours, wh.group_index
-                FROM course_sessions cs
-                JOIN courses c ON cs.course_id = c.id
-                JOIN semesters s ON c.semester_id = s.id
-                LEFT JOIN teachers t ON cs.teacher_id = t.id
-                LEFT JOIN weekly_hours wh ON wh.course_session_id = cs.id
-                WHERE cs.nb_sessions > 0 OR cs.total_hours > 0
-                ORDER BY s.code, c.code,
-                         CASE cs.teaching_type WHEN 'CM' THEN 0 WHEN 'TD' THEN 1 WHEN 'TP' THEN 2 WHEN 'PT' THEN 3 ELSE 4 END,
-                         cs.formation_type, wh.week_number
-            ''')
-        raw = cursor.fetchall()
-
-        # Nb de groupes par (semestre, face, type) : les TP et les TD se scindent en
-        # une ligne par groupe dans la répartition calendaire.
-        sg_map, mut_set, tpsep_set = _load_semester_groups(db)
-        # Enseignants par groupe (un TD / TP peut être partagé entre enseignants)
-        gt_map = _load_group_teachers(db)
-        t_names = {r['id']: r['name'] for r in db.execute('SELECT id, name FROM teachers').fetchall()}
-
-        # Pivot : regrouper par session, en conservant les heures par groupe
-        sessions = {}
-        order = []
-        for r in raw:
-            sid = r['session_id']
-            if sid not in sessions:
-                tt = r['teaching_type'] or ''
-                # Nb de groupes pour ce type (CM=1, TD, TP12/TP8, PT) selon semestre/face.
-                # Sert au comptage des créneaux (répartition journalière) et, pour les TP
-                # et les TD, à scinder la session en une ligne par groupe.
-                try:
-                    group_count = int(_group_multiplier(
-                        sg_map, mut_set, tpsep_set, r['semester_code'],
-                        r['formation_type'], tt, r['tp_type']) or 1)
-                except Exception:
-                    group_count = 1
-                if group_count < 1:
-                    group_count = 1
-                n_groups = group_count if _placed_by_group(tt) else 1
-                sessions[sid] = {
-                    'session_id': sid,
-                    'course_id': r['course_id'],
-                    'course_code': r['course_code'] or '',
-                    'course_name': r['course_name'] or '',
-                    'semester': r['semester_code'] or '',
-                    'type':r['teaching_type'] or '',
-                    'tp_type': r['tp_type'] or 'TP12',
-                    'formation': {0: 'FTP', 1: 'ALT', 2: 'MUT', 3: 'OTHER'}.get(r['formation_type'], str(r['formation_type'] or '')),
-                    'total_hours': r['total_hours'] or 0,
-                    'nb_sessions': r['nb_sessions'] or 0,
-                    'slot_duration': r['slot_duration'] or 1.5,
-                    'teacher': r['teacher_name'] or '',
-                    'teacher_id': r['teacher_id'],
-                    'room': r['room_name'] or '',
-                    'n_groups': n_groups,
-                    'group_count': group_count,
-                    'by_group': {},   # {group_index: {week: hours}}
-                }
-                order.append(sid)
-            if r['week_number'] is not None and (r['hours'] or 0) > 0:
-                g = r['group_index'] or 1
-                sessions[sid]['by_group'].setdefault(g, {})[r['week_number']] = r['hours'] or 0
-
-        # Une ligne par session (CM/PT) ou une ligne par groupe (TP et TD à plusieurs groupes)
-        _BASE = ('session_id', 'course_id', 'course_code', 'course_name', 'semester', 'type',
-                 'tp_type', 'formation', 'total_hours', 'nb_sessions', 'slot_duration',
-                 'teacher', 'room', 'group_count')
-        out_rows = []
-        for sid in order:
-            s = sessions[sid]
-            base = {k: s[k] for k in _BASE}
-            n = s['n_groups']
-            # Enseignant de chaque groupe (défaut : celui de la session)
-            g_teachers = _group_teacher_list(s['teacher_id'], gt_map.get(sid), s['group_count'])
-            if n <= 1:
-                # Une seule ligne, le placement du groupe 1 : celui d'un groupe
-                # au-delà (nombre de groupes réduit depuis) n'est plus affiché,
-                # pas plus que dans les lignes par groupe ci-dessous. La ligne
-                # porte tous les enseignants du type (ex. PT à 2 groupes)
-                merged = dict(s['by_group'].get(1, {}))
-                # `teachers` : un élément PAR GROUPE (doublons compris) — c'est lui
-                # qui permet de pondérer la charge d'un enseignant par le nombre de
-                # groupes qu'il assure. `teacher` reste le libellé affiché.
-                per_group = [t_names.get(tid, '') for tid in g_teachers]
-                names = []
-                for nm in per_group:
-                    if nm and nm not in names:
-                        names.append(nm)
-                out_rows.append({**base, 'teacher': ' / '.join(names) or base['teacher'],
-                                 'teachers': per_group,
-                                 'group_index': 1, 'n_groups': 1, 'by_week': merged,
-                                 'alt_group': False, 'group_label': ''})
-            else:
-                # TP mutualisé à TP communs : les apprentis (ALT) occupent les
-                # DERNIERS groupes (nb = alt_groups de la promo).
-                sem = s['semester']
-                # Uniquement les matières réellement mutualisées (session MUT) ont des
-                # groupes d'apprentis. Les SAE (face FTP ou ALT) gardent tous leurs
-                # groupes dans LEUR cohorte — pas de dernier groupe « ALT ». Les TD
-                # n'en ont jamais : alt_groups ne compte que des groupes de TP.
-                is_common_mut = (s['type'].upper().startswith('TP') and (sem in mut_set)
-                                 and (sem not in tpsep_set) and (s['formation'] == 'MUT'))
-                k_alt = 0
-                if is_common_mut:
-                    k_alt = int((sg_map.get((sem, 2)) or {}).get('ALT', 1) or 0)
-                    k_alt = max(0, min(k_alt, n))
-                n_ftp = n - k_alt
-                for g in range(1, n + 1):
-                    is_alt = g > n_ftp
-                    if is_alt:
-                        rank = g - n_ftp
-                        label = 'ALT' if k_alt == 1 else f'ALT {rank}'
-                    else:
-                        label = f'gr.{g}'
-                    tid = g_teachers[g - 1] if g <= len(g_teachers) else None
-                    nm = t_names.get(tid, base['teacher'] if tid else '')
-                    out_rows.append({**base, 'teacher': nm, 'teachers': [nm],
-                                     'group_index': g, 'n_groups': n,
-                                     'by_week': dict(s['by_group'].get(g, {})),
-                                     'alt_group': is_alt, 'group_label': label})
-
-        return jsonify({
-            'weeks': weeks,
-            'rows': out_rows,
-            'special_weeks': special_weeks,
-        }), 200
+        return jsonify(_repartition_payload(request.args.get('semester', ''))), 200
     except Exception as e:
         return error_response(f'Error fetching repartition: {str(e)}', 500)
+
+def _repartition_payload(semester_code):
+    """Lignes de la Répartition annuelle d'un semestre (une par séance, ou par groupe
+    pour les TD et les TP), avec colonnes et semaines spéciales : ce qu'affiche
+    l'écran, et ce que lit l'optimiseur (optim_repartition)."""
+    cfg = get_year_config()
+    start_week = cfg['academic_start_week']
+    end_week_cfg = cfg['academic_end_week']
+    max_week = cfg['academic_max_week']
+    _key = lambda w: school_week_key(w, start_week, max_week)
+
+    # Colonnes = plage complète de l'année académique (identique pour tous les semestres)
+    weeks = sorted(get_valid_school_weeks(start_week, end_week_cfg, max_week), key=_key)
+
+    db = get_db()
+    cursor = db.cursor()
+
+    # Détecter l'année de promotion à partir du code semestre
+    year_group = None
+    if semester_code:
+        s_code = semester_code.split('+')[0]  # ex: "S1+S2" → "S1"
+        try:
+            sn = int(s_code[1])          # S1→1, S3→3, S5→5
+            year_group = (sn + 1) // 2   # 1,2→1 ; 3,4→2 ; 5,6→3
+        except Exception:
+            pass
+
+    # Plage des colonnes = plage propre à l'année de progression du semestre
+    # (début/fin + nb de semaines 52/53), repli global si non définie.
+    if year_group:
+        start_week, end_week_cfg, max_week = year_range_for_yg(cfg, year_group)
+        _key = lambda w: school_week_key(w, start_week, max_week)
+        weeks = sorted(get_valid_school_weeks(start_week, end_week_cfg, max_week), key=_key)
+
+    # Charger le calendrier spécial global
+    cursor.execute('SELECT week_number, week_type FROM special_calendar ORDER BY week_type, week_number')
+    sc = {t: [] for t in _SPECIAL_TYPES}
+    for r in cursor.fetchall():
+        if r['week_type'] in sc:
+            sc[r['week_type']].append(r['week_number'])
+
+    special_weeks = {
+        'vacation_ftp': sc.get(f'vacation_ftp_y{year_group}', []) if year_group else [],
+        'stage_ftp':    sc.get(f'stage_ftp_y{year_group}', []) if year_group else [],
+        'company_alt':  sc.get(f'company_alt_y{year_group}', []) if year_group else [],
+    }
+
+    # Lignes de données avec heures hebdomadaires
+    if semester_code:
+        cursor.execute('''
+            SELECT cs.id AS session_id, c.id AS course_id,
+                   c.code AS course_code, c.name AS course_name,
+                   c.tp_type,
+                   s.code AS semester_code,
+                   cs.teaching_type, cs.formation_type,
+                   cs.total_hours, cs.nb_sessions, cs.slot_duration,
+                   cs.room_name, cs.teacher_id,
+                   t.name AS teacher_name,
+                   wh.week_number, wh.semester_week, wh.hours, wh.group_index
+            FROM course_sessions cs
+            JOIN courses c ON cs.course_id = c.id
+            JOIN semesters s ON c.semester_id = s.id
+            LEFT JOIN teachers t ON cs.teacher_id = t.id
+            LEFT JOIN weekly_hours wh ON wh.course_session_id = cs.id
+            WHERE s.code = ? AND (cs.nb_sessions > 0 OR cs.total_hours > 0)
+            ORDER BY c.code,
+                     CASE cs.teaching_type WHEN 'CM' THEN 0 WHEN 'TD' THEN 1 WHEN 'TP' THEN 2 WHEN 'PT' THEN 3 ELSE 4 END,
+                     cs.formation_type, wh.week_number
+        ''', (semester_code,))
+    else:
+        cursor.execute('''
+            SELECT cs.id AS session_id, c.id AS course_id,
+                   c.code AS course_code, c.name AS course_name,
+                   c.tp_type,
+                   s.code AS semester_code,
+                   cs.teaching_type, cs.formation_type,
+                   cs.total_hours, cs.nb_sessions, cs.slot_duration,
+                   cs.room_name, cs.teacher_id,
+                   t.name AS teacher_name,
+                   wh.week_number, wh.semester_week, wh.hours, wh.group_index
+            FROM course_sessions cs
+            JOIN courses c ON cs.course_id = c.id
+            JOIN semesters s ON c.semester_id = s.id
+            LEFT JOIN teachers t ON cs.teacher_id = t.id
+            LEFT JOIN weekly_hours wh ON wh.course_session_id = cs.id
+            WHERE cs.nb_sessions > 0 OR cs.total_hours > 0
+            ORDER BY s.code, c.code,
+                     CASE cs.teaching_type WHEN 'CM' THEN 0 WHEN 'TD' THEN 1 WHEN 'TP' THEN 2 WHEN 'PT' THEN 3 ELSE 4 END,
+                     cs.formation_type, wh.week_number
+        ''')
+    raw = cursor.fetchall()
+
+    # Nb de groupes par (semestre, face, type) : les TP et les TD se scindent en
+    # une ligne par groupe dans la répartition calendaire.
+    sg_map, mut_set, tpsep_set = _load_semester_groups(db)
+    # Enseignants par groupe (un TD / TP peut être partagé entre enseignants)
+    gt_map = _load_group_teachers(db)
+    t_names = {r['id']: r['name'] for r in db.execute('SELECT id, name FROM teachers').fetchall()}
+
+    # Pivot : regrouper par session, en conservant les heures par groupe
+    sessions = {}
+    order = []
+    for r in raw:
+        sid = r['session_id']
+        if sid not in sessions:
+            tt = r['teaching_type'] or ''
+            # Nb de groupes pour ce type (CM=1, TD, TP12/TP8, PT) selon semestre/face.
+            # Sert au comptage des créneaux (répartition journalière) et, pour les TP
+            # et les TD, à scinder la session en une ligne par groupe.
+            try:
+                group_count = int(_group_multiplier(
+                    sg_map, mut_set, tpsep_set, r['semester_code'],
+                    r['formation_type'], tt, r['tp_type']) or 1)
+            except Exception:
+                group_count = 1
+            if group_count < 1:
+                group_count = 1
+            n_groups = group_count if _placed_by_group(tt) else 1
+            sessions[sid] = {
+                'session_id': sid,
+                'course_id': r['course_id'],
+                'course_code': r['course_code'] or '',
+                'course_name': r['course_name'] or '',
+                'semester': r['semester_code'] or '',
+                'type':r['teaching_type'] or '',
+                'tp_type': r['tp_type'] or 'TP12',
+                'formation': {0: 'FTP', 1: 'ALT', 2: 'MUT', 3: 'OTHER'}.get(r['formation_type'], str(r['formation_type'] or '')),
+                'total_hours': r['total_hours'] or 0,
+                'nb_sessions': r['nb_sessions'] or 0,
+                'slot_duration': r['slot_duration'] or 1.5,
+                'teacher': r['teacher_name'] or '',
+                'teacher_id': r['teacher_id'],
+                'room': r['room_name'] or '',
+                'n_groups': n_groups,
+                'group_count': group_count,
+                'by_group': {},   # {group_index: {week: hours}}
+            }
+            order.append(sid)
+        if r['week_number'] is not None and (r['hours'] or 0) > 0:
+            g = r['group_index'] or 1
+            sessions[sid]['by_group'].setdefault(g, {})[r['week_number']] = r['hours'] or 0
+
+    # Une ligne par session (CM/PT) ou une ligne par groupe (TP et TD à plusieurs groupes)
+    _BASE = ('session_id', 'course_id', 'course_code', 'course_name', 'semester', 'type',
+             'tp_type', 'formation', 'total_hours', 'nb_sessions', 'slot_duration',
+             'teacher', 'room', 'group_count')
+    out_rows = []
+    for sid in order:
+        s = sessions[sid]
+        base = {k: s[k] for k in _BASE}
+        n = s['n_groups']
+        # Enseignant de chaque groupe (défaut : celui de la session)
+        g_teachers = _group_teacher_list(s['teacher_id'], gt_map.get(sid), s['group_count'])
+        if n <= 1:
+            # Une seule ligne, le placement du groupe 1 : celui d'un groupe
+            # au-delà (nombre de groupes réduit depuis) n'est plus affiché,
+            # pas plus que dans les lignes par groupe ci-dessous. La ligne
+            # porte tous les enseignants du type (ex. PT à 2 groupes)
+            merged = dict(s['by_group'].get(1, {}))
+            # `teachers` : un élément PAR GROUPE (doublons compris) — c'est lui
+            # qui permet de pondérer la charge d'un enseignant par le nombre de
+            # groupes qu'il assure. `teacher` reste le libellé affiché.
+            per_group = [t_names.get(tid, '') for tid in g_teachers]
+            names = []
+            for nm in per_group:
+                if nm and nm not in names:
+                    names.append(nm)
+            out_rows.append({**base, 'teacher': ' / '.join(names) or base['teacher'],
+                             'teachers': per_group,
+                             'group_index': 1, 'n_groups': 1, 'by_week': merged,
+                             'alt_group': False, 'group_label': ''})
+        else:
+            # TP mutualisé à TP communs : les apprentis (ALT) occupent les
+            # DERNIERS groupes (nb = alt_groups de la promo).
+            sem = s['semester']
+            # Uniquement les matières réellement mutualisées (session MUT) ont des
+            # groupes d'apprentis. Les SAE (face FTP ou ALT) gardent tous leurs
+            # groupes dans LEUR cohorte — pas de dernier groupe « ALT ». Les TD
+            # n'en ont jamais : alt_groups ne compte que des groupes de TP.
+            is_common_mut = (s['type'].upper().startswith('TP') and (sem in mut_set)
+                             and (sem not in tpsep_set) and (s['formation'] == 'MUT'))
+            k_alt = 0
+            if is_common_mut:
+                k_alt = int((sg_map.get((sem, 2)) or {}).get('ALT', 1) or 0)
+                k_alt = max(0, min(k_alt, n))
+            n_ftp = n - k_alt
+            for g in range(1, n + 1):
+                is_alt = g > n_ftp
+                if is_alt:
+                    rank = g - n_ftp
+                    label = 'ALT' if k_alt == 1 else f'ALT {rank}'
+                else:
+                    label = f'gr.{g}'
+                tid = g_teachers[g - 1] if g <= len(g_teachers) else None
+                nm = t_names.get(tid, base['teacher'] if tid else '')
+                out_rows.append({**base, 'teacher': nm, 'teachers': [nm],
+                                 'group_index': g, 'n_groups': n,
+                                 'by_week': dict(s['by_group'].get(g, {})),
+                                 'alt_group': is_alt, 'group_label': label})
+
+    return {
+        'weeks': weeks,
+        'rows': out_rows,
+        'special_weeks': special_weeks,
+    }
+
+@app.route('/api/repartition/optimiser', methods=['POST'])
+def optimiser_repartition():
+    """Optimise la Répartition annuelle des semestres demandés (optim_repartition.py) en
+    respectant les contraintes matière (ordonnancements, répartition souhaitée), le
+    calendrier de chaque face et les charges. N'ÉCRIT RIEN : renvoie, ligne par ligne,
+    les heures proposées par semaine, que l'écran pose dans le brouillon.
+    Corps : {semestres: ['S1', …], faces: '' | 'ftp' | 'alt', mode: 'stable' | 'zero',
+    temps: secondes, cells: [brouillon en cours]} — le brouillon est pris en compte le
+    temps du calcul, puis annulé (comme le Contrôle)."""
+    import solveur_edt
+    import optim_repartition
+    nom_solveur = solveur_edt.solveur_disponible()
+    if optim_repartition.pulp is None or not nom_solveur:
+        return error_response('Solveur PuLP non installé sur le serveur (pip install -r requirements.txt)', 503)
+    data = request.get_json(silent=True) or {}
+    sems = [s for s in (data.get('semestres') or []) if isinstance(s, str) and _re.match(r'^S[1-6]$', s)]
+    faces = data.get('faces') or ''
+    mode = data.get('mode') or 'stable'
+    if not sems or faces not in ('', 'ftp', 'alt') or mode not in ('stable', 'zero'):
+        return error_response('Paramètres invalides (semestres, faces, mode)', 400)
+    placer_vides = data.get('placer_vides', True) is not False
+    try:
+        temps = min(90.0, max(5.0, float(data.get('temps') or 30)))
+    except (TypeError, ValueError):
+        return error_response('Temps de calcul invalide', 400)
+    try:
+        brouillon = _weekly_cells_from_json(data) if data.get('cells') else None
+    except ValueError as e:
+        return error_response(str(e), 400)
+    db = get_db()
+    try:
+        if brouillon:
+            _write_weekly_cells(db, brouillon)
+        cfg = get_year_config()
+        codes = [r['code'] for r in db.execute('SELECT code FROM semesters ORDER BY code')
+                 if _re.match(r'^S[1-6]$', r['code'] or '')]
+        lignes, speciales, annee, semaines, maxw = [], {}, {}, {}, {}
+        for code in codes:
+            p = _repartition_payload(code)
+            lignes += p['rows']
+            speciales[code] = p['special_weeks']
+            yg = (int(code[1]) + 1) // 2
+            annee[code] = yg
+            if yg not in semaines:
+                sw, ew, mw = year_range_for_yg(cfg, yg)
+                semaines[yg] = sorted(get_valid_school_weeks(sw, ew, mw),
+                                      key=lambda w, sw=sw, mw=mw: school_week_key(w, sw, mw))
+                maxw[yg] = mw
+        plages = {}
+        for r in db.execute('''SELECT c.id, c.start_week, c.end_week, c.default_weeks, s.code
+                               FROM courses c JOIN semesters s ON s.id = c.semester_id'''):
+            sw, ew = resolve_course_weeks({'default_weeks': r['default_weeks'], 'semester_code': r['code'],
+                                           'start_week': r['start_week'], 'end_week': r['end_week']}, cfg)
+            yg = annee.get(r['code'])
+            plages[r['id']] = (get_valid_school_weeks(sw, ew, maxw.get(yg, cfg['academic_max_week']))
+                               if sw and ew else None)
+        spw = {r[0]: r[1] for r in db.execute('SELECT id, COALESCE(sessions_per_week_max, 1) FROM course_sessions')}
+        ordres = []
+        for r in db.execute('''SELECT o.course_id_pred, o.course_id_succ, o.pred_part, o.succ_part, o.min_gap_weeks,
+                                      cp.code AS pc, cs.code AS sc
+                               FROM course_ordering o JOIN courses cp ON cp.id = o.course_id_pred
+                               JOIN courses cs ON cs.id = o.course_id_succ'''):
+            ordres.append({'pred_id': r['course_id_pred'], 'succ_id': r['course_id_succ'],
+                           'pred_part': (r['pred_part'] or '').upper(), 'succ_part': (r['succ_part'] or '').upper(),
+                           'gap': r['min_gap_weeks'] or 0,
+                           'texte': f"{(r['pred_part'] + ' de ') if r['pred_part'] else ''}{r['pc']} terminé avant "
+                                    f"{('le ' + r['succ_part'] + ' de ') if r['succ_part'] else ''}{r['sc']}"})
+        voeux = {r['course_id']: _wish_row_from_db(r) for r in db.execute('SELECT * FROM course_wishes')}
+        don = solveur_edt.Donnees(db, solveur_edt.lire_reglages({}))
+        ft_code = {'FTP': 0, 'ALT': 1, 'MUT': 2}
+        publics = {}
+        for r in lignes:
+            if r['formation'] in ft_code and annee.get(r['semester']):
+                publics[(r['session_id'], r['group_index'] or 1)] = don.public(
+                    annee[r['semester']], ft_code[r['formation']], r['group_index'] or 1,
+                    r['n_groups'] or 1, r['semester'], (r['type'] or '').upper())
+        ctx = {'annee': annee, 'semaines': semaines, 'speciales': speciales, 'plages': plages,
+               'spw': spw, 'ordres': ordres, 'voeux': voeux, 'publics': publics}
+        res = optim_repartition.optimiser(lignes, ctx, {'semestres': sems, 'faces': faces, 'mode': mode,
+                                                         'temps': temps, 'placer_vides': placer_vides},
+                                          nom_solveur, solveur_edt._solveur)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return error_response(f'Erreur de l\'optimiseur : {e}', 500)
+    finally:
+        db.rollback()                 # le brouillon n'a servi que le temps du calcul
+
+    def bilan(b):
+        if not b:
+            return None
+        return {'ordres': b['ordres'][:40], 'nb_ordres': len(b['ordres']), 'voeux': b['voeux'],
+                'hors_plage': b['hors_plage'], 'interdites': b['interdites'], 'non_places': b['non_places'],
+                'blocs_en_plus': b['blocs_en_plus'],
+                'surcharges': [{'annee': a, 'face': f, 'semaine': w, 'heures': round(h, 1)}
+                               for a, f, w, h in b['surcharges'][:60]], 'nb_surcharges': len(b['surcharges']),
+                'enseignants': [{'nom': n, 'semaine': w, 'heures': round(h, 1)} for n, w, h in b['enseignants'][:60]],
+                'nb_enseignants': len(b['enseignants']),
+                'heures_surcharge': round(b['heures_surcharge'], 1), 'heures_enseignants': round(b['heures_enseignants'], 1)}
+    _audit('REPARTITION_OPTIMISER', ip=_client_ip(), user=session.get('user'), semestres='+'.join(sems),
+           faces=faces or 'toutes', mode=mode, deplacees=res.get('seances_deplacees'))
+    return jsonify({
+        'ok': res.get('ok', False), 'statut': res.get('statut'), 'duree_s': res.get('duree_s'),
+        'lignes': res.get('lignes'), 'seances_deplacees': res.get('seances_deplacees', 0),
+        'seances_ajoutees': res.get('seances_ajoutees', 0), 'lignes_vides_laissees': res.get('lignes_vides_laissees', 0),
+        'avant': bilan(res.get('avant')), 'apres': bilan(res.get('apres')),
+        'propositions': [{'session_id': sid, 'group_index': g, 'by_week': {str(w): h for w, h in sorted(bw.items())}}
+                         for (sid, g), bw in sorted(res.get('propositions', {}).items())],
+    }), 200
 
 _EDT_COHORTS = ('FTP', 'ALT', 'MUT')   # MUT = FTP + ALT posés ensemble
 
@@ -22152,9 +22330,13 @@ def _ordering_cycle(db, types, pred, pred_part, succ, succ_part):
 def _ordering_add(db, pred, succ, pred_part, succ_part, gap):
     """Ajoute une contrainte d'ordonnancement. Renvoie (ligne, None) ou (None, erreur)."""
     try:
-        pred, succ, gap = int(pred or 0), int(succ or 0), int(gap or 0)
+        pred, succ = int(pred or 0), int(succ or 0)
     except (TypeError, ValueError):
         return None, 'Matières invalides'
+    try:
+        gap = int(gap or 0)
+    except (TypeError, ValueError):
+        return None, "L'écart doit être un nombre entier de semaines (0 à 20)"
     pred_part = str(pred_part or '').strip().upper()
     succ_part = str(succ_part or '').strip().upper()
     if pred_part not in _ORD_PARTS or succ_part not in _ORD_PARTS:
@@ -22195,20 +22377,9 @@ def get_course_orderings():
     except Exception as e:
         return error_response(str(e), 500)
 
-@app.route('/api/course-orderings', methods=['POST'])
-def create_course_ordering():
-    try:
-        data = request.get_json() or {}
-        row, err = _ordering_add(get_db(), data.get('course_id_pred'), data.get('course_id_succ'),
-                                 data.get('pred_part'), data.get('succ_part'), data.get('min_gap_weeks', 0))
-        if err:
-            return error_response(err)
-        return jsonify(row), 201
-    except Exception as e:
-        return error_response(str(e), 500)
-
-# Contraintes Matière : les intervenants d'une matière (ou l'admin) posent les
-# matières à placer AVANT elle — la matière de l'URL est toujours celle d'après.
+# Contraintes Matière, seul endroit où se posent les ordonnancements : les
+# intervenants d'une matière (ou l'admin) posent les matières à placer AVANT
+# elle — la matière de l'URL est toujours celle d'après.
 def _can_edit_course_constraints(course_id):
     return (_admin_power('svc:contraintes-matiere')
             or teacher_intervenes_in_course(course_id, session.get('teacher_name')))
@@ -22225,7 +22396,8 @@ def add_course_ordering_for(course_id):
         if err:
             return error_response(err)
         _audit('COURSE_ORDERING_ADD', ip=_client_ip(), user=session.get('user'),
-               pred=row['pred_id'], succ=course_id, parts=f"{row['pred_part']}>{row['succ_part']}")
+               pred=row['pred_id'], succ=course_id, parts=f"{row['pred_part']}>{row['succ_part']}",
+               gap=row['min_gap_weeks'])
         return jsonify(row), 201
     except Exception as e:
         return error_response(str(e), 500)
@@ -22242,17 +22414,6 @@ def delete_course_ordering_for(course_id, oid):
         db.execute('DELETE FROM course_ordering WHERE id = ?', (oid,))
         db.commit()
         _audit('COURSE_ORDERING_DEL', ip=_client_ip(), user=session.get('user'), succ=course_id, id=oid)
-        return jsonify({'message': 'Contrainte supprimée'}), 200
-    except Exception as e:
-        return error_response(str(e), 500)
-
-@app.route('/api/course-orderings/<int:oid>', methods=['DELETE'])
-def delete_course_ordering(oid):
-    try:
-        db = get_db()
-        cursor = db.cursor()
-        cursor.execute('DELETE FROM course_ordering WHERE id = ?', (oid,))
-        db.commit()
         return jsonify({'message': 'Contrainte supprimée'}), 200
     except Exception as e:
         return error_response(str(e), 500)

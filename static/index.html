@@ -209,7 +209,13 @@
         .edtg-vue { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin: 12px 0 4px; font-size: .85rem; }
         .edtg-vue select { padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 6px; font: inherit; }
         .edtg-vue .pl-nav { min-width: 28px; }
-        /* Jours fériés et ponts de l'année (répartition journalière) */
+        /* Jours fériés et ponts de l'année (Promotions › Calendrier) */
+        /* Repère d'une semaine qui a un jour férié (F) ou un pont (P), dans les tableaux à semaines */
+        .jf-rep { display: inline-block; margin-left: 2px; padding: 0 3px; border-radius: 3px; font-size: .58rem; font-weight: 800;
+                  line-height: 1.35; letter-spacing: 0; background: #fee2e2; color: #b91c1c; vertical-align: middle; cursor: help; }
+        .jf-rep.pont { background: #ffedd5; color: #c2410c; }
+        .cal-grid tr.cal-jf-row td { text-align: center; }
+        .repj-jf { margin: 0 0 10px; padding: 7px 10px; border-radius: 6px; background: #fef2f2; color: #991b1b; font-size: .84rem; }
         .jf-statut { font-size: .84rem; margin: 0 0 10px; padding: 7px 10px; border-radius: 6px; background: #f3f4f6; color: #374151; }
         .jf-statut.non { background: #fffbeb; color: #78350f; }
         table.jf-table { width: 100%; border-collapse: collapse; box-shadow: none; }
@@ -509,6 +515,12 @@
         .pn-table .mc-wish-table td.mc-cell { min-width: 20px; cursor: pointer; font-weight: 700; color: #111; background: #fff; }
         .pn-table .mc-wish-table td.mc-cell.is-zero { color: #c4c4c4; font-weight: 400; }
         .pn-table .mc-wish-table td.mc-cell:hover { outline: 2px solid #6366f1; outline-offset: -2px; }
+        /* Au-delà des semaines disponibles de la face : hachuré, inactif ; séance en trop en rouge */
+        .pn-table .mc-wish-table td.mc-cell.mc-off { cursor: not-allowed; background: repeating-linear-gradient(135deg, #f3f4f6 0 4px, #e5e7eb 4px 8px); }
+        .pn-table .mc-wish-table td.mc-cell.mc-off:hover { outline: none; }
+        .pn-table .mc-wish-table td.mc-cell.mc-over { background: #fee2e2; color: #b91c1c; }
+        .mc-wish-over { margin-top: 6px; padding: 6px 10px; border-radius: 6px; background: #fef2f2; color: #b91c1c; font-size: .75rem; }
+        .mc-wish-dispo { color: #374151; font-weight: 600; }
         .pn-table .mc-wish-table td.mc-form { font-size: .62rem; font-weight: 700; letter-spacing: .04em; }
         .pn-table .mc-wish-table td.mc-form-ftp { background: #e0f2fe; color: #0369a1; }
         .pn-table .mc-wish-table td.mc-form-alt { background: #fff7ed; color: #9a3412; }
@@ -529,6 +541,11 @@
         .mc-ord-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: .8rem; color: #374151; }
         .mc-ord-form select { padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 6px; font-size: .8rem; max-width: 100%; background: #fff; }
         .mc-ord-after { margin-top: 6px; font-size: .75rem; color: #6b7280; }
+        .mc-ord-form label { display: inline-flex; align-items: center; gap: 4px; font-weight: 400; }
+        .mc-ord-form input[type=number] { width: 52px; padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 6px; font-size: .8rem; }
+        /* Matière ouverte depuis le repère 🔗 de la répartition */
+        @keyframes mcFlash { from { background-color: #e0e7ff; } to { background-color: transparent; } }
+        .pn-table tr.mc-flash > td { animation: mcFlash 1.8s ease-out; }
         /* Journal d'audit */
         .journal-table th, .journal-table td { padding: 6px 10px; border-bottom: 1px solid #f3f4f6; text-align: left; vertical-align: top; }
         .journal-table tbody tr:hover td { background: #f9fafb; }
@@ -572,6 +589,7 @@
         .ord-badge.ord-ok, .wish-badge.ord-ok { background: #dcfce7; color: #166534; }
         .ord-badge.ord-bad, .wish-badge.ord-bad { background: #fee2e2; color: #b91c1c; }
         .ord-badge.ord-unknown { background: #f3f4f6; color: #6b7280; }
+        .ord-badge.ord-lien, .wish-badge.ord-lien { cursor: pointer; }
         .repartition-wrap td.cell-order-bad { position: relative; }
         .repartition-wrap td.cell-order-bad::after { content: ''; position: absolute; top: 0; right: 0; pointer-events: none;
             border-style: solid; border-width: 0 7px 7px 0; border-color: transparent #dc2626 transparent transparent; }
@@ -1086,6 +1104,9 @@
                    oninput="renderCourseConstraints()" style="margin-left:12px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
             <label style="font-weight:400;display:inline-flex;align-items:center;gap:4px;margin-left:8px">
                 <input type="checkbox" id="mc-wish-only" onchange="renderCourseConstraints()"> Avec répartition souhaitée</label>
+            <label style="font-weight:400;display:inline-flex;align-items:center;gap:4px;margin-left:8px"
+                   title="Matières qui ont une matière à placer avant elles, ou qui doivent elles-mêmes passer avant une autre">
+                <input type="checkbox" id="mc-ord-only" onchange="renderCourseConstraints()"> Avec ordonnancement</label>
         </div>
     </div>
     <div id="contraintes-matiere-content"><div class="spinner">Chargement…</div></div>
@@ -1216,6 +1237,24 @@
             <span style="background:#dbeafe;color:#1e40af;padding:2px 10px;border-radius:4px">Vacances FTP</span>
             <span style="background:#fef08a;color:#854d0e;padding:2px 10px;border-radius:4px">Stages FTP</span>
             <span style="background:#fed7aa;color:#9a3412;padding:2px 10px;border-radius:4px">Entreprise ALT</span>
+            <span><span class="jf-rep">F</span> jour férié · <span class="jf-rep pont">P</span> pont (au survol : les dates)</span>
+        </div>
+        <!-- Jours fériés et ponts de l'année : seul endroit où ils se définissent -->
+        <div class="card" id="cal-jf-card" style="padding:16px;margin-top:16px">
+            <h3 style="margin:0 0 4px">Jours fériés et ponts <span id="jf-annee"></span>
+                <span style="color:#9ca3af;font-size:.8rem;font-weight:400">— communs à toutes les promotions de l'année</span></h3>
+            <p class="edtg-note" style="margin:0 0 10px">
+                Aucun cours ces jours-là. Une semaine qui en compte un du lundi au vendredi rouvre le jeudi après-midi
+                aux FTP, pour rattraper. Lus par « Générer l'EDT », et signalés (F, P) dans la ligne ci-dessus et dans les
+                tableaux de répartition. Enregistrés avec le bouton « Enregistrer » du calendrier.
+            </p>
+            <div id="jf-statut" class="jf-statut"></div>
+            <div id="jf-liste"><div class="empty">Sélectionnez une promotion.</div></div>
+            <div class="dsp-actions">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="jfAjouter()">+ Ajouter un jour</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="jf-legaux" onclick="jfLegaux()">Ajouter les jours fériés légaux manquants</button>
+                <span class="dsp-status" id="jf-modif"></span>
+            </div>
         </div>
     </div>
     <div id="promo-tab-devenir" style="display:none">
@@ -1626,11 +1665,6 @@
                     title="Placer automatiquement les cours (enseignants, salles et groupes sans chevauchement, dispos, préférences) — aperçu possible avant d'enregistrer">
                 Générer l'EDT
             </button>
-            <button type="button" class="btn btn-secondary btn-sm admin-only" style="margin-left:6px"
-                    onclick="openJoursFermes()"
-                    title="Jours sans aucun cours de l'année (jours fériés, ponts), pour toutes les promotions — lus par « Générer l'EDT »">
-                Jours fériés et ponts
-            </button>
         </div>
         <!-- Filtres du sous-onglet Planning -->
         <div class="filters" id="rep-filters-planning" style="display:none">
@@ -1680,8 +1714,9 @@
             <button class="btn btn-primary btn-sm rep-tool-restricted" style="margin-left:16px" onclick="runRepartitionChecks()">
                 Contrôle
             </button>
-            <button class="btn btn-secondary btn-sm rep-tool-restricted" style="margin-left:8px" onclick="openOrderingModal()">
-                Ordonnancement
+            <button class="btn btn-secondary btn-sm rep-tool-restricted" style="margin-left:8px" onclick="openRepOptim()"
+                    title="Propose une répartition des semestres affichés qui respecte les contraintes matière (ordonnancements, répartition souhaitée), le calendrier et les charges — posée dans le brouillon, rien n'est enregistré">
+                Optimiser…
             </button>
             <button class="btn btn-secondary btn-sm export-btn" style="margin-left:8px" onclick="exportRepartitionExcel(this)">
                 Export Excel
@@ -1915,55 +1950,6 @@
 <!-- Aide de l'écran affiché, depuis n'importe quel onglet -->
 <button type="button" id="aide-flottant" onclick="aideContexte()" title="Aide sur cet écran">?</button>
 
-<!-- ===== MODAL ORDONNANCEMENT ===== -->
-<div class="modal-backdrop" id="modal-ordering">
-    <div class="modal modal-wide">
-        <h2>Contraintes d'ordonnancement</h2>
-        <p style="color:#6b7280;font-size:.85rem;margin-bottom:14px">
-            Définissez l'ordre dans lequel les matières doivent être enseignées : la partie choisie de la
-            première doit être terminée avant le début de la partie choisie de la seconde.<br>
-            Ces contraintes sont prises en compte lors de l'optimisation. Les enseignants posent aussi les
-            leurs dans Service › Contraintes Matière.
-        </p>
-
-        <div class="section-title">Ajouter une contrainte</div>
-        <div style="display:grid;grid-template-columns:1fr auto 1fr auto auto auto;gap:10px;align-items:end;margin-bottom:14px">
-            <div class="form-group" style="margin-bottom:0">
-                <label>Matière à placer EN PREMIER</label>
-                <select id="ord-pred"></select>
-            </div>
-            <div class="form-group" style="margin-bottom:0">
-                <label>Partie</label>
-                <select id="ord-pred-part">
-                    <option value="">Toute la matière</option><option>CM</option><option>TD</option><option>TP</option><option>PT</option>
-                </select>
-            </div>
-            <div class="form-group" style="margin-bottom:0">
-                <label>Matière à placer APRÈS</label>
-                <select id="ord-succ"></select>
-            </div>
-            <div class="form-group" style="margin-bottom:0">
-                <label>Partie</label>
-                <select id="ord-succ-part">
-                    <option value="">Toute la matière</option><option>CM</option><option>TD</option><option>TP</option><option>PT</option>
-                </select>
-            </div>
-            <div class="form-group" style="margin-bottom:0">
-                <label>Écart min (sem.)</label>
-                <input type="number" id="ord-gap" min="0" step="1" value="0" style="width:70px">
-            </div>
-            <button class="btn btn-primary" onclick="addOrdering()">+ Ajouter</button>
-        </div>
-
-        <div class="section-title">Contraintes existantes</div>
-        <div id="ordering-list" style="min-height:40px"></div>
-
-        <div class="form-actions" style="margin-top:16px">
-            <button class="btn btn-secondary" onclick="closeModal('modal-ordering')">Fermer</button>
-        </div>
-    </div>
-</div>
-
 <!-- ===== MODAL GÉNÉRER L'EDT (répartition journalière) ===== -->
 <div class="modal-backdrop" id="modal-edt-gen">
     <div class="modal modal-edtgen">
@@ -2023,27 +2009,58 @@
     </div>
 </div>
 
-<!-- ===== MODAL JOURS FÉRIÉS ET PONTS (année, répartition journalière) ===== -->
-<div class="modal-backdrop" id="modal-jours-fermes">
-    <div class="modal" style="max-width:760px">
-        <h2>Jours fériés et ponts — <span id="jf-annee">—</span></h2>
+<!-- ===== MODAL OPTIMISER LA RÉPARTITION ANNUELLE (optim_repartition.py) ===== -->
+<div class="modal-backdrop" id="modal-rep-optim">
+    <div class="modal" style="max-width:820px">
+        <h2>Optimiser la répartition annuelle</h2>
         <p class="edtg-note" style="margin:-8px 0 10px">
-            Aucun cours ces jours-là, pour toutes les promotions. Une semaine qui en compte un du lundi au vendredi
-            rouvre le jeudi après-midi aux FTP, pour rattraper. Lu par « Générer l'EDT ».
+            Propose, pour les semestres affichés, un placement des séances semaine par semaine qui respecte toujours le
+            calendrier de chaque face (vacances et stage FTP, entreprise ALT) et le nombre de séances par semaine, puis, du
+            plus important au moins important : placer toutes les séances, les <b>ordonnancements</b> et la <b>répartition
+            souhaitée</b> (Contraintes Matière), la plage de semaines de la matière, la charge des promotions (FTP 30 h, ALT
+            40 h par semaine) et des enseignants (20 h), et des matières sans interruption. La proposition va dans le
+            brouillon : rien n'est enregistré, Ctrl+Z l'annule.
         </p>
-        <div id="jf-statut" class="jf-statut"></div>
-        <div id="jf-liste"></div>
-        <div class="dsp-actions">
-            <button type="button" class="btn btn-secondary btn-sm" onclick="jfAjouter()">+ Ajouter un jour</button>
-            <button type="button" class="btn btn-secondary btn-sm" id="jf-legaux" onclick="jfLegaux()">Ajouter les jours fériés légaux manquants</button>
-            <span class="dsp-status" id="jf-modif"></span>
+        <div class="edtg-opts">
+            <fieldset>
+                <legend>Périmètre</legend>
+                <div style="font-size:.85rem" id="ropt-perimetre">—</div>
+                <div class="edtg-note">Celui de la vue : semestres cochés et filtre Formation (les lignes MUT en font
+                    toujours partie). Les autres semestres restent tels quels, mais comptent dans les charges et les
+                    ordonnancements.</div>
+            </fieldset>
+            <fieldset>
+                <legend>Mode</legend>
+                <label><input type="radio" name="ropt-mode" value="stable" checked onchange="roptMode()">
+                    <span><b>Bouger le moins possible</b> <span class="edtg-note">(part de la répartition actuelle, garde le
+                    total placé de chaque ligne)</span></span></label>
+                <label><input type="radio" name="ropt-mode" value="zero" onchange="roptMode()">
+                    <span><b>Repartir de zéro</b> <span class="edtg-note">(recalcule tout le périmètre d'après la fiche
+                    Matières)</span></span></label>
+                <label id="ropt-vides-lbl"><input type="checkbox" id="ropt-vides" checked>
+                    <span>Placer aussi les lignes encore vides <span class="edtg-note">(d'après la fiche Matières)</span></span></label>
+            </fieldset>
+            <fieldset>
+                <legend>Calcul</legend>
+                <label style="align-items:center">Temps :
+                    <select id="ropt-temps" style="padding:3px 6px;border:1px solid #d1d5db;border-radius:6px">
+                        <option value="30">30 s (un semestre)</option>
+                        <option value="60" selected>60 s (une année)</option>
+                        <option value="90">90 s</option>
+                    </select></label>
+                <div class="edtg-note">Plus de temps donne en général un meilleur résultat.</div>
+            </fieldset>
         </div>
+        <div id="ropt-progress"></div>
+        <div id="ropt-result"></div>
         <div class="form-actions">
-            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-jours-fermes')">Fermer</button>
-            <button type="button" class="btn btn-primary" id="jf-save" onclick="jfEnregistrer()">Enregistrer</button>
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-rep-optim')">Fermer</button>
+            <button type="button" class="btn btn-secondary" id="ropt-apply" style="display:none" onclick="roptAppliquer()">Poser dans le brouillon</button>
+            <button type="button" class="btn btn-primary" id="ropt-run" onclick="roptLancer()">Lancer</button>
         </div>
     </div>
 </div>
+
 
 <!-- ===== MODAL COMMENTAIRE DE SEMAINE ===== -->
 <div class="modal-backdrop" id="modal-week-comment">
@@ -4083,6 +4100,10 @@ const _DIRTY_ZONES = [
     { mark: 'jury-content', clean: null, label: 'des décisions de jury', save: () => saveJuryDecisions() },
     { mark: 'promo-groups-editor', clean: 'promo-groups-editor', label: 'des groupes de la promotion', save: () => savePromotionGroups() },
     { mark: 'promo-tab-calendrier', clean: 'calendrier-body', label: 'des modifications du calendrier', save: () => saveCalendrier() },
+    // Jours fériés et ponts (bloc du Calendrier) : leur propre état, qui survit au
+    // re-rendu de la grille (changement FTP / ALT, plage)
+    { mark: 'cal-jf-card', label: 'des modifications des jours fériés et ponts', isDirty: () => !!_jf.modif,
+      save: () => saveCalendrier(), discard: () => { _jf.modif = false; } },
     { mark: 'page-programme', clean: 'prog-content', label: 'des modifications du programme', save: () => saveProg() },
     // Brouillon de la répartition calendaire : son état vient de la copie de travail
     // (isDirty), et l'abandonner la ramène à la version enregistrée (discard).
@@ -5595,9 +5616,51 @@ async function loadCourseConstraints() {
         _mcDraft.clear();
         _mcText.clear();
         renderCourseConstraints();
+        if (_mcFocus) { const [cid, volet] = _mcFocus; _mcFocus = null; mcFocus(cid, volet); }
     } catch (e) {
+        _mcFocus = null;
         el.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
     }
+}
+
+// Répartition annuelle → Contraintes Matière : la matière du repère cliqué, volet
+// « Matières à placer avant » (🔗) ou « Répartition souhaitée » (vœu) ouvert. Le
+// brouillon de la répartition passe par la garde habituelle (enregistrer,
+// abandonner ou rester).
+let _mcFocus = null;
+function mcOuvrirMatiere(cid, volet) {
+    if (!cid || tabHidden('svc:contraintes-matiere')) return;
+    initDirtyWatch();
+    guardUnsaved(() => { _mcFocus = [cid, volet]; _showPage('contraintes-matiere'); });
+}
+// Amène à la matière dans la page déjà affichée (`volet` : 'ord' ou 'voeu')
+function mcFocus(cid, volet = 'ord') {
+    const c = (state.courses || []).find(x => x.id === cid);
+    if (!c || !canEditCourse(c, 'svc:contraintes-matiere')) {
+        toast("Vous n'intervenez pas dans cette matière", 'error');
+        return;
+    }
+    if (!_mcSemesters.has(c.semester_code)) {
+        _mcSemesters.add(c.semester_code);
+        const b = document.querySelector(`#mc-sem-toggle .sem-btn[data-sem="${c.semester_code}"]`);
+        if (b) b.classList.add('active');
+    }
+    _mcOpen.set(volet === 'voeu' ? cid : 'o' + cid, true);
+    renderCourseConstraints();
+    if (!document.getElementById('mc-ord-' + cid)) {
+        // masquée par la recherche ou un filtre : on les lève
+        ['mc-wish-only', 'mc-ord-only'].forEach(id => { const e = document.getElementById(id); if (e) e.checked = false; });
+        const s = document.getElementById('mc-search');
+        if (s) s.value = '';
+        renderCourseConstraints();
+    }
+    const box = document.getElementById('mc-ord-' + cid);
+    const tr = box && box.closest('tr');
+    if (!tr) return;
+    tr.scrollIntoView({ block: 'center' });
+    tr.classList.remove('mc-flash');
+    void tr.offsetWidth;
+    tr.classList.add('mc-flash');
 }
 
 function renderCourseConstraints() {
@@ -5613,9 +5676,14 @@ function renderCourseConstraints() {
     }
     const q = ((document.getElementById('mc-search') || {}).value || '').trim().toLowerCase();
     const wishOnly = (document.getElementById('mc-wish-only') || {}).checked;
+    const ordOnly = (document.getElementById('mc-ord-only') || {}).checked;
     list = list.filter(c => _mcSemesters.has(c.semester_code));
     if (q) list = list.filter(c => ((c.code || '') + ' ' + (c.name || '')).toLowerCase().includes(q));
     if (wishOnly) list = list.filter(c => (_mcWishes[c.id] || {}).wish || _mcIsDirty(c.id));
+    if (ordOnly) {
+        const lies = new Set((_mcOrders || []).flatMap(o => [o.pred_id, o.succ_id]));
+        list = list.filter(c => lies.has(c.id));
+    }
     if (!list.length) { el.innerHTML = '<div class="empty">Aucune matière pour cette sélection.</div>'; return; }
     list.sort((a, b) => (_SEM_ORDER.indexOf(a.semester_code) - _SEM_ORDER.indexOf(b.semester_code))
                         || (a.code || '').localeCompare(b.code || ''));
@@ -5628,10 +5696,14 @@ function renderCourseConstraints() {
         matière (salle spécifique, période imposée…) et, dans <strong>Répartition souhaitée</strong>,
         l'enchaînement voulu : combien de séances de chaque type, semaine après semaine, dans l'ordre.
         Les semaines ne sont pas numérotées : leur place dans le calendrier est décidée par
-        l'administration ou le responsable FTP. Un TD ou un TP à plusieurs groupes suit le même rythme
+        l'administration ou le responsable FTP. Leur nombre est limité aux semaines disponibles du semestre,
+        qui diffèrent entre FTP (vacances, stage) et ALT (entreprise) : au-delà, les cases sont hachurées.
+        Un TD ou un TP à plusieurs groupes suit le même rythme
         pour chaque groupe. Dans <strong>Matières à placer avant</strong>, ajoutez une à une les matières
-        (ou leur CM, TD…) qui doivent être terminées avant le début de celle-ci ou d'une de ses parties :
-        chaque contrainte est enregistrée dès l'ajout.</p>`;
+        (ou leur CM, TD…) qui doivent être terminées avant le début de celle-ci ou d'une de ses parties,
+        avec si besoin un écart minimal en semaines : chaque contrainte est enregistrée dès l'ajout. C'est
+        le seul endroit où se posent ces ordonnancements : la répartition annuelle les vérifie et l'optimiseur
+        les respecte.</p>`;
     _SEM_ORDER.forEach(sem => {
         const rows = bySem[sem];
         if (!rows || !rows.length) return;
@@ -5677,9 +5749,12 @@ function renderCourseConstraints() {
 function _mcSaved(cid) {
     const e = _mcWishes[cid] || {};
     const w = e.wish;
+    const max = _mcMaxCols(cid);
     // Sans vœu : de quoi placer une séance par semaine du type le plus fourni
-    const n = (w && w.n_weeks)
-        || Math.min(_MC_MAX_WEEKS, Math.max(4, ...(e.sessions || []).map(s => s.nb || 0)));
+    let n = (w && w.n_weeks) || Math.min(max, Math.max(4, ...(e.sessions || []).map(s => s.nb || 0)));
+    // Vœu plus long que les semaines disponibles (calendrier modifié depuis) : les
+    // colonnes vides en trop disparaissent, les séances en trop restent visibles
+    if (w && n > max) n = Math.max(max, ...Object.values(w.rows || {}).map(_mcDerniere));
     const rows = {};
     (e.sessions || []).forEach(s => {
         const src = (w && w.rows && w.rows[s.key]) || [];
@@ -5688,6 +5763,34 @@ function _mcSaved(cid) {
     return { n, rows };
 }
 function _mcWorking(cid) { return _mcDraft.get(cid) || _mcSaved(cid); }
+
+// Semaines disponibles du semestre de la matière pour une face ('FTP', 'ALT', 'MUT') :
+// vacances et stage retirés côté FTP, entreprise côté ALT, les deux pour le mutualisé
+function _mcLim(cid, face) {
+    const l = (_mcWishes[cid] || {}).limites;
+    return l && Number.isInteger(l[face]) ? Math.min(l[face], _MC_MAX_WEEKS) : _MC_MAX_WEEKS;
+}
+// Colonnes de la grille : au plus les semaines disponibles de la face la mieux lotie
+function _mcMaxCols(cid) {
+    const faces = [...new Set(((_mcWishes[cid] || {}).sessions || []).map(s => s.formation))];
+    return faces.length ? Math.max(1, ...faces.map(f => _mcLim(cid, f))) : _MC_MAX_WEEKS;
+}
+// Rang (1, 2…) de la dernière semaine qui a des séances, 0 si aucune
+function _mcDerniere(r) {
+    for (let i = (r || []).length - 1; i >= 0; i--) if (r[i]) return i + 1;
+    return 0;
+}
+const _MC_QUI = { FTP: 'les FTP', ALT: 'les ALT', MUT: 'le mutualisé (semaines communes aux FTP et aux ALT)' };
+// Lignes dont des séances dépassent les semaines disponibles de leur face (messages)
+function _mcDepassements(cid, wk) {
+    const e = _mcWishes[cid] || {}, sem = e.semestre || 'le semestre';
+    return (e.sessions || []).filter(s => _mcDerniere(wk.rows[s.key]) > _mcLim(cid, s.formation)).map(s => {
+        const lim = _mcLim(cid, s.formation);
+        return lim <= 0 ? `${s.formation} · ${s.type} : ${sem} n'a aucune semaine disponible pour ${_MC_QUI[s.formation]}`
+            : `${s.formation} · ${s.type} : des séances au-delà de la ${lim}${lim === 1 ? 're' : 'e'} semaine, or ${sem} n'a que ${
+                lim} semaine${lim > 1 ? 's' : ''} disponible${lim > 1 ? 's' : ''} pour ${_MC_QUI[s.formation]}`;
+    });
+}
 // Forme comparable d'une grille : lignes non vides seulement ('' = aucun vœu)
 function _mcNorm(wk) {
     const rows = {};
@@ -5750,10 +5853,14 @@ function mcWishGridHtml(cid) {
         if (!f) faces.push(f = { ft: s.ft, label: s.formation, list: [] });
         f.list.push(s);
     });
+    const semLbl = e.semestre || 'le semestre';
     faces.forEach(f => {
+        const lim = _mcLim(cid, f.label);
+        const horsTitre = `Au-delà des ${lim} semaine${lim > 1 ? 's' : ''} disponible${lim > 1 ? 's' : ''} en ${semLbl} pour ${_MC_QUI[f.label] || f.label}`;
         f.list.forEach((s, j) => {
             const counts = wk.rows[s.key] || [];
-            const rest = s.nb - counts.reduce((a, b) => a + b, 0);
+            // Les séances au-delà des semaines disponibles restent à répartir
+            const rest = s.nb - counts.reduce((a, b, i) => a + (i < lim ? b : 0), 0);
             const tLbl = s.type === 'TP' ? (s.tp_type === 'TP8' ? 'TP8' : 'TP12') : s.type;
             const grp = s.type !== 'CM' && s.groups > 1;
             const title = `Séances de ${_mcFmtDur(s.slot)}`
@@ -5761,8 +5868,12 @@ function mcWishGridHtml(cid) {
                 + (s.teacher ? ` · ${s.teacher}` : '');
             const form = j === 0
                 ? `<td class="mc-form mc-form-${f.label.toLowerCase()}" rowspan="${f.list.length}">${esc(f.label)}</td>` : '';
-            const cells = counts.map((v, i) =>
-                `<td class="mc-cell${v ? '' : ' is-zero'}" data-key="${s.key}" data-i="${i}">${v || '·'}</td>`).join('');
+            // Au-delà des semaines disponibles de la face : case hachurée, inactive ; une
+            // séance déjà posée là (calendrier changé, copie FTP → ALT) est en rouge
+            const cells = counts.map((v, i) => i < lim
+                ? `<td class="mc-cell${v ? '' : ' is-zero'}" data-key="${s.key}" data-i="${i}">${v || '·'}</td>`
+                : v ? `<td class="mc-cell mc-over" data-key="${s.key}" data-i="${i}" title="${esc(horsTitre)} : cliquer pour retirer une séance">${v}</td>`
+                    : `<td class="mc-cell mc-off" title="${esc(horsTitre)}"></td>`).join('');
             h += `<tr>${form}
                 <td class="mc-type" title="${esc(title)}"><span class="badge ${badge[s.type] || 'badge-cm'}">${tLbl}</span><span class="mc-dur">${_mcFmtDur(s.slot)}</span>${grp ? `<span class="mc-grp">× ${s.groups} gr.</span>` : ''}</td>
                 <td>${s.nb}</td>
@@ -5785,9 +5896,15 @@ function mcWishGridHtml(cid) {
     // Outils
     const lastUsed = Object.values(wk.rows).some(r => r[n - 1]);
     const copyable = sess.some(s => s.ft === 1 && sess.some(t => t.ft === 0 && t.type === s.type));
+    const maxCols = _mcMaxCols(cid);
+    const dispo = e.limites ? faces.map(f => `${f.label} ${_mcLim(cid, f.label)}`).join(' · ') : '';
+    const depasse = _mcDepassements(cid, wk);
+    if (depasse.length)
+        h += `<div class="mc-wish-over">⚠ ${depasse.map(esc).join('<br>⚠ ')}</div>`;
     h += `<div class="mc-wish-tools">
         <span>Clic : + 1 séance · clic droit (ou Maj + clic) : − 1</span>
-        <button type="button" class="btn btn-secondary" onclick="mcWishWeeks(${cid}, 1)"${n >= _MC_MAX_WEEKS ? ' disabled' : ''}>+ 1 semaine</button>
+        ${dispo ? `<span class="mc-wish-dispo" title="Semaines du semestre, moins les vacances et le stage (FTP) ou l'entreprise (ALT) ; le mutualisé n'a que les semaines communes">Semaines disponibles en ${esc(semLbl)} : ${dispo}</span>` : ''}
+        <button type="button" class="btn btn-secondary" onclick="mcWishWeeks(${cid}, 1)"${n >= maxCols ? ` disabled title="${esc(semLbl)} : au plus ${maxCols} semaines"` : ''}>+ 1 semaine</button>
         <button type="button" class="btn btn-secondary" onclick="mcWishWeeks(${cid}, -1)"${n <= 1 || lastUsed ? ' disabled' : ''}
             title="${lastUsed ? 'La dernière semaine contient des séances' : 'Retirer la dernière semaine'}">− 1 semaine</button>
         ${copyable ? `<button type="button" class="btn btn-secondary" onclick="mcWishCopyFtpAlt(${cid})"
@@ -5821,7 +5938,8 @@ function mcWishClick(ev, cid, delta) {
     const td = ev.target.closest('td.mc-cell');
     if (!td) return;
     ev.preventDefault();
-    if (ev.shiftKey) delta = -1;
+    if (td.classList.contains('mc-off')) return;         // semaine indisponible pour cette face
+    if (ev.shiftKey || td.classList.contains('mc-over')) delta = -1;
     const key = td.dataset.key, i = +td.dataset.i;
     _mcEdit(cid, wk => {
         const r = wk.rows[key];
@@ -5831,7 +5949,8 @@ function mcWishClick(ev, cid, delta) {
 
 function mcWishWeeks(cid, d) {
     const cur = _mcWorking(cid);
-    const n = Math.max(1, Math.min(_MC_MAX_WEEKS, cur.n + d));
+    if (d > 0 && cur.n >= _mcMaxCols(cid)) return;       // plus de semaine disponible
+    const n = Math.max(1, cur.n + d);
     if (n === cur.n || (d < 0 && Object.values(cur.rows).some(r => r[cur.n - 1]))) return;
     _mcEdit(cid, wk => {
         Object.keys(wk.rows).forEach(k => {
@@ -5850,6 +5969,10 @@ function mcWishCopyFtpAlt(cid) {
             if (src) wk.rows[s.key] = src.slice();
         });
     });
+    // Les ALT ont souvent moins de semaines que les FTP : le surplus est signalé en rouge
+    const lim = _mcLim(cid, 'ALT');
+    if (sess.some(s => s.ft === 1 && _mcDerniere(_mcWorking(cid).rows[s.key]) > lim))
+        toast(`Le rythme FTP dépasse les ${lim} semaines disponibles pour les ALT : séances en trop en rouge, à ramener plus tôt`, 'error');
 }
 
 function mcWishClear(cid) {
@@ -5862,8 +5985,9 @@ function mcWishRevert(cid) {
 }
 
 // ----- Matières à placer avant (ordonnancement « X avant cette matière ») -----
-// Chaque contrainte est enregistrée dès l'ajout (hors bouton « Enregistrer ») et
-// sert à l'optimiseur ; l'admin la retrouve dans Répartition › Ordonnancement.
+// Seul endroit où se posent les ordonnancements. Chaque contrainte est enregistrée
+// dès l'ajout (hors bouton « Enregistrer ») ; la répartition annuelle la vérifie
+// (repère 🔗, qui ramène ici) et l'optimiseur la respecte.
 const _MC_TYPES = ['CM', 'TD', 'TP', 'PT'];
 // Types de séance (avec des heures) d'une matière, dans l'ordre CM, TD, TP, PT
 function _mcTypes(cid) {
@@ -5895,7 +6019,9 @@ function mcOrdHtml(cid) {
         onclick="mcOrdForm(${cid})">+ Ajouter une matière à placer avant</button></div>`;
     if (after.length)
         h += `<div class="mc-ord-after">Cette matière doit elle-même être terminée avant : ${after.map(o =>
-            `<strong>${esc(o.succ_code)}</strong>${o.succ_part ? ' (' + o.succ_part + ')' : ''}`).join(', ')}</div>`;
+            `<a href="#" onclick="mcFocus(${o.succ_id}); return false" title="Aller à ${esc(o.succ_code)} (la contrainte s'y modifie)"><strong>${
+                esc(o.succ_code)}</strong></a>${o.succ_part ? ' (' + o.succ_part + ')' : ''}${
+                o.min_gap_weeks ? ` · écart ≥ ${o.min_gap_weeks} sem.` : ''}`).join(', ')}</div>`;
     return h;
 }
 
@@ -5930,6 +6056,8 @@ function mcOrdForm(cid) {
         <span>terminé(e) avant</span>
         <select id="mc-ord-sp-${cid}" title="Partie de cette matière-ci">${
             _mcPartOptions(_mcTypes(cid), 'cette matière (en entier)', t => `le ${t} de cette matière`)}</select>
+        <label title="Nombre de semaines au moins entre la fin de l'une et le début de l'autre (0 : la semaine suivante suffit)">écart ≥
+            <input type="number" id="mc-ord-gap-${cid}" min="0" max="20" step="1" value="0"> sem.</label>
         <button type="button" class="btn btn-primary btn-sm" onclick="mcOrdAdd(${cid})">Ajouter</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="_mcRefreshOrd(${cid})">Annuler</button>
     </div>`;
@@ -5947,9 +6075,16 @@ function mcOrdPartOptions(cid) {
 async function mcOrdAdd(cid) {
     const pred = parseInt(document.getElementById('mc-ord-pred-' + cid).value) || 0;
     if (!pred) { toast('Choisissez la matière à placer avant', 'error'); return; }
+    const gapTxt = (document.getElementById('mc-ord-gap-' + cid).value || '0').trim();
+    const gap = Number(gapTxt);
+    if (!Number.isInteger(gap) || gap < 0 || gap > 20) {
+        toast("L'écart doit être un nombre entier de semaines, de 0 à 20", 'error');
+        return;
+    }
     const body = { course_id_pred: pred,
                    pred_part: document.getElementById('mc-ord-pp-' + cid).value,
-                   succ_part: document.getElementById('mc-ord-sp-' + cid).value };
+                   succ_part: document.getElementById('mc-ord-sp-' + cid).value,
+                   min_gap_weeks: gap };
     try {
         const row = await _mcSend('POST', '/api/courses/' + cid + '/orderings', body);
         _mcOrders.push(row);
@@ -6000,6 +6135,12 @@ async function saveCourseConstraints(id, quiet) {
     if (!textDirty && !wishDirty) {
         if (!quiet) toast('Aucune modification à enregistrer');
         return true;
+    }
+    // Répartition souhaitée au-delà des semaines disponibles : rien n'est envoyé
+    const depasse = wishDirty ? _mcDepassements(id, _mcDraft.get(id)) : [];
+    if (depasse.length) {
+        toast((c ? c.code + ' : ' : '') + depasse[0], 'error');
+        return false;
     }
     try {
         if (textDirty) {
@@ -16175,6 +16316,7 @@ let _weeklyActive = [];
 let _weeklyModalCourseId = null;
 let _weeklyFormationType = 0;   // 0=FTP, 1=ALT
 let _weeklySpecial = { vacation_ftp: [], stage_ftp: [], company_alt: [] };
+let _weeklyJF = {};   // jours fériés et ponts par semaine (jfParSemaine)
 
 async function openWeeklyModal(courseId) {
     const c = state.courses.find(x => x.id === courseId);
@@ -16188,10 +16330,12 @@ async function openWeeklyModal(courseId) {
     _weeklyFormationType = 0;
     _weeklySpecial = { vacation_ftp: [], stage_ftp: [], company_alt: [] };
 
-    // Charger les semaines spéciales depuis le calendrier global
+    // Charger les semaines spéciales depuis le calendrier global, et les jours fériés
+    // et ponts, de l'année des matières affichées
     const sem = state.semesters.find(s => s.id === c.semester_id);
+    const fermesP = api('/jours-fermes' + svcQ()).catch(() => null);
     try {
-        const cal = await api('/special-calendar');
+        const cal = await api('/special-calendar' + svcQ());
         const yg  = sem ? sem.year_group : null;
         _weeklySpecial = {
             vacation_ftp: (yg ? cal['vacation_ftp_y' + yg] : []) || [],
@@ -16199,6 +16343,7 @@ async function openWeeklyModal(courseId) {
             company_alt:  (yg ? cal['company_alt_y' + yg] : []) || [],
         };
     } catch(e) {}
+    _weeklyJF = jfParSemaine(((await fermesP) || {}).jours);
 
     // Activer l'onglet FTP par défaut
     document.querySelectorAll('#weekly-tabs .tab-btn').forEach((b,i) => b.classList.toggle('active', i===0));
@@ -16281,7 +16426,7 @@ function renderWeeklyModalTable(sem) {
     const headerWeeks = weeks.map(w => {
         const cls = weekCls(w);
         const title = cls === 'w-vacation' ? ' title="Vacances FTP"' : cls === 'w-company' ? ' title="Entreprise ALT"' : '';
-        return `<th class="col-week ${cls}"${title}>S${w}</th>`;
+        return `<th class="col-week ${cls}"${title}>S${w}${jfRepere(_weeklyJF[w])}</th>`;
     }).join('');
 
     const rows = _weeklyActive.map(t => {
@@ -17655,94 +17800,13 @@ const ftpHeatBg = h => heatBg(h, 25, 15, 35);
 const altHeatBg = h => heatBg(h, 35, 20, 40);
 
 // ===== ORDONNANCEMENT =====
-
-async function openOrderingModal() {
-    // Matières de l'année du Service enseignant (liste locale : ne pollue pas
-    // le cache state.courses de l'onglet Matières, qui suit l'année active)
-    const courses = await api('/courses' + svcQ());
-    buildOrderingSelects(courses);
-    await loadOrderings();
-    openModal('modal-ordering');
-}
-
-function buildOrderingSelects(courses) {
-    const none = '<option value="">— Choisir —</option>';
-    const opts = none + courses
-        .slice().sort((a, b) => (a.semester_code||'').localeCompare(b.semester_code||'') || a.code.localeCompare(b.code))
-        .map(c => `<option value="${c.id}">${esc(c.semester_code||'')} · ${esc(c.code)} — ${esc(c.name)}</option>`)
-        .join('');
-    document.getElementById('ord-pred').innerHTML = opts;
-    document.getElementById('ord-succ').innerHTML = opts;
-}
-
-async function loadOrderings() {
-    try {
-        const rows = await api('/course-orderings' + svcQ());
-        renderOrderingList(rows);
-        // Le tableau de la répartition, derrière le modal, suit les changements
-        _repOrders = rows;
-        repOrdSchedule();
-    } catch(e) {
-        document.getElementById('ordering-list').innerHTML = '<div class="empty">Erreur chargement</div>';
-    }
-}
-
-function renderOrderingList(rows) {
-    const el = document.getElementById('ordering-list');
-    if (!rows.length) {
-        el.innerHTML = '<div class="empty" style="padding:12px">Aucune contrainte définie.</div>';
-        return;
-    }
-    el.innerHTML = `<table style="width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1)">
-        <thead style="background:#f9fafb"><tr>
-            <th style="padding:8px 12px;font-size:.78rem;text-align:left;color:#374151">Avant (doit précéder)</th>
-            <th style="padding:8px 12px;font-size:.78rem;text-align:left;color:#374151">Après (doit suivre)</th>
-            <th style="padding:8px 12px;font-size:.78rem;text-align:center;color:#374151">Écart min</th>
-            <th style="padding:8px 12px;font-size:.78rem"></th>
-        </tr></thead>
-        <tbody>${rows.map(r => `
-        <tr style="border-top:1px solid #f3f4f6">
-            <td style="padding:7px 12px;font-size:.88rem"><strong>${esc(r.pred_code)}</strong>${_ordPartTag(r.pred_part)} — ${esc(r.pred_name)}</td>
-            <td style="padding:7px 12px;font-size:.88rem"><strong>${esc(r.succ_code)}</strong>${_ordPartTag(r.succ_part)} — ${esc(r.succ_name)}${
-                r.created_by ? `<br><small style="color:#6b7280">posée par ${esc(r.created_by)}</small>` : ''}</td>
-            <td style="padding:7px 12px;font-size:.88rem;text-align:center">${r.min_gap_weeks} sem.</td>
-            <td style="padding:7px 12px;text-align:right">
-                <button class="btn btn-danger btn-sm" onclick="deleteOrdering(${r.id})">Supprimer</button>
-            </td>
-        </tr>`).join('')}</tbody>
-    </table>`;
-}
+// Les contraintes « X terminé avant Y » se posent dans Service › Contraintes Matière
+// (volet « Matières à placer avant ») ; la répartition les vérifie (repères 🔗, Contrôle).
 
 // Partie visée d'une matière dans une contrainte d'ordonnancement ('' = toute la matière)
 function _ordPartTag(part) {
     const cls = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' }[part];
     return cls ? ` <span class="badge ${cls}">${part}</span>` : '';
-}
-
-async function addOrdering() {
-    const pred = parseInt(document.getElementById('ord-pred').value);
-    const succ = parseInt(document.getElementById('ord-succ').value);
-    const gap  = parseInt(document.getElementById('ord-gap').value) || 0;
-    const pred_part = document.getElementById('ord-pred-part').value;
-    const succ_part = document.getElementById('ord-succ-part').value;
-    if (!pred || !succ) { toast('Sélectionnez les deux matières', 'error'); return; }
-    if (pred === succ)  { toast('Les deux matières doivent être différentes', 'error'); return; }
-    try {
-        await api('/course-orderings' + svcQ(), {
-            method: 'POST',
-            body: JSON.stringify({ course_id_pred: pred, course_id_succ: succ, pred_part, succ_part, min_gap_weeks: gap }),
-        });
-        toast('Contrainte ajoutée');
-        loadOrderings();
-    } catch(e) { toast('Erreur : ' + e.message, 'error'); }
-}
-
-async function deleteOrdering(id) {
-    try {
-        await api('/course-orderings/' + id + svcQ(), { method: 'DELETE' });
-        toast('Contrainte supprimée');
-        loadOrderings();
-    } catch(e) { toast('Erreur : ' + e.message, 'error'); }
 }
 
 // ===== CALENDRIER SPECIAL =====
@@ -18774,14 +18838,17 @@ async function loadCalendrier() {
         buildCalYearSelect();
         updateCalYearWarning();
         body.innerHTML = '<div class="empty">Sélectionnez une promotion (onglet Effectifs) pour définir son calendrier sur ses 3 années.</div>';
+        _jfEtat(null);
+        document.getElementById('jf-statut').innerHTML = '';
+        document.getElementById('jf-liste').innerHTML = '<div class="empty">Sélectionnez une promotion.</div>';
         return;
     }
     body.innerHTML = '<div class="spinner">Chargement…</div>';
     const q = _calQ();   // cible la base de l'année (start+_calYG-1) de la cohorte
     try {
-        const [cal, cfg, comments, codes] = await Promise.all([
+        const [cal, cfg, comments, codes, fermes] = await Promise.all([
             api('/special-calendar' + q), api('/config' + q), api('/week-comments' + q),
-            api('/category-codes' + q)
+            api('/category-codes' + q), api('/jours-fermes' + q).catch(() => null)
         ]);
         _calData = cal;
         _weekComments = comments || {};
@@ -18800,6 +18867,12 @@ async function loadCalendrier() {
         buildAllWeekSelect('config-end-week',   rg.end);
         document.getElementById('cal-max-week').value = String(rg.max);
         renderCalendrierPage(rg.start, rg.end, rg.max);
+        // Jours fériés et ponts de cette année universitaire (après la grille : sa ligne F / P)
+        _jfEtat(fermes);
+        if (!fermes) {
+            document.getElementById('jf-statut').innerHTML = '';
+            document.getElementById('jf-liste').innerHTML = '<div class="empty">Liste indisponible.</div>';
+        }
     } catch(e) {
         body.innerHTML = '<div class="empty">Erreur : ' + esc(e.message) + '</div>';
     }
@@ -18866,6 +18939,15 @@ function renderCalendrierPage(startWeek, endWeek, maxW) {
             <td style="vertical-align:middle"><input class="cat-code-input" data-key="${cat.key}" value="${esc(code)}" placeholder="—" oninput="setCategoryCode('${cat.key}', this.value)"></td>
             ${cells}</tr>`;
     });
+
+    // Ligne Jours fériés / ponts (lecture : ils se saisissent dans le bloc sous la grille)
+    const jfm = jfParSemaine(_jf.jours);
+    html += `<tr class="cal-jf-row">
+        <td style="padding:6px 10px;white-space:nowrap;vertical-align:middle">
+            <strong>Jours fériés / ponts</strong> <span style="color:#9ca3af;font-size:.75rem">(toutes promotions)</span>
+        </td>
+        <td></td>
+        ${weeks.map((w, i) => `<td${i === sepIdx ? ' class="sem-sep"' : ''} data-w="${w}">${jfRepere(jfm[w])}</td>`).join('')}</tr>`;
 
     // Ligne Commentaires : un commentaire libre par semaine (clic pour éditer)
     const commentCells = weeks.map((w, i) => {
@@ -18971,6 +19053,10 @@ async function saveCalendrier() {
         toast('Renseigner les semaines de début et de fin des semestres', 'error');
         return;
     }
+    if (_jf.modif && _jf.jours.some(j => !j.date)) {
+        toast('Jours fériés et ponts : indiquez la date de chaque jour, ou retirez la ligne', 'error');
+        return false;
+    }
     try {
         const q = _calQ();   // écrit dans la base de l'année de la cohorte
         await api('/special-calendar' + q, { method: 'PUT', body: JSON.stringify(_calData) });
@@ -18982,10 +19068,20 @@ async function saveCalendrier() {
         if (aSw && aEw) state.config.academic_ranges[String(_calYG)] = { start: aSw, end: aEw, max: aMx || 52 };
         const rg = calYearRange();
         renderCalendrierPage(rg.start, rg.end, rg.max);
-        toast('Calendrier enregistré');
     } catch(e) {
         toast('Erreur : ' + e.message, 'error');
+        return false;
     }
+    // Jours fériés et ponts en dernier : leurs bornes suivent la plage d'année tout juste enregistrée
+    if (_jf.etat && _jf.modif) {
+        try {
+            await _jfEnregistrer(_calQ());
+        } catch (e) {
+            toast('Calendrier enregistré, mais pas les jours fériés et ponts : ' + e.message, 'error');
+            return false;
+        }
+    }
+    toast('Calendrier enregistré');
 }
 
 let _repLoadSeq = 0;   // seul le dernier chargement lancé s'affiche
@@ -19017,14 +19113,15 @@ async function loadRepartition() {
         await mapLimit(promoSet, 2, async s => {
             datas[s] = await api('/repartition?semester=' + encodeURIComponent(s) + svcQ('&'));
         });
-        const [wc, calRaw, catCodes, orders, wishes] = await Promise.all([
+        const [wc, calRaw, catCodes, orders, wishes, fermes] = await Promise.all([
             api('/week-comments' + svcQ()), api('/special-calendar' + svcQ()),
             api('/category-codes' + svcQ()), api('/course-orderings' + svcQ()),
-            api('/courses/wishes' + svcQ())
+            api('/courses/wishes' + svcQ()), api('/jours-fermes' + svcQ()).catch(() => null)
         ]);
         if (seq !== _repLoadSeq) return;   // une autre sélection est déjà en cours de chargement
         _repOrders = orders || [];
         _repWishes = wishes || {};
+        _repJF = jfParSemaine(fermes && fermes.jours);
         // Brouillon : les cases modifiées reprennent leur valeur de travail
         const allRows = promoSet.flatMap(s => datas[s].rows);
         repDraftOverlay(allRows);
@@ -19127,6 +19224,7 @@ function typeLabelJour(r) {
 // ===== Sous-onglets Répartition : annuelle (tous) / journalière (admin) =====
 let _repTab = 'annuelle';
 let _repJourData = null;   // { weeks, rows, special } de la promo choisie
+let _repJourJF = {};       // jours fériés et ponts par semaine (jfParSemaine)
 
 function showRepTab(tab) {
     // La journalière lit la répartition enregistrée : un brouillon en cours est réglé avant
@@ -19221,7 +19319,18 @@ function repJourSuivi(cohorte) {
 function repJourWeekLabel(w) {
     const s = repJourSuivi();
     const mark = s.optimized.has(w) ? '✓✓ ' : s.planned.has(w) ? '✓ ' : '';
-    return mark + 'Semaine ' + w;
+    // Jour férié ou pont dans la semaine : signalé dans la liste
+    const jf = _repJourJF[w] || [];
+    const f = jf.some(j => j.type !== 'pont'), p = jf.some(j => j.type === 'pont');
+    return mark + 'Semaine ' + w + (f || p ? ' · ' + [f ? 'férié' : '', p ? 'pont' : ''].filter(Boolean).join(' + ') : '');
+}
+
+// Bandeau des jours sans cours de la semaine affichée (jours fériés, ponts)
+function repJourJFHtml(w) {
+    const jf = _repJourJF[w] || [];
+    if (!jf.length) return '';
+    return `<div class="repj-jf"><b>Semaine ${w} : pas de cours</b> — ${jf.map(j => esc(jfLigne(j))).join(' ; ')}.${
+        jf.some(j => j.jour <= 4) && !jf.some(j => j.jour === 3) ? ' Le jeudi après-midi des FTP rouvre pour rattraper.' : ''}</div>`;
 }
 
 // La cohorte n'est pas là cette semaine : vacances ou stage (FTP), entreprise (ALT)
@@ -19919,12 +20028,45 @@ function plImprimer() {
 
 // ----- Jours fériés et ponts de l'année -----
 // Jours sans aucun cours, pour toutes les promotions, enregistrés dans la base de
-// l'année (GET/PUT /api/jours-fermes) et lus par le solveur. Tant que la liste n'a
-// pas été enregistrée, le serveur propose les jours fériés légaux, que le solveur
-// prend alors tels quels (sans pont).
+// l'année (GET/PUT /api/jours-fermes) et lus par le solveur. Ils se définissent
+// dans Promotions › Calendrier (seul endroit, enregistrés avec le calendrier) ; les
+// tableaux à semaines les signalent (repère F / P). Tant que la liste n'a pas été
+// enregistrée, le serveur propose les jours fériés légaux, que le solveur prend
+// alors tels quels (sans pont).
 let _edtgFermesEtat = null;
 let _jf = { etat: null, jours: [], modif: false };
 const _JF_JOURS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
+
+// Jours fermés du lundi au samedi, par semaine : {n° de semaine: [{date, type, libelle, jour}]}
+// (jour : 0 = lundi). Accepte la liste du serveur (jour, semaine déjà calculés) ou
+// celle en cours de saisie dans le Calendrier.
+function jfParSemaine(jours) {
+    const m = {};
+    (jours || []).forEach(j => {
+        const inf = Number.isInteger(j.semaine) && Number.isInteger(j.jour) ? { sem: j.semaine, jour: j.jour } : _jfInfo(j.date);
+        if (!inf || inf.jour > 5) return;
+        (m[inf.sem] = m[inf.sem] || []).push({ ...j, jour: inf.jour, semaine: inf.sem });
+    });
+    return m;
+}
+// « mardi 11/11 : Armistice (férié) »
+function jfLigne(j) {
+    const [, mo, d] = String(j.date || '').split('-');
+    const quoi = j.type === 'pont' ? 'pont' : 'férié';
+    return `${_JF_JOURS[j.jour] || ''} ${d}/${mo} : ${j.libelle ? `${j.libelle} (${quoi})` : quoi}`;
+}
+// Version courte, pour la ligne « Commentaires » de la répartition : « Armistice 11/11 »
+function jfCourt(j) {
+    const [, mo, d] = String(j.date || '').split('-');
+    return `${j.libelle || (j.type === 'pont' ? 'Pont' : 'Férié')} ${d}/${mo}`;
+}
+// Repère d'une semaine : F (jour férié), P (pont), FP (les deux) ; '' si aucun
+function jfRepere(liste) {
+    if (!liste || !liste.length) return '';
+    const f = liste.some(j => j.type !== 'pont'), p = liste.some(j => j.type === 'pont');
+    return `<span class="jf-rep${p && !f ? ' pont' : ''}" title="${esc('Pas de cours :\n' + liste.map(jfLigne).join('\n'))}">${
+        (f ? 'F' : '') + (p ? 'P' : '')}</span>`;
+}
 
 // Rappel en tête de la fenêtre « Générer l'EDT »
 function _edtgFermes(etat) {
@@ -19932,31 +20074,32 @@ function _edtgFermes(etat) {
     const el = document.getElementById('edtgen-fermes');
     if (!etat) { el.textContent = 'Jours fériés et ponts : liste indisponible.'; return; }
     const nP = etat.jours.filter(j => j.type === 'pont').length, nF = etat.jours.length - nP;
+    const lien = tabHidden('promo:calendrier') ? ''
+        : ` · <a onclick="closeModal('modal-edt-gen'); aideOuvrir('promotions/calendrier')">${
+            etat.definie ? 'modifier' : 'les définir'} dans Promotions › Calendrier</a>`;
     el.innerHTML = etat.definie
-        ? `Jours fériés et ponts ${esc(etat.annee)} : ${nF} jour(s) férié(s), ${nP} pont(s) · <a onclick="openJoursFermes()">voir ou modifier</a>`
+        ? `Jours fériés et ponts ${esc(etat.annee)} : ${nF} jour(s) férié(s), ${nP} pont(s)${lien}`
         : `Jours fériés et ponts ${esc(etat.annee)} <b>pas encore enregistrés</b> : les ${nF} jours fériés légaux
-           sont pris, sans pont · <a onclick="openJoursFermes()">les définir</a>`;
+           sont pris, sans pont${lien}`;
 }
 
-async function openJoursFermes() {
-    if (state.resp && state.resp.length) {
-        toast('Réservé à la session administrateur', 'error');
-        return;
-    }
-    openModal('modal-jours-fermes');
-    document.getElementById('jf-statut').innerHTML = '';
-    document.getElementById('jf-liste').innerHTML = '<div class="spinner">Chargement…</div>';
-    try {
-        _jfEtat(await api('/jours-fermes' + svcQ()));
-    } catch (e) {
-        document.getElementById('jf-liste').innerHTML = `<div class="empty">Erreur : ${esc(e.message)}</div>`;
-    }
-}
-
+// Calendrier : liste de l'année de la cohorte affichée (null = indisponible)
 function _jfEtat(etat) {
-    _jf = { etat, jours: etat.jours.map(j => ({ date: j.date, type: j.type, libelle: j.libelle || '' })), modif: false };
-    document.getElementById('jf-annee').textContent = etat.annee;
-    _jfRendre();
+    _jf = etat
+        ? { etat, jours: etat.jours.map(j => ({ date: j.date, type: j.type, libelle: j.libelle || '' })), modif: false }
+        : { etat: null, jours: [], modif: false };
+    document.getElementById('jf-annee').textContent = etat ? etat.annee : '';
+    if (etat) _jfRendre();
+    _calJfMaj();
+}
+
+// Ligne « Jours fériés / ponts » de la grille du Calendrier, suivie pendant la saisie
+// (cases mises à jour une à une : la grille n'est pas reconstruite)
+function _calJfMaj() {
+    const m = jfParSemaine(_jf.jours);
+    document.querySelectorAll('#calendrier-body tr.cal-jf-row td[data-w]').forEach(td => {
+        td.innerHTML = jfRepere(m[+td.dataset.w]);
+    });
 }
 
 // Jour de la semaine (0 = lundi) et semaine ISO d'une date AAAA-MM-JJ, ou null
@@ -20007,6 +20150,7 @@ function _jfRendre() {
     const m = document.getElementById('jf-modif');
     m.textContent = _jf.modif ? 'Modifications non enregistrées' : '';
     m.classList.toggle('dirty', _jf.modif);
+    _calJfMaj();
 }
 
 function jfMaj(i, champ, valeur, sansRendu) {
@@ -20026,6 +20170,7 @@ function _jfTrier() {
 }
 
 function jfAjouter() {
+    if (!_jf.etat) { toast('Sélectionnez d\'abord une promotion', 'error'); return; }
     _jf.jours.push({ date: '', type: 'pont', libelle: '' });
     _jf.modif = true;
     _jfRendre();
@@ -20034,6 +20179,7 @@ function jfAjouter() {
 }
 
 function jfLegaux() {
+    if (!_jf.etat) { toast('Sélectionnez d\'abord une promotion', 'error'); return; }
     const vus = new Set(_jf.jours.map(j => j.date));
     const manquants = _jf.etat.legaux.filter(j => !vus.has(j.date));
     if (!manquants.length) { toast('Tous les jours fériés légaux de l\'année sont déjà dans la liste'); return; }
@@ -20050,24 +20196,12 @@ function jfRetirer(i) {
     _jfRendre();
 }
 
-async function jfEnregistrer() {
-    if (_jf.jours.some(j => !j.date)) {
-        toast('Indiquez la date de chaque jour, ou retirez la ligne', 'error');
-        return;
-    }
-    const btn = document.getElementById('jf-save');
-    btn.disabled = true;
-    try {
-        _jfTrier();
-        const etat = await api('/jours-fermes' + svcQ(), { method: 'PUT', body: JSON.stringify({ jours: _jf.jours }) });
-        _jfEtat(etat);
-        _edtgFermes(etat);
-        toast('Jours fériés et ponts enregistrés');
-    } catch (e) {
-        toast('Erreur : ' + e.message, 'error');
-    } finally {
-        btn.disabled = false;
-    }
+// Enregistrement, par le bouton « Enregistrer » du Calendrier (`q` : ?year= de la
+// cohorte). Lève une erreur au message lisible si le serveur refuse la liste.
+async function _jfEnregistrer(q) {
+    _jfTrier();
+    const etat = await api('/jours-fermes' + q, { method: 'PUT', body: JSON.stringify({ jours: _jf.jours }) });
+    _jfEtat(etat);
 }
 
 // Bandeau d'avancement de la cohorte affichée : combien de semaines posées puis
@@ -20126,10 +20260,11 @@ async function loadRepJour() {
     const sems = ['S' + (yg * 2 - 1), 'S' + (yg * 2)];
     try {
         state.config = await api('/config' + svcQ());
-        const [sg, ...datas] = await Promise.all([
-            api('/semester-groups' + svcQ()),
+        const [sg, fermes, ...datas] = await Promise.all([
+            api('/semester-groups' + svcQ()), api('/jours-fermes' + svcQ()).catch(() => null),
             ...sems.map(s => api('/repartition?semester=' + encodeURIComponent(s) + svcQ('&')))
         ]);
+        _repJourJF = jfParSemaine(fermes && fermes.jours);
         state.mutSemesters = sg.mutualized || {};
         state.tpSeparate = sg.tp_separate || {};
         // Semaines déjà posées / optimisées à l'EDT pour cette année de promotion,
@@ -20272,7 +20407,7 @@ function renderRepJour() {
     }
     const list = _repJourData.rows.filter(r => (r.by_week && r.by_week[w]) > 0 && repJourInCohorte(r, cohorte));
     if (!list.length) {
-        el.innerHTML = repJourProgressHtml() +
+        el.innerHTML = repJourProgressHtml() + repJourJFHtml(w) +
             '<div class="empty">Aucun cours à placer en semaine ' + w +
             ' pour la cohorte ' + esc(cohorte) + '.</div>';
         return;
@@ -20495,7 +20630,7 @@ function renderRepJour() {
     const arrow = k => _repJourSort.key === k ? (_repJourSort.dir > 0 ? ' ▲' : ' ▼') : '';
     const th = (k, label, style) =>
         `<th style="${style};cursor:pointer;user-select:none" onclick="sortRepJour('${k}')" title="Trier par ${esc(label)}">${esc(label)}${arrow(k)}</th>`;
-    el.innerHTML = repJourProgressHtml() + `
+    el.innerHTML = repJourProgressHtml() + repJourJFHtml(w) + `
         <div style="display:flex;align-items:center;gap:18px;margin-bottom:10px;font-size:.9rem">
             <span><strong style="color:${formColor[cohorte]}">${esc(cohorteLabel)}</strong> :
                 ${fmt(totCohorte)}h${totDetail}</span>
@@ -20782,7 +20917,8 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
         return '';
     }
 
-    const headerWeeks = weeks.map((w, i) => `<th class="col-week${sepCls(i)}">${w}</th>`).join('');
+    // Numéro de semaine, et repère F / P d'un jour férié ou d'un pont (dates au survol)
+    const headerWeeks = weeks.map((w, i) => `<th class="col-week${sepCls(i)}">${w}${jfRepere(_repJF[w])}</th>`).join('');
     const hasDraft = _repDraft.cells.size > 0;
 
     function buildDataRow(r, formCls, formCell) {
@@ -20841,7 +20977,7 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
         // Repère d'ordonnancement (🔗) à droite du nom, rempli par repOrdRefresh()
         bodyRows += `<tr class="row-mat">
             <td class="s-col" colspan="${fixedSpan}" style="left:0;z-index:2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-                <div class="mat-head"><span class="mat-title"><strong>${esc(block.code)}</strong> — ${esc(block.name)}${semLabel}</span><span class="wish-badge" data-wish-cid="${block.courseId}"></span><span class="ord-badge" data-ord-cid="${block.courseId}"></span></div>
+                <div class="mat-head"><span class="mat-title"><strong>${esc(block.code)}</strong> — ${esc(block.name)}${semLabel}</span><span class="wish-badge" data-wish-cid="${block.courseId}" onclick="repOrdBadgeClick(event, this, 'voeu')"></span><span class="ord-badge" data-ord-cid="${block.courseId}" onclick="repOrdBadgeClick(event, this, 'ord')"></span></div>
             </td><td colspan="${weeks.length}"></td>
         </tr>`;
 
@@ -20991,6 +21127,8 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
         });
         const cm = commentForWeek(w);
         if (cm && !out.includes(cm)) out.push(cm);
+        // Jours fériés et ponts : toutes les promotions, quel que soit le filtre
+        (_repJF[w] || []).forEach(j => out.push(jfCourt(j)));
         return out.join(' / ');
     };
     const anyCode = weeks.some(w => codeForWeek(w));
@@ -21261,6 +21399,7 @@ function repClearCells(cells, what) {
 // côté FTP (FTP + MUT) et côté ALT (ALT + MUT) séparément ; pour des groupes, chaque
 // groupe d'après commence après la fin de tous les groupes d'avant.
 let _repOrders = [];             // contraintes de l'année (/api/course-orderings)
+let _repJF = {};                 // jours fériés et ponts par semaine (jfParSemaine)
 let _repOrdMarked = new Set();   // cases marquées « ordre non respecté » (repDraftKey)
 let _repOrdPending = false;
 
@@ -21471,16 +21610,20 @@ function repOrdRefresh() {
         td.title = [td.title, bad.get(key), wish.bad.get(key)].filter(Boolean).join('\n');
     });
     _repOrdMarked = keys;
+    // Un clic sur un repère ouvre la matière dans Contraintes Matière, où se posent
+    // ordonnancements et répartition souhaitée (si l'onglet est accessible)
+    const lien = !tabHidden('svc:contraintes-matiere');
+    const lienTxt = lien ? '\n\nCliquer pour modifier dans Service › Contraintes Matière' : '';
     // Repères « vœu » des lignes bleues : rappel de l'enchaînement voulu
     document.querySelectorAll('#repartition-table .wish-badge').forEach(b => {
         const r = wish.per.get(parseInt(b.dataset.wishCid));
         if (!r) { b.className = 'wish-badge'; b.textContent = ''; b.removeAttribute('title'); return; }
-        b.className = 'wish-badge ' + (r.nBad ? 'ord-bad' : 'ord-ok');
+        b.className = 'wish-badge ' + (r.nBad ? 'ord-bad' : 'ord-ok') + (lien ? ' ord-lien' : '');
         b.textContent = r.nBad ? `vœu ✗${r.nBad}` : 'vœu ✓';
         const w = r.wish;
         b.title = `Répartition souhaitée${w.updated_by ? ' par ' + w.updated_by : ''}${
             w.updated_at ? ' le ' + _mcDate(w.updated_at) : ''} :\n${r.seqs.join('\n')}${
-            r.msgs.length ? '\n\nÉcarts :\n' + r.msgs.join('\n') : ''}`;
+            r.msgs.length ? '\n\nÉcarts :\n' + r.msgs.join('\n') : ''}${lienTxt}`;
     });
     // Repères des lignes bleues : chaque contrainte compte pour ses deux matières
     const per = new Map();
@@ -21493,10 +21636,17 @@ function repOrdRefresh() {
         if (!es.length) { b.className = 'ord-badge'; b.textContent = ''; b.removeAttribute('title'); return; }
         const nBad = es.filter(e => e.status === 'bad').length;
         const nUnk = es.filter(e => e.status === 'unknown').length;
-        b.className = 'ord-badge ' + (nBad ? 'ord-bad' : nUnk ? 'ord-unknown' : 'ord-ok');
+        b.className = 'ord-badge ' + (nBad ? 'ord-bad' : nUnk ? 'ord-unknown' : 'ord-ok') + (lien ? ' ord-lien' : '');
         b.textContent = `🔗${es.length} ${nBad ? '✗' + nBad : nUnk ? '?' : '✓'}`;
-        b.title = 'Ordonnancement :\n' + es.map(repOrdLine).join('\n');
+        b.title = 'Ordonnancement :\n' + es.map(repOrdLine).join('\n') + lienTxt;
     });
+}
+
+// Clic sur un repère 🔗 / vœu d'une ligne bleue
+function repOrdBadgeClick(ev, b, volet) {
+    if (!b.classList.contains('ord-lien') || !b.textContent) return;
+    ev.stopPropagation();
+    mcOuvrirMatiere(parseInt(b.dataset.ordCid || b.dataset.wishCid), volet);
 }
 
 // Contrôle → matière : défilement jusqu'à sa ligne bleue et halo sur ses cases en cause
@@ -21701,6 +21851,139 @@ async function runImportRepartition(file) {
 }
 
 // ===== CONTROLES REPARTITION =====
+// ===== Optimiser la répartition annuelle (POST /api/repartition/optimiser) =====
+// Le serveur propose, ligne par ligne, les heures de chaque semaine pour les semestres
+// affichés (brouillon en cours compris) ; rien n'est écrit. La proposition se pose dans
+// le brouillon en un seul pas (Ctrl+Z l'annule), où les repères 🔗 / cadres rouges et
+// le Contrôle la vérifient avant « Enregistrer ».
+let _ropt = null;   // { propositions, semestres, faces } du dernier calcul
+
+function _roptPerimetre() {
+    const sems = ((_repartitionData && _repartitionData.selected) || []).slice().sort();
+    const f = document.getElementById('filter-formation-repartition').value;
+    return { semestres: sems, faces: f, libelle: `${sems.join(' + ') || '—'} · ${
+        f === 'ftp' ? 'FTP (et MUT)' : f === 'alt' ? 'ALT (et MUT)' : 'FTP + ALT'}` };
+}
+
+function openRepOptim() {
+    if (!_repartitionData) { toast('Chargez d\'abord la répartition', 'error'); return; }
+    const p = _roptPerimetre();
+    document.getElementById('ropt-perimetre').innerHTML = `<b>${esc(p.libelle)}</b>`;
+    document.getElementById('ropt-temps').value = p.semestres.length > 1 ? '60' : '30';
+    if (!(_ropt && _ropt.run)) {
+        document.getElementById('ropt-progress').innerHTML = '';
+        document.getElementById('ropt-result').innerHTML = '';
+        document.getElementById('ropt-apply').style.display = 'none';
+    }
+    roptMode();
+    openModal('modal-rep-optim');
+}
+
+function roptMode() {
+    const stable = document.querySelector('input[name="ropt-mode"]:checked').value === 'stable';
+    document.getElementById('ropt-vides-lbl').style.display = stable ? '' : 'none';
+}
+
+async function roptLancer() {
+    if (_ropt && _ropt.run) return;
+    const p = _roptPerimetre();
+    if (!p.semestres.length) { toast('Cochez au moins un semestre', 'error'); return; }
+    const mode = document.querySelector('input[name="ropt-mode"]:checked').value;
+    const temps = parseInt(document.getElementById('ropt-temps').value) || 60;
+    const corps = { semestres: p.semestres, faces: p.faces, mode, temps,
+                    placer_vides: document.getElementById('ropt-vides').checked, cells: repDraftPayload() };
+    _ropt = { run: true };
+    const btn = document.getElementById('ropt-run');
+    btn.disabled = true;
+    document.getElementById('ropt-apply').style.display = 'none';
+    document.getElementById('ropt-result').innerHTML = '';
+    const t0 = Date.now();
+    const prog = document.getElementById('ropt-progress');
+    const tick = () => { prog.innerHTML = `<div class="edtg-progress">⏳ Calcul en cours… ${Math.round((Date.now() - t0) / 1000)} s
+        <span class="edtg-note">(jusqu'à ${temps} s)</span></div>`; };
+    tick();
+    const minuteur = setInterval(tick, 1000);
+    try {
+        const r = await api('/repartition/optimiser' + svcQ(), { method: 'POST', body: JSON.stringify(corps) });
+        _ropt = { propositions: r.propositions || [], semestres: p.semestres, faces: p.faces, res: r };
+        prog.innerHTML = `<div class="edtg-progress">✓ Calcul terminé en ${Math.round(r.duree_s || 0)} s.</div>`;
+        document.getElementById('ropt-result').innerHTML = roptBilanHtml(r);
+        document.getElementById('ropt-apply').style.display = r.ok && _roptChangements().length ? '' : 'none';
+    } catch (e) {
+        _ropt = null;
+        prog.innerHTML = `<div class="edtg-progress err">Erreur : ${esc(e.message)}</div>`;
+    } finally {
+        clearInterval(minuteur);
+        btn.disabled = false;
+        if (_ropt) _ropt.run = false;
+    }
+}
+
+// Avant / après : ce qui compte pour l'admin, dans l'ordre d'importance
+function roptBilanHtml(r) {
+    if (!r.ok) return '<div class="empty">Aucune proposition dans le temps imparti : relancez avec plus de temps.</div>';
+    const a = r.avant || {}, b = r.apres || {};
+    const lignes = [
+        ['Séances non placées', a.non_places, b.non_places, ''],
+        ['Séances en semaine interdite (vacances, stage, entreprise)', a.interdites, b.interdites, ''],
+        ['Ordonnancements non respectés', a.nb_ordres, b.nb_ordres, ''],
+        ['Écarts à la répartition souhaitée', a.voeux, b.voeux, ''],
+        ['Séances hors de la plage de la matière', a.hors_plage, b.hors_plage, ''],
+        ['Surcharge des promotions', a.heures_surcharge, b.heures_surcharge, ' h'],
+        ['Heures d\'enseignants au-delà de 20 h / semaine', a.heures_enseignants, b.heures_enseignants, ' h'],
+        ['Interruptions de matières', a.blocs_en_plus, b.blocs_en_plus, ''],
+    ];
+    const cell = (v, u) => (v == null ? '—' : String(Math.round(v * 10) / 10).replace('.', ',') + u);
+    const sens = (x, y) => (y < x ? 'color:#15803d;font-weight:700' : y > x ? 'color:#b45309;font-weight:700' : 'color:#6b7280');
+    const n = _roptChangements().length;
+    let html = `<div class="edtg-sum"><b>${r.seances_deplacees || 0}</b> séance(s) changée(s) de semaine${
+        r.seances_ajoutees ? `, <b>${r.seances_ajoutees}</b> posée(s) dans des lignes qui étaient vides` : ''}${
+        r.lignes_vides_laissees ? ` · ${r.lignes_vides_laissees} ligne(s) laissée(s) vide(s)` : ''} · ${n} case(s) modifiée(s)
+        · ${r.lignes} ligne(s) dans le périmètre</div>
+        <table class="edtg-small"><thead><tr><th></th><th>Avant</th><th>Après</th></tr></thead><tbody>${
+        lignes.map(([l, x, y, u]) => `<tr><td>${esc(l)}</td><td>${cell(x, u)}</td><td style="${sens(x, y)}">${cell(y, u)}</td></tr>`).join('')
+        }</tbody></table>`;
+    if ((b.ordres || []).length)
+        html += `<div class="section-title">Ordonnancements encore non respectés</div><ul class="edtg-alertes">${
+            b.ordres.map(o => `<li>${esc(o)}</li>`).join('')}</ul>`;
+    if ((b.surcharges || []).length)
+        html += `<details class="edtg-alertes"><summary>Semaines encore surchargées (${b.nb_surcharges})</summary><ul>${
+            b.surcharges.map(s => `<li>S${s.semaine} · ${s.annee}A ${esc(s.face)} : ${String(s.heures).replace('.', ',')} h</li>`).join('')}</ul></details>`;
+    html += `<p class="edtg-note" style="margin-top:8px">« Poser dans le brouillon » remplace, pour le périmètre, les cases
+        par la proposition ; les repères 🔗 et les cadres rouges se mettent à jour. Vérifiez (Contrôle), puis Enregistrez —
+        ou Ctrl+Z pour revenir en arrière.</p>`;
+    return html;
+}
+
+// Cases à changer : proposition contre copie de travail actuelle (brouillon compris)
+function _roptChangements() {
+    if (!_ropt || !_ropt.propositions) return [];
+    const out = [];
+    _ropt.propositions.forEach(p => {
+        const row = repRowFor(p.session_id, p.group_index);
+        if (!row) return;
+        const prop = p.by_week || {};
+        const semaines = new Set([...Object.keys(row.by_week || {}), ...Object.keys(prop)].map(Number));
+        semaines.forEach(w => {
+            const from = row.by_week[w] || 0, to = prop[w] || 0;
+            if (Math.abs(from - to) > 1e-9) out.push({ sid: p.session_id, week: w, group: p.group_index, from, to });
+        });
+    });
+    return out;
+}
+
+function roptAppliquer() {
+    if (_repDraft.saving) return;
+    const cells = _roptChangements();
+    if (!cells.length) { toast('Rien à changer'); return; }
+    _repDraft.undo.push({ cells, label: `optimisation (${cells.length} cases)` });
+    _repDraft.redo = [];
+    cells.forEach(p => repApplyStep(p, p.to));
+    closeModal('modal-rep-optim');
+    document.getElementById('ropt-apply').style.display = 'none';
+    toast(`Proposition posée dans le brouillon : ${cells.length} case(s) — Ctrl+Z pour annuler, Enregistrer pour garder`);
+}
+
 async function runRepartitionChecks() {
     const panel = document.getElementById('checks-panel');
     panel.innerHTML = '<div class="spinner">Vérification…</div>';
