@@ -254,10 +254,43 @@ def _ordres(pb):
     return out
 
 
+def _periodes_libres(arr, n_cols, t):
+    """Périodes de TP « libres » d'une ligne du vœu : colonnes de TP qui se suivent dont
+    au moins une a plus d'une séance — leurs séances se placent n'importe où dans la
+    période. [(début, fin)] (colonnes) ; jamais pour un autre type que TP."""
+    if t != 'TP':
+        return []
+    v = [int((arr[c] if c < len(arr) else 0) or 0) for c in range(n_cols)]
+    out, c = [], 0
+    while c < n_cols:
+        if v[c] <= 0:
+            c += 1
+            continue
+        d = c
+        while d + 1 < n_cols and v[d + 1] > 0:
+            d += 1
+        if max(v[c:d + 1]) > 1:
+            out.append((c, d))
+        c = d + 1
+    return out
+
+
+def _ancres(arr, n_cols, t):
+    """Colonne de référence de chaque colonne : le début de sa période libre, sinon elle-même."""
+    a = list(range(n_cols))
+    for debut, fin in _periodes_libres(arr, n_cols, t):
+        for c in range(debut, fin + 1):
+            a[c] = debut
+    return a
+
+
 def _voeux(pb):
     """Règles de la répartition souhaitée, comme la répartition (repWishEvaluate) : la
     i-e séance d'un type t d'une ligne attend, au plus tard la même semaine, `need`
     séances de chaque autre type u que le vœu met avant elle — dans chaque groupe de u.
+    Période de TP libre (_periodes_libres) : ses séances n'attendent que ce qui la
+    précède, ce qui est placé pendant la période n'attend aucune d'elles, ce qui la
+    suit les attend toutes.
     → [{course_id, regles: [(ligne t, i, need, [lignes u])]}]"""
     par_cours = defaultdict(list)
     for r in pb.lignes:
@@ -281,9 +314,10 @@ def _voeux(pb):
                 continue
             if side == 'ALT' and all(type_cle[t].startswith('2:') for t in types):
                 continue
-            cum, col = {}, {}
+            cum, col, anc = {}, {}, {}
             for t in types:
                 arr = w['rows'].get(type_cle[t]) or []
+                anc[t] = _ancres(arr, w['n_weeks'], t)
                 cum[t], col[t], acc = [], [], 0
                 for c in range(w['n_weeks']):
                     cum[t].append(acc)
@@ -294,11 +328,13 @@ def _voeux(pb):
             nb = {t: max([int(r.get('nb_sessions') or 0) for r in lignes_t[t]] or [0]) for t in types}
             for t in types:
                 for r_t in lignes_t[t]:
-                    for i, c in enumerate(col[t], start=1):
+                    for i, c0 in enumerate(col[t], start=1):
+                        c = anc[t][c0]                      # séance d'une période libre : son début
                         for u in types:
                             if u == t or not lignes_t[u]:
                                 continue
-                            need = min(cum[u][c], nb[u] or cum[u][c])
+                            cu = cum[u][anc[u][c]]          # u en période libre : ce qui la précède
+                            need = min(cu, nb[u] or cu)
                             if need > 0:
                                 regles.append((r_t, i, need, lignes_t[u]))
         if regles:

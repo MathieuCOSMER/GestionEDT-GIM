@@ -850,6 +850,10 @@ function _aideService() {
         et le repère passe à <span class="wish-badge ord-bad">vœu ✗1</span>. Exemple : vœu « CM → TD → CM », deux CM placés d'affilée :
         le second est encadré tant qu'aucun TD (dans chaque groupe) n'est placé avant lui ou la même semaine.
         ${_aUi('Contrôle')} liste aussi les matières en écart.</p>
+        <p>Quand le vœu met <b>plus d'une séance de TP dans une semaine</b>, les semaines de TP qui se suivent forment une
+        <b>période libre</b> : ses séances peuvent se placer n'importe où dans la période. Elles n'attendent que ce que le vœu met
+        avant la période ; ce qui est placé pendant la période n'attend aucune d'elles ; ce qui la suit les attend toutes. Le survol
+        l'indique d'un bloc (« 5 TP sur 4 sem. »). ${_aUi('Optimiser…')} applique la même règle.</p>
         <h3>Outils de la barre</h3>
         <ul>
             ${_aSiModif('rep:annuelle', `<li>${_aUi('Contrôle')} : un panneau à droite liste la <b>charge des enseignants par semaine</b> (orange au-delà de 20 h, rouge au-delà de 30 h) , les <b>conflits de salle</b> (plus de 2 matières la même semaine) et les <b>contraintes d'ordre non respectées</b>. Le brouillon est compris dans le contrôle.</li>
@@ -1079,6 +1083,9 @@ function _aideService() {
         FTP 16 · ALT 11 »). Au-delà, les cases d'une face sont <b>hachurées</b> et ne prennent pas de séance. Une séance qui s'y trouve
         déjà (calendrier modifié depuis, ou ${_aUi('Copier FTP → ALT')} d'un rythme trop long) apparaît en <b>rouge</b>, compte encore dans
         ${_aUi('Reste')}, et un clic la retire : l'enregistrement est refusé tant qu'il en reste.</p>
+        <p>Plus d'une séance de TP dans une semaine (souvent pour tenir dans les semaines des ALT) : les TP de ces semaines qui se
+        suivent forment une <b>période libre</b>, signalée sous la grille — ses séances peuvent se placer n'importe où dans la
+        période, seul compte ce qui vient avant et après.</p>
         <p>Un TD ou un TP à plusieurs groupes suit le même rythme pour chaque groupe. Le titre du volet indique si la répartition est
         renseignée, par qui et quand. C'est un <b>vœu</b> : rien n'est placé dans la répartition calendaire, mais l'administration y
         voit l'enchaînement voulu et les séances placées dans un autre ordre.</p>

@@ -520,6 +520,7 @@
         .pn-table .mc-wish-table td.mc-cell.mc-off:hover { outline: none; }
         .pn-table .mc-wish-table td.mc-cell.mc-over { background: #fee2e2; color: #b91c1c; }
         .mc-wish-over { margin-top: 6px; padding: 6px 10px; border-radius: 6px; background: #fef2f2; color: #b91c1c; font-size: .75rem; }
+        .mc-wish-info { margin-top: 6px; padding: 6px 10px; border-radius: 6px; background: #eff6ff; color: #1e40af; font-size: .75rem; }
         .mc-wish-dispo { color: #374151; font-weight: 600; }
         .pn-table .mc-wish-table td.mc-form { font-size: .62rem; font-weight: 700; letter-spacing: .04em; }
         .pn-table .mc-wish-table td.mc-form-ftp { background: #e0f2fe; color: #0369a1; }
@@ -5901,6 +5902,12 @@ function mcWishGridHtml(cid) {
     const depasse = _mcDepassements(cid, wk);
     if (depasse.length)
         h += `<div class="mc-wish-over">⚠ ${depasse.map(esc).join('<br>⚠ ')}</div>`;
+    // Périodes de TP à plus d'une séance par semaine : séances libres dans la période
+    const libres = sess.flatMap(s => wishPeriodesLibres(wk.rows[s.key] || [], n, s.type).map(p =>
+        `${s.formation} · ${s.type} : plus d'une séance dans une semaine — les ${p.n} séances de ces ${p.fin - p.debut + 1} semaines
+         peuvent se placer n'importe où dans la période (seul compte ce qui vient avant et après).`));
+    if (libres.length)
+        h += `<div class="mc-wish-info">ℹ ${libres.map(esc).join('<br>ℹ ')}</div>`;
     h += `<div class="mc-wish-tools">
         <span>Clic : + 1 séance · clic droit (ou Maj + clic) : − 1</span>
         ${dispo ? `<span class="mc-wish-dispo" title="Semaines du semestre, moins les vacances et le stage (FTP) ou l'entreprise (ALT) ; le mutualisé n'a que les semaines communes">Semaines disponibles en ${esc(semLbl)} : ${dispo}</span>` : ''}
@@ -21481,13 +21488,45 @@ function repOrdLine(e) {
 // une séance d'un autre type que le vœu met AVANT elle n'est pas placée au plus tard
 // la même semaine — pour un TD / TP en groupes, dans chaque groupe. Colonnes vides
 // du vœu ignorées ; regrouper dans une semaine ce que le vœu étale est toléré.
+// Période de TP « libre » (colonnes de TP qui se suivent, dont une à plus d'une
+// séance) : ses séances se placent n'importe où dans la période — elles n'attendent
+// que ce qui précède la période, ce qui est pendant la période n'attend aucune
+// d'elles, ce qui la suit les attend toutes (même règle dans optim_repartition.py).
 let _repWishes = {};             // /api/courses/wishes : {course_id: {sessions, wish}}
 
-// Enchaînement voulu d'une face, lisible sans numéro de semaine : « 2 CM → CM + TD → TD »
+// Périodes libres d'une ligne du vœu : [{debut, fin, n}] (colonnes, séances) — TP seulement
+function wishPeriodesLibres(arr, nCols, type) {
+    const out = [];
+    if (type !== 'TP') return out;
+    for (let c = 0; c < nCols; ) {
+        if (!((arr[c] || 0) > 0)) { c++; continue; }
+        let d = c;
+        while (d + 1 < nCols && (arr[d + 1] || 0) > 0) d++;
+        const tranche = Array.from({ length: d - c + 1 }, (_, i) => arr[c + i] || 0);
+        if (tranche.some(v => v > 1)) out.push({ debut: c, fin: d, n: tranche.reduce((a, b) => a + b, 0) });
+        c = d + 1;
+    }
+    return out;
+}
+// Colonne de référence de chaque colonne : le début de sa période libre, sinon elle-même
+function wishAncres(arr, nCols, type) {
+    const a = Array.from({ length: nCols }, (_, c) => c);
+    wishPeriodesLibres(arr, nCols, type).forEach(p => { for (let c = p.debut; c <= p.fin; c++) a[c] = p.debut; });
+    return a;
+}
+
+// Enchaînement voulu d'une face, lisible sans numéro de semaine : « 2 CM → CM + TD → TD » ;
+// une période de TP libre se lit d'un bloc : « 5 TP sur 4 sem. »
 function repWishSeqText(w, typeKey) {
+    const libres = {};
+    Object.entries(typeKey).forEach(([t, k]) => {
+        wishPeriodesLibres(w.rows[k] || [], w.n_weeks, t).forEach(p => { (libres[t] = libres[t] || []).push(p); });
+    });
     const cols = [];
     for (let c = 0; c < w.n_weeks; c++) {
         const parts = Object.entries(typeKey).map(([t, k]) => {
+            const p = (libres[t] || []).find(x => x.debut <= c && c <= x.fin);
+            if (p) return c === p.debut ? `${p.n} ${t} sur ${p.fin - p.debut + 1} sem.` : '';
             const v = (w.rows[k] || [])[c] || 0;
             return v ? (v > 1 ? v + ' ' : '') + t : '';
         }).filter(Boolean);
@@ -21529,10 +21568,12 @@ function repWishEvaluate() {
             const ordered = {};
             types.forEach(t => { ordered[t] = typeKey[t]; });
             res.seqs.push(sideLbl + repWishSeqText(w, ordered));
-            // cum[t][c] = séances de t voulues dans les colonnes avant c ; colOf[t][i] = colonne de la (i+1)e
-            const cum = {}, colOf = {};
+            // cum[t][c] = séances de t voulues dans les colonnes avant c ; colOf[t][i] = colonne de la (i+1)e ;
+            // anc[t][c] = colonne de référence (début de la période de TP libre qui contient c)
+            const cum = {}, colOf = {}, anc = {};
             types.forEach(t => {
                 const arr = w.rows[typeKey[t]] || [];
+                anc[t] = wishAncres(arr, w.n_weeks, t);
                 cum[t] = []; colOf[t] = [];
                 let acc = 0;
                 for (let c = 0; c < w.n_weeks; c++) {
@@ -21557,11 +21598,12 @@ function repWishEvaluate() {
                     nbOf[t] = Math.max(nbOf[t] || 0, r.nb_sessions || 0);
                 });
             Object.entries(placed).forEach(([t, groups]) => groups.forEach(list => list.forEach((s, i) => {
-                const c = colOf[t][i];
-                if (c === undefined) return;               // au-delà de ce que décrit le vœu
+                if (colOf[t][i] === undefined) return;     // au-delà de ce que décrit le vœu
+                const c = anc[t][colOf[t][i]];             // séance d'une période libre : son début
                 const missing = types.filter(u => {
                     if (u === t || !placed[u]) return false;
-                    const need = Math.min(cum[u][c], nbOf[u] || cum[u][c]);
+                    const cu = cum[u][anc[u][c]];          // u en période libre : ce qui la précède
+                    const need = Math.min(cu, nbOf[u] || cu);
                     return need > 0 && placed[u].some(l => l.length < need || l[need - 1].k > s.k);
                 });
                 if (!missing.length) return;
