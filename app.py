@@ -3698,8 +3698,8 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     (r'^/api/import/repartition$', ['rep:annuelle'], ''),
     (r'^/api/optimize$', ['rep:annuelle'], ''),
     # Optimiseur de la répartition : rien n'est écrit (proposition pour le brouillon),
-    # mais seul qui administre la répartition annuelle s'en sert
-    (r'^/api/repartition/optimiser$', ['rep:annuelle'], 'strict'),
+    # mais seul qui administre la répartition annuelle s'en sert et en règle les poids
+    (r'^/api/repartition/(optimiser|poids)$', ['rep:annuelle'], 'strict'),
     (r'^/api/(checks|export)/repartition$', ['rep:annuelle'], 'readlike'),
     (r'^/api/edt-planned-weeks$', ['rep:jour'], ''),
     (r'^/api/compare/hyperplanning$', ['svc:comparaison'], 'readlike'),
@@ -17645,11 +17645,18 @@ _WISH_MAX_WEEKS = 40
 _WISH_MAX_PER_WEEK = 9
 
 def _wish_semaines_dispo(db):
+    """Nombre de semaines disponibles de chaque semestre, par face (_wish_semaines_listes).
+    {code semestre: {'FTP': n, 'ALT': n, 'MUT': n}}"""
+    return {code: {f: len(ws) for f, ws in faces.items()}
+            for code, faces in _wish_semaines_listes(db).items()}
+
+def _wish_semaines_listes(db):
     """Semaines disponibles de chaque semestre, par face, pour la répartition
     souhaitée : les semaines du semestre (config Calendrier, impair / pair, dans la
     plage de son année d'études), moins les vacances et le stage côté FTP, moins
     l'entreprise côté ALT ; le mutualisé n'a que les semaines communes aux deux.
-    {code semestre: {'FTP': n, 'ALT': n, 'MUT': n}}"""
+    Une colonne du vœu = une de ces semaines, dans l'ordre de l'année.
+    {code semestre: {'FTP': [semaines], 'ALT': [...], 'MUT': [...]}}"""
     cfg = get_year_config()
     sc = {}
     for r in db.execute('SELECT week_number, week_type FROM special_calendar').fetchall():
@@ -17666,7 +17673,8 @@ def _wish_semaines_dispo(db):
         sem = get_valid_school_weeks(debut, fin, a_max) & get_valid_school_weeks(a_debut, a_fin, a_max)
         ftp = sem - sc.get(f'vacation_ftp_y{yg}', set()) - sc.get(f'stage_ftp_y{yg}', set())
         alt = sem - sc.get(f'company_alt_y{yg}', set())
-        out[code] = {'FTP': len(ftp), 'ALT': len(alt), 'MUT': len(ftp & alt)}
+        cle = lambda w, a_debut=a_debut, a_max=a_max: school_week_key(w, a_debut, a_max)
+        out[code] = {'FTP': sorted(ftp, key=cle), 'ALT': sorted(alt, key=cle), 'MUT': sorted(ftp & alt, key=cle)}
     return out
 
 def _wish_depassement(sem, face, typ, lim):
@@ -17692,13 +17700,16 @@ def _wish_row_from_db(r):
 @app.route('/api/courses/wishes', methods=['GET'])
 def get_course_wishes():
     """Séances de chaque matière (face × type, nb de séances, durée, groupes), vœux
-    de répartition enregistrés et semaines disponibles de son semestre par face.
-    {course_id: {sessions: [...], wish: {...} | null, semestre, limites: {FTP, ALT, MUT} | null}}"""
+    de répartition enregistrés et semaines disponibles de son semestre par face
+    (nombre, et liste dans l'ordre de l'année : une colonne du vœu = une semaine).
+    {course_id: {sessions: [...], wish: {...} | null, semestre, limites: {FTP, ALT, MUT} | null,
+                 semaines: {FTP: [...], ALT: [...], MUT: [...]} | null}}"""
     try:
         db = get_db()
         sg_map, mut_set, tpsep_set = _load_semester_groups(db)
         rank_ft = {ft: i for i, ft in enumerate(_WISH_FORMATIONS)}
-        dispo = _wish_semaines_dispo(db)
+        listes = _wish_semaines_listes(db)
+        dispo = {code: {f: len(ws) for f, ws in faces.items()} for code, faces in listes.items()}
         out = {}
         for r in db.execute('''
                 SELECT c.id AS course_id, c.tp_type, s.code AS semester_code,
@@ -17714,7 +17725,8 @@ def get_course_wishes():
                 continue
             entry = out.setdefault(r['course_id'], {'sessions': [], 'wish': None,
                                                     'semestre': r['semester_code'],
-                                                    'limites': dispo.get(r['semester_code'])})
+                                                    'limites': dispo.get(r['semester_code']),
+                                                    'semaines': listes.get(r['semester_code'])})
             slot = r['slot_duration'] or 1.5
             nb = r['nb_sessions'] or (round((r['total_hours'] or 0) / slot) if slot > 0 else 0)
             try:
@@ -19986,6 +19998,54 @@ def _repartition_payload(semester_code):
         'special_weeks': special_weeks,
     }
 
+# ===== Poids de l'optimiseur de la répartition (optim_repartition) =====
+# Réglage du site (edt_settings.json, « repartition_poids » : {nom: valeur}), commun à
+# toutes les années, comme les poids de l'EDT ; seuls les écarts aux valeurs par défaut
+# sont gardés. « Optimiser… » les applique quand la requête ne donne pas les siens.
+
+def _rep_poids_enregistres():
+    """Poids enregistrés, valides ; {} si aucun ou illisibles."""
+    try:
+        import optim_repartition
+        return optim_repartition.lire_poids(get_settings().get('repartition_poids') or {})
+    except Exception:
+        return {}
+
+def _rep_poids_etat():
+    import optim_repartition as O
+    enr = _rep_poids_enregistres()
+    cles = [c for c, *_ in O.POIDS_INFOS]
+    return {'poids': {c: enr.get(c, O.POIDS[c]) for c in cles}, 'defauts': {c: O.POIDS[c] for c in cles},
+            'max': O.POIDS_MAX, 'modifies': sorted(c for c in cles if c in enr),
+            'infos': [{'cle': c, 'libelle': l, 'unite': u, 'aide': a} for c, l, u, a in O.POIDS_INFOS]}
+
+@app.route('/api/repartition/poids', methods=['GET'])
+def get_repartition_poids():
+    return jsonify(_rep_poids_etat())
+
+@app.route('/api/repartition/poids', methods=['PUT'])
+def put_repartition_poids():
+    """Enregistre les poids (corps : {"poids": {nom: valeur}}) ; {} = valeurs par défaut."""
+    err = _require_admin()
+    if err:
+        return err
+    import optim_repartition as O
+    data = request.get_json(silent=True) or {}
+    try:
+        poids = O.lire_poids(data.get('poids') if data.get('poids') is not None else {})
+    except ValueError as e:
+        return error_response(str(e), 400)
+    ecarts = {c: v for c, v in poids.items() if v != O.POIDS[c]}
+    s = get_settings()
+    if ecarts:
+        s['repartition_poids'] = ecarts
+    else:
+        s.pop('repartition_poids', None)
+    save_settings(s)
+    _audit('REPARTITION_POIDS_SAVE', ip=_client_ip(), user=session.get('user'),
+           poids=','.join(f'{c}={v:g}' for c, v in sorted(ecarts.items())) or 'défaut')
+    return jsonify(_rep_poids_etat())
+
 @app.route('/api/repartition/optimiser', methods=['POST'])
 def optimiser_repartition():
     """Optimise la Répartition annuelle des semestres demandés (optim_repartition.py) en
@@ -20011,6 +20071,12 @@ def optimiser_repartition():
         temps = min(90.0, max(5.0, float(data.get('temps') or 30)))
     except (TypeError, ValueError):
         return error_response('Temps de calcul invalide', 400)
+    # Poids : ceux de la fenêtre (enregistrés ou non), sinon ceux enregistrés
+    try:
+        poids = (optim_repartition.lire_poids(data['poids']) if data.get('poids') is not None
+                 else _rep_poids_enregistres())
+    except ValueError as e:
+        return error_response(str(e), 400)
     try:
         brouillon = _weekly_cells_from_json(data) if data.get('cells') else None
     except ValueError as e:
@@ -20063,9 +20129,11 @@ def optimiser_repartition():
                     annee[r['semester']], ft_code[r['formation']], r['group_index'] or 1,
                     r['n_groups'] or 1, r['semester'], (r['type'] or '').upper())
         ctx = {'annee': annee, 'semaines': semaines, 'speciales': speciales, 'plages': plages,
-               'spw': spw, 'ordres': ordres, 'voeux': voeux, 'publics': publics}
+               'spw': spw, 'ordres': ordres, 'voeux': voeux, 'publics': publics,
+               'semaines_voeu': _wish_semaines_listes(db)}
         res = optim_repartition.optimiser(lignes, ctx, {'semestres': sems, 'faces': faces, 'mode': mode,
-                                                         'temps': temps, 'placer_vides': placer_vides},
+                                                         'temps': temps, 'placer_vides': placer_vides,
+                                                         'poids': poids},
                                           nom_solveur, solveur_edt._solveur)
     except Exception as e:
         import traceback
@@ -20078,6 +20146,9 @@ def optimiser_repartition():
         if not b:
             return None
         return {'ordres': b['ordres'][:40], 'nb_ordres': len(b['ordres']), 'voeux': b['voeux'],
+                'grille': b.get('grille', 0),
+                'grille_matieres': [{'code': c, 'ecart': e, 'debut': s} for c, e, s in b.get('grille_matieres', [])[:40]],
+                'nb_grille_matieres': len(b.get('grille_matieres', [])),
                 'hors_plage': b['hors_plage'], 'interdites': b['interdites'], 'non_places': b['non_places'],
                 'blocs_en_plus': b['blocs_en_plus'],
                 'surcharges': [{'annee': a, 'face': f, 'semaine': w, 'heures': round(h, 1)}

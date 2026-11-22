@@ -796,7 +796,7 @@ function _aideService() {
             <li>Une ligne bleue par <b>matière</b>, puis une ligne par formation (MUT, FTP, ALT) et par type. Les <b>TD</b> et les <b>TP</b> partagés en groupes ont <b>une ligne par groupe</b>, avec son numéro (gr.1, gr.2… ; ALT pour les groupes d'apprentis d'un TP mutualisé) et son enseignant : chaque groupe se place à part, deux groupes de TD peuvent donc avoir la même séance des semaines différentes.</li>
             <li>${_aUi('H. module')} : le volume à placer ; ${_aUi('Reste')} : ce qu'il reste à placer, <b>en rouge tant qu'il n'est pas à zéro</b>. Le reste compte toutes les semaines, même celles qu'un filtre masque.</li>
             <li>Les semaines <b style="color:#c2410c">orange</b> sont des semaines de vacances, de stage (FTP) ou d'entreprise (ALT), d'après le ${_aLien('promo-calendrier', 'calendrier')} de la promotion.</li>
-            <li>En haut, les <b>taux horaires</b> (FTP1, ALT1… FTP3, ALT3) donnent les heures de cours d'un étudiant de chaque promo, semaine par semaine. Filtré sur un enseignant ou une salle, le tableau ajoute sa charge hebdomadaire.</li>
+            <li>En haut, les <b>taux horaires</b> (FTP1, ALT1… FTP3, ALT3) donnent les heures de cours d'un étudiant de chaque promo, semaine par semaine : celles du <b>groupe le plus chargé</b> de la semaine, TD et TP compris (un étudiant ne suit qu'un groupe de TD et un de TP ; le survol d'une case dit lequel). Ce sont les mêmes heures que la charge des promotions du ${_aUi('Contrôle')} et de ${_aUi('Optimiser…')}. Filtré sur un enseignant ou une salle, le tableau ajoute sa charge hebdomadaire.</li>
             <li>La ligne des <b>commentaires</b> de semaine (écrits dans le calendrier) s'affiche au-dessus des semaines.</li>
             <li>Une semaine qui a un <b>jour férié</b> ou un <b>pont</b> porte un repère à côté de son numéro : <span class="jf-rep">F</span>
                 pour un jour férié, <span class="jf-rep pont">P</span> pour un pont ; le survol donne les dates, et leur nom s'ajoute à la
@@ -845,15 +845,24 @@ function _aideService() {
         <h3>Répartition souhaitée par l'enseignant</h3>
         <p>Quand un enseignant a donné l'enchaînement voulu de ses séances (${_aOng('Contraintes Matière')}), la ligne bleue de la matière
         porte <span class="wish-badge ord-ok">vœu ✓</span> ; le survol rappelle cet enchaînement (« CM → TD → CM + TD → TP… »).
-        Seul l'<b>ordre</b> compte, la place dans le calendrier reste votre choix. Une séance placée alors qu'une séance que le vœu
-        met avant elle ne l'est pas encore (au plus tard la même semaine) prend un <b>cadre rouge pointillé</b>, avec le rappel au survol,
-        et le repère passe à <span class="wish-badge ord-bad">vœu ✗1</span>. Exemple : vœu « CM → TD → CM », deux CM placés d'affilée :
-        le second est encadré tant qu'aucun TD (dans chaque groupe) n'est placé avant lui ou la même semaine.
-        ${_aUi('Contrôle')} liste aussi les matières en écart.</p>
-        <p>Quand le vœu met <b>plus d'une séance de TP dans une semaine</b>, les semaines de TP qui se suivent forment une
-        <b>période libre</b> : ses séances peuvent se placer n'importe où dans la période. Elles n'attendent que ce que le vœu met
-        avant la période ; ce qui est placé pendant la période n'attend aucune d'elles ; ce qui la suit les attend toutes. Le survol
-        l'indique d'un bloc (« 5 TP sur 4 sem. »). ${_aUi('Optimiser…')} applique la même règle.</p>
+        Le vœu se lit de deux façons :</p>
+        <ul>
+            <li>l'<b>ordre</b> : une séance placée alors qu'une séance que le vœu met avant elle ne l'est pas encore (au plus tard la
+            même semaine) prend un <b>cadre rouge pointillé</b>, avec le rappel au survol, et le repère passe à
+            <span class="wish-badge ord-bad">vœu ✗1</span>. Exemple : vœu « CM → TD → CM », deux CM placés d'affilée : le second est
+            encadré tant qu'aucun TD (dans chaque groupe) n'est placé avant lui ou la même semaine ;</li>
+            <li>la <b>grille</b>, semaine par semaine : une colonne du vœu est une semaine disponible de la face (sans vacances ni stage
+            pour les FTP, sans entreprise pour les ALT), à partir d'une semaine de début — une pour les FTP et le mutualisé, une pour
+            les ALT —, celle qui colle le mieux à la répartition. Chaque séance décalée d'une semaine compte 1 : le repère passe à
+            <span class="wish-badge ord-warn">vœu ~3</span> et les semaines où la grille veut un autre nombre de séances prennent un
+            <b>cadre orange</b> (« 1 CM voulu cette semaine, 0 placé »). Le survol du repère donne la semaine de début retenue.</li>
+        </ul>
+        <p>${_aUi('Contrôle')} liste les matières en écart, à l'ordre (en rouge) ou à la grille (en orange).</p>
+        <p>Quand le vœu met <b>plus d'une séance de TP dans une semaine</b> — ou de TD, si la face n'a qu'<b>un seul groupe de TD</b> —, les
+        semaines qui se suivent forment une <b>période libre</b> : ses séances peuvent se placer n'importe où dans la période. Elles
+        n'attendent que ce que le vœu met avant la période ; ce qui est placé pendant la période n'attend aucune d'elles ; ce qui la suit
+        les attend toutes ; la grille n'en fixe que le total. Le survol l'indique d'un bloc (« 5 TP sur 4 sem. »).
+        ${_aUi('Optimiser…')} applique les mêmes règles.</p>
         <h3>Outils de la barre</h3>
         <ul>
             ${_aSiModif('rep:annuelle', `<li>${_aUi('Contrôle')} : un panneau à droite liste la <b>charge des enseignants par semaine</b> (orange au-delà de 20 h, rouge au-delà de 30 h) , les <b>conflits de salle</b> (plus de 2 matières la même semaine) et les <b>contraintes d'ordre non respectées</b>. Le brouillon est compris dans le contrôle.</li>
@@ -866,7 +875,7 @@ function _aideService() {
 
     { id: 'rep-optimiser', rub: R, titre: 'Optimiser la répartition annuelle', chemin: 'Service › Répartition Calendaire › Répartition annuelle › Optimiser…',
       onglet: 'rep:annuelle', cible: 'repartition/annuelle', pour: 'modifier',
-      mots: 'optimiser optimisation optimiseur ordonnancement répartition souhaitée automatique placer calculer brouillon interruption surcharge charge',
+      mots: 'optimiser optimisation optimiseur ordonnancement répartition souhaitée vœu grille automatique placer calculer brouillon interruption surcharge charge poids',
       html: `
         <p>${_aUi('Optimiser…')} propose un placement des séances, semaine par semaine, pour les <b>semestres affichés</b> (et le
         filtre ${_aUi('Formation')} : les lignes MUT en font toujours partie). Les autres semestres ne bougent pas, mais leurs heures
@@ -875,11 +884,23 @@ function _aideService() {
         <ul>
             <li><b>toujours</b> : le calendrier de chaque face — aucune séance FTP en vacances ou en stage, aucune séance ALT en entreprise,
             les deux pour le mutualisé — et le nombre de séances par semaine de chaque séance (fiche Matières) ;</li>
+            <li>les semaines de la matière (son semestre) : une séance n'en sort pas — en mode ${_aUi('Bouger le moins possible')}, celle
+            que vous y avez déjà mise dehors reste où elle est ;</li>
             <li>puis, du plus important au moins important : placer toutes les séances ; les <b>ordonnancements</b> (« A terminé avant B »,
-            écart compris) et la <b>répartition souhaitée</b> par les enseignants, avec les mêmes règles que les repères 🔗 et les cadres
-            rouges ; la plage de semaines de la matière (son semestre) ; la charge des promotions (au-delà de 30 h par semaine en FTP,
-            de 40 h en ALT, groupe par groupe) et des enseignants (au-delà de 20 h) ; des matières sans interruption.</li>
+            écart compris) ; la <b>répartition souhaitée</b> par les enseignants — un groupe ne commence pas avant la fin de ce que le vœu
+            met tout entier avant lui (pas de TP avant la fin des CM, par exemple), puis la <b>grille</b> du vœu semaine par semaine, à
+            partir de la semaine de début la plus favorable (FTP et ALT chacun la leur) ; la charge des promotions (au-delà de 30 h par
+            semaine en FTP, de 40 h en ALT, groupe par groupe) et des enseignants (au-delà de 20 h) ; des matières sans interruption —
+            sauf celles qui suivent un vœu, dont la grille fixe le rythme.</li>
         </ul>
+        <h3>Poids du calcul</h3>
+        <p>${_aUi('Poids du calcul')}, dans la fenêtre, affiche et règle l'importance de chacune de ces préférences : séance non placée
+        (100 par séance), ordonnancement (100 par semaine de retard), ordre de la répartition souhaitée (30 par semaine d'avance),
+        grille du vœu (5 par séance et par semaine de décalage), séance hors des semaines de la matière (30), surcharge d'une
+        promotion (3 par heure) ou d'un enseignant (1 par heure), interruption (3), séance déplacée (2, mode
+        ${_aUi('Bouger le moins possible')}), semaine la plus chargée (0,2 par heure). Plus un poids est fort, plus le calcul évite ce
+        qu'il pénalise ; 0 l'ignore. Les valeurs affichées servent au prochain calcul ; ${_aUi('Enregistrer ces poids')} les garde pour
+        tous les calculs, de toutes les années, et ${_aUi('Valeurs par défaut')} y revient.</p>
         <h3>Deux modes</h3>
         <ul>
             <li>${_aUi('Bouger le moins possible')} : part de la répartition actuelle (brouillon compris) et ne déplace une séance que si
@@ -888,13 +909,17 @@ function _aideService() {
             Matières.</li>
             <li>${_aUi('Repartir de zéro')} : recalcule tout le périmètre d'après la fiche Matières, sans tenir compte de l'actuel.</li>
         </ul>
-        <p>Le calcul dure le temps choisi (30 s pour un semestre, 60 s pour une année). Il affiche ensuite un bilan <b>avant / après</b>.
+        <p>Le calcul dure le temps choisi (60 s pour un semestre, 90 s pour une année ; 30 s pour un essai rapide, moins abouti). Il affiche ensuite un bilan <b>avant / après</b>.
         ${_aUi('Poser dans le brouillon')} remplace les cases du périmètre par la proposition, en un seul pas : les repères se mettent à
         jour, ${_aUi('Contrôle')} la vérifie, <kbd>Ctrl</kbd>+<kbd>Z</kbd> l'annule. Rien n'est enregistré avant ${_aUi('Enregistrer')}.</p>
         ${_aEx('régler un ordonnancement', `Une matière de S1 doit être terminée avant une matière de S2 qui commence trop tôt : on coche
             S1 et S2, ${_aUi('Optimiser…')}, ${_aUi('Bouger le moins possible')}, ${_aUi('Lancer')}. Le bilan indique « Ordonnancements non
             respectés : 1 → 0 » et le nombre de séances déplacées ; ${_aUi('Poser dans le brouillon')}, un coup d'œil aux repères, puis
-            ${_aUi('Enregistrer')}.`)}` },
+            ${_aUi('Enregistrer')}.`)}
+        ${_aEx('suivre les vœux', `Les matières de S2 portent <span class="wish-badge ord-warn">vœu ~12</span> : leurs séances ne suivent
+            pas la grille des enseignants. ${_aUi('Optimiser…')} sur S2 : le bilan donne « décalages à la grille » avant / après et liste
+            les matières encore décalées, avec leur semaine de début. Pour que la grille l'emporte sur la charge des promotions,
+            augmenter son poids dans ${_aUi('Poids du calcul')} avant de relancer.`)}` },
 
     { id: 'rep-jour', rub: R, titre: 'Répartition journalière (semaine par semaine)', chemin: 'Service › Répartition Calendaire › Répartition journalière',
       onglet: 'rep:jour', cible: 'repartition/jour',
@@ -1083,12 +1108,14 @@ function _aideService() {
         FTP 16 · ALT 11 »). Au-delà, les cases d'une face sont <b>hachurées</b> et ne prennent pas de séance. Une séance qui s'y trouve
         déjà (calendrier modifié depuis, ou ${_aUi('Copier FTP → ALT')} d'un rythme trop long) apparaît en <b>rouge</b>, compte encore dans
         ${_aUi('Reste')}, et un clic la retire : l'enregistrement est refusé tant qu'il en reste.</p>
-        <p>Plus d'une séance de TP dans une semaine (souvent pour tenir dans les semaines des ALT) : les TP de ces semaines qui se
-        suivent forment une <b>période libre</b>, signalée sous la grille — ses séances peuvent se placer n'importe où dans la
-        période, seul compte ce qui vient avant et après.</p>
+        <p>Plus d'une séance de TP dans une semaine (souvent pour tenir dans les semaines des ALT), ou de TD quand la face n'a
+        qu'<b>un seul groupe de TD</b> : les semaines qui se suivent forment une <b>période libre</b>, signalée sous la grille — ses
+        séances peuvent se placer n'importe où dans la période, seul compte ce qui vient avant et après.</p>
         <p>Un TD ou un TP à plusieurs groupes suit le même rythme pour chaque groupe. Le titre du volet indique si la répartition est
-        renseignée, par qui et quand. C'est un <b>vœu</b> : rien n'est placé dans la répartition calendaire, mais l'administration y
-        voit l'enchaînement voulu et les séances placées dans un autre ordre.</p>
+        renseignée, par qui et quand. C'est un <b>vœu</b> : rien n'est placé tout seul dans la répartition calendaire, mais
+        l'administration y voit l'enchaînement voulu, les séances placées dans un autre ordre (cadre rouge) et les semaines qui
+        s'écartent de la grille (cadre orange) — une colonne est une semaine disponible de la face, la semaine de début restant
+        son choix —, et ${_aUi('Optimiser…')} la suit.</p>
         <p>Le volet ${_aUi('Matières à placer avant')} liste les matières qui doivent être <b>terminées avant le début</b> de celle-ci.
         ${_aUi('+ Ajouter une matière à placer avant')} propose toutes les matières de l'année (celles du même semestre d'abord) ;
         on peut viser une partie de chaque côté : « le CM de R1.01 terminé avant le TD de cette matière », et demander un

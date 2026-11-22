@@ -584,11 +584,15 @@
         .repartition-wrap .mat-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
         .repartition-wrap .mat-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .ord-badge:empty, .wish-badge:empty { display: none; }
+        /* Écart à la grille de la répartition souhaitée (semaine où le vœu veut un autre
+           nombre de séances) : cadre orange ; un écart à l'ordre (rouge) passe devant */
+        .repartition-wrap td.cell-wish-grille { outline: 2px dotted #d97706; outline-offset: -2px; }
         /* Écart à la répartition souhaitée : cadre rouge (pointillé, laisse voir l'encadré du brouillon) */
         .repartition-wrap td.cell-wish-bad { outline: 2px dashed #dc2626; outline-offset: -2px; }
         .ord-badge, .wish-badge { flex-shrink: 0; font-size: .68rem; font-weight: 700; padding: 0 6px; border-radius: 999px; line-height: 1.6; cursor: help; white-space: nowrap; }
         .ord-badge.ord-ok, .wish-badge.ord-ok { background: #dcfce7; color: #166534; }
         .ord-badge.ord-bad, .wish-badge.ord-bad { background: #fee2e2; color: #b91c1c; }
+        .wish-badge.ord-warn { background: #fef3c7; color: #92400e; }
         .ord-badge.ord-unknown { background: #f3f4f6; color: #6b7280; }
         .ord-badge.ord-lien, .wish-badge.ord-lien { cursor: pointer; }
         .repartition-wrap td.cell-order-bad { position: relative; }
@@ -2018,9 +2022,10 @@
             Propose, pour les semestres affichés, un placement des séances semaine par semaine qui respecte toujours le
             calendrier de chaque face (vacances et stage FTP, entreprise ALT) et le nombre de séances par semaine, puis, du
             plus important au moins important : placer toutes les séances, les <b>ordonnancements</b> et la <b>répartition
-            souhaitée</b> (Contraintes Matière), la plage de semaines de la matière, la charge des promotions (FTP 30 h, ALT
-            40 h par semaine) et des enseignants (20 h), et des matières sans interruption. La proposition va dans le
-            brouillon : rien n'est enregistré, Ctrl+Z l'annule.
+            souhaitée</b> (Contraintes Matière : l'ordre des types, puis sa grille semaine par semaine, à partir de la
+            semaine de début la plus favorable), la charge des promotions (FTP 30 h, ALT 40 h par semaine) et des
+            enseignants (20 h), et des matières sans interruption. Une séance reste dans les semaines de sa matière (son
+            semestre). La proposition va dans le brouillon : rien n'est enregistré, Ctrl+Z l'annule.
         </p>
         <div class="edtg-opts">
             <fieldset>
@@ -2045,13 +2050,19 @@
                 <legend>Calcul</legend>
                 <label style="align-items:center">Temps :
                     <select id="ropt-temps" style="padding:3px 6px;border:1px solid #d1d5db;border-radius:6px">
-                        <option value="30">30 s (un semestre)</option>
-                        <option value="60" selected>60 s (une année)</option>
-                        <option value="90">90 s</option>
+                        <option value="30">30 s (essai rapide)</option>
+                        <option value="60" selected>60 s (un semestre)</option>
+                        <option value="90">90 s (une année)</option>
                     </select></label>
                 <div class="edtg-note">Plus de temps donne en général un meilleur résultat.</div>
             </fieldset>
         </div>
+        <!-- Poids des préférences (GET/PUT /api/repartition/poids, réglage du site), comme
+             pour « Générer l'EDT » : les valeurs affichées servent au prochain calcul -->
+        <details class="edtg-poids" id="ropt-poids">
+            <summary>Poids du calcul <span class="edtg-note" id="ropt-poids-resume"></span></summary>
+            <div id="ropt-poids-corps"><div class="spinner">Chargement…</div></div>
+        </details>
         <div id="ropt-progress"></div>
         <div id="ropt-result"></div>
         <div class="form-actions">
@@ -5839,14 +5850,14 @@ function mcWishGridHtml(cid) {
         return `<div class="mc-wish-none">Aucune séance n'est encore définie pour cette matière.</div>`;
     const wk = _mcWorking(cid), n = wk.n, sess = e.sessions;
     const badge = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' };
-    // Colonnes sans numéro : seul l'ordre compte, la place dans le calendrier
-    // revient à l'administration / au responsable FTP
+    // Colonnes sans numéro : une colonne = une semaine disponible de la face, la semaine
+    // de début revient à l'administration / au responsable FTP (et à l'optimiseur)
     let h = `<div class="mc-wish-scroll"><table class="mc-wish-table"
                 onclick="mcWishClick(event, ${cid}, 1)" oncontextmenu="mcWishClick(event, ${cid}, -1)">
         <thead><tr><th>Form.</th><th>Type</th>
             <th title="Séances à répartir (par groupe)">Séances</th>
             <th title="Séances restant à répartir">Reste</th>
-            <th class="mc-seq" colspan="${n}" title="Une colonne par semaine, dans l'ordre ; leur place dans le calendrier est décidée par l'administration">Semaine après semaine →</th></tr></thead><tbody>`;
+            <th class="mc-seq" colspan="${n}" title="Une colonne par semaine disponible de la face (sans vacances, stage ni entreprise), dans l'ordre ; la semaine de début est décidée par l'administration">Semaine après semaine →</th></tr></thead><tbody>`;
     // Un bloc par face (MUT, FTP, ALT), libellé fusionné à gauche comme dans la répartition
     const faces = [];
     sess.forEach(s => {
@@ -5902,9 +5913,9 @@ function mcWishGridHtml(cid) {
     const depasse = _mcDepassements(cid, wk);
     if (depasse.length)
         h += `<div class="mc-wish-over">⚠ ${depasse.map(esc).join('<br>⚠ ')}</div>`;
-    // Périodes de TP à plus d'une séance par semaine : séances libres dans la période
-    const libres = sess.flatMap(s => wishPeriodesLibres(wk.rows[s.key] || [], n, s.type).map(p =>
-        `${s.formation} · ${s.type} : plus d'une séance dans une semaine — les ${p.n} séances de ces ${p.fin - p.debut + 1} semaines
+    // Périodes de TP (ou de TD d'un seul groupe) à plus d'une séance par semaine : séances libres dans la période
+    const libres = sess.flatMap(s => wishPeriodesLibres(wk.rows[s.key] || [], n, s.type, s.groups).map(p =>
+        `${s.formation} · ${s.type}${s.type === 'TD' ? ' (un seul groupe)' : ''} : plus d'une séance dans une semaine — les ${p.n} séances de ces ${p.fin - p.debut + 1} semaines
          peuvent se placer n'importe où dans la période (seul compte ce qui vient avant et après).`));
     if (libres.length)
         h += `<div class="mc-wish-info">ℹ ${libres.map(esc).join('<br>ℹ ')}</div>`;
@@ -19157,27 +19168,11 @@ async function loadRepartition() {
             company_alt:  uniq(sems.flatMap(s => datas[s].special_weeks.company_alt || [])),
         };
 
-        // promoRows : une entrée par session avec sa contribution aux taux FTP et ALT
-        // (CM+TD+TP). Mutualisé : CM/TD comptent pour les deux ; TP → côté FTP = groupes
-        // FTP, côté ALT = groupe(s) apprenti(s). Un étudiant n'étant que dans un groupe,
-        // on prend le groupe le plus chargé de chaque côté (pas de multiplication).
-        const seenPromo = new Set();
-        const promoRows = [];
-        promoSet.forEach(s => {
-            const bySid = {};
-            datas[s].rows.forEach(r => { (bySid[r.session_id] = bySid[r.session_id] || []).push(r); });
-            Object.values(bySid).forEach(groupRows => {
-                const sid = groupRows[0].session_id;
-                if (seenPromo.has(sid)) return;
-                seenPromo.add(sid);
-                const contrib = sessionPromoContrib(groupRows);
-                promoRows.push({ session_id: sid, formation: groupRows[0].formation,
-                                 semester: groupRows[0].semester,
-                                 ftpByWeek: contrib.ftp, altByWeek: contrib.alt });
-            });
-        });
+        // Charge hebdomadaire des promotions (lignes FTP1, ALT1…) : parties d'effectif de
+        // chaque promotion, sur les semestres affichés et leurs pairs (promoStructure)
+        const promoStruct = promoStructure(allRows);
 
-        _repartitionData = { weeks, rows, allRows, special_weeks, specialBySem, promoRows, selected: sems };
+        _repartitionData = { weeks, rows, allRows, special_weeks, specialBySem, promoStruct, selected: sems };
         renderRepartition(_repartitionData); // repeuple aussi les filtres Enseignant/Salle
     } catch(e) {
         if (seq !== _repLoadSeq) return;
@@ -19484,87 +19479,107 @@ async function openEdtGen() {
     else document.getElementById('edtgen-grid').innerHTML = '';
 }
 
-// ----- Poids du calcul (GET/PUT /api/edt-poids) -----
+// ----- Poids du calcul : panneau commun (Générer l'EDT, Optimiser la répartition) -----
 // Réglage du site, commun à toutes les années. Les champs affichés servent au
 // prochain calcul même s'ils ne sont pas enregistrés (essais) ; « Enregistrer »
-// les garde pour tous les calculs.
-let _edtgPoids = null;   // { poids (enregistrés), defauts, max, modifies, infos: [{cle, libelle, unite, aide}] }
+// les garde pour tous les calculs. État d'un panneau : { poids (enregistrés), defauts,
+// max, modifies, infos: [{cle, libelle, unite, aide}] }, lu par GET `api`.
+let _edtgPoids = null;   // Générer l'EDT (GET/PUT /api/edt-poids)
+let _roptPoids = null;   // Optimiser la répartition annuelle (GET/PUT /api/repartition/poids)
+const _POIDS_PANNEAUX = {
+    edt: { api: '/edt-poids', corps: 'edtgen-poids-corps', resume: 'edtgen-poids-resume', pref: 'edtgp',
+           get: () => _edtgPoids, set: v => { _edtgPoids = v; },
+           note: 'Placer toutes les séances passe toujours avant.' },
+    ropt: { api: '/repartition/poids', corps: 'ropt-poids-corps', resume: 'ropt-poids-resume', pref: 'roptp',
+            get: () => _roptPoids, set: v => { _roptPoids = v; },
+            note: 'Gardez « Séance non placée » le plus fort.' },
+};
 
-async function _edtgChargerPoids() {
-    const corps = document.getElementById('edtgen-poids-corps');
-    try { _edtgPoids = await api('/edt-poids'); }
+async function poidsCharger(nom) {
+    const c = _POIDS_PANNEAUX[nom];
+    const corps = document.getElementById(c.corps);
+    try { c.set(await api(c.api)); }
     catch (e) { corps.innerHTML = `<div class="empty">Poids indisponibles : ${esc(e.message)}</div>`; return; }
-    _edtgRendrePoids(_edtgPoids.poids);
+    poidsRendre(nom, c.get().poids);
 }
 
-function _edtgRendrePoids(valeurs) {
-    const P = _edtgPoids;
-    document.getElementById('edtgen-poids-corps').innerHTML = `<table><tbody>${P.infos.map(i => `<tr>
+function poidsRendre(nom, valeurs) {
+    const c = _POIDS_PANNEAUX[nom], P = c.get();
+    document.getElementById(c.corps).innerHTML = `<table><tbody>${P.infos.map(i => `<tr>
             <td><b>${esc(i.libelle)}</b>${i.aide ? `<div class="edtg-note">${esc(i.aide)}</div>` : ''}</td>
-            <td class="pv"><input type="number" min="0" max="${P.max}" step="0.5" id="edtgp-${i.cle}"
-                value="${valeurs[i.cle]}" oninput="edtgPoidsMaj()" aria-label="${esc(i.libelle)}">
+            <td class="pv"><input type="number" min="0" max="${P.max}" step="0.5" id="${c.pref}-${i.cle}"
+                value="${valeurs[i.cle]}" oninput="poidsMaj('${nom}')" aria-label="${esc(i.libelle)}">
                 <span class="edtg-note">${esc(i.unite)}</span></td>
             <td class="pv pdef">défaut ${P.defauts[i.cle]}</td></tr>`).join('')}</tbody></table>
         <div class="pactions">
-            <button type="button" class="btn btn-secondary btn-sm" onclick="edtgPoidsDefaut()">Valeurs par défaut</button>
-            <button type="button" class="btn btn-primary btn-sm" id="edtgp-save" onclick="edtgPoidsEnregistrer()">Enregistrer ces poids</button>
-            <span class="edtg-note" id="edtgp-statut"></span>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="poidsDefaut('${nom}')">Valeurs par défaut</button>
+            <button type="button" class="btn btn-primary btn-sm" id="${c.pref}-save" onclick="poidsEnregistrer('${nom}')">Enregistrer ces poids</button>
+            <span class="edtg-note" id="${c.pref}-statut"></span>
         </div>
         <p class="edtg-note" style="margin-top:6px">Plus un poids est fort, plus le calcul évite ce qu'il pénalise ;
-        0 l'ignore. Placer toutes les séances passe toujours avant. Les valeurs affichées servent au prochain calcul,
+        0 l'ignore. ${esc(c.note)} Les valeurs affichées servent au prochain calcul,
         même sans les enregistrer ; enregistrées, elles valent pour tous les calculs, de toutes les années.</p>`;
-    edtgPoidsMaj();
+    poidsMaj(nom);
 }
 
 // Valeurs saisies {clé: nombre} ; Error si l'une est vide ou hors bornes
-function _edtgPoidsSaisis() {
+function poidsSaisis(nom) {
+    const c = _POIDS_PANNEAUX[nom], P = c.get();
     const out = {};
-    for (const i of _edtgPoids.infos) {
-        const el = document.getElementById('edtgp-' + i.cle);
+    for (const i of P.infos) {
+        const el = document.getElementById(`${c.pref}-${i.cle}`);
         const v = el ? Number(el.value) : NaN;
-        if (!el || el.value.trim() === '' || !Number.isFinite(v) || v < 0 || v > _edtgPoids.max)
-            throw new Error(`Poids « ${i.libelle} » : un nombre de 0 à ${_edtgPoids.max} est attendu`);
+        if (!el || el.value.trim() === '' || !Number.isFinite(v) || v < 0 || v > P.max)
+            throw new Error(`Poids « ${i.libelle} » : un nombre de 0 à ${P.max} est attendu`);
         out[i.cle] = v;
     }
     return out;
 }
 
 // Champs différents du défaut en évidence ; état : par défaut, enregistrés, ou modifiés non enregistrés
-function edtgPoidsMaj() {
-    const P = _edtgPoids;
+function poidsMaj(nom) {
+    const c = _POIDS_PANNEAUX[nom], P = c.get();
     if (!P) return;
     let saisis = null;
-    try { saisis = _edtgPoidsSaisis(); } catch (e) { /* valeur invalide : signalée ci-dessous */ }
+    try { saisis = poidsSaisis(nom); } catch (e) { /* valeur invalide : signalée ci-dessous */ }
     P.infos.forEach(i => {
-        const el = document.getElementById('edtgp-' + i.cle);
+        const el = document.getElementById(`${c.pref}-${i.cle}`);
         if (el) el.classList.toggle('modif', el.value.trim() !== '' && Number(el.value) !== P.defauts[i.cle]);
     });
     const nonEnr = !!saisis && P.infos.some(i => saisis[i.cle] !== P.poids[i.cle]);
     const ecarts = saisis ? P.infos.filter(i => saisis[i.cle] !== P.defauts[i.cle]).length : 0;
-    const statut = document.getElementById('edtgp-statut');
+    const statut = document.getElementById(`${c.pref}-statut`);
     if (statut) statut.textContent = !saisis ? '⚠ valeur invalide'
         : nonEnr ? 'Modifiés, non enregistrés : ils serviront au prochain calcul.'
         : P.modifies.length ? 'Poids enregistrés.' : 'Valeurs par défaut.';
-    document.getElementById('edtgen-poids-resume').textContent = !saisis ? '— valeur invalide'
+    document.getElementById(c.resume).textContent = !saisis ? '— valeur invalide'
         : `— ${ecarts ? ecarts + ' différent(s) des valeurs par défaut' : 'valeurs par défaut'}${nonEnr ? ', non enregistré(s)' : ''}`;
 }
 
-function edtgPoidsDefaut() { if (_edtgPoids) _edtgRendrePoids(_edtgPoids.defauts); }
+function poidsDefaut(nom) { const P = _POIDS_PANNEAUX[nom].get(); if (P) poidsRendre(nom, P.defauts); }
 
-async function edtgPoidsEnregistrer() {
+async function poidsEnregistrer(nom) {
+    const c = _POIDS_PANNEAUX[nom];
     let poids;
-    try { poids = _edtgPoidsSaisis(); } catch (e) { toast(e.message, 'error'); return; }
-    const btn = document.getElementById('edtgp-save');
+    try { poids = poidsSaisis(nom); } catch (e) { toast(e.message, 'error'); return; }
+    const btn = document.getElementById(`${c.pref}-save`);
     btn.disabled = true;
     try {
-        _edtgPoids = await api('/edt-poids', { method: 'PUT', body: JSON.stringify({ poids }) });
-        _edtgRendrePoids(_edtgPoids.poids);
+        c.set(await api(c.api, { method: 'PUT', body: JSON.stringify({ poids }) }));
+        poidsRendre(nom, c.get().poids);
         toast('Poids du calcul enregistrés');
     } catch (e) {
         toast('Erreur : ' + e.message, 'error');
         btn.disabled = false;
     }
 }
+
+// Générer l'EDT : noms d'origine
+function _edtgChargerPoids() { return poidsCharger('edt'); }
+function _edtgPoidsSaisis() { return poidsSaisis('edt'); }
+function edtgPoidsMaj() { poidsMaj('edt'); }
+function edtgPoidsDefaut() { poidsDefaut('edt'); }
+function edtgPoidsEnregistrer() { return poidsEnregistrer('edt'); }
 
 function stopEdtGen() {
     _edtGen.stop = true;
@@ -20708,88 +20723,88 @@ function populateRepartitionFilters(rows) {
     }
 }
 
-// Contribution d'une session au taux horaire des promos FTP / ALT (CM+TD+TP).
-// - CM/TD/PT : FTP→FTP, ALT→ALT, MUT (mutualisé) → les DEUX (tronc commun).
-// - TP mutualisé commun (groupes apprentis présents) : côté FTP = groupes non-apprentis,
-//   côté ALT = groupes apprentis ; on prend le groupe le plus chargé de chaque côté par semaine
-//   (un étudiant n'est que dans un groupe).
-// - TP séparé (non mutualisé), TD à plusieurs groupes : selon la formation, le groupe
-//   le plus chargé par semaine.
-function sessionPromoContrib(groupRows) {
-    const first = groupRows[0];
-    const form = first.formation;
-    const isTP = (first.type || '').toUpperCase() === 'TP' && first.n_groups > 1;
-    const ftp = {}, alt = {};
-    const addMax = (target, subset) => subset.forEach(r =>
-        Object.entries(r.by_week).forEach(([w, h]) => { if (h > 0) target[w] = Math.max(target[w] || 0, h); }));
-    if (isTP && groupRows.some(r => r.alt_group)) {
-        addMax(ftp, groupRows.filter(r => !r.alt_group));   // groupes FTP
-        addMax(alt, groupRows.filter(r => r.alt_group));    // groupes apprentis
-    } else {
-        if (form === 'FTP' || form === 'MUT') addMax(ftp, groupRows);
-        if (form === 'ALT' || form === 'MUT') addMax(alt, groupRows);
+
+// ----- Charge hebdomadaire d'une promotion (lignes FTP1, ALT1… de la répartition) -----
+// Vue d'un étudiant : la promotion (année × face) est découpée en parties d'effectif
+// d'après les groupes — même découpage que solveur_edt.Donnees.public, donc que la charge
+// des promotions du Contrôle et de l'optimiseur. La ligne du groupe g sur n couvre la part
+// [(g−1)/n, g/n) de la promotion ; TP mutualisé à TP communs : FTP sur les groupes non
+// apprentis, ALT sur les groupes apprentis ; CM / TD / PT mutualisés : les deux faces.
+// Chaque semaine, la ligne promo donne la partie la plus CHARGÉE (un étudiant ne suit
+// qu'un groupe de TD et un de TP). Prendre le groupe le plus chargé séance par séance
+// additionnait les TP de groupes qui tournent : 55 h affichées pour 35 h réelles.
+const _PROMO_DEN = 2520;   // multiple de 1 à 10 : bornes des parts en entiers
+
+// Parts de promotion couvertes par une ligne : [[face, début, fin]] (kAlt : groupes apprentis de sa séance)
+function promoParts(r, kAlt) {
+    const n = r.n_groups || 1, g = r.group_index || 1;
+    const part = (a, b, m) => [Math.round(_PROMO_DEN * a / m), Math.round(_PROMO_DEN * b / m)];
+    if (r.formation === 'FTP' || r.formation === 'ALT') return [[r.formation, ...part(g - 1, g, n)]];
+    if (r.formation !== 'MUT') return [];
+    if (kAlt) {
+        const nf = n - kAlt;
+        return r.alt_group ? [['ALT', ...part(g - nf - 1, g - nf, kAlt)]] : [['FTP', ...part(g - 1, g, nf)]];
     }
-    return { ftp, alt };
+    return [['FTP', ...part(g - 1, g, n)], ['ALT', ...part(g - 1, g, n)]];
 }
 
-// Recalcule et réaffiche la cellule « taux horaire » d'une promo pour une semaine.
-function recomputePromoCell(promoKey, week) {
-    if (!_repartitionData || !_repartitionData.promoRows) return;
-    const form = promoKey.startsWith('ALT') ? 'ALT' : 'FTP';
-    const yg = parseInt(promoKey.replace(/\D/g, '')) || 0;
-    let total = 0;
-    _repartitionData.promoRows.forEach(pr => {
-        if (Math.ceil((parseInt(String(pr.semester).replace(/\D/g, '')) || 0) / 2) !== yg) return;
-        const bw = form === 'FTP' ? pr.ftpByWeek : pr.altByWeek;
-        total += (bw && bw[week]) || 0;
+// Parties d'effectif de chaque promotion : { 'FTP1': { form, yg, parties: [{ rows, label }] } }
+// (label : le groupe le plus fin qui la couvre — « TP gr.3 », « TP ALT » ; '' = toute la promotion)
+function promoStructure(rows) {
+    const ygOf = sem => Math.ceil((parseInt(String(sem).replace(/\D/g, '')) || 0) / 2);
+    const kAlt = {};
+    rows.forEach(r => { if (r.alt_group) kAlt[r.session_id] = (kAlt[r.session_id] || 0) + 1; });
+    const out = {};
+    rows.forEach(r => {
+        const yg = ygOf(r.semester);
+        if (!yg) return;
+        promoParts(r, kAlt[r.session_id] || 0).forEach(([form, lo, hi]) => {
+            const k = form + yg;
+            (out[k] = out[k] || { form, yg, cov: [], parties: [] }).cov.push({ r, lo, hi });
+        });
     });
-    total = Math.round(total * 100) / 100;
+    Object.values(out).forEach(p => {
+        const bornes = [...new Set(p.cov.flatMap(c => [c.lo, c.hi]))].sort((x, y) => x - y);
+        for (let i = 0; i + 1 < bornes.length; i++) {
+            const a = bornes[i], z = bornes[i + 1];
+            const membres = p.cov.filter(c => c.lo < z && c.hi > a);
+            const fin = membres.filter(c => c.hi - c.lo < _PROMO_DEN).sort((x, y) => (x.hi - x.lo) - (y.hi - y.lo))[0];
+            p.parties.push({ rows: membres.map(c => c.r),
+                             label: fin ? `${(fin.r.type || '').toUpperCase()} ${fin.r.group_label || 'gr.' + (fin.r.group_index || 1)}` : '' });
+        }
+        delete p.cov;
+    });
+    return out;
+}
+
+// Charge d'une semaine : { h : heures de la partie la plus chargée, label : cette partie }
+function promoChargeSemaine(p, w) {
+    let best = { h: 0, label: '' };
+    p.parties.forEach(pt => {
+        const h = pt.rows.reduce((s, r) => s + ((r.by_week || {})[w] || 0), 0);
+        if (h > best.h + 1e-9) best = { h, label: pt.label };
+    });
+    best.h = Math.round(best.h * 100) / 100;
+    return best;
+}
+
+function promoCelluleTitre(key, w, c) {
+    if (!(c.h > 0)) return '';
+    return `${key}, S${w} : ${String(c.h).replace('.', ',')} h pour ${c.label ? 'le groupe ' + c.label : 'toute la promotion'}`
+        + ` — la partie de la promotion la plus chargée (un étudiant ne suit qu'un groupe de TD et un de TP)`;
+}
+
+// Recalcule et réaffiche la cellule « heures / semaine » d'une promo pour une semaine (édition live).
+function recomputePromoCell(promoKey, week) {
+    const p = _repartitionData && _repartitionData.promoStruct && _repartitionData.promoStruct[promoKey];
     const th = document.querySelector(`tr[data-promo="${promoKey}"] th[data-promo-week="${week}"]`);
-    if (!th) return;
-    th.textContent = total > 0 ? total : '';
-    const colorFn = form === 'FTP' ? ftpHeatBg : altHeatBg;
-    const bg = colorFn(total);
+    if (!p || !th) return;
+    const c = promoChargeSemaine(p, week);
+    th.textContent = c.h > 0 ? c.h : '';
+    th.title = promoCelluleTitre(promoKey, week, c);
+    const bg = (p.form === 'FTP' ? ftpHeatBg : altHeatBg)(c.h);
     if (bg) th.setAttribute('style', `background:${bg} !important;color:#111`);
     else th.removeAttribute('style');
-}
-
-// Nom du groupe TP dont le taux horaire est compté pour une promo (formation + année) :
-// côté FTP = groupe FTP le plus chargé ; côté ALT = groupe apprenti. On renvoie le libellé
-// du groupe retenu pour le TP le plus volumineux de la promo (celui « affiché »).
-function promoCountedGroup(form, yg, rows) {
-    const altSessions = new Set();
-    (rows || []).forEach(r => { if (r.alt_group) altSessions.add(r.session_id); });
-    const bySession = {};
-    (rows || []).forEach(r => {
-        if ((r.type || '').toUpperCase() !== 'TP' || !(r.n_groups > 1)) return;
-        const ryg = Math.ceil((parseInt(String(r.semester).replace(/\D/g, '')) || 0) / 2);
-        if (ryg !== yg) return;
-        // Côté (FTP/ALT) alimenté par CETTE ligne de groupe
-        let side;
-        if (altSessions.has(r.session_id)) side = r.alt_group ? 'ALT' : 'FTP';
-        else side = r.formation === 'ALT' ? 'ALT' : r.formation === 'FTP' ? 'FTP' : 'BOTH';
-        if (!(side === form || side === 'BOTH')) return;
-        const placed = Object.values(r.by_week).reduce((s, v) => s + v, 0);
-        if (placed <= 0) return;
-        const cur = bySession[r.session_id];
-        if (!cur || placed > cur.placed) {
-            bySession[r.session_id] = { placed, label: r.group_label || ('gr.' + (r.group_index || 1)) };
-        }
-    });
-    let best = null;
-    Object.values(bySession).forEach(s => { if (!best || s.placed > best.placed) best = s; });
-    return best ? best.label : '';
-}
-
-// Met à jour le libellé « FTP1 (groupe) » d'une ligne promo (édition live).
-function refreshPromoGroupLabel(promoKey) {
-    if (!_repartitionData) return;
-    const th = document.querySelector(`tr[data-promo="${promoKey}"] > th.s-col`);
-    if (!th) return;
-    const form = promoKey.startsWith('ALT') ? 'ALT' : 'FTP';
-    const yg = parseInt(promoKey.replace(/\D/g, '')) || 0;
-    const lbl = promoCountedGroup(form, yg, _repartitionData.rows);
-    th.innerHTML = `${esc(promoKey)}${lbl ? ` <span class="promo-grp">(${esc(lbl)})</span>` : ''}`;
 }
 
 function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
@@ -21001,25 +21016,13 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
 
     // Taux horaire hebdomadaire par promo (formation + année), au lieu d'un total
     // global qui mélangerait les années. Jusqu'à 6 lignes : FTP1, ALT1, … FTP3, ALT3.
-    const promoSource = (_repartitionData && _repartitionData.promoRows) || rows;
-    const ygOf = sem => Math.ceil((parseInt(String(sem).replace(/\D/g, '')) || 0) / 2);
-    const promoData = {};  // clé "FTP1" -> { form, yg, byWeek }
-    const ensurePromo = (form, yg) => {
-        const k = form + yg;
-        if (!promoData[k]) { promoData[k] = { form, yg, byWeek: {} }; weeks.forEach(w => promoData[k].byWeek[w] = 0); }
-        return promoData[k];
-    };
-    promoSource.forEach(r => {
-        const yg = ygOf(r.semester);
-        if (!yg) return;
-        // Contributions pré-calculées par côté (ftpByWeek / altByWeek). Repli sur
-        // l'ancien schéma by_week/formation si jamais elles manquent.
-        const fbw = r.ftpByWeek || (r.formation !== 'ALT' ? r.by_week : null) || {};
-        const abw = r.altByWeek || (r.formation !== 'FTP' ? r.by_week : null) || {};
-        weeks.forEach(w => {
-            if (fbw[w]) ensurePromo('FTP', yg).byWeek[w] += fbw[w];
-            if (abw[w]) ensurePromo('ALT', yg).byWeek[w] += abw[w];
-        });
+    // Heures de la partie de la promotion la plus chargée, semaine par semaine (promoStructure)
+    const promoStruct = (_repartitionData && _repartitionData.promoStruct) || promoStructure(rows);
+    const promoData = {};  // clé "FTP1" -> { form, yg, byWeek: {semaine: {h, label}} }
+    Object.entries(promoStruct).forEach(([k, p]) => {
+        const byWeek = {};
+        weeks.forEach(w => { byWeek[w] = promoChargeSemaine(p, w); });
+        if (weeks.some(w => byWeek[w].h > 0)) promoData[k] = { form: p.form, yg: p.yg, byWeek };
     });
     // Ordre d'affichage : FTP1, ALT1, FTP2, ALT2, FTP3, ALT3 (uniquement les promos présentes)
     const promoOrder = [];
@@ -21032,14 +21035,16 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
     }));
     const fmtH = h => h > 0 ? h : '';
 
-    const promoHeaderRow = (key, cls, byWeek, colorFn, grpLbl) =>
+    const promoHeaderRow = (key, cls, byWeek, colorFn) =>
         `<tr data-promo="${key}">
-            <th class="s-col ${cls}" colspan="${fixedSpan}" style="left:0">${key}${grpLbl ? ` <span class="promo-grp">(${esc(grpLbl)})</span>` : ''}</th>
+            <th class="s-col ${cls}" colspan="${fixedSpan}" style="left:0"
+                title="Heures par semaine d'un étudiant : celles du groupe le plus chargé de la semaine (TD et TP compris)">${key} <span class="promo-grp">(groupe le plus chargé)</span></th>
             ${weeks.map((w, i) => {
-                const h = byWeek[w];
-                const bg = colorFn ? colorFn(h) : null;
+                const c = byWeek[w];
+                const bg = colorFn ? colorFn(c.h) : null;
                 const st = bg ? ` style="background:${bg} !important;color:#111"` : '';
-                return `<th class="col-week ${cls}${sepCls(i)}" data-promo-week="${w}"${st}>${fmtH(h)}</th>`;
+                const t = promoCelluleTitre(key, w, c);
+                return `<th class="col-week ${cls}${sepCls(i)}" data-promo-week="${w}"${st}${t ? ` title="${esc(t)}"` : ''}>${fmtH(c.h)}</th>`;
             }).join('')}
         </tr>`;
 
@@ -21165,8 +21170,7 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
         const p = promoData[k];
         const cls = p.form === 'FTP' ? 'th-promo-ftp' : 'th-promo-alt';
         const colorFn = p.form === 'FTP' ? ftpHeatBg : altHeatBg;
-        const grpLbl = promoCountedGroup(p.form, p.yg, rows);
-        return promoHeaderRow(k, cls, p.byWeek, colorFn, grpLbl);
+        return promoHeaderRow(k, cls, p.byWeek, colorFn);
     });
     [
         teacherHeaderRow,
@@ -21488,16 +21492,22 @@ function repOrdLine(e) {
 // une séance d'un autre type que le vœu met AVANT elle n'est pas placée au plus tard
 // la même semaine — pour un TD / TP en groupes, dans chaque groupe. Colonnes vides
 // du vœu ignorées ; regrouper dans une semaine ce que le vœu étale est toléré.
-// Période de TP « libre » (colonnes de TP qui se suivent, dont une à plus d'une
-// séance) : ses séances se placent n'importe où dans la période — elles n'attendent
-// que ce qui précède la période, ce qui est pendant la période n'attend aucune
-// d'elles, ce qui la suit les attend toutes (même règle dans optim_repartition.py).
-let _repWishes = {};             // /api/courses/wishes : {course_id: {sessions, wish}}
+// Période « libre » (colonnes de TP — ou de TD quand la face n'a qu'un groupe de TD —
+// qui se suivent, dont une à plus d'une séance) : ses séances se placent n'importe où
+// dans la période — elles n'attendent que ce qui précède la période, ce qui est pendant
+// la période n'attend aucune d'elles, ce qui la suit les attend toutes (même règle dans
+// optim_repartition.py).
+// Le vœu se lit aussi semaine par semaine (wishGrille) : c'est sa GRILLE, que l'optimiseur
+// suit et dont les écarts s'affichent en orange.
+let _repWishes = {};             // /api/courses/wishes : {course_id: {sessions, wish, semaines}}
 
-// Périodes libres d'une ligne du vœu : [{debut, fin, n}] (colonnes, séances) — TP seulement
-function wishPeriodesLibres(arr, nCols, type) {
+// Le type peut-il avoir des périodes libres ? Le TP, et le TD d'un seul groupe (nGr)
+function wishPeriodeLibrePossible(type, nGr) { return type === 'TP' || (type === 'TD' && nGr === 1); }
+
+// Périodes libres d'une ligne du vœu : [{debut, fin, n}] (colonnes, séances)
+function wishPeriodesLibres(arr, nCols, type, nGr) {
     const out = [];
-    if (type !== 'TP') return out;
+    if (!wishPeriodeLibrePossible(type, nGr)) return out;
     for (let c = 0; c < nCols; ) {
         if (!((arr[c] || 0) > 0)) { c++; continue; }
         let d = c;
@@ -21509,18 +21519,18 @@ function wishPeriodesLibres(arr, nCols, type) {
     return out;
 }
 // Colonne de référence de chaque colonne : le début de sa période libre, sinon elle-même
-function wishAncres(arr, nCols, type) {
+function wishAncres(arr, nCols, type, nGr) {
     const a = Array.from({ length: nCols }, (_, c) => c);
-    wishPeriodesLibres(arr, nCols, type).forEach(p => { for (let c = p.debut; c <= p.fin; c++) a[c] = p.debut; });
+    wishPeriodesLibres(arr, nCols, type, nGr).forEach(p => { for (let c = p.debut; c <= p.fin; c++) a[c] = p.debut; });
     return a;
 }
 
 // Enchaînement voulu d'une face, lisible sans numéro de semaine : « 2 CM → CM + TD → TD » ;
-// une période de TP libre se lit d'un bloc : « 5 TP sur 4 sem. »
-function repWishSeqText(w, typeKey) {
+// une période libre se lit d'un bloc : « 5 TP sur 4 sem. » (nGr : groupes par type)
+function repWishSeqText(w, typeKey, nGr = {}) {
     const libres = {};
     Object.entries(typeKey).forEach(([t, k]) => {
-        wishPeriodesLibres(w.rows[k] || [], w.n_weeks, t).forEach(p => { (libres[t] = libres[t] || []).push(p); });
+        wishPeriodesLibres(w.rows[k] || [], w.n_weeks, t, nGr[t]).forEach(p => { (libres[t] = libres[t] || []).push(p); });
     });
     const cols = [];
     for (let c = 0; c < w.n_weeks; c++) {
@@ -21535,9 +21545,114 @@ function repWishSeqText(w, typeKey) {
     return cols.length > 10 ? cols.slice(0, 10).join(' → ') + ' → …' : cols.join(' → ');
 }
 
-// → { per: Map(cid → { seqs: [texte par face], msgs, nBad }), bad: Map(case → texte) }
+// ----- Grille de la répartition souhaitée (même mesure que _organisation, optim_repartition.py) -----
+// Une colonne du vœu = une semaine disponible de la face dans le semestre (`semaines` de
+// /api/courses/wishes : vacances et stage ôtés pour les FTP, entreprise pour les ALT,
+// communes aux deux pour le mutualisé). La colonne 0 est la première de ces semaines à
+// partir de la semaine de début — une pour les FTP (et le mutualisé), une pour les ALT,
+// choisie au mieux. Écart d'une ligne = somme, sur ses semaines disponibles, de l'écart
+// entre ses séances placées jusque-là et ce que la grille y veut : une séance décalée de
+// d semaines compte d. Une période libre ne fixe que son total, à sa fin.
+
+// Ligne du vœu que suit une ligne de la répartition : sa face, sinon le mutualisé ; une
+// ligne MUT suit le mutualisé, sinon le FTP, sinon l'ALT
+function wishCleLigne(rows, formation, t) {
+    for (const f of ({ FTP: [0, 2], ALT: [1, 2], MUT: [2, 0, 1] }[formation] || []))
+        if (rows[`${f}:${t}`]) return `${f}:${t}`;
+    return null;
+}
+
+// m ↦ [au moins, au plus] : séances voulues en cumul à la fin de la colonne m (plafonné à cap)
+function wishBande(arr, n, t, nGr, cap) {
+    const wc = [];
+    let acc = 0, der = -1;
+    for (let c = 0; c < n; c++) { acc += arr[c]; wc.push(acc); if (arr[c] > 0) der = c; }
+    const libre = {};
+    wishPeriodesLibres(arr, n, t, nGr).forEach(p => {
+        for (let m = p.debut; m < p.fin; m++) libre[m] = [p.debut ? wc[p.debut - 1] : 0, wc[p.fin]];
+    });
+    return m => {
+        let lo, hi;
+        if (m < 0) lo = hi = 0;
+        else if (m > der) { lo = acc; hi = Math.max(acc, cap); }
+        else if (libre[m]) [lo, hi] = libre[m];
+        else lo = hi = wc[m];
+        return [Math.min(lo, cap), Math.min(hi, cap)];
+    };
+}
+
+// Grille d'une matière : { ecart, debuts: {FTP, ALT}, cases: Map(case → [voulu, placé, type]) } | null
+// (cases : semaines où la grille veut un autre nombre de séances, pour le début retenu)
+function wishGrille(w, rows, semaines, skey) {
+    if (!w || !w.n_weeks || !semaines) return null;
+    const n = w.n_weeks;
+    const suivies = [];
+    rows.forEach(r => {
+        const t = (r.type || '').toUpperCase();
+        const k = wishCleLigne(w.rows, r.formation, t);
+        if (!k) return;
+        const arr = Array.from({ length: n }, (_, c) => Math.max(0, parseInt((w.rows[k] || [])[c]) || 0));
+        const ws = semaines[r.formation] || [];
+        if (!ws.length || !arr.some(v => v > 0)) return;
+        // Séances placées par semaine, comme l'optimiseur (heures / durée, arrondi)
+        const slot = r.slot_duration || 1.5, pl = {};
+        Object.entries(r.by_week || {}).forEach(([x, h]) => { const v = Math.round((h || 0) / slot); if (v > 0) pl[+x] = v; });
+        const cap = Object.values(pl).reduce((a, b) => a + b, 0);
+        const X = ws.map(x => Object.entries(pl).reduce((a, [y, v]) => a + (skey(+y) <= skey(x) ? v : 0), 0));
+        suivies.push({ r, k, t, arr, ws, pl, cap, X });
+    });
+    if (!suivies.length) return null;
+    const nGr = {};
+    suivies.forEach(L => { nGr[L.k] = (nGr[L.k] || 0) + 1; });
+    const longueur = arr => arr.reduce((m, v, c) => (v > 0 ? c + 1 : m), 0);
+    const j0 = (L, s) => L.ws.filter(x => skey(x) < skey(s)).length;
+    const ecartLigne = (L, s) => {
+        if (L.cap <= 0) return 0;                  // ligne pas encore placée : rien à comparer
+        const b = wishBande(L.arr, n, L.t, nGr[L.k], L.cap), d = j0(L, s);
+        return L.ws.reduce((e, x, j) => { const [lo, hi] = b(j - d); return e + Math.max(0, L.X[j] - hi, lo - L.X[j]); }, 0);
+    };
+    const res = { ecart: 0, debuts: {}, cases: new Map() };
+    ['FTP', 'ALT'].forEach(g => {
+        const part = suivies.filter(L => (L.r.formation === 'ALT') === (g === 'ALT'));
+        if (!part.length) return;
+        const tous = [...new Set(part.flatMap(L => L.ws))].sort((a, b) => skey(a) - skey(b));
+        let debuts = tous.filter(s => part.every(L => L.ws.filter(x => skey(x) >= skey(s)).length >= longueur(L.arr)));
+        if (!debuts.length) debuts = tous.slice(0, 1);
+        let best = null;
+        debuts.forEach(s => {
+            const e = part.reduce((a, L) => a + ecartLigne(L, s), 0);
+            if (!best || e < best.e) best = { e, s };
+        });
+        res.ecart += best.e;
+        res.debuts[g] = best.s;
+        if (!best.e) return;
+        // Semaines où la grille fixe le nombre de séances (hors période libre) et où il diffère
+        part.forEach(L => {
+            if (L.cap <= 0) return;
+            const b = wishBande(L.arr, n, L.t, nGr[L.k], L.cap), d = j0(L, best.s);
+            L.ws.forEach((x, j) => {
+                const [lo, hi] = b(j - d), [lo0, hi0] = b(j - d - 1);
+                if (lo !== hi || lo0 !== hi0) return;
+                const voulu = hi - hi0, place = L.pl[x] || 0;
+                if (voulu !== place) res.cases.set(repDraftKey(L.r.session_id, L.r.group_index || 1, x), [voulu, place, L.t]);
+            });
+        });
+    });
+    return res;
+}
+
+// Début(s) retenu(s), lisible : « S5 » ou « FTP S5 · ALT S7 »
+function wishDebutsTexte(debuts) {
+    const f = Object.keys(debuts || {});
+    if (!f.length) return '';
+    if (f.length === 1 || debuts.FTP === debuts.ALT) return 'S' + debuts[f[0]];
+    return f.map(x => `${x} S${debuts[x]}`).join(' · ');
+}
+
+// → { per: Map(cid → { seqs: [texte par face], msgs, nBad, grille }), bad: Map(case → texte),
+//     grille: Map(case → texte) }
 function repWishEvaluate() {
-    const out = { per: new Map(), bad: new Map() };
+    const out = { per: new Map(), bad: new Map(), grille: new Map() };
     const data = _repartitionData;
     if (!data) return out;
     const all = data.allRows || data.rows;
@@ -21551,7 +21666,7 @@ function repWishEvaluate() {
     byCourse.forEach((rows, cid) => {
         const w = (_repWishes[cid] || {}).wish;
         if (!w || !w.n_weeks) return;
-        const res = { wish: w, seqs: [], msgs: [], nBad: 0 };
+        const res = { wish: w, seqs: [], msgs: [], nBad: 0, grille: null };
         [['FTP', 0], ['ALT', 1]].forEach(([side, ft]) => {
             // Type → clé du vœu pour cette face (la face elle-même plutôt que le mutualisé)
             const typeKey = {};
@@ -21567,13 +21682,17 @@ function repWishEvaluate() {
             const sideLbl = allMut ? '' : side + ' : ';
             const ordered = {};
             types.forEach(t => { ordered[t] = typeKey[t]; });
-            res.seqs.push(sideLbl + repWishSeqText(w, ordered));
+            // Groupes de chaque type sur cette face (un TD d'un seul groupe a des périodes libres)
+            const nGr = {};
+            types.forEach(t => { nGr[t] = rows.filter(r => [side, 'MUT'].includes(r.formation)
+                                                        && (r.type || '').toUpperCase() === t).length; });
+            res.seqs.push(sideLbl + repWishSeqText(w, ordered, nGr));
             // cum[t][c] = séances de t voulues dans les colonnes avant c ; colOf[t][i] = colonne de la (i+1)e ;
             // anc[t][c] = colonne de référence (début de la période de TP libre qui contient c)
             const cum = {}, colOf = {}, anc = {};
             types.forEach(t => {
                 const arr = w.rows[typeKey[t]] || [];
-                anc[t] = wishAncres(arr, w.n_weeks, t);
+                anc[t] = wishAncres(arr, w.n_weeks, t, nGr[t]);
                 cum[t] = []; colOf[t] = [];
                 let acc = 0;
                 for (let c = 0; c < w.n_weeks; c++) {
@@ -21615,10 +21734,20 @@ function repWishEvaluate() {
                                   + `${missing.join(' et ')} attendu${missing.length > 1 ? 's' : ''} avant`);
                 }
                 out.bad.set(key, `Répartition souhaitée${w.updated_by ? ' (' + w.updated_by + ')' : ''} : ${what}`
-                    + `\nEnchaînement voulu : ${repWishSeqText(w, ordered)}`);
+                    + `\nEnchaînement voulu : ${repWishSeqText(w, ordered, nGr)}`);
             })));
         });
-        if (res.seqs.length) out.per.set(cid, res);
+        // Grille semaine par semaine
+        res.grille = wishGrille(w, rows.filter(r => ['FTP', 'ALT', 'MUT'].includes(r.formation)),
+                                (_repWishes[cid] || {}).semaines, skey);
+        if (res.grille && res.grille.ecart) {
+            const deb = wishDebutsTexte(res.grille.debuts);
+            res.grille.cases.forEach(([voulu, place, t], key) => {
+                out.grille.set(key, `Grille de la répartition souhaitée (début ${deb}) : ${voulu} ${t} voulu${
+                    voulu > 1 ? 's' : ''} cette semaine, ${place} placé${place > 1 ? 's' : ''}`);
+            });
+        }
+        if (res.seqs.length || res.grille) out.per.set(cid, res);
     });
     return out;
 }
@@ -21634,14 +21763,14 @@ function repOrdRefresh() {
             `#repartition-table td[data-sid="${sid}"][data-week="${week}"][data-group="${group}"]`);
     };
     _repOrdMarked.forEach(key => {
-        if (bad.has(key) || wish.bad.has(key)) return;
+        if (bad.has(key) || wish.bad.has(key) || wish.grille.has(key)) return;
         const td = cellTd(key);
         if (!td) return;
-        td.classList.remove('cell-order-bad', 'cell-wish-bad');
+        td.classList.remove('cell-order-bad', 'cell-wish-bad', 'cell-wish-grille');
         const [sid, group, week] = key.split('|').map(Number);
         repRefreshCell(sid, week, group, td);   // rend son titre à la case
     });
-    const keys = new Set([...bad.keys(), ...wish.bad.keys()]);
+    const keys = new Set([...bad.keys(), ...wish.bad.keys(), ...wish.grille.keys()]);
     keys.forEach(key => {
         const td = cellTd(key);
         if (!td) return;
@@ -21649,7 +21778,8 @@ function repOrdRefresh() {
         repRefreshCell(sid, week, group, td);
         td.classList.toggle('cell-order-bad', bad.has(key));
         td.classList.toggle('cell-wish-bad', wish.bad.has(key));
-        td.title = [td.title, bad.get(key), wish.bad.get(key)].filter(Boolean).join('\n');
+        td.classList.toggle('cell-wish-grille', wish.grille.has(key) && !wish.bad.has(key));
+        td.title = [td.title, bad.get(key), wish.bad.get(key), wish.grille.get(key)].filter(Boolean).join('\n');
     });
     _repOrdMarked = keys;
     // Un clic sur un repère ouvre la matière dans Contraintes Matière, où se posent
@@ -21660,12 +21790,17 @@ function repOrdRefresh() {
     document.querySelectorAll('#repartition-table .wish-badge').forEach(b => {
         const r = wish.per.get(parseInt(b.dataset.wishCid));
         if (!r) { b.className = 'wish-badge'; b.textContent = ''; b.removeAttribute('title'); return; }
-        b.className = 'wish-badge ' + (r.nBad ? 'ord-bad' : 'ord-ok') + (lien ? ' ord-lien' : '');
-        b.textContent = r.nBad ? `vœu ✗${r.nBad}` : 'vœu ✓';
+        const eg = r.grille ? r.grille.ecart : 0;
+        b.className = 'wish-badge ' + (r.nBad ? 'ord-bad' : eg ? 'ord-warn' : 'ord-ok') + (lien ? ' ord-lien' : '');
+        b.textContent = r.nBad ? `vœu ✗${r.nBad}` : eg ? `vœu ~${eg}` : 'vœu ✓';
         const w = r.wish;
+        const grilleTxt = !r.grille ? '' : eg
+            ? `\n\nGrille : ${eg} décalage${eg > 1 ? 's' : ''} d'une semaine (séance × semaine) au mieux, début ${
+                wishDebutsTexte(r.grille.debuts)} — cases en orange`
+            : `\n\nGrille suivie semaine par semaine (début ${wishDebutsTexte(r.grille.debuts)})`;
         b.title = `Répartition souhaitée${w.updated_by ? ' par ' + w.updated_by : ''}${
             w.updated_at ? ' le ' + _mcDate(w.updated_at) : ''} :\n${r.seqs.join('\n')}${
-            r.msgs.length ? '\n\nÉcarts :\n' + r.msgs.join('\n') : ''}${lienTxt}`;
+            r.msgs.length ? '\n\nÉcarts à l\'ordre :\n' + r.msgs.join('\n') : ''}${grilleTxt}${lienTxt}`;
     });
     // Repères des lignes bleues : chaque contrainte compte pour ses deux matières
     const per = new Map();
@@ -21698,7 +21833,7 @@ function repOrdGoto(cid) {
     const tr = b.closest('tr');
     tr.scrollIntoView({ block: 'center', inline: 'nearest' });
     for (let t = tr.nextElementSibling; t && t.classList.contains('row-data'); t = t.nextElementSibling) {
-        t.querySelectorAll('td.cell-order-bad, td.cell-wish-bad').forEach(td => {
+        t.querySelectorAll('td.cell-order-bad, td.cell-wish-bad, td.cell-wish-grille').forEach(td => {
             td.classList.remove('cell-flash');
             void td.offsetWidth;
             td.classList.add('cell-flash');
@@ -21735,13 +21870,16 @@ function repWishChecksHtml() {
     if (!per.size) return h + '<p style="color:#6b7280;font-size:.85rem">Aucun vœu sur les matières affichées.</p>';
     const all = (_repartitionData.allRows || _repartitionData.rows);
     const codeOf = cid => { const r = all.find(x => x.course_id === cid); return r ? r.course_code : '?'; };
-    const bad = [...per.entries()].filter(([, r]) => r.nBad);
+    const eg = r => (r.grille ? r.grille.ecart : 0);
+    const bad = [...per.entries()].filter(([, r]) => r.nBad || eg(r));
     if (!bad.length)
-        return h + `<p style="color:#166534;font-size:.85rem">${per.size} vœu${per.size > 1 ? 'x' : ''} suivi${per.size > 1 ? 's' : ''} (ou pas encore placé${per.size > 1 ? 's' : ''}).</p>`;
+        return h + `<p style="color:#166534;font-size:.85rem">${per.size} vœu${per.size > 1 ? 'x' : ''} suivi${per.size > 1 ? 's' : ''}, grille comprise (ou pas encore placé${per.size > 1 ? 's' : ''}).</p>`;
+    bad.sort(([, a], [, b]) => (b.nBad - a.nBad) || (eg(b) - eg(a)));
     return h + '<table><thead><tr><th>Écart au vœu de l\'enseignant</th></tr></thead><tbody>' + bad.map(([cid, r]) =>
-        `<tr class="check-danger" style="cursor:pointer" title="Aller à la matière" onclick="repOrdGoto(${cid})">
-            <td><b>${esc(codeOf(cid))}</b> — voulu : ${esc(r.seqs.join(' ; '))}<br>${esc(r.msgs.slice(0, 4).join(' ; '))}${
-            r.msgs.length > 4 ? ` (+${r.msgs.length - 4})` : ''}</td></tr>`).join('') + '</tbody></table>';
+        `<tr class="${r.nBad ? 'check-danger' : 'check-warn'}" style="cursor:pointer" title="Aller à la matière" onclick="repOrdGoto(${cid})">
+            <td><b>${esc(codeOf(cid))}</b> — voulu : ${esc(r.seqs.join(' ; '))}${r.nBad ? `<br>Ordre : ${esc(r.msgs.slice(0, 4).join(' ; '))}${
+            r.msgs.length > 4 ? ` (+${r.msgs.length - 4})` : ''}` : ''}${eg(r) ? `<br>Grille : ${eg(r)} décalage${eg(r) > 1 ? 's' : ''} d'une semaine
+            (début ${esc(wishDebutsTexte(r.grille.debuts))}), cases en orange` : ''}</td></tr>`).join('') + '</tbody></table>';
 }
 
 // Pose `newHours` dans la copie de travail et met l'affichage à jour sans re-rendu
@@ -21772,15 +21910,10 @@ function repApplyCell(sid, week, group, newHours) {
                 else totalTd.classList.remove('col-total-bad');
             }
 
-            // Recalcule la contribution promo de la session (CM+TD+TP, côtés FTP/ALT)
-            // puis réaffiche les cellules « taux horaire » de la semaine éditée.
+            // Réaffiche les cellules « heures / semaine » des promos de la semaine éditée
+            // (la ligne vient d'être modifiée en place : les parties d'effectif la relisent)
             const yg = Math.ceil((parseInt(String(row.semester).replace(/\D/g, '')) || 0) / 2);
-            if (_repartitionData.promoRows) {
-                const contrib = sessionPromoContrib(groupRows);
-                const pr = _repartitionData.promoRows.find(x => x.session_id === sid);
-                if (pr) { pr.ftpByWeek = contrib.ftp; pr.altByWeek = contrib.alt; }
-            }
-            [`FTP${yg}`, `ALT${yg}`].forEach(pk => { recomputePromoCell(pk, week); refreshPromoGroupLabel(pk); });
+            [`FTP${yg}`, `ALT${yg}`].forEach(pk => recomputePromoCell(pk, week));
 
             // Les lignes h/sem. ne comptent que les semestres affichés
             const shown = (_repartitionData.selected || []).includes(row.semester);
@@ -21911,7 +22044,7 @@ function openRepOptim() {
     if (!_repartitionData) { toast('Chargez d\'abord la répartition', 'error'); return; }
     const p = _roptPerimetre();
     document.getElementById('ropt-perimetre').innerHTML = `<b>${esc(p.libelle)}</b>`;
-    document.getElementById('ropt-temps').value = p.semestres.length > 1 ? '60' : '30';
+    document.getElementById('ropt-temps').value = p.semestres.length > 1 ? '90' : '60';
     if (!(_ropt && _ropt.run)) {
         document.getElementById('ropt-progress').innerHTML = '';
         document.getElementById('ropt-result').innerHTML = '';
@@ -21919,6 +22052,7 @@ function openRepOptim() {
     }
     roptMode();
     openModal('modal-rep-optim');
+    if (!_roptPoids) poidsCharger('ropt');    // une fois : les saisies non enregistrées restent
 }
 
 function roptMode() {
@@ -21934,6 +22068,11 @@ async function roptLancer() {
     const temps = parseInt(document.getElementById('ropt-temps').value) || 60;
     const corps = { semestres: p.semestres, faces: p.faces, mode, temps,
                     placer_vides: document.getElementById('ropt-vides').checked, cells: repDraftPayload() };
+    // Poids affichés (enregistrés ou non) ; pas encore chargés : le serveur prend ceux enregistrés
+    if (_roptPoids) {
+        try { corps.poids = poidsSaisis('ropt'); }
+        catch (e) { document.getElementById('ropt-poids').open = true; toast(e.message, 'error'); return; }
+    }
     _ropt = { run: true };
     const btn = document.getElementById('ropt-run');
     btn.disabled = true;
@@ -21969,7 +22108,8 @@ function roptBilanHtml(r) {
         ['Séances non placées', a.non_places, b.non_places, ''],
         ['Séances en semaine interdite (vacances, stage, entreprise)', a.interdites, b.interdites, ''],
         ['Ordonnancements non respectés', a.nb_ordres, b.nb_ordres, ''],
-        ['Écarts à la répartition souhaitée', a.voeux, b.voeux, ''],
+        ['Répartition souhaitée : séances placées avant ce que le vœu met avant elles', a.voeux, b.voeux, ''],
+        ['Répartition souhaitée : décalages à la grille (séance × semaine)', a.grille, b.grille, ''],
         ['Séances hors de la plage de la matière', a.hors_plage, b.hors_plage, ''],
         ['Surcharge des promotions', a.heures_surcharge, b.heures_surcharge, ' h'],
         ['Heures d\'enseignants au-delà de 20 h / semaine', a.heures_enseignants, b.heures_enseignants, ' h'],
@@ -21988,6 +22128,12 @@ function roptBilanHtml(r) {
     if ((b.ordres || []).length)
         html += `<div class="section-title">Ordonnancements encore non respectés</div><ul class="edtg-alertes">${
             b.ordres.map(o => `<li>${esc(o)}</li>`).join('')}</ul>`;
+    if ((b.grille_matieres || []).length) {
+        const deb = d => ['FTP', 'ALT'].filter(f => d && d[f]).map(f => `${f} S${d[f]}`).join(' · ');
+        html += `<details class="edtg-alertes"><summary>Matières encore décalées par rapport à leur grille (${b.nb_grille_matieres})</summary><ul>${
+            b.grille_matieres.map(m => `<li><b>${esc(m.code)}</b> : ${m.ecart} décalage${m.ecart > 1 ? 's' : ''} d'une semaine${
+                deb(m.debut) ? ` <span class="edtg-note">(début ${esc(deb(m.debut))})</span>` : ''}</li>`).join('')}</ul></details>`;
+    }
     if ((b.surcharges || []).length)
         html += `<details class="edtg-alertes"><summary>Semaines encore surchargées (${b.nb_surcharges})</summary><ul>${
             b.surcharges.map(s => `<li>S${s.semaine} · ${s.annee}A ${esc(s.face)} : ${String(s.heures).replace('.', ',')} h</li>`).join('')}</ul></details>`;
