@@ -2539,6 +2539,12 @@
         <h2 id="suivi-modal-title" style="margin-bottom:4px">Fiche de suivi</h2>
         <p id="suivi-modal-sub" style="color:#6b7280;margin:0 0 14px;font-size:.85rem"></p>
         <form onsubmit="submitSuivi(event)">
+            <div class="form-group" id="suivi-contrat-groupe"><label>Contrat <span style="font-weight:400;color:#6b7280">(coché sur le PV de visite)</span></label>
+                <select id="suivi-contrat">
+                    <option value="">— non renseigné —</option>
+                    <option value="apprentissage">Contrat d'apprentissage</option>
+                    <option value="professionnalisation">Contrat de professionnalisation</option>
+                </select></div>
             <div class="form-group"><label>Entreprise / organisme</label>
                 <input id="suivi-entreprise" list="suivi-entreprises" oninput="suiviEntrepriseInput()" autocomplete="off"></div>
             <datalist id="suivi-entreprises"></datalist>
@@ -7677,7 +7683,14 @@ const SUIVI_KINDS = {
     stages: { who: 'stagiaire', mission: 'Sujet du stage', years: [2, 3] },
     alternance: { who: 'alternant', mission: 'Poste et missions', years: [1, 2, 3] },
 };
-const SUIVI_FIELDS = ['entreprise', 'adresse', 'ville', 'departement', 'tuteur_entreprise', 'tuteur_fonction',
+// Contrat de l'alternant (fiche de l'onglet Alternance seulement)
+const SUIVI_CONTRATS = { apprentissage: "Contrat d'apprentissage", professionnalisation: 'Contrat de professionnalisation' };
+// Le contrat sous le nom de l'alternant, ou ce qu'il reste à renseigner
+function _suiviContratHtml(s) {
+    return s.contrat ? `<div style="font-size:.74rem;color:#6b7280">${esc(SUIVI_CONTRATS[s.contrat] || s.contrat)}</div>`
+                     : '<div style="font-size:.74rem;color:#b45309">contrat à renseigner</div>';
+}
+const SUIVI_FIELDS = ['contrat', 'entreprise', 'adresse', 'ville', 'departement', 'tuteur_entreprise', 'tuteur_fonction',
                       'tuteur_email', 'tuteur_tel', 'mission', 'tuteur_univ'];
 const _suivi = {};
 let _suiviEdit = null;   // fiche ouverte dans le modal : {kind, pid, year, sid}
@@ -7840,7 +7853,8 @@ function renderSuiviBody(kind) {
                 <td><span onclick="${fiche}" title="Fiche de renseignements de l'étudiant"
                     style="cursor:pointer;color:#1d4ed8;text-decoration:underline dotted"><strong>${
                     esc(s.nom || '')}</strong> ${esc(s.prenom || '')}</span>${s.inherited_from
-                    ? `<div style="font-size:.72rem;color:#6b7280">fiche reprise de la ${_suiviYearLabel(s.inherited_from)}</div>` : ''}</td>
+                    ? `<div style="font-size:.72rem;color:#6b7280">fiche reprise de la ${_suiviYearLabel(s.inherited_from)}</div>` : ''}${
+                    kind === 'alternance' ? _suiviContratHtml(s) : ''}</td>
                 <td>${s.entreprise ? `<strong>${esc(s.entreprise)}</strong>` : missing}${
                     _suiviAdresse(s) ? `<div style="font-size:.78rem;color:#6b7280">${esc(_suiviAdresse(s))}</div>` : ''}</td>
                 <td>${s.tuteur_entreprise ? esc(s.tuteur_entreprise) : missing}${
@@ -7897,6 +7911,8 @@ function openSuiviModal(kind, pid, year, sid) {
             ? ` · fiche reprise de la ${_suiviYearLabel(s.inherited_from)} : l'enregistrer la remplace à partir de cette année`
             : '');
     document.getElementById('suivi-mission-label').textContent = SUIVI_KINDS[kind].mission;
+    // Le contrat ne concerne que l'alternant
+    document.getElementById('suivi-contrat-groupe').style.display = kind === 'alternance' ? '' : 'none';
     const univ = document.getElementById('suivi-tuteur_univ');
     univ.innerHTML = _suiviUnivOptions(st, s.tuteur_univ);
     SUIVI_FIELDS.forEach(f => { document.getElementById('suivi-' + f).value = s[f] || ''; });
@@ -8476,13 +8492,13 @@ function _altVisTableau(D, liste, avecTuteur) {
             <thead><tr><th style="width:24%">Alternant</th><th>Entreprise</th><th>Tuteur entreprise</th>${
                 avecTuteur ? '<th>Tuteur universitaire</th>' : ''}<th style="width:1%"></th></tr></thead>
             <tbody>${liste.map(e => {
-                const incomplet = !e.entreprise || !e.adresse || !e.tuteur_entreprise || !e.tuteur_univ;
+                const incomplet = !e.contrat || !e.entreprise || !e.adresse || !e.tuteur_entreprise || !e.tuteur_univ;
                 const aide = incomplet ? 'Fiche incomplète : ce qui manque reste vide sur le PV (à compléter dans Tuteurs, ou à la main)'
                                        : 'Le PV de visite prérempli pour cet alternant';
                 const lien = (fmt, lib, cls) => `<a class="btn ${cls} btn-sm" style="text-decoration:none"
                     href="/api/alternance/visites/${e.id}/pv${q}${fmt}" title="${esc(aide)}">${lib}</a>`;
                 return `<tr${e.mien && avecTuteur ? ' style="background:#f5f3ff" title="Alternant que vous suivez"' : ''}>
-                <td style="vertical-align:top">${_altDepNom(e)}</td>
+                <td style="vertical-align:top">${_altDepNom(e)}${_suiviContratHtml(e)}</td>
                 <td style="vertical-align:top">${e.entreprise ? `<strong>${esc(e.entreprise)}</strong>` : manque}${
                     _suiviAdresse(e) ? `<div style="font-size:.78rem;color:#6b7280">${esc(_suiviAdresse(e))}</div>` : ''}${
                     e.entreprise && !e.adresse ? '<div style="color:#b45309;font-size:.76rem">adresse à renseigner</div>' : ''}</td>

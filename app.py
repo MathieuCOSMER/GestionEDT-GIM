@@ -1603,9 +1603,10 @@ def _apply_promotions_migrations(db):
     # Coordonnées du tuteur entreprise (fonction, mail, téléphone) et mission confiée
     # (sujet du stage, poste de l'alternant) : saisies dans les onglets Stages et
     # Alternance, elles alimentent la liste des entreprises.
-    # Adresse de l'entreprise (n°, rue, code postal), reprise sur le PV de visite.
+    # Adresse de l'entreprise (n°, rue, code postal) et contrat de l'alternant
+    # (apprentissage, professionnalisation), repris sur le PV de visite.
     for _col in ('ville', 'departement', 'tuteur_fonction', 'tuteur_email', 'tuteur_tel', 'mission',
-                 'adresse'):
+                 'adresse', 'contrat'):
         try:
             db.execute('ALTER TABLE student_tutors ADD COLUMN %s TEXT' % _col)
         except sqlite3.OperationalError:
@@ -8701,9 +8702,11 @@ def export_year_effectif(pid, year):
 # Champs d'une fiche de suivi (table student_tutors) et longueur maximale saisie
 _TUTOR_FIELDS = {'tuteur_univ': 120, 'tuteur_entreprise': 120, 'entreprise': 160,
                  'adresse': 200, 'ville': 60, 'departement': 30, 'tuteur_fonction': 120,
-                 'tuteur_email': 160, 'tuteur_tel': 40, 'mission': 1000}
+                 'tuteur_email': 160, 'tuteur_tel': 40, 'mission': 1000, 'contrat': 30}
 # Coordonnées du tuteur entreprise : seules, elles ne font pas une fiche
 _TUTOR_CONTACT = ('tuteur_fonction', 'tuteur_email', 'tuteur_tel')
+# Contrat d'un alternant (fiche ALT seulement ; vide : non renseigné)
+_TUTOR_CONTRATS = ('apprentissage', 'professionnalisation')
 
 def _tuteurs_students(pdb, pid, year):
     """Étudiants de l'effectif d'une année d'étude avec leur fiche de suivi. ALT :
@@ -8781,6 +8784,11 @@ def set_year_tuteurs(pid, year, sid):
                                   "dont vous êtes le tuteur universitaire", 403)
     data = request.get_json() or {}
     sent = {f: str(data.get(f) or '').strip()[:n] for f, n in _TUTOR_FIELDS.items() if f in data}
+    # Le contrat ne concerne que l'alternant ; une autre valeur que les deux connues est refusée
+    if face != 'ALT':
+        sent.pop('contrat', None)
+    elif sent.get('contrat') and sent['contrat'] not in _TUTOR_CONTRATS:
+        return error_response('Contrat inconnu (apprentissage ou professionnalisation)', 400)
     if tuteur_seul and 'tuteur_univ' in sent and _suivi_key(sent['tuteur_univ']) != _suivi_key(actuel):
         return error_response('Le tuteur universitaire est attribué par le responsable', 403)
     cols = ', '.join(_TUTOR_FIELDS)
@@ -9506,7 +9514,9 @@ def put_alternance_echeances():
 # alternant prérempli, à partir de la trame Excel data/pv_visite_alternance.xlsx.
 _PV_VISITE_MODELE = os.path.join(_BASE_DIR, 'data', 'pv_visite_alternance.xlsx')
 _PV_VISITE_PARCOURS = 'Ingénierie des systèmes pluritechniques (ISP)'
-_PV_VISITE_CAMPUS = 'G13'      # site de formation coché : « ⃝ Campus de la Garde »
+# Cases cochées : (cellule, rang de la case dans la cellule)
+_PV_VISITE_CAMPUS = ('G13', 0)   # site de formation : « ⃝ Campus de la Garde »
+_PV_VISITE_CONTRATS = {'apprentissage': ('B17', 0), 'professionnalisation': ('B17', 1)}
 _PV_VISITE_BLEU = 'FF1F4E79'   # ce que le site a prérempli, distinct de l'écriture à la main
 
 def _prenom_casse(prenom):
@@ -9532,9 +9542,10 @@ def _pv_nom_prenom(texte):
 def _pv_visite_xlsx(champs, coches=()):
     """Le .xlsx du PV : la trame, chaque cellule de `champs` ({réf: valeur})
     complétée. Le libellé de la cellule reste dans sa police ; la valeur le suit,
-    dans la même police sans gras et en bleu. Les cases `coches` (« ⃝ … ») sont
-    cochées (« ◉ … », en bleu). Le reste du classeur (logo, mise en page, zone
-    d'impression) est recopié tel quel."""
+    dans la même police sans gras et en bleu. Les cases `coches` [(cellule, rang)]
+    sont cochées : la rang-ième « ⃝ » de la cellule devient « ◉ », elle et son
+    libellé en bleu. Le reste du classeur (logo, mise en page, zone d'impression)
+    est recopié tel quel."""
     def xml(t):
         return str(t).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     with zipfile.ZipFile(_PV_VISITE_MODELE) as z:
@@ -9571,15 +9582,21 @@ def _pv_visite_xlsx(champs, coches=()):
     def cellule(ref):
         return re.search(rf'<c r="{ref}"(?: s="(\d+)")?( t="s")?\s*(?:/>|>(?:<v>(\d+)</v>)?</c>)', feuille)
 
-    for ref in coches:
+    # Cases cochées, par cellule : rang de la case dans la cellule (B17 en a deux)
+    par_cellule = {}
+    for ref, rang in coches:
+        par_cellule.setdefault(ref, set()).add(rang)
+    for ref, rangs in par_cellule.items():
         m = cellule(ref)
         if not (m and m[2] and m[3] is not None) or '⃝' not in chaines[int(m[3])]:
             continue
         style = m[1] or '0'
         partages += 1
-        texte = chaines[int(m[3])].replace('⃝', '◉', 1)
-        feuille = (feuille[:m.start()] + f'<c r="{ref}" s="{style}" t="inlineStr"><is><r>{police(style, True)}'
-                   f'<t xml:space="preserve">{xml(texte)}</t></r></is></c>' + feuille[m.end():])
+        avant, *options = chaines[int(m[3])].split('⃝')
+        morceaux = [(avant, False)] + [(('◉' if i in rangs else '⃝') + t, i in rangs) for i, t in enumerate(options)]
+        runs = ''.join(f'<r>{police(style, bleu)}<t xml:space="preserve">{xml(t)}</t></r>' for t, bleu in morceaux if t)
+        feuille = (feuille[:m.start()] + f'<c r="{ref}" s="{style}" t="inlineStr"><is>{runs}</is></c>'
+                   + feuille[m.end():])
     for ref, valeur in champs.items():
         valeur = ' '.join(str(valeur or '').split())
         m = cellule(ref)
@@ -9736,8 +9753,8 @@ def _pv_visite_pdf(champs, coches=(), titre='PV de visite'):
         boite('B', 'AG', r, r)
         texte('B', 'AG', r, r, [(libelle, 'b' if gras else '', NOIR), (champs.get(ref) or '', '', BLEU)], 9.9)
 
-    def option(c1, c2, r, ref, libelle, aligne='centre'):
-        coche = ref in coches
+    def option(c1, c2, r, case, libelle, aligne='centre'):
+        coche = case in coches
         coul = BLEU if coche else NOIR
         texte(c1, c2, r, r, [('◉' if coche else '◯', '', coul), (' ' + libelle, '', coul)], 9.9, aligne)
 
@@ -9773,16 +9790,16 @@ def _pv_visite_pdf(champs, coches=(), titre='PV de visite'):
     rubrique(12, 'Nom du tuteur universitaire : ', 'B12')
     boite('B', 'AG', 13, 13)
     texte('B', 'F', 13, 13, [('Site de formation :', '', NOIR)], 9.9)
-    option('G', 'O', 13, 'G13', 'Campus de la Garde')
-    option('P', 'X', 13, 'P13', 'Campus de Toulon')
-    option('Y', 'AG', 13, 'Y13', 'Campus de Draguignan')
+    option('G', 'O', 13, ('G13', 0), 'Campus de la Garde')
+    option('P', 'X', 13, ('P13', 0), 'Campus de Toulon')
+    option('Y', 'AG', 13, ('Y13', 0), 'Campus de Draguignan')
     # Étudiant, entreprise, tuteur entreprise
     bandeau(14, "Partie concernant l'étudiant/e")
     rubrique(15, 'Nom : ', 'B15')
     rubrique(16, 'Prénom : ', 'B16')
     boite('B', 'AG', 17, 17)
-    option('E', 'P', 17, '-', "contrat d'apprentissage")
-    option('Q', 'AE', 17, '-', 'contrat de professionalisation')
+    option('E', 'P', 17, ('B17', 0), "contrat d'apprentissage")
+    option('Q', 'AE', 17, ('B17', 1), 'contrat de professionalisation')   # orthographe de la trame
     bandeau(18, "Partie concernant l'entreprise d'accueil")
     rubrique(19, "Nom de l'entreprise visitée : ", 'B19')
     rubrique(20, "Adresse de l'entreprise visitée : ", 'B20', gras=False)
@@ -9896,7 +9913,7 @@ def get_alternance_visites():
     tous = droits['tout'] or droits['recap']
     gens = _alt_visites_alternants(pdb, start, _suivi_key(session.get('teacher_name')), tous)
     champs = ('id', 'person_id', 'nom', 'prenom', 'pid', 'promotion', 'annee_etude', 'mien',
-              'tuteur_univ', 'entreprise', 'adresse', 'ville', 'departement', 'tuteur_entreprise')
+              'tuteur_univ', 'entreprise', 'adresse', 'ville', 'departement', 'tuteur_entreprise', 'contrat')
     return jsonify({'annee': annee, 'echeances': _alt_echeances(pdb, annee, 'visite'),
                     'droits': {'echeances': droits['echeances'], 'tous': tous},
                     'aujourdhui': datetime.now().strftime('%Y-%m-%d'),
@@ -9908,9 +9925,9 @@ def get_alternance_visites():
 def get_alternance_pv_visite(sid):
     """Le PV de visite d'un alternant pour l'année ?annee=, en Excel (défaut) ou en PDF
     (?format=pdf), prérempli : année, formation et année d'étude, parcours, tuteur
-    universitaire, site de formation (La Garde), l'alternant, son entreprise et son
-    adresse si la fiche en a une (_pv_adresse), le tuteur entreprise. Pour son tuteur
-    universitaire, l'admin et les responsables ALT et FTP."""
+    universitaire, site de formation (La Garde), l'alternant et son contrat, son
+    entreprise et son adresse si la fiche en a une (_pv_adresse), le tuteur entreprise.
+    Pour son tuteur universitaire, l'admin et les responsables ALT et FTP."""
     droits = _alt_depots_droits()
     if not droits['voir']:
         return error_response('Accès réservé', 403)
@@ -9936,11 +9953,13 @@ def get_alternance_pv_visite(sid):
         'B19': s['entreprise'], 'B20': _pv_adresse(s),
         'B22': t_nom, 'B23': t_prenom,
     }
+    # Campus de la Garde, et le contrat de la fiche s'il est renseigné
+    coches = [_PV_VISITE_CAMPUS] + ([_PV_VISITE_CONTRATS[s['contrat']]] if s.get('contrat') in _PV_VISITE_CONTRATS else [])
     fichier = _zip_nom(f'PV visite {nom} {prenom} {annee}', 150)
     if request.args.get('format') == 'pdf':
-        return send_file(io.BytesIO(_pv_visite_pdf(champs, [_PV_VISITE_CAMPUS], f'PV de visite {nom} {prenom} {annee}')),
+        return send_file(io.BytesIO(_pv_visite_pdf(champs, coches, f'PV de visite {nom} {prenom} {annee}')),
                          as_attachment=True, download_name=fichier + '.pdf', mimetype='application/pdf')
-    return send_file(io.BytesIO(_pv_visite_xlsx(champs, coches=[_PV_VISITE_CAMPUS])), as_attachment=True,
+    return send_file(io.BytesIO(_pv_visite_xlsx(champs, coches=coches)), as_attachment=True,
                      download_name=fichier + '.xlsx',
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 

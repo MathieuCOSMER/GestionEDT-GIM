@@ -1709,6 +1709,8 @@ function _aideSuivi() {
         <h3>Remplir une fiche</h3>
         <p>Un clic sur un étudiant ouvre sa fiche :</p>
         <ul>
+            <li><b>Contrat</b> (alternance seulement) : contrat d'apprentissage ou de professionnalisation, coché sur le PV de visite ;
+                tant qu'il n'est pas choisi, l'alternant est signalé <b>contrat à renseigner</b> ;</li>
             <li><b>Entreprise / organisme</b> : la liste propose les entreprises déjà connues (toutes années) — en choisir une reprend son lieu et son adresse ;</li>
             <li><b>Adresse</b> (n°, rue, code postal), reprise sur le PV de visite de l'alternance ;</li>
             <li><b>Ville</b>, <b>Département</b> (numéro « 83 » ou nom « Var ») ;</li>
@@ -1772,10 +1774,12 @@ function _aideSuivi() {
         <h3>Le PV de visite prérempli</h3>
         <p>${_aUi('⤓ PV (PDF)')} et ${_aUi('⤓ Excel')} téléchargent le PV, rempli d'après la fiche de l'alternant (sous-onglet Tuteurs) : année
         universitaire, formation et année d'étude, parcours, tuteur universitaire, site de formation (Campus de la Garde, coché), nom et prénom
-        de l'alternant, entreprise et son adresse, nom et prénom du tuteur entreprise. Ce qui est prérempli est écrit en bleu. Le PDF s'imprime
+        de l'alternant, son contrat (case cochée d'après la fiche), entreprise et son adresse, nom et prénom du tuteur entreprise.
+        Ce qui est prérempli est écrit en bleu. Le PDF s'imprime
         tel quel ; l'Excel (la trame d'origine) se complète aussi à l'ordinateur.</p>
         <p>L'<b>adresse</b> n'est écrite que si la fiche en a une (n°, rue, code postal) : la ville seule ne suffit pas, la ligne reste alors vide
-        et l'alternant est signalé <b>adresse à renseigner</b>. Restent à écrire le type de contrat, le compte rendu, la date et les signatures.</p>
+        et l'alternant est signalé <b>adresse à renseigner</b> ; de même, sans contrat choisi, aucune case n'est cochée (<b>contrat à renseigner</b>).
+        Restent à écrire le compte rendu, la date et les signatures.</p>
         <p>Le tuteur universitaire voit ses alternants ; l'administrateur et les responsables de l'alternance et FTP les voient tous
         (recherche, ${_aUi('Mes alternants')}).</p>` },
 
