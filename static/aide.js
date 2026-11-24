@@ -1044,7 +1044,7 @@ function _aideService() {
 
     { id: 'contraintes', rub: R, titre: "Contraintes d'emploi du temps (enseignant)", chemin: 'Service › Contraintes Enseignant',
       onglet: 'svc:contraintes', cible: 'contraintes',
-      mots: 'contraintes indisponibilité préférence fichier joint disponibilité dispos grille semaine type semaines particulières barre des semaines paires impaires hyperplanning pinceau priorité',
+      mots: 'contraintes indisponibilité préférence fichier joint disponibilité dispos grille semaine type semaines particulières barre des semaines paires impaires hyperplanning pinceau priorité import pdf hachures hachuré emploi du temps imprimé',
       html: `
         <p>Chaque enseignant y indique ses <b>indisponibilités et préférences</b> pour l'année affichée dans le Service :</p>
         <ul>
@@ -1084,6 +1084,44 @@ function _aideService() {
         de mise à jour ; un responsable voit d'abord les siennes, puis celles des autres. Le bloc ${_aUi('Disponibilités (grille)')} permet
         de choisir un enseignant (✓ = grille enregistrée, « n sem. » = semaines avec leur propre grille) et de saisir sa grille à sa
         place, semaine par semaine si besoin, ses contraintes écrites affichées à côté.</p>
+        <h3>Importer les indisponibilités d'Hyperplanning</h3>
+        <p>Les indisponibilités déjà déclarées dans Hyperplanning s'importent depuis l'emploi du temps des enseignants <b>imprimé en
+        PDF</b> : ${_aUi('Importer les indisponibilités d\'Hyperplanning…')} dans le bloc ${_aUi('Disponibilités (grille)')}
+        (administration). Dans Hyperplanning, imprimez l'emploi du temps avec la <b>journée complète</b> (8h00 → 21h00), au choix
+        avec les <b>jours datés</b> (« lundi 4 janvier 2027 »), une semaine par page ou plusieurs semaines côte à côte, ou avec les
+        <b>semaines en colonnes</b> (« 24 août - 29 août », jours en rangées, dix semaines par page), pour un enseignant ou pour
+        tous, sur toute l'année si besoin. Les zones <b>hachurées</b> sont lues comme des indisponibilités, à la demi-heure près.
+        Des horaires compactés (heures sans cours réduites), eux, ne conviennent pas : les hachures y sont coupées, et ces pages
+        sont refusées.</p>
+        <p>Le fichier est lu par tranches (une barre montre l'avancement : quelques secondes par dizaine de pages), puis un tableau
+        rapproche chaque nom du fichier d'un enseignant de l'année ; un nom non reconnu, ou deux noms pour un même enseignant (« M. »
+        et « Mme » du même nom), se rattachent à la main, ou s'ignorent. <b>Rien n'est écrit avant</b> ${_aUi('Importer')}.</p>
+        <p>Les indisponibilités importées sont gardées <b>à part</b> de la grille peinte : elles apparaissent <b>hachurées</b> par-dessus
+        (et dans la barre des semaines), pour l'enseignant comme pour l'administration, et le calcul de l'emploi du temps les ferme en
+        plus de la grille. Le pinceau ne les modifie pas. Un nouvel import remplace les semaines que le fichier couvre et laisse les
+        autres ; ${_aUi('Retirer l\'import Hyperplanning')} les efface pour l'enseignant affiché. Dans la liste des enseignants,
+        « HP n sem. » compte les semaines qui en ont.</p>
+        <h3>Les cours déjà posés dans Hyperplanning</h3>
+        <p>Imprimé <b>une semaine par page</b>, l'emploi du temps montre aussi le texte complet de chaque cours (matière, classe,
+        groupe, salle) : l'import le lit. Imprimé avec les <b>semaines en colonnes</b>, ce texte est presque complet (la salle,
+        en bout de ligne, devient souvent « (...) ») : l'import le lit aussi. Quand la classe y est coupée, elle est déduite des
+        autres cases de la même matière dans le fichier (« classe déduite »). Avec les jours datés et plusieurs semaines côte à
+        côte, la classe est le plus souvent masquée : les cours n'y sont pas lus.</p>
+        <ul>
+            <li>les cours d'<b>autres départements</b> rendent toujours le créneau indisponible, comme une zone hachurée ;</li>
+            <li>un cours dont la case est trop petite pour son texte (« ... », semaines en colonnes) est compté « illisible » et
+            bloqué de même ;</li>
+            <li>chaque <b>cours GIM</b> est rapproché de la séance de l'appli qu'il représente (enseignant, année, groupe, type,
+            numéro de semestre de la matière, durée) ; la colonne ${_aUi('Cours dans Hyperplanning')} propose alors de le
+            <b>reprendre</b> : tous les cours d'un enseignant d'un clic, ou cours par cours. Repris, il entre dans l'emploi du temps
+            de l'appli à sa place Hyperplanning, figé (📌 dans la vue Planning ; « Générer l'EDT » ne le bouge plus), à la place de
+            la même séance placée par l'appli. Non repris, il n'en est pas tenu compte : l'appli place la séance elle-même ;</li>
+            <li>un cours GIM sans séance correspondante dans l'appli (matière absente de la répartition…) est seulement bloqué.</li>
+        </ul>
+        <p>Un nouvel import retire les cours repris lors du précédent sur les semaines qu'il couvre, puis reprend ceux qui sont
+        cochés (d'emblée, ceux déjà repris). Un cours qui n'est plus repris laisse sa séance à placer : relancez « Générer l'EDT »
+        sur ces semaines.</p>
+        ${_aTip(`les jours hors de l'année affichée dans le Service sont ignorés : importez le fichier de l'année que vous préparez.`)}
         ${_aTip(`pour donner ses contraintes de l'an prochain, choisissez d'abord l'année suivante dans la liste ${_aUi('Année')} du Service.`)}` },
 
     { id: 'contraintes-matiere', rub: R, titre: 'Contraintes par matière', chemin: 'Service › Contraintes Matière',
@@ -1328,6 +1366,14 @@ function _aidePromotions() {
         ${_aUi('Ajouter les jours fériés légaux manquants')} complète la liste. Ils s'enregistrent avec le reste du calendrier`)}.
         Tant que la liste n'est pas enregistrée, « Générer l'EDT » prend les jours fériés légaux, sans pont. Une semaine qui a un jour
         fermé du lundi au vendredi rouvre le jeudi après-midi aux FTP, pour rattraper.</p>
+        ${_aSiModif('promo:calendrier', `<p>${_aUi('Relever dans un PDF Hyperplanning…')} reprend les jours fermés de l'établissement
+        tels qu'Hyperplanning les marque (« Férié » en travers du jour) dans un emploi du temps imprimé avec les <b>jours datés</b>
+        (« lundi 4 janvier 2027 ») ou les <b>semaines en colonnes</b> (« 24 août - 29 août ») : celui d'un seul enseignant sur
+        l'année suffit. Les jours qui manquent à la liste sont proposés :
+        les fériés légaux et les <b>ponts</b> (un jour fermé accolé à un férié, comme le vendredi après l'Ascension) cochés, les jours
+        d'une longue fermeture (Noël) décochés, puisque ces semaines sont d'ordinaire déjà en vacances au calendrier. Un jour de la
+        liste qu'Hyperplanning ne marque pas est signalé « à vérifier ». Les jours cochés s'ajoutent à la liste, à enregistrer ensuite
+        avec le calendrier.</p>`)}
         <p>Ces jours sont signalés partout où l'on répartit les matières : repère F / P sur la semaine dans la
         ${_aLien('rep-annuelle', 'répartition annuelle')} (et leur nom dans la ligne « Commentaires »)${_aSi('rep:jour', `, « férié » ou « pont »
         dans la liste des semaines de la ${_aLien('rep-jour', 'répartition journalière')}, avec un bandeau rappelant les jours sans cours`)},

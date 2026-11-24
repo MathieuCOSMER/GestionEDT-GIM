@@ -2333,6 +2333,32 @@ def _apply_migrations(db):
             FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE
         )
     ''')
+    # Indisponibilités importées d'Hyperplanning (zones hachurées de son emploi du
+    # temps imprimé en PDF, cf. hp_pdf.py) : une grille par semaine importée, au format
+    # de teacher_availability_weeks ('0' = indisponible, '1' = rien d'importé, '.' =
+    # fermé). Gardées À PART de ce que l'enseignant peint (un nouvel import remplace
+    # les semaines qu'il couvre, sans toucher à sa grille) ; le solveur ferme ces
+    # créneaux en plus des siens.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS teacher_availability_hp (
+            teacher_id  INTEGER NOT NULL,
+            week_number INTEGER NOT NULL,
+            grille      TEXT NOT NULL,
+            source      TEXT,
+            imported_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (teacher_id, week_number),
+            FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE
+        )
+    ''')
+    # Cours placés gardés à leur place (« figés ») : « Générer l'EDT » ne les déplace
+    # plus (solveur_edt.cours_figes). Origine 'hp' : cours posé dans Hyperplanning et
+    # repris à l'import de son emploi du temps (PDF), enseignant par enseignant ou cours
+    # par cours ; un nouvel import les remplace.
+    for col in ('group_index INTEGER', 'fige INTEGER DEFAULT 0', 'origine TEXT'):
+        try:
+            db.execute(f'ALTER TABLE timetable_slots ADD COLUMN {col}')
+        except sqlite3.OperationalError:
+            pass
     try:
         db.execute('ALTER TABLE course_sessions ADD COLUMN sessions_per_week_max INTEGER DEFAULT 1')
     except sqlite3.OperationalError:
@@ -3749,6 +3775,10 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     (r'^/api/compare/hyperplanning$', ['svc:comparaison'], 'readlike'),
     (r'^/api/constraints/me(/file|/dispos)?$', ['svc:contraintes'], ''),
     (r'^/api/constraints/\d+/dispos$', ['svc:contraintes'], 'strict'),
+    # Import des indisponibilités d'Hyperplanning (PDF) et retrait d'un import ; la
+    # lecture du PDF sert aussi à relever les jours fériés et ponts (Calendrier)
+    (r'^/api/constraints/dispos/hp/(fichier|lire)$', ['svc:contraintes', 'promo:calendrier'], 'strict'),
+    (r'^/api/constraints/(\d+/)?dispos/hp$', ['svc:contraintes'], 'strict'),
     (r'^/api/qr-attendance$', ['svc:repartition-enseignant'], ''),
     (r'^/api/my-account(/.*)?$', ['nav:mon-compte'], ''),
     # Calendrier de la promotion, jours fériés et ponts de l'année compris (Promotions › Calendrier)
@@ -4513,9 +4543,16 @@ def _dispos_etat(teacher_id):
         fermes = _jours_fermes_etat(db)
     except Exception:
         fermes = {'annee': get_current_year(), 'debut': None, 'jours': []}
+    hp = db.execute('''SELECT week_number, grille, source, imported_at FROM teacher_availability_hp
+                       WHERE teacher_id = ?''', (teacher_id,)).fetchall()
+    dernier = max(hp, key=lambda r: r['imported_at'] or '', default=None)
     return {'creneaux': creneaux,
             'type': _dsp_grille_depuis_creneaux(creneaux) if creneaux else None,
             'semaines': {str(w): g for w, g in sorted(semaines.items(), key=lambda x: ordre(x[0]))},
+            # indisponibilités importées d'Hyperplanning (semaines couvertes par l'import)
+            'hp': {str(r['week_number']): r['grille'] for r in sorted(hp, key=lambda r: ordre(r['week_number']))},
+            'hp_source': dernier['source'] if dernier else None,
+            'hp_date': dernier['imported_at'] if dernier else None,
             'liste': [{'semaine': w, 'cours': w in cours} for w in liste],
             'annee': fermes['annee'], 'debut': fermes['debut'],
             'fermes': [{'semaine': j['semaine'], 'jour': j['jour'], 'type': j['type'],
@@ -4591,10 +4628,13 @@ def list_dispos():
     rows = get_db().execute('''
         SELECT t.id, t.name, t.status,
                (SELECT COUNT(*) FROM teacher_availability ta WHERE ta.teacher_id = t.id) AS nb,
-               (SELECT COUNT(*) FROM teacher_availability_weeks tw WHERE tw.teacher_id = t.id) AS nbs
+               (SELECT COUNT(*) FROM teacher_availability_weeks tw WHERE tw.teacher_id = t.id) AS nbs,
+               (SELECT COUNT(*) FROM teacher_availability_hp th WHERE th.teacher_id = t.id
+                                                               AND th.grille LIKE '%0%') AS nbh
         FROM teachers t ORDER BY t.name''').fetchall()
     return jsonify([{'teacher_id': r['id'], 'teacher_name': r['name'], 'status': r['status'] or '',
-                     'saisie': r['nb'] > 0 or r['nbs'] > 0, 'semaines_propres': r['nbs']} for r in rows])
+                     'saisie': r['nb'] > 0 or r['nbs'] > 0, 'semaines_propres': r['nbs'],
+                     'semaines_hp': r['nbh']} for r in rows])
 
 @app.route('/api/constraints/<int:teacher_id>/dispos', methods=['GET'])
 def get_teacher_dispos(teacher_id):
@@ -4622,6 +4662,506 @@ def save_teacher_dispos(teacher_id):
     _audit('DISPOS_SAVE', ip=_client_ip(), user=session.get('user'), teacher=teacher_id,
            creneaux=len(etat['creneaux']), semaines=len(etat['semaines']))
     return jsonify(etat)
+
+# ----- Indisponibilités importées d'Hyperplanning (PDF) -----
+# L'emploi du temps des enseignants imprimé par Hyperplanning, journée complète
+# (8 h → 21 h), jours datés (« lundi 4 janvier 2027 ») ou semaines en colonnes
+# (« 24 août - 29 août », jours en rangées), un ou plusieurs enseignants par fichier,
+# est lu par hp_pdf.py : ses zones hachurées sont leurs indisponibilités. Import en trois temps,
+# pour qu'un gros fichier (tous les enseignants sur l'année : plusieurs centaines de
+# pages) ne bute pas sur la durée d'une requête :
+#   1. POST …/hp/fichier : dépôt du PDF -> {jeton, pages} ;
+#   2. POST …/hp/lire {jeton, debut, fin} : lecture d'une tranche de pages ->
+#      {enseignants: {nom affiché: {date: [[début, fin], …]}}} (minutes) ; l'écran
+#      réunit les tranches ;
+#   3. POST …/hp {lu, associations, apply} : rapprochement des noms et rapport ; avec
+#      apply, enregistrement dans teacher_availability_hp. Les semaines couvertes par
+#      le fichier remplacent celles d'un import précédent, les autres restent.
+_HP_IMPORT_DIR = os.environ.get('EDT_HP_IMPORT_DIR') or os.path.join(_BASE_DIR, 'uploads', 'hp_import')
+_HP_MAX = 60 * 1024 * 1024
+_HP_JETON_RE = _re.compile(r'^[0-9a-f]{32}$')
+
+def _hp_droit(onglets=('svc:contraintes',)):
+    """Import réservé à qui administre l'onglet Contraintes ; la lecture du PDF sert
+    aussi à relever les jours fériés et ponts (Promotions › Calendrier)."""
+    if not any(_admin_view(k) for k in onglets):
+        return error_response('Accès réservé à l\'administrateur', 403)
+    return _require_admin()
+
+_HP_LECTURE = ('svc:contraintes', 'promo:calendrier')
+
+def _hp_menage():
+    """Fichiers déposés il y a plus de 6 heures (import abandonné) : supprimés."""
+    try:
+        limite = time.time() - 6 * 3600
+        for nom in os.listdir(_HP_IMPORT_DIR):
+            p = os.path.join(_HP_IMPORT_DIR, nom)
+            if os.path.isfile(p) and os.path.getmtime(p) < limite:
+                os.remove(p)
+    except OSError:
+        pass
+
+@app.route('/api/constraints/dispos/hp/fichier', methods=['POST'])
+def hp_deposer():
+    import secrets
+    err = _hp_droit(_HP_LECTURE)
+    if err:
+        return err
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return error_response('Aucun fichier reçu', 400)
+    if os.path.splitext(f.filename)[1].lower() != '.pdf':
+        return error_response(f'{f.filename} : un PDF d\'Hyperplanning est attendu', 400)
+    if request.content_length and request.content_length > _HP_MAX:
+        return error_response('Fichier trop volumineux (max 60 Mo)', 400)
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return error_response('Lecture des PDF indisponible sur ce serveur : '
+                              'installez le module pypdf (pip install pypdf)', 500)
+    os.makedirs(_HP_IMPORT_DIR, exist_ok=True)
+    _hp_menage()
+    jeton = secrets.token_hex(16)
+    chemin = os.path.join(_HP_IMPORT_DIR, jeton + '.pdf')
+    f.save(chemin)
+    try:
+        pages = len(PdfReader(chemin).pages)
+    except Exception as e:
+        try:
+            os.remove(chemin)
+        except OSError:
+            pass
+        return error_response(f'{f.filename} : lecture impossible ({e})', 400)
+    return jsonify({'jeton': jeton, 'pages': pages, 'fichier': f.filename})
+
+@app.route('/api/constraints/dispos/hp/lire', methods=['POST'])
+def hp_lire():
+    import hp_pdf
+    err = _hp_droit(_HP_LECTURE)
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    jeton = str(data.get('jeton') or '')
+    if not _HP_JETON_RE.match(jeton):
+        return error_response('Jeton invalide', 400)
+    chemin = os.path.join(_HP_IMPORT_DIR, jeton + '.pdf')
+    if not os.path.isfile(chemin):
+        return error_response('Fichier expiré : déposez-le à nouveau', 410)
+    try:
+        debut, fin = int(data.get('debut', 0)), int(data.get('fin', 0))
+    except (TypeError, ValueError):
+        return error_response('Plage de pages invalide', 400)
+    try:
+        res = hp_pdf.lire_pdf(chemin, pages=(debut, fin))
+    except Exception as e:
+        return error_response(f'Lecture impossible ({e})', 400)
+    if fin >= res['pages']:              # dernière tranche : le fichier ne sert plus
+        try:
+            os.remove(chemin)
+        except OSError:
+            pass
+    return jsonify({'pages': res['pages'], 'lues': res['lues'], 'ignorees': res['ignorees'],
+                    'enseignants': {q: {d.isoformat(): [[a, b] for a, b in z] for d, z in jours.items()}
+                                    for q, jours in res['enseignants'].items()},
+                    # cours posés dans Hyperplanning (pages « une semaine », ou semaines en
+                    # colonnes) : [début, fin, GIM ?, matière, classes, groupes, salle] ;
+                    # case illisible (« ... ») : matière, classes, groupes et salle vides
+                    'cours_hp': {q: {d.isoformat(): [[c['debut'], c['fin'], int(c['gim']), c['matiere'][:120],
+                                                      ' | '.join(c['classes'])[:120], ' | '.join(c['groupes'])[:60],
+                                                      (c['salles'] or [''])[0][:40]] for c in cs]
+                                     for d, cs in jours.items() if cs}
+                                 for q, jours in res['cours_hp'].items()},
+                    'pages_cours': res['pages_cours'],
+                    # jours marqués « Férié » (calendrier de l'établissement), et jours
+                    # affichés : nombre de pages, pour Promotions › Calendrier
+                    'feries': {d.isoformat(): n for d, n in res['feries'].items()},
+                    'jours_vus': {d.isoformat(): n for d, n in res['jours_vus'].items()}})
+
+def _hp_lu_valide(lu):
+    """{nom: {date ISO: [[début, fin], …]}} envoyé par l'écran -> même structure
+    nettoyée (dates réelles, minutes entières, début < fin), ou None si invalide."""
+    from datetime import date as _date
+    if not isinstance(lu, dict) or len(lu) > 400:
+        return None
+    out = {}
+    for qui, jours in lu.items():
+        if not isinstance(qui, str) or not qui.strip() or len(qui) > 120 or not isinstance(jours, dict) \
+                or len(jours) > 600:
+            return None
+        propres = {}
+        for ds, zones in jours.items():
+            try:
+                d = _date.fromisoformat(str(ds))
+            except ValueError:
+                return None
+            if not isinstance(zones, list) or len(zones) > 50:
+                return None
+            zs = []
+            for z in zones:
+                try:
+                    a, b = int(z[0]), int(z[1])
+                except (TypeError, ValueError, IndexError, KeyError):
+                    return None
+                if not 0 <= a < b <= 24 * 60:
+                    return None
+                zs.append((a, b))
+            propres[d] = zs
+        out[qui.strip()] = propres
+    return out
+
+def _hp_cours_valide(cours):
+    """Cours posés dans Hyperplanning, envoyés par l'écran : {nom: {date ISO: [[début,
+    fin, GIM 0/1, matière, classes, groupes, salle], …]}} -> même structure nettoyée
+    (dates réelles), ou None si invalide."""
+    from datetime import date as _date
+    if not isinstance(cours, dict) or len(cours) > 400:
+        return None
+    out = {}
+    for qui, jours in cours.items():
+        if not isinstance(qui, str) or len(qui) > 120 or not isinstance(jours, dict) or len(jours) > 600:
+            return None
+        propres = {}
+        for ds, cs in jours.items():
+            try:
+                d = _date.fromisoformat(str(ds))
+            except ValueError:
+                return None
+            if not isinstance(cs, list) or len(cs) > 40:
+                return None
+            lst = []
+            for c in cs:
+                if not isinstance(c, list) or len(c) != 7:
+                    return None
+                try:
+                    a, b, gim = int(c[0]), int(c[1]), bool(int(c[2]))
+                except (TypeError, ValueError):
+                    return None
+                if not 0 <= a < b <= 24 * 60:
+                    return None
+                lst.append({'debut': a, 'fin': b, 'gim': gim,
+                            **{k: str(v or '')[:120] for k, v in zip(('matiere', 'classes', 'groupes', 'salle'), c[3:])}})
+            propres[d] = lst
+        out[qui.strip()] = propres
+    return out
+
+
+def _hp_rapprocher_cours(c, cands, pas):
+    """Séance de l'appli (événement du solveur) qui correspond à un cours GIM posé dans
+    Hyperplanning, parmi les séances de son enseignant cette semaine-là. Indices lus
+    dans la case : année (« BUT 1 »), formation (« ISP ALT », « Temps plein », « MUT »),
+    groupe (TP12_3, TD_1, TP12_ALT ; aucun = CM ou promotion entière), numéro de
+    semestre en fin de nom de matière (« Anglais 1 »), durée. Renvoie (événement ou
+    None, ambigu ?)."""
+    classes, grp = c['classes'].upper(), (c['groupes'].split('|')[0].strip().upper() if c['groupes'] else '')
+    m = re.search(r'BUT\s*(\d)', classes)
+    annee = int(m.group(1)) if m else None
+    m = re.search(r'(\d)\s*$', c['matiere'])
+    sem = f'S{m.group(1)}' if m else None
+    alt_classe = 'ALT' in classes.replace('GIM', '')
+    plein = 'TEMPS PLEIN' in classes
+    out = []
+    for e in cands:
+        if annee and e.annee != annee:
+            continue
+        if sem and e.semestre and e.semestre != sem:
+            continue
+        if alt_classe and e.formation == 0 or plein and e.formation == 1:
+            continue
+        if grp:
+            typ = 'TP' if grp.startswith('TP') else ('TD' if grp.startswith('TD') else None)
+            if typ and not e.type.startswith(typ):
+                continue
+            if 'ALT' in grp:
+                if not (e.formation == 1 or (e.formation == 2 and e.groupe == e.nb_groupes and e.nb_groupes > 1)):
+                    continue
+            else:
+                n = re.search(r'(\d+)\s*$', grp)
+                if n and (e.formation == 1 or e.groupe != int(n.group(1))):
+                    continue
+        elif e.nb_groupes > 1 and e.type.startswith('TP'):
+            continue                    # TP par groupe : un cours sans groupe n'en est pas un
+        out.append(e)
+    if not out:
+        return None, False
+    duree = c['fin'] - c['debut']
+    out.sort(key=lambda e: (abs(e.lon * pas - duree) > 5, e.session_id, e.rang))
+    meilleur = out[0]
+    ambigu = len({(e.session_id, e.groupe) for e in out
+                  if (abs(e.lon * pas - duree) > 5) == (abs(meilleur.lon * pas - duree) > 5)}) > 1
+    return meilleur, ambigu
+
+
+def _hp_classes_deduites(cours_hp):
+    """Classe masquée : imprimé avec les semaines en colonnes, une case d'une heure et
+    demie coupe souvent la ligne de la classe (« Techno. Méca. Flu. 3,(...) »). Elle se
+    déduit des cases lisibles de la même matière dans le fichier, quel qu'en soit
+    l'enseignant : si toutes sont de classes GIM, le cours est GIM (classe reprise si
+    elle est unique, marqué « deduit »). Sinon (aucune case lisible, ou une classe d'un
+    autre département), il reste bloqué comme avant. Modifie et renvoie cours_hp."""
+    vues = {}
+    for jours in cours_hp.values():
+        for cs in jours.values():
+            for c in cs:
+                if c['matiere'] and c['classes']:
+                    vues.setdefault(c['matiere'], set()).add((c['gim'], c['classes']))
+    for jours in cours_hp.values():
+        for cs in jours.values():
+            for c in cs:
+                v = vues.get(c['matiere']) if not c['gim'] and not c['classes'] else None
+                if v and all(g for g, _ in v):
+                    c['gim'], c['deduit'] = True, True
+                    if len(v) == 1:
+                        c['classes'] = next(iter(v))[1]
+    return cours_hp
+
+
+def _hp_preparer(db, lu, associations, cours_hp=None):
+    """Rapprochement des noms du fichier avec les enseignants de l'année, grilles à
+    écrire et cours posés dans Hyperplanning. Les cours d'autres départements, les cours
+    illisibles (case trop petite : « ... ») et les cours GIM sans séance correspondante
+    dans l'appli bloquent le créneau comme une zone hachurée ; un cours GIM rapproché
+    d'une séance peut être repris dans l'EDT de l'appli (figé), sinon il ne compte pas.
+    Renvoie (rapport, grilles {teacher_id: {semaine: grille}}, reprises {teacher_id:
+    {clé: cours à reprendre}}, erreur)."""
+    import hp_pdf
+    import solveur_edt
+    from collections import defaultdict
+    cours_hp = _hp_classes_deduites(cours_hp or {})
+    profs = [(r['id'], r['name']) for r in db.execute('SELECT id, name FROM teachers ORDER BY name')]
+    noms = dict(profs)
+    cfg = get_year_config()
+    valides = get_valid_school_weeks(cfg['academic_start_week'], cfg['academic_end_week'], cfg['academic_max_week'])
+    debut_an, fin_an = _jours_fermes_bornes(get_current_year())
+    ordre = lambda w: (w < cfg['academic_start_week'], w)   # noqa: E731
+    deja = {r[0]: r[1] for r in db.execute(
+        'SELECT teacher_id, COUNT(*) FROM teacher_availability_hp GROUP BY teacher_id')}
+    # 1. rapprochement (automatique, ou choix fait à l'écran)
+    choix = {}
+    for qui in set(lu) | set(cours_hp):
+        tid, how = hp_pdf.rapprocher(qui, profs)
+        if qui in associations:
+            v = associations[qui]
+            try:
+                tid = int(v) if v not in (None, '') else None
+            except (TypeError, ValueError):
+                tid = None
+            tid, how = (tid, 'choisi') if tid in noms else (None, None)
+        choix[qui] = [tid, how]
+    # deux noms du fichier rapprochés d'office du même enseignant (« M. RICHIER » et
+    # « Mme RICHIER ») : à trancher à l'écran ; choisis tous deux à la main : erreur
+    par_tid = defaultdict(list)
+    for qui, (tid, how) in choix.items():
+        if tid is not None:
+            par_tid[tid].append(qui)
+    erreur = None
+    for tid, quis in par_tid.items():
+        if len(quis) > 1:
+            if all(choix[q][1] == 'choisi' for q in quis):
+                erreur = f'{" et ".join(quis)} sont associés au même enseignant ({noms[tid]})'
+            for q in quis:
+                if choix[q][1] != 'choisi':
+                    choix[q] = [None, 'conflit']
+    # Séances à placer de chaque semaine (celles du solveur), pour rapprocher les cours
+    # GIM ; cours déjà repris d'Hyperplanning (origine 'hp'), pour les cocher d'emblée
+    don, evts_sem = None, {}
+
+    def seances(w):
+        nonlocal don
+        if w not in evts_sem:
+            if don is None:
+                don = solveur_edt.Donnees(db, solveur_edt.lire_reglages({'annee_universitaire': get_current_year()}))
+            evts_sem[w] = solveur_edt.evenements_semaine(db, don, w, [])
+        return evts_sem[w]
+    repris = set()
+    try:
+        for r in db.execute("""SELECT teacher_id, week_number, day_of_week, start_time, course_session_id
+                               FROM timetable_slots WHERE origine = 'hp' AND COALESCE(fige, 0) = 1"""):
+            repris.add((r[0], r[1], r[2], str(r[3])[:5], r[4]))
+    except sqlite3.OperationalError:
+        pass
+    salles = {r['name'].strip().upper(): r['id'] for r in db.execute('SELECT id, name FROM rooms')}
+
+    def salle_id(nom):
+        m = re.match(r'^\s*([A-Z]?)(\d{2,4}[A-Z]?)\b', (nom or '').upper())
+        if not m:
+            return None
+        return salles.get(m.group(1) + m.group(2)) or salles.get(m.group(2))
+    # 2. grilles par semaine et cours posés dans Hyperplanning
+    rapport, grilles, reprises = [], {}, {}
+    jours_lib = ['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.']
+    hm = lambda m: f'{m // 60:02d}:{m % 60:02d}'   # noqa: E731
+    for qui in sorted(choix, key=lambda q: hp_pdf.cle_nom(hp_pdf.nom_sans_civilite(q))):
+        tid, how = choix[qui]
+        sem_g, hors, demi = {}, 0, 0
+        exemples = []
+
+        def bloquer(d, a, b):
+            nonlocal demi
+            g = sem_g.setdefault(d.isocalendar()[1], list(_dsp_grille_defaut()))
+            j = d.weekday()
+            for u in range(_DSP_U):
+                k = j * _DSP_U + u
+                t0 = _DSP_DEBUT + u * _DSP_PAS
+                if g[k] == '1' and a < t0 + _DSP_PAS and b > t0:
+                    g[k] = '0'
+                    demi += 1
+
+        def dans_annee(d):
+            return debut_an <= d <= fin_an and d.isocalendar()[1] in valides and d.weekday() < _DSP_NJ
+        for d in sorted(lu.get(qui, {})):
+            if not dans_annee(d):
+                hors += 1
+                continue
+            sem_g.setdefault(d.isocalendar()[1], list(_dsp_grille_defaut()))
+            for a, b in lu[qui][d]:
+                bloquer(d, a, b)
+                if len(exemples) < 4:
+                    exemples.append(f"S{d.isocalendar()[1]} {jours_lib[d.weekday()]} "
+                                    f"{d.day:02d}/{d.month:02d} {a // 60}h{a % 60:02d}–{b // 60}h{b % 60:02d}")
+        # cours posés dans Hyperplanning
+        gim, autres, illisibles, non_rap = [], 0, 0, []
+        pris = defaultdict(set)              # semaine -> séances déjà rapprochées
+        for d in sorted(cours_hp.get(qui, {})):
+            if not dans_annee(d):
+                continue
+            w, j = d.isocalendar()[1], d.weekday()
+            sem_g.setdefault(w, list(_dsp_grille_defaut()))
+            for k, c in enumerate(cours_hp[qui][d]):
+                if not c['gim']:
+                    # case trop petite pour son texte (« ... ») : cours inconnu, bloqué aussi
+                    if not any(c[x] for x in ('matiere', 'classes', 'groupes', 'salle')):
+                        illisibles += 1
+                    else:
+                        autres += 1
+                    bloquer(d, c['debut'], c['fin'])
+                    continue
+                e, ambigu = None, False
+                if tid is not None:
+                    cands = [x for x in seances(w) if x.enseignant == tid and x.idx not in pris[w]]
+                    e, ambigu = _hp_rapprocher_cours(c, cands, don.reg.pas)
+                texte = f"{c['matiere']} {c['groupes'] or c['classes']}".strip()
+                if e is None:
+                    non_rap.append(f"S{w} {jours_lib[j]} {hm(c['debut'])} {texte}")
+                    bloquer(d, c['debut'], c['fin'])
+                    continue
+                pris[w].add(e.idx)
+                cle = f"{d.isoformat()}T{hm(c['debut'])}-{hm(c['fin'])}#{k}"
+                lib = f"{e.code} {e.type}{f' gr{e.groupe}' if e.nb_groupes > 1 else ''}"
+                gim.append({'cle': cle, 'semaine': w, 'jour': j, 'date': d.isoformat(),
+                            'debut': hm(c['debut']), 'fin': hm(c['fin']), 'texte': texte, 'seance': lib,
+                            'ambigu': ambigu, 'salle': c['salle'], 'deduit': bool(c.get('deduit')),
+                            'deja': (tid, w, j, hm(c['debut']), e.session_id) in repris})
+                reprises.setdefault(tid, {})[cle] = {
+                    'semaine': w, 'jour': j, 'debut': hm(c['debut']), 'fin': hm(c['fin']),
+                    'session_id': e.session_id, 'groupe': e.groupe, 'nb_groupes': e.nb_groupes,
+                    'formation': e.formation, 'room_id': salle_id(c['salle'])}
+        semaines = sorted(sem_g, key=ordre)
+        gim.sort(key=lambda x: (ordre(x['semaine']), x['jour'], x['debut']))
+        rapport.append({'qui': qui, 'teacher_id': tid, 'teacher_name': noms.get(tid) if tid else None,
+                        'how': how, 'semaines': semaines,
+                        'semaines_hp': sum(1 for w in semaines if '0' in sem_g[w]),
+                        'heures': demi / 2, 'hors_annee': hors, 'exemples': exemples,
+                        'deja': deja.get(tid, 0) if tid else 0,
+                        'cours_gim': gim, 'cours_autres': autres, 'cours_illisibles': illisibles,
+                        'cours_non_rapproches': non_rap[:40],
+                        'nb_non_rapproches': len(non_rap)})
+        if tid is not None and semaines:
+            grilles[tid] = {w: ''.join(sem_g[w]) for w in semaines}
+    vus = {tid for tid, _ in choix.values() if tid is not None}
+    absents = [n for i, n in profs if i not in vus]
+    return {'annee': get_current_year(), 'enseignants': rapport, 'absents': absents,
+            'profs': [{'id': i, 'name': n} for i, n in profs]}, grilles, reprises, erreur
+
+@app.route('/api/constraints/dispos/hp', methods=['POST'])
+def hp_importer():
+    """Rapport de l'import (sans apply) ou enregistrement (apply). Corps :
+    {lu: {nom affiché: {date: [[début, fin], …]}}, cours_hp: {nom: {date: [[…]]}}
+    (cours posés dans Hyperplanning), associations: {nom: teacher_id | null},
+    reprendre: {teacher_id: [clés des cours GIM à reprendre]}, source, apply}.
+
+    À l'enregistrement, pour chaque enseignant du fichier et les semaines qu'il couvre :
+    sa grille d'indisponibilités est remplacée (hachures, cours d'autres départements,
+    cours GIM non rapprochés) ; les cours repris d'un import précédent sont retirés de
+    l'EDT de l'appli ; chaque cours GIM choisi y est repris à sa place, figé (origine
+    'hp'), à la place d'une séance identique non figée de la même semaine."""
+    err = _hp_droit()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    lu = _hp_lu_valide(data.get('lu'))
+    cours_hp = _hp_cours_valide(data.get('cours_hp') or {})
+    if lu is None or cours_hp is None:
+        return error_response('Lecture invalide : relancez l\'import', 400)
+    if not lu and not cours_hp:
+        return error_response('Aucun emploi du temps reconnu dans ce fichier : imprimez-le depuis '
+                              'Hyperplanning avec la journée complète (8 h → 21 h), jours datés ou '
+                              'semaines en colonnes', 400)
+    associations = data.get('associations') if isinstance(data.get('associations'), dict) else {}
+    reprendre = data.get('reprendre') if isinstance(data.get('reprendre'), dict) else {}
+    db = get_db()
+    rapport, grilles, reprises, erreur = _hp_preparer(db, lu, associations, cours_hp)
+    if not data.get('apply'):
+        rapport['erreur'] = erreur
+        return jsonify(rapport)
+    if erreur:
+        return error_response(erreur, 400)
+    if not grilles:
+        return error_response('Aucun enseignant de l\'année à mettre à jour', 400)
+    source = str(data.get('source') or '')[:200]
+    maintenant = datetime.now().strftime('%Y-%m-%d %H:%M')
+    repris = remplaces = 0
+    for tid, sems in grilles.items():
+        db.executemany('DELETE FROM teacher_availability_hp WHERE teacher_id = ? AND week_number = ?',
+                       [(tid, w) for w in sems])
+        db.executemany('''INSERT INTO teacher_availability_hp (teacher_id, week_number, grille, source, imported_at)
+                          VALUES (?,?,?,?,?)''', [(tid, w, g, source, maintenant) for w, g in sems.items()])
+        # cours repris d'un import précédent, sur ces semaines : retirés (repris à nouveau ci-dessous si choisis)
+        pl = ','.join('?' * len(sems))
+        db.execute(f"DELETE FROM timetable_slots WHERE origine = 'hp' AND teacher_id = ? AND week_number IN ({pl})",
+                   (tid, *sems))
+        choisis = reprendre.get(str(tid)) or []
+        if not isinstance(choisis, list):
+            return error_response('Choix des cours à reprendre invalide', 400)
+        for cle in choisis:
+            r = reprises.get(tid, {}).get(str(cle))
+            if r is None:
+                continue
+            gi = r['groupe'] if r['nb_groupes'] > 1 else None
+            # la séance placée par l'appli que ce cours remplace (même séance, même groupe, non figée)
+            ancien = db.execute('''SELECT id FROM timetable_slots WHERE week_number = ? AND course_session_id = ?
+                                   AND COALESCE(group_index, 1) = ? AND COALESCE(fige, 0) = 0
+                                   AND COALESCE(origine, '') <> 'hp' ORDER BY id LIMIT 1''',
+                                (r['semaine'], r['session_id'], r['groupe'])).fetchone()
+            if ancien:
+                db.execute('DELETE FROM timetable_slots WHERE id = ?', (ancien[0],))
+                remplaces += 1
+            db.execute('''INSERT INTO timetable_slots (course_session_id, week_number, day_of_week, start_time, end_time,
+                              room_id, teacher_id, formation_type, group_index, fige, origine)
+                          VALUES (?,?,?,?,?,?,?,?,?,1,'hp')''',
+                       (r['session_id'], r['semaine'], r['jour'], r['debut'], r['fin'], r['room_id'], tid,
+                        r['formation'], gi))
+            repris += 1
+    db.commit()
+    _audit('DISPOS_HP_IMPORT', ip=_client_ip(), user=session.get('user'), source=source,
+           enseignants=len(grilles), semaines=sum(len(s) for s in grilles.values()), cours_repris=repris)
+    rapport['applique'] = True
+    rapport['ecrits'] = {str(t): len(s) for t, s in grilles.items()}
+    rapport['cours_repris'], rapport['seances_remplacees'] = repris, remplaces
+    return jsonify(rapport)
+
+@app.route('/api/constraints/<int:teacher_id>/dispos/hp', methods=['DELETE'])
+def hp_effacer(teacher_id):
+    """Retire les indisponibilités importées d'Hyperplanning d'un enseignant."""
+    err = _hp_droit()
+    if err:
+        return err
+    db = get_db()
+    if not db.execute('SELECT 1 FROM teachers WHERE id = ?', (teacher_id,)).fetchone():
+        return error_response('Enseignant introuvable', 404)
+    n = db.execute('DELETE FROM teacher_availability_hp WHERE teacher_id = ?', (teacher_id,)).rowcount
+    db.commit()
+    _audit('DISPOS_HP_DELETE', ip=_client_ip(), user=session.get('user'), teacher=teacher_id, semaines=n)
+    return jsonify(_dispos_etat(teacher_id))
 
 # ======================= NOTIFICATIONS =======================
 # Onglet Notifications : ce que le site signale à chaque utilisateur connecté avec
@@ -19464,6 +20004,15 @@ def _generate_timetable_glouton():
 
         # Clear existing timetable for these weeks
         placeholders = ','.join('?' * len(weeks))
+        # Ce générateur de secours ne sait pas garder les cours figés : il les effacerait
+        try:
+            figes = cursor.execute(f'SELECT COUNT(*) FROM timetable_slots WHERE fige = 1 '
+                                   f'AND week_number IN ({placeholders})', weeks).fetchone()[0]
+        except sqlite3.OperationalError:
+            figes = 0
+        if figes:
+            return error_response(f'{figes} cours figé(s) dans ces semaines : seul le solveur PuLP sait les garder '
+                                  'à leur place (pip install -r requirements.txt)', 409)
         cursor.execute(f'DELETE FROM timetable_slots WHERE week_number IN ({placeholders})', weeks)
 
         # Build time grid: 30-min slots from day_start to day_end
