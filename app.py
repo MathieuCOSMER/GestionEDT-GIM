@@ -3,7 +3,7 @@ Flask backend application for IUT Gestion Emploi Du Temps (EDT)
 Manages timetables for IUT GIM Toulon
 """
 
-from flask import Flask, request, jsonify, send_file, send_from_directory, g, session, redirect
+from flask import Flask, request, jsonify, send_file, send_from_directory, g, session, redirect, has_app_context
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -13,6 +13,7 @@ import re
 import json
 import unicodedata
 import math
+import pickle
 import shutil
 import hmac
 import time
@@ -688,6 +689,7 @@ def full_backup_import():
     # Caches et migrations de schéma sur les bases restaurées
     global _settings_cache
     _settings_cache = None
+    _JURY_CACHE.clear()
     for y in imported_years:
         try:
             db = sqlite3.connect(db_path_for_year(y))
@@ -2118,6 +2120,37 @@ def _merge_formation_promotions(db):
             db.execute("UPDATE promotions SET programme_id=? WHERE id=?", (prog, survivor['id']))
     db.commit()
 
+# ===== JETON DE MODIFICATION (cache du calcul jury) =====
+# Chaque écriture dans promotions.db ou programmes.db tire un nouveau jeton au hasard,
+# par des déclencheurs SQLite posés sur toutes les tables : quelle que soit la route
+# qui écrit (saisie, import, jury, effectif, programme, restauration…), le
+# changement se voit, sans qu'aucune route ait à y penser. Un calcul gardé en mémoire
+# n'est resservi que sous le jeton qu'il a vu naître (cf _jury_compute).
+# Tables exclues : sans effet sur le calcul et souvent écrites (lecture d'une
+# notification, dépôt d'un fichier) ; une table nouvelle est couverte d'office.
+_JETON_TABLES_EXCLUES = {'cache_jeton', 'notifications', 'notification_targets',
+                         'notification_reads', 'student_photos',
+                         'alternance_documents', 'alternance_depots'}
+
+def _poser_jeton_cache(db):
+    """Crée la table du jeton et les déclencheurs manquants. Idempotent : rappelé à
+    chaque démarrage après les migrations, car une table recréée perd les siens."""
+    db.execute('''CREATE TABLE IF NOT EXISTS cache_jeton (
+                      id    INTEGER PRIMARY KEY CHECK (id = 1),
+                      jeton INTEGER NOT NULL)''')
+    db.execute('INSERT OR IGNORE INTO cache_jeton (id, jeton) VALUES (1, random())')
+    tables = [r[0] for r in db.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
+    for t in tables:
+        if t in _JETON_TABLES_EXCLUES:
+            continue
+        for op in ('INSERT', 'UPDATE', 'DELETE'):
+            db.execute(f'''CREATE TRIGGER IF NOT EXISTS "jeton_{t}_{op.lower()}"
+                           AFTER {op} ON "{t}" BEGIN
+                               UPDATE cache_jeton SET jeton = random() WHERE id = 1;
+                           END''')
+    db.commit()
+
 def _init_promotions_db():
     os.makedirs(os.path.dirname(_PROMOTIONS_DB), exist_ok=True)
     db = _open_promotions_db()
@@ -2139,6 +2172,11 @@ def _init_promotions_db():
         except Exception as e:
             db.rollback()
             _audit('RED_REPAIR_ERROR', error=str(e))
+        try:
+            _poser_jeton_cache(db)
+        except Exception as e:
+            db.rollback()
+            _audit('CACHE_JETON_ERROR', base='promotions', error=str(e))
     finally:
         db.close()
 
@@ -2209,6 +2247,11 @@ def _init_programmes_db():
                           VALUES(?,?,CURRENT_TIMESTAMP)''',
                        (cur.lastrowid, json.dumps(data, ensure_ascii=False)))
             db.commit()
+        try:
+            _poser_jeton_cache(db)
+        except Exception as e:
+            db.rollback()
+            _audit('CACHE_JETON_ERROR', base='programmes', error=str(e))
     finally:
         db.close()
 
@@ -13292,7 +13335,69 @@ def _jury_ue_numbers(ref_all):
                 nums[nm] = len(nums) + 1
     return nums
 
+# Calcul jury gardé en mémoire, par base et par promotion : {(fichier, pid): (clé, résultat
+# sérialisé)}. Resservi tant que rien n'a été écrit depuis (jetons de _poser_jeton_cache).
+# Un jeton par BASE et non par promotion : les notes d'une cohorte comptent dans le jury
+# d'une autre (redoublants). EDT_JURY_CACHE=0 le coupe (diagnostic).
+_JURY_CACHE = {}
+_JURY_CACHE_ACTIF = os.environ.get('EDT_JURY_CACHE', '1') != '0'
+
+def _jury_cache_cle(pdb):
+    """(fichier de la base, clé de validité) ou None quand le cache ne peut pas servir
+    (coupé, hors contexte Flask, jeton absent). La clé réunit les jetons des deux bases
+    et la date du fichier de coefficients de référence (BONUS/PEN manquants y sont
+    pris). Lue AVANT le calcul : un résultat ne peut ainsi porter qu'une clé plus
+    ancienne que ses données, jamais l'inverse."""
+    if not _JURY_CACHE_ACTIF or not has_app_context():
+        return None
+    try:
+        fichier = pdb.execute('PRAGMA database_list').fetchone()[2]
+        jp = pdb.execute('SELECT jeton FROM cache_jeton WHERE id = 1').fetchone()
+        jg = get_programmes_db().execute('SELECT jeton FROM cache_jeton WHERE id = 1').fetchone()
+    except (sqlite3.Error, TypeError, IndexError):
+        return None
+    if not fichier or jp is None or jg is None:
+        return None
+    try:
+        ref = os.stat(_REF_COEFF_FILE).st_mtime_ns
+    except OSError:
+        ref = None
+    return fichier, (jp[0], jg[0], ref)
+
 def _jury_compute(pdb, pid):
+    """Calcul jury d'une promotion (cf _jury_calcul), refait seulement si promotions.db
+    ou programmes.db ont changé depuis le dernier. Chaque appel reçoit sa propre copie :
+    un appelant qui la modifie ne touche pas à celle des autres."""
+    cle = _jury_cache_cle(pdb)
+    if cle is not None:
+        garde = _JURY_CACHE.get((cle[0], pid))
+        if garde is not None and garde[0] == cle[1]:
+            return pickle.loads(garde[1])
+    comp = _jury_calcul(pdb, pid)
+    if cle is not None:
+        _JURY_CACHE[(cle[0], pid)] = (cle[1], pickle.dumps(comp, pickle.HIGHEST_PROTOCOL))
+    return comp
+
+def _jury_prechauffer():
+    """Calcul jury de toutes les promotions, au démarrage du serveur : le premier
+    visiteur après un rechargement trouve tout prêt. Fait d'un seul tenant (pas de
+    thread : un hébergement WSGI peut ne pas les faire tourner) ; une erreur ici
+    n'empêche jamais le site de démarrer, la page refera simplement le calcul."""
+    if not _JURY_CACHE_ACTIF:
+        return
+    t0 = time.perf_counter()
+    n = 0
+    try:
+        with app.app_context():
+            pdb = get_promotions_db()
+            for r in pdb.execute('SELECT id FROM promotions ORDER BY id').fetchall():
+                _jury_compute(pdb, r['id'])
+                n += 1
+        _audit('JURY_PRECHAUFFAGE', promotions=n, duree=f'{time.perf_counter() - t0:.2f}s')
+    except Exception as e:
+        _audit('JURY_PRECHAUFFAGE_ERROR', promotions=n, error=str(e))
+
+def _jury_calcul(pdb, pid):
     """Cœur du calcul jury pour TOUTES les années (1..3) d'une promotion. Retourne les
     structures réutilisables : moyennes semestrielles/annuelles par UE, codes UE
     (ADM/ADMJ/CMP/AJ) et décision d'année par étudiant.
@@ -23262,6 +23367,7 @@ os.makedirs('static', exist_ok=True)
 init_db()
 _init_promotions_db()
 _init_programmes_db()
+_jury_prechauffer()   # après les migrations : bases à jour, jetons posés
 
 if __name__ == '__main__':
     # Run Flask app
