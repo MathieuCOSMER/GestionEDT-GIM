@@ -136,7 +136,7 @@
         .modal-backdrop.open { display: flex; }
         .modal { background: #fff; border-radius: 10px; padding: 24px; width: 100%; max-width: 460px; box-shadow: 0 10px 40px rgba(0,0,0,.2); margin: auto; }
         .modal.modal-wide { max-width: 600px; }
-        /* Générer l'EDT (répartition journalière) : options, bilan, grille de la semaine */
+        /* Optimiser l'EDT (Planning) : options, bilan, grille de la semaine */
         .modal.modal-edtgen { max-width: 1120px; }
         .edtg-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px 18px; margin-bottom: 6px; }
         .edtg-opts fieldset { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 12px; }
@@ -152,7 +152,7 @@
         .edtg-weeks tbody tr.sel td { background: #eef2ff; }
         .edtg-alertes { font-size: .8rem; margin-top: 8px; }
         .edtg-alertes li { margin: 2px 0 2px 18px; }
-        /* Poids du calcul (fenêtre Générer l'EDT) */
+        /* Poids du calcul (fenêtre Optimiser l'EDT) */
         .edtg-poids { border: 1px solid #e5e7eb; border-radius: 8px; padding: 6px 12px; margin: 4px 0 8px; font-size: .85rem; }
         .edtg-poids > summary { cursor: pointer; font-weight: 700; font-size: .8rem; color: #374151; }
         .edtg-poids table { width: 100%; border-collapse: collapse; margin-top: 6px; }
@@ -164,7 +164,7 @@
         .edtg-poids .pactions { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
         .edtg-fermes { font-size: .82rem; margin: 0 0 10px; padding: 6px 10px; border-radius: 6px; background: #fffbeb; color: #78350f; }
         .edtg-fermes a { cursor: pointer; text-decoration: underline; }
-        /* Emploi du temps en grille horaire (Planning, fenêtre « Générer l'EDT ») : jours en colonnes,
+        /* Emploi du temps en grille horaire (Planning, fenêtre « Optimiser l'EDT ») : jours en colonnes,
            heures en lignes, un rectangle par cours, couleur par matière, cours simultanés côte à côte */
         .pl-edt { --pl-axe: 46px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; overflow: hidden;
                   font-size: .68rem; color: #111827; }
@@ -189,6 +189,11 @@
                     background: hsl(var(--pl-t) 72% 89%); border: 1px solid hsl(var(--pl-t) 40% 66%);
                     border-left: 4px solid hsl(var(--pl-t) 55% 40%); cursor: default; }
         .pl-cours > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        /* Planning : un clic fige ou libère le cours */
+        .pl-cours.pl-clic { cursor: pointer; }
+        .pl-cours.pl-clic:hover { outline: 2px solid #4338ca; outline-offset: -1px; z-index: 2; }
+        .pl-cours.pl-fige { border-style: solid; box-shadow: inset 0 0 0 1px hsl(var(--pl-t) 55% 40%); }
+        .pl-cours.pl-encours { opacity: .55; pointer-events: none; }
         .pl-cours .pl-c2 { color: #374151; }
         .pl-cours .pl-c3 { color: #4b5563; }
         .pl-semaines { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; margin: 4px 0 12px; }
@@ -204,7 +209,26 @@
                         font: inherit; font-size: .78rem; cursor: pointer; }
         .pl-promo-btn.on { background: #eef2ff; border-color: #6366f1; color: #3730a3; font-weight: 600; }
         .pl-titre { font-size: 1rem; font-weight: 700; color: #1f2937; margin: 0 0 10px; }
+        /* Planning : cours repris d'Hyperplanning et laissés libres, état de l'import */
+        .pl-hp-libre { display: inline-block; font-size: .62rem; font-weight: 700; color: #0f766e; background: #ccfbf1;
+                       border: 1px solid #5eead4; border-radius: 3px; padding: 0 3px; line-height: 1.3; }
+        .pl-hp-etat { font-size: .82rem; color: #334155; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+                      padding: 6px 10px; margin: 0 0 8px; }
+        .pl-hp-etat .btn { margin-left: 10px; }
+        .ical-choix { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; vertical-align: middle; }
+        .ical-choix button { border: 0; background: #fff; color: #475569; font: inherit; font-size: .74rem; padding: 2px 8px; cursor: pointer; }
+        .ical-choix button + button { border-left: 1px solid #cbd5e1; }
+        .ical-choix button.on { background: #4338ca; color: #fff; }
+        .ical-choix button.mixte { background: #e0e7ff; color: #3730a3; }
+        .ical-ligne { display: flex; gap: 6px; align-items: center; white-space: nowrap; font-size: .76rem; padding: 1px 0; }
+        .ical-ligne select { font-size: .74rem; padding: 1px 4px; border: 1px solid #d1d5db; border-radius: 4px; }
         .pl-promo { margin-bottom: 18px; }
+        /* Comparaison Répartition ↔ Planning */
+        .cmprp-table > tbody > tr.cmprp-sem:hover { background: #f8fafc; }
+        .cmprp-table > tbody > tr.cmprp-detail > td { background: #f8fafc; padding: 6px 10px 10px 26px; }
+        .cmprp-b { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: .76rem; font-weight: 600; white-space: nowrap; }
+        .cmprp-b.manque { background: #fef3c7; color: #92400e; }
+        .cmprp-b.trop { background: #dbeafe; color: #1e40af; }
         .pl-promo-t { font-weight: 700; color: #334155; margin: 0 0 6px; }
         .edtg-vue { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin: 12px 0 4px; font-size: .85rem; }
         .edtg-vue select { padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 6px; font: inherit; }
@@ -932,6 +956,8 @@
 <div id="service-bar" class="nav-subbar" style="display:none">
     <button type="button" id="svc-tab-repartition-enseignant" class="subtab" onclick="showPage('repartition-enseignant')">Bilan Global</button>
     <button type="button" id="svc-tab-repartition" class="subtab" onclick="showPage('repartition')">Répartition Calendaire</button>
+    <button type="button" id="svc-tab-planning" class="subtab admin-only" onclick="showPage('planning')"
+            title="L'emploi du temps de l'appli semaine par semaine, en grille horaire par promotion ; import de l'EDT d'Hyperplanning">Planning</button>
     <button type="button" id="svc-tab-matieres" class="subtab" onclick="showPage('matieres')">Matières</button>
     <button type="button" id="svc-tab-contraintes" class="subtab" onclick="showPage('contraintes')">Contraintes Enseignant</button>
     <button type="button" id="svc-tab-contraintes-matiere" class="subtab" onclick="showPage('contraintes-matiere')">Contraintes Matière</button>
@@ -1048,8 +1074,43 @@
 <!-- ===== COMPARAISON HYPERPLANNING ===== -->
 <div class="page" id="page-comparaison">
     <div class="toolbar">
-        <h1>Comparaison Hyperplanning</h1>
+        <h1>Comparaison</h1>
     </div>
+    <div class="subtabs" id="cmp-subtabs">
+        <button type="button" id="cmp-subtab-rp" class="subtab active" onclick="cmpOnglet('rp')"
+                title="Les heures prévues par la Répartition Calendaire confrontées aux cours posés dans le Planning">Répartition ↔ Planning</button>
+        <button type="button" id="cmp-subtab-hp" class="subtab" onclick="cmpOnglet('hp')"
+                title="Un export « état récapitulatif » d'Hyperplanning confronté aux heures saisies ici">Export Hyperplanning</button>
+    </div>
+    <!-- Répartition Calendaire (heures prévues semaine par semaine) ↔ Planning (EDT de l'appli) -->
+    <div id="cmp-pane-rp">
+        <div class="card" style="margin-bottom:12px">
+            <p style="margin:0 0 10px;color:#4b5563;font-size:.85rem;line-height:1.5">
+                Pour chaque semaine, les heures que la <strong>Répartition Calendaire</strong> prévoit, séance par séance et
+                groupe par groupe, confrontées aux cours posés dans le <strong>Planning</strong> (générés par « Optimiser
+                l'EDT » ou repris d'Hyperplanning). <strong>À placer</strong> : le Planning en a moins que prévu ;
+                <strong>en trop</strong> : il en a plus (répartition modifiée depuis, cours d'Hyperplanning plus longs…).
+                Rien n'est modifié ici.</p>
+            <div class="filters" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
+                <div><label style="display:block;font-size:.75rem;color:#6b7280">Année d'étude</label>
+                    <select id="cmprp-annee" onchange="cmprpRendre()" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+                        <option value="">Toutes</option><option value="1">1ère année</option>
+                        <option value="2">2ème année</option><option value="3">3ème année</option></select></div>
+                <div><label style="display:block;font-size:.75rem;color:#6b7280">Formation</label>
+                    <select id="cmprp-formation" onchange="cmprpRendre()" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+                        <option value="">Toutes</option><option value="0">FTP</option><option value="1">ALT</option>
+                        <option value="2">MUT</option></select></div>
+                <div><label style="display:block;font-size:.75rem;color:#6b7280">Matière, enseignant</label>
+                    <input type="search" id="cmprp-q" oninput="cmprpRendre()" placeholder="R1.05, RICHIER…"
+                           style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;width:170px"></div>
+                <label style="font-weight:400;font-size:.85rem"><input type="checkbox" id="cmprp-tout" onchange="cmprpRendre()">
+                    Semaines sans écart aussi</label>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="cmprpCharger()">Actualiser</button>
+            </div>
+        </div>
+        <div id="cmprp-result"><div class="spinner">Chargement…</div></div>
+    </div>
+    <div id="cmp-pane-hp" style="display:none">
     <div class="card" style="margin-bottom:14px">
         <p style="margin:0 0 10px;color:#4b5563;font-size:.85rem;line-height:1.5">
             Déposez l'<strong>état récapitulatif</strong> exporté d'Hyperplanning
@@ -1091,6 +1152,7 @@
         </div>
     </div>
     <div id="cmp-result"></div>
+    </div>
 </div>
 
 <!-- ===== CONTRAINTES EMPLOI DU TEMPS ===== -->
@@ -1260,7 +1322,7 @@
                 <span style="color:#9ca3af;font-size:.8rem;font-weight:400">— communs à toutes les promotions de l'année</span></h3>
             <p class="edtg-note" style="margin:0 0 10px">
                 Aucun cours ces jours-là. Une semaine qui en compte un du lundi au vendredi rouvre le jeudi après-midi
-                aux FTP, pour rattraper. Lus par « Générer l'EDT », et signalés (F, P) dans la ligne ci-dessus et dans les
+                aux FTP, pour rattraper. Lus par « Optimiser l'EDT », et signalés (F, P) dans la ligne ci-dessus et dans les
                 tableaux de répartition. Enregistrés avec le bouton « Enregistrer » du calendrier.
             </p>
             <div id="jf-statut" class="jf-statut"></div>
@@ -1677,18 +1739,6 @@
                        style="cursor:pointer;width:15px;height:15px">
                 Optimisée
             </label>
-            <button type="button" id="repj-gen-btn" class="btn btn-primary btn-sm admin-only" style="margin-left:16px"
-                    onclick="openEdtGen()"
-                    title="Placer automatiquement les cours (enseignants, salles et groupes sans chevauchement, dispos, préférences) — aperçu possible avant d'enregistrer">
-                Générer l'EDT
-            </button>
-        </div>
-        <!-- Filtres du sous-onglet Planning -->
-        <div class="filters" id="rep-filters-planning" style="display:none">
-            <label>Promotions :</label>
-            <span id="pl-promos" class="pl-promos"></span>
-            <button type="button" class="btn btn-secondary btn-sm" style="margin-left:12px" onclick="plImprimer()"
-                    title="Imprimer (ou enregistrer en PDF) la semaine affichée : une promotion par page">Imprimer</button>
         </div>
         <div class="filters" id="rep-filters-annuelle">
             <label>Semestres :</label>
@@ -1731,9 +1781,9 @@
             <button class="btn btn-primary btn-sm rep-tool-restricted" style="margin-left:16px" onclick="runRepartitionChecks()">
                 Contrôle
             </button>
-            <button class="btn btn-secondary btn-sm rep-tool-restricted" style="margin-left:8px" onclick="openRepOptim()"
-                    title="Propose une répartition des semestres affichés qui respecte les contraintes matière (ordonnancements, répartition souhaitée), le calendrier et les charges — posée dans le brouillon, rien n'est enregistré">
-                Optimiser…
+            <button class="btn btn-secondary btn-sm rep-tool-restricted" style="margin-left:8px" onclick="openRepOptim()" id="rep-optim-btn"
+                    title="Propose une répartition des heures semaine par semaine pour les semestres affichés, qui respecte les contraintes matière (ordonnancements, répartition souhaitée), le calendrier et les charges — posée dans le brouillon, rien n'est enregistré. L'emploi du temps (jours et heures) s'optimise dans Service › Planning.">
+                Optimiser la répartition…
             </button>
             <button class="btn btn-secondary btn-sm export-btn" style="margin-left:8px" onclick="exportRepartitionExcel(this)">
                 Export Excel
@@ -1747,8 +1797,6 @@
     <div class="subtabs" id="rep-subtabs">
         <button type="button" id="rep-subtab-annuelle" class="subtab active" onclick="showRepTab('annuelle')">Répartition annuelle</button>
         <button type="button" id="rep-subtab-jour" class="subtab admin-only" onclick="showRepTab('jour')">Répartition journalière</button>
-        <button type="button" id="rep-subtab-planning" class="subtab admin-only" onclick="showRepTab('planning')"
-                title="L'EDT généré enregistré, semaine par semaine, en grille horaire par promotion">Planning</button>
         <span id="rep-click-hint" class="rep-click-hint" style="display:none" title="Maj + clic retire aussi une séance. Clic droit sur le libellé d'une ligne, la colonne Form. ou la ligne bleue d'une matière : vider la ligne, la formation ou la matière.">Clic : + 1 séance · clic droit : − 1 · clic droit sur un libellé : vider</span>
         <!-- Brouillon de la répartition annuelle : rien n'est enregistré avant « Enregistrer » -->
         <div id="rep-draft-bar" class="rep-draft-bar admin-only" style="display:none">
@@ -1770,11 +1818,32 @@
     <div id="rep-pane-jour" style="display:none">
         <div id="repj-content"><div class="empty">Choisissez une promo et une semaine.</div></div>
     </div>
-    <!-- Planning : l'EDT généré enregistré (timetable_slots), en grille horaire par promotion -->
-    <div id="rep-pane-planning" style="display:none">
-        <div id="pl-semaines" class="pl-semaines"></div>
-        <div id="pl-content"><div class="spinner">Chargement…</div></div>
+</div>
+
+<!-- ===== PLANNING (Service) =====
+     L'EDT de l'appli (timetable_slots) semaine par semaine, en grille horaire par
+     promotion : généré (« Optimiser l'EDT ») ou repris d'Hyperplanning (import iCal,
+     cours figés ou libres). -->
+<div class="page" id="page-planning">
+    <div class="toolbar">
+        <h1>Planning</h1>
+        <div class="filters">
+            <label>Promotions :</label>
+            <span id="pl-promos" class="pl-promos"></span>
+            <button type="button" class="btn btn-secondary btn-sm" style="margin-left:12px" onclick="plImprimer()"
+                    title="Imprimer (ou enregistrer en PDF) la semaine affichée : une promotion par page">Imprimer</button>
+            <button type="button" class="btn btn-primary btn-sm pl-hp-outil" style="margin-left:16px" onclick="openEdtGen()"
+                    title="Placer automatiquement les cours de la répartition à des jours et heures précis (enseignants, salles et groupes sans chevauchement, dispos, préférences) ; les cours figés 📌 gardent leur place — aperçu possible avant d'enregistrer">⚙ Optimiser l'EDT…</button>
+            <button type="button" class="btn btn-secondary btn-sm pl-hp-outil" style="margin-left:8px" onclick="icalOuvrirImport()"
+                    title="Reprendre les cours déjà posés dans Hyperplanning (export iCal), figés ou libres">📥 Importer l'EDT d'Hyperplanning…</button>
+            <button type="button" class="btn btn-secondary btn-sm pl-hp-outil" style="margin-left:8px" onclick="plReinitOuvrir()"
+                    title="Vider l'emploi du temps de toute l'année ou de semaines choisies (les cours figés peuvent être gardés)">🗑 Réinitialiser l'EDT…</button>
+        </div>
     </div>
+    <!-- Ce que l'import d'Hyperplanning a laissé dans l'année (cours repris, créneaux bloqués) -->
+    <div id="pl-hp-etat" class="pl-hp-etat" style="display:none"></div>
+    <div id="pl-semaines" class="pl-semaines"></div>
+    <div id="pl-content"><div class="spinner">Chargement…</div></div>
 </div>
 
 <!-- ===== ÉTUDIANTS (registre) ===== -->
@@ -1956,10 +2025,9 @@
             PDF de l'emploi du temps des enseignants imprimé depuis Hyperplanning avec la <strong>journée complète</strong>
             (8h00 → 21h00) : <strong>jours datés</strong> (« lundi 4 janvier 2027 »), une semaine par page ou plusieurs
             côte à côte, ou <strong>semaines en colonnes</strong> (« 24 août - 29 août », jours en rangées). Un ou
-            plusieurs enseignants par fichier, toute l'année si besoin. Les zones <strong>hachurées</strong> deviennent
-            des indisponibilités. Imprimé <strong>une semaine par page</strong> ou <strong>semaines en colonnes</strong>,
-            les cours posés dans Hyperplanning sont lus aussi : ceux d'autres départements sont bloqués, et les cours GIM
-            peuvent être repris dans l'emploi du temps de l'appli, figés. Des horaires compactés (heures sans cours
+            plusieurs enseignants par fichier, toute l'année si besoin. Seules les zones <strong>hachurées</strong> sont
+            lues : elles deviennent des indisponibilités. Les cours posés dans Hyperplanning s'importent à part, depuis
+            son export iCal, dans <strong>Service › Planning</strong>. Des horaires compactés (heures sans cours
             réduites) ne conviennent pas : les hachures y sont coupées.</p>
         <p style="color:#6b7280;font-size:.84rem;margin:0 0 8px">
             Les indisponibilités importées sont gardées <strong>à part</strong> de la grille que l'enseignant peint :
@@ -1973,6 +2041,63 @@
         <div class="form-actions" style="margin-top:14px">
             <button type="button" class="btn btn-secondary" onclick="hpFermerImport()">Fermer</button>
             <button type="button" class="btn btn-primary" id="hp-import-apply" onclick="hpAppliquer()" disabled>Importer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL RÉINITIALISER L'EDT (Planning) ===== -->
+<div class="modal-backdrop" id="modal-pl-reinit">
+    <div class="modal" style="max-width:760px">
+        <h2 style="font-size:1.05rem;margin-bottom:4px">Réinitialiser l'emploi du temps</h2>
+        <p style="color:#6b7280;font-size:.84rem;margin:0 0 10px">
+            Retire de l'emploi du temps de l'appli les cours placés (générés ou repris d'Hyperplanning) de toute l'année ou des
+            semaines choisies. La répartition des heures n'est pas touchée, ni les indisponibilités des enseignants (créneaux
+            bloqués par l'import d'Hyperplanning compris) : « Optimiser l'EDT » replace ensuite les cours.</p>
+        <div class="form-group" style="display:flex;gap:18px;flex-wrap:wrap">
+            <label style="font-weight:400"><input type="radio" name="pl-reinit-quoi" value="tout" onchange="plReinitMaj()"> Toute l'année</label>
+            <label style="font-weight:400"><input type="radio" name="pl-reinit-quoi" value="choix" checked onchange="plReinitMaj()"> Les semaines choisies</label>
+        </div>
+        <div id="pl-reinit-semaines">
+            <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="plReinitCocher('affichee')">Semaine affichée</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="plReinitCocher('edt')">Toutes celles qui ont un EDT</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="plReinitCocher('aucune')">Aucune</button>
+            </div>
+            <div id="pl-reinit-liste" class="pl-semaines"></div>
+        </div>
+        <label style="font-weight:400;display:block;margin:6px 0"><input type="checkbox" id="pl-reinit-figes" onchange="plReinitMaj()">
+            Garder les cours figés 📌</label>
+        <div id="pl-reinit-resume" class="edtg-note" style="margin-top:6px"></div>
+        <div class="form-actions" style="margin-top:14px">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-pl-reinit')">Annuler</button>
+            <button type="button" class="btn btn-danger" id="pl-reinit-ok" onclick="plReinitAppliquer()" disabled>Réinitialiser</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL IMPORT DE L'EMPLOI DU TEMPS D'HYPERPLANNING (iCal, Planning) ===== -->
+<div class="modal-backdrop" id="modal-ical-import">
+    <div class="modal" style="max-width:1080px">
+        <h2 style="font-size:1.05rem;margin-bottom:4px">Importer l'emploi du temps d'Hyperplanning</h2>
+        <p style="color:#6b7280;font-size:.84rem;margin:0 0 6px">
+            Export <strong>iCal</strong> (.ics) de l'emploi du temps des enseignants : dans Hyperplanning, l'emploi du temps
+            « Professeur » de tous les enseignants exporté au format iCal, <strong>un seul fichier</strong> pour l'année.
+            Chaque <strong>cours GIM</strong> est rapproché de la séance de l'appli qu'il représente (enseignant, année,
+            groupe, type, semestre, durée) et repris dans l'emploi du temps de l'appli, à sa place Hyperplanning :
+            <strong>figé</strong> (« Optimiser l'EDT » ne le bouge plus) ou <strong>libre</strong> (posé là, mais le calcul
+            peut le déplacer). Les autres cours (autres départements, cours GIM sans séance correspondante, réunions…)
+            rendent le créneau <strong>indisponible</strong> pour leurs enseignants.</p>
+        <p style="color:#6b7280;font-size:.84rem;margin:0 0 8px">
+            Pour chaque enseignant du fichier, un nouvel import remplace les semaines qu'il couvre ; les indisponibilités
+            (hachures) restent celles de Contraintes Enseignant. <strong>Rien n'est écrit avant votre confirmation.</strong></p>
+        <div class="form-group">
+            <label>Fichier iCal *</label>
+            <input type="file" id="ical-import-file" accept=".ics,text/calendar" onchange="icalLireFichier(this)">
+        </div>
+        <div id="ical-import-report" style="max-height:58vh;overflow:auto"></div>
+        <div class="form-actions" style="margin-top:14px">
+            <button type="button" class="btn btn-secondary" onclick="icalFermerImport()">Fermer</button>
+            <button type="button" class="btn btn-primary" id="ical-import-apply" onclick="icalAppliquer()" disabled>Importer</button>
         </div>
     </div>
 </div>
@@ -2021,9 +2146,11 @@
 <!-- ===== MODAL GÉNÉRER L'EDT (répartition journalière) ===== -->
 <div class="modal-backdrop" id="modal-edt-gen">
     <div class="modal modal-edtgen">
-        <h2>Générer l'emploi du temps</h2>
+        <h2>Optimiser l'emploi du temps</h2>
         <p class="edtg-note" style="margin:-8px 0 12px">
-            Place automatiquement les cours de la répartition enregistrée, du lundi au vendredi de 8 h à 20 h et le
+            Place automatiquement les cours de la répartition enregistrée à des jours et heures précis ; les cours
+            <b>figés</b> (📌) gardent leur place, les autres (repris d'Hyperplanning et laissés libres compris) sont
+            replacés. Du lundi au vendredi de 8 h à 20 h et le
             samedi de 8 h à 12 h 30 : jamais deux cours en même temps pour un enseignant, un groupe ou une salle, dispos
             des enseignants et 6 h de CM/TD par jour au plus respectées, jeudi après-midi (dès 12 h 30) libre pour les
             FTP (sauf la semaine d'un jour férié ou d'un pont), aucun cours un jour férié ou un pont ; puis une même
@@ -2046,12 +2173,15 @@
                 <label><input type="radio" name="edtgen-years" value="all" checked>
                     <span>Toutes <span class="edtg-note">(recommandé : enseignants et salles sont partagés)</span></span></label>
                 <label><input type="radio" name="edtgen-years" value="one">
-                    <span>Seulement la <b id="edtgen-year-label">—</b> <span class="edtg-note">(les autres gardent leur EDT)</span></span></label>
+                    <span>Seulement la <select id="edtgen-year-sel" onchange="document.querySelector('input[name=edtgen-years][value=one]').checked = true"
+                            style="padding:2px 6px;border:1px solid #d1d5db;border-radius:6px">
+                        <option value="1">1ère année</option><option value="2">2ème année</option><option value="3">3ème année</option>
+                    </select> <span class="edtg-note">(les autres gardent leur EDT)</span></span></label>
             </fieldset>
             <fieldset>
                 <legend>Calcul</legend>
                 <label><input type="checkbox" id="edtgen-preview" checked>
-                    <span>Aperçu seulement <span class="edtg-note">(rien n'est enregistré ; décoché : remplace l'EDT généré de ces semaines)</span></span></label>
+                    <span>Aperçu seulement <span class="edtg-note">(rien n'est enregistré ; décoché : remplace l'EDT de ces semaines, sauf les cours figés)</span></span></label>
                 <label style="align-items:center">Temps par semaine :
                     <select id="edtgen-time" style="padding:3px 6px;border:1px solid #d1d5db;border-radius:6px">
                         <option value="20" selected>20 s</option>
@@ -2121,7 +2251,7 @@
             </fieldset>
         </div>
         <!-- Poids des préférences (GET/PUT /api/repartition/poids, réglage du site), comme
-             pour « Générer l'EDT » : les valeurs affichées servent au prochain calcul -->
+             pour « Optimiser l'EDT » : les valeurs affichées servent au prochain calcul -->
         <details class="edtg-poids" id="ropt-poids">
             <summary>Poids du calcul <span class="edtg-note" id="ropt-poids-resume"></span></summary>
             <div id="ropt-poids-corps"><div class="spinner">Chargement…</div></div>
@@ -4090,12 +4220,12 @@ function toast(msg, type = 'success') {
 }
 
 // ===== NAVIGATION =====
-// Onglet « Service enseignant » : regroupe Bilan Global, Répartition Calendaire,
-// Matières, les contraintes (Enseignant / Matière) et la Comparaison Hyperplanning
-// en sous-onglets, avec sa
+// Onglet « Service enseignant » : regroupe Bilan Global, Répartition Calendaire, le
+// Planning (EDT de l'appli), Matières, les contraintes (Enseignant / Matière) et la
+// Comparaison Hyperplanning en sous-onglets, avec sa
 // propre année de consultation (_serviceYear, passée en ?year= aux API de ces
 // vues uniquement).
-const _servicePages = ['repartition-enseignant', 'repartition', 'matieres', 'contraintes',
+const _servicePages = ['repartition-enseignant', 'repartition', 'planning', 'matieres', 'contraintes',
                        'contraintes-matiere', 'comparaison'];
 let _serviceTab = 'repartition';   // dernier sous-onglet Service visité
 let _serviceYear = '';             // année affichée dans Service enseignant
@@ -4392,10 +4522,10 @@ async function loadPage(name, forceReload) {
         else if (name === 'aide') { await aideCharger(); }
         else if (name === 'repartition') {
             await loadRepartition();
-            if (tabHidden('rep:' + _repTab)) _showRepTab(_firstVisibleTab('rep:', ['annuelle', 'jour', 'planning']));
+            if (tabHidden('rep:' + _repTab)) _showRepTab(_firstVisibleTab('rep:', _REP_TABS));
             else if (_repTab === 'jour') await loadRepJour();
-            else if (_repTab === 'planning') await loadPlanning();
         }
+        else if (name === 'planning') { await loadPlanning(); }
     } catch (e) {
         toast('Erreur de chargement : ' + e.message, 'error');
     }
@@ -5246,7 +5376,7 @@ function renderConstraintsAdmin(list, below = false) {
 
 // ===== DISPONIBILITÉS (semaine type et semaines particulières) =====
 // Grille à la demi-heure (lundi → vendredi 8 h → 20 h, samedi 8 h → 12 h 30, comme
-// les cours), lue par le solveur d'EDT (« Générer l'EDT »). Niveau d'un créneau :
+// les cours), lue par le solveur d'EDT (« Optimiser l'EDT »). Niveau d'un créneau :
 // 1 préféré, 2 possible, 3 si besoin, 4 dernier recours, 0 indisponible.
 // Comme dans Hyperplanning, on choisit d'abord les semaines dans la barre (clic : une
 // semaine ; Ctrl+clic : en ajouter ou en retirer une ; Maj+clic ou glisser : une
@@ -5674,8 +5804,11 @@ async function dspRetirerHp(id) {
 // barre de progression : un fichier de tous les enseignants sur l'année fait
 // plusieurs centaines de pages) ; les tranches sont réunies ici. Le rapport
 // (/hp sans apply) rapproche les noms du fichier des enseignants de l'année ; un
-// nom se rattache à la main dans le tableau. Rien n'est écrit avant « Importer ».
+// nom se rattache à la main dans le tableau. Seules les hachures sont importées : les
+// cours posés dans Hyperplanning s'importent depuis son export iCal (Service ›
+// Planning). Rien n'est écrit avant « Importer ».
 const _HP_TRANCHE = 20;          // pages par requête de lecture (≈ 5 s ici pour les pages chargées)
+const _HP_JOURS = ['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
 let _hpImport = null;            // { n, fichier, pages, ignorees, lu, associations, rapport }
 let _hpCompteur = 0;             // un nouveau fichier interrompt la lecture du précédent
 
@@ -5701,8 +5834,7 @@ async function hpLireFichier(input) {
     const zone = document.getElementById('hp-import-report');
     const bouton = document.getElementById('hp-import-apply');
     bouton.disabled = true;
-    _hpImport = { n, fichier: f.name, pages: 0, ignorees: 0, pagesCours: 0, lu: {}, cours: {}, associations: {},
-                  reprendre: {}, rapport: null };
+    _hpImport = { n, fichier: f.name, pages: 0, ignorees: 0, lu: {}, associations: {}, rapport: null };
     const progres = (txt, part) => {
         zone.innerHTML = `<div class="edtg-note">${esc(txt)}</div>
             <div class="hp-barre"><div style="width:${Math.round(100 * part)}%"></div></div>`;
@@ -5726,12 +5858,6 @@ async function hpLireFichier(input) {
                 const dest = _hpImport.lu[qui] || (_hpImport.lu[qui] = {});
                 for (const [d, zones] of Object.entries(jours)) dest[d] = (dest[d] || []).concat(zones);
             }
-            // cours posés dans Hyperplanning (pages « une semaine par page », ou semaines en colonnes)
-            _hpImport.pagesCours += res.pages_cours || 0;
-            for (const [qui, jours] of Object.entries(res.cours_hp || {})) {
-                const dest = _hpImport.cours[qui] || (_hpImport.cours[qui] = {});
-                for (const [d, cs] of Object.entries(jours)) dest[d] = cs;
-            }
         }
         if (!Object.keys(_hpImport.lu).length)
             throw new Error('Aucun emploi du temps reconnu dans ce fichier : imprimez-le depuis Hyperplanning avec la journée '
@@ -5754,14 +5880,9 @@ async function hpRapport() {
     bouton.disabled = true;
     try {
         const rap = await api('/constraints/dispos/hp' + svcQ(), {
-            method: 'POST', body: JSON.stringify({ lu: imp.lu, cours_hp: imp.cours, associations: imp.associations }) });
+            method: 'POST', body: JSON.stringify({ lu: imp.lu, associations: imp.associations }) });
         if (imp !== _hpImport) return;
         imp.rapport = rap;
-        // cours GIM à reprendre, par enseignant : au départ, ceux repris lors d'un import précédent
-        rap.enseignants.forEach(e => {
-            if (e.teacher_id && !imp.reprendre[e.teacher_id])
-                imp.reprendre[e.teacher_id] = new Set((e.cours_gim || []).filter(c => c.deja).map(c => c.cle));
-        });
         const lignes = rap.enseignants.slice().sort((a, b) => (!a.teacher_id) - (!b.teacher_id));
         const retenus = lignes.filter(e => e.teacher_id && e.semaines.length);
         const opts = sel => '<option value="">— ignorer —</option>' + rap.profs.map(p =>
@@ -5781,33 +5902,23 @@ async function hpRapport() {
                 ${rap.enseignants.length} nom(s) dans le fichier · <b>${retenus.length} enseignant(s) de l'année ${esc(rap.annee)}
                 mis à jour</b>${retenus.length ? ` sur ${nbSem} semaine(s)` : ''}.</p>
             ${rap.erreur ? `<div class="empty" style="color:#b91c1c;margin-bottom:8px">${esc(rap.erreur)}</div>` : ''}
-            ${imp.pagesCours ? `<p class="edtg-note" style="margin:0 0 6px"><b>Cours dans Hyperplanning</b> (lus sur
-                ${imp.pagesCours} page(s)) : ceux d'autres départements, ceux dont la case est trop petite pour être lue (« ... »),
-                et les cours GIM sans séance correspondante dans l'appli, rendent le créneau indisponible. Un cours GIM rapproché d'une séance de l'appli
-                peut être <b>repris</b> dans l'emploi du temps de l'appli, à sa place et figé (« Générer l'EDT » ne le bouge
-                plus), à la place de la même séance placée par l'appli ; sinon il n'en est pas tenu compte. Tous les cours
-                d'un enseignant d'un clic, ou cours par cours dans le détail.</p>`
-              : `<p class="edtg-note" style="margin:0 0 6px">Plusieurs semaines côte à côte avec les jours datés : la classe des
-                cours y est masquée, seules les hachures sont lues. Pour les cours posés dans Hyperplanning (autres départements
-                bloqués, cours GIM à reprendre), imprimez l'emploi du temps une semaine par page, ou les semaines en colonnes
-                (« 24 août - 29 août »).</p>`}
+            <p class="edtg-note" style="margin:0 0 6px">Seules les zones hachurées sont importées. Les cours posés dans
+                Hyperplanning (cours GIM à reprendre, cours d'autres départements à bloquer) s'importent depuis son export
+                iCal, dans Service › Planning.</p>
             <table class="pn-table hp-rap"><thead><tr>
                 <th>Nom dans le fichier</th><th>Enseignant de l'année</th><th>Semaines</th>
-                <th>Indisponibilités</th>${imp.pagesCours ? '<th>Cours dans Hyperplanning</th>' : ''}<th>Exemples</th>
-                <th>Remarques</th></tr></thead><tbody>
+                <th>Indisponibilités</th><th>Exemples</th><th>Remarques</th></tr></thead><tbody>
             ${lignes.map(e => `<tr class="${e.teacher_id ? '' : 'hp-ignore'}">
                 <td><b>${esc(e.qui)}</b></td>
                 <td><select data-qui="${esc(e.qui)}" onchange="hpAssocier(this)">${opts(e.teacher_id)}</select></td>
                 <td style="white-space:nowrap">${plage(e.semaines)}<br><span class="edtg-note">${e.semaines.length} sem.</span></td>
                 <td style="white-space:nowrap">${e.heures ? `${String(e.heures).replace('.', ',')} h<br><span class="edtg-note">${
                     e.semaines_hp} sem. concernée(s)</span>` : '<span class="edtg-note">aucune</span>'}</td>
-                ${imp.pagesCours ? `<td>${_hpCoursHtml(e, imp)}</td>` : ''}
                 <td class="edtg-note">${e.exemples.map(esc).join('<br>')}</td>
                 <td class="edtg-note">${remarques(e)}</td></tr>`).join('')}
             </tbody></table>
             ${rap.absents.length ? `<p class="edtg-note" style="margin-top:8px">Enseignants de l'année absents du fichier
                 (rien ne change pour eux) : ${rap.absents.map(esc).join(', ')}.</p>` : ''}`;
-        lignes.forEach(e => { if (e.teacher_id) _hpReprendreMaj(e.teacher_id); });
         bouton.disabled = !retenus.length || !!rap.erreur;
     } catch (e) {
         if (imp === _hpImport) zone.innerHTML = `<div class="empty" style="color:#b91c1c">Erreur : ${esc(e.message)}</div>`;
@@ -5820,66 +5931,6 @@ function hpAssocier(sel) {
     hpRapport();
 }
 
-// Cellule « Cours dans Hyperplanning » d'un enseignant : cours GIM rapprochés d'une
-// séance de l'appli (case « reprendre », partielle si une partie seulement, détail
-// cours par cours), et cours bloqués (autres départements, GIM non rapprochés)
-const _HP_JOURS = ['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
-function _hpCoursHtml(e, imp) {
-    if (!e.teacher_id) return '<span class="edtg-note">—</span>';
-    const gim = e.cours_gim || [], tid = e.teacher_id, choix = imp.reprendre[tid] || new Set();
-    const nonRap = e.nb_non_rapproches ? `<span title="${esc('Cours GIM sans séance correspondante dans l’appli :\n'
-        + (e.cours_non_rapproches || []).join('\n'))}" style="text-decoration:underline dotted">${
-        e.nb_non_rapproches} GIM non rapproché(s)</span>` : '';
-    const illisibles = e.cours_illisibles ? `<span title="Case trop petite dans le PDF : seul « ... » y est écrit"
-        style="text-decoration:underline dotted">${e.cours_illisibles} illisible(s)</span>` : '';
-    const bloques = [e.cours_autres ? `${e.cours_autres} d’autres départements` : '', illisibles, nonRap]
-        .filter(Boolean).join(' · ');
-    const ligne = c => `<label style="display:block;white-space:nowrap;font-size:.76rem">
-        <input type="checkbox" class="hp-r-c" data-tid="${tid}" data-cle="${esc(c.cle)}"${choix.has(c.cle) ? ' checked' : ''}
-               onchange="hpReprendreCours(this)">
-        S${c.semaine} ${_HP_JOURS[c.jour] || ''} ${esc(c.debut)}–${esc(c.fin)} · ${esc(c.texte)} → <b>${esc(c.seance)}</b>${
-            c.ambigu ? ' <span style="color:#b45309" title="Plusieurs séances possibles : la première a été retenue">?</span>' : ''}${
-            c.deduit ? ' <span class="edtg-note" title="Classe coupée dans la case (« (...) ») : déduite des autres cases de la même matière">(classe déduite)</span>' : ''}${
-            c.deja ? ' <span class="edtg-note">(déjà repris)</span>' : ''}</label>`;
-    return `${gim.length ? `<label style="white-space:nowrap"><input type="checkbox" class="hp-r-tout" data-tid="${tid}"
-                onchange="hpReprendreTout(this)"> reprendre les ${gim.length} cours GIM</label>
-            <br><span class="edtg-note"><span class="hp-r-n" data-tid="${tid}"></span></span>
-            <details><summary class="edtg-note" style="cursor:pointer">cours par cours</summary>
-                <div style="max-height:180px;overflow:auto;margin-top:4px">${gim.map(ligne).join('')}</div></details>`
-          : '<span class="edtg-note">aucun cours GIM</span>'}
-        ${bloques ? `<div class="edtg-note">bloqués : ${bloques}</div>` : ''}`;
-}
-
-// Case « reprendre tout », partielle, et compte d'un enseignant, d'après le choix en cours
-function _hpReprendreMaj(tid) {
-    const imp = _hpImport;
-    const e = imp && imp.rapport && imp.rapport.enseignants.find(x => x.teacher_id === tid);
-    if (!e || !(e.cours_gim || []).length) return;
-    const n = (imp.reprendre[tid] || new Set()).size, total = e.cours_gim.length;
-    const zone = document.getElementById('hp-import-report');
-    const tout = zone.querySelector(`.hp-r-tout[data-tid="${tid}"]`);
-    if (tout) { tout.checked = n === total; tout.indeterminate = n > 0 && n < total; }
-    const lib = zone.querySelector(`.hp-r-n[data-tid="${tid}"]`);
-    if (lib) lib.textContent = n ? `${n} repris, figés` : 'non repris : il n’en est pas tenu compte';
-}
-
-function hpReprendreTout(el) {
-    const imp = _hpImport, tid = +el.dataset.tid;
-    const e = imp && imp.rapport.enseignants.find(x => x.teacher_id === tid);
-    if (!e) return;
-    imp.reprendre[tid] = new Set(el.checked ? e.cours_gim.map(c => c.cle) : []);
-    document.querySelectorAll(`#hp-import-report .hp-r-c[data-tid="${tid}"]`).forEach(c => { c.checked = el.checked; });
-    _hpReprendreMaj(tid);
-}
-
-function hpReprendreCours(el) {
-    const imp = _hpImport, tid = +el.dataset.tid;
-    if (!imp) return;
-    const s = imp.reprendre[tid] || (imp.reprendre[tid] = new Set());
-    if (el.checked) s.add(el.dataset.cle); else s.delete(el.dataset.cle);
-    _hpReprendreMaj(tid);
-}
-
 async function hpAppliquer() {
     const imp = _hpImport;
     if (!imp || !imp.rapport) return;
@@ -5888,11 +5939,9 @@ async function hpAppliquer() {
     try {
         const rap = await api('/constraints/dispos/hp' + svcQ(), {
             method: 'POST', body: JSON.stringify({
-                lu: imp.lu, cours_hp: imp.cours, associations: imp.associations, source: imp.fichier, apply: true,
-                reprendre: Object.fromEntries(Object.entries(imp.reprendre).map(([t, s]) => [t, [...s]])) }) });
+                lu: imp.lu, associations: imp.associations, source: imp.fichier, apply: true }) });
         const n = Object.keys(rap.ecrits || {}).length;
-        toast(`Indisponibilités Hyperplanning importées pour ${n} enseignant(s)${
-            rap.cours_repris ? ` · ${rap.cours_repris} cours GIM repris dans l'EDT, figés` : ''}`);
+        toast(`Indisponibilités Hyperplanning importées pour ${n} enseignant(s)`);
         hpFermerImport();
         await dspAdminInit(null, true);
         if (_dspAdmTid) {
@@ -17079,7 +17128,138 @@ let _cmpData = null;
 let _cmpTab = 'matieres';      // 'matieres' | 'enseignants'
 let _cmpFiltre = 'ecarts';     // 'ecarts' | 'tout'
 
+// ----- Service › Comparaison : deux sous-onglets -----
+//   • Répartition ↔ Planning (par défaut) : heures prévues semaine par semaine contre
+//     cours posés dans l'EDT de l'appli (GET /compare/repartition-planning) ;
+//   • Export Hyperplanning : un « état récapitulatif » confronté aux heures d'ici.
+let _cmpOnglet = 'rp';
+
 async function loadComparaison() {
+    ['rp', 'hp'].forEach(o => {
+        document.getElementById('cmp-subtab-' + o).classList.toggle('active', o === _cmpOnglet);
+        document.getElementById('cmp-pane-' + o).style.display = o === _cmpOnglet ? '' : 'none';
+    });
+    if (_cmpOnglet === 'rp') await cmprpCharger();
+    else await _loadComparaisonHp();
+}
+
+function cmpOnglet(o) { _cmpOnglet = o; loadComparaison(); }
+
+// ----- Répartition ↔ Planning -----
+let _cmprp = null;               // réponse du serveur
+let _cmprpFermes = null;         // jours fermés (dates des semaines)
+const _cmprpOuvertes = new Set(); // semaines dépliées
+const _CMPRP_FORM = { 0: 'FTP', 1: 'ALT', 2: 'MUT' };
+
+async function cmprpCharger() {
+    const zone = document.getElementById('cmprp-result');
+    zone.innerHTML = '<div class="spinner">Chargement…</div>';
+    try {
+        [_cmprp, _cmprpFermes] = await Promise.all([api('/compare/repartition-planning' + svcQ()),
+                                                    api('/jours-fermes' + svcQ()).catch(() => null)]);
+        cmprpRendre();
+    } catch (e) {
+        zone.innerHTML = `<div class="empty">Erreur : ${esc(e.message)}</div>`;
+    }
+}
+
+// Minutes -> « 3 h », « 1 h 30 »
+function _cmprpH(m) {
+    m = Math.round(m);
+    if (!m) return '0 h';
+    const h = Math.floor(m / 60), r = m % 60;
+    return r ? `${h} h ${String(r).padStart(2, '0')}` : `${h} h`;
+}
+
+function cmprpBascule(w) {
+    if (_cmprpOuvertes.has(w)) _cmprpOuvertes.delete(w); else _cmprpOuvertes.add(w);
+    cmprpRendre();
+}
+
+function cmprpToutOuvrir(ouvrir) {
+    _cmprpOuvertes.clear();
+    if (ouvrir && _cmprp) _cmprp.semaines.forEach(s => _cmprpOuvertes.add(s.semaine));
+    cmprpRendre();
+}
+
+// Ouvre la semaine dans le Planning
+function cmprpVoirPlanning(w) {
+    _pl.forcer = w;
+    showPage('planning');
+}
+
+function cmprpRendre() {
+    const d = _cmprp, zone = document.getElementById('cmprp-result');
+    if (!d) return;
+    const fa = document.getElementById('cmprp-annee').value, ff = document.getElementById('cmprp-formation').value;
+    const q = document.getElementById('cmprp-q').value.trim().toLowerCase();
+    const tout = document.getElementById('cmprp-tout').checked;
+    const promoOk = (a, f) => (!fa || String(a) === fa) && (!ff || String(f) === ff);
+    // totaux d'une semaine, restreints aux promotions filtrées
+    const totaux = s => {
+        if (!fa && !ff) return s;
+        const t = { attendu: 0, place: 0, ok: 0, manque: 0, trop: 0, h_manque: 0, h_trop: 0, figes: 0 };
+        Object.entries(s.par || {}).forEach(([k, v]) => {
+            const [a, f] = k.split('-');
+            if (promoOk(a, f)) Object.keys(t).forEach(c => { t[c] += v[c] || 0; });
+        });
+        return t;
+    };
+    const ecarts = d.ecarts.filter(e => promoOk(e.annee, e.formation)
+        && (!q || `${e.code} ${e.matiere} ${e.enseignant}`.toLowerCase().includes(q)));
+    const parSem = {};
+    ecarts.forEach(e => (parSem[e.semaine] = parSem[e.semaine] || []).push(e));
+    const lignes = d.semaines.map(s => ({ s, t: totaux(s), e: parSem[s.semaine] || [] }))
+        .filter(x => (x.t.attendu || x.t.place) && (tout || x.e.length));
+    // totaux de l'année (promotions filtrées), semaines affichées ou non
+    const T = d.semaines.map(totaux).reduce((a, t) => {
+        ['attendu', 'place', 'manque', 'trop', 'h_manque', 'h_trop'].forEach(c => { a[c] += t[c]; });
+        return a;
+    }, { attendu: 0, place: 0, manque: 0, trop: 0, h_manque: 0, h_trop: 0 });
+    const filtres = fa || ff || q;
+    let html = `<p style="font-size:.88rem;margin:0 0 10px">${esc(d.annee)} · <b>${lignes.length}</b> semaine(s)${tout ? '' : ' avec des écarts'}${
+        filtres ? ' (filtre appliqué)' : ''} · Répartition <b>${_cmprpH(T.attendu)}</b> · Planning <b>${_cmprpH(T.place)}</b>
+        · <span style="color:#b45309"><b>${T.manque}</b> séance(s) à placer (${_cmprpH(T.h_manque)})</span>
+        · <span style="color:#1d4ed8"><b>${T.trop}</b> en trop (${_cmprpH(T.h_trop)})</span>${q ? ' <span class="edtg-note">(la recherche ne filtre que le détail)</span>' : ''}
+        <span style="margin-left:10px"><a href="#" onclick="cmprpToutOuvrir(true);return false">tout déplier</a> ·
+        <a href="#" onclick="cmprpToutOuvrir(false);return false">tout replier</a></span></p>`;
+    if (!lignes.length) {
+        zone.innerHTML = html + `<div class="empty">${d.semaines.length ? 'Aucun écart : le Planning suit la Répartition Calendaire.'
+            : 'Ni répartition ni planning pour cette année.'}</div>`;
+        return;
+    }
+    html += `<table class="pn-table cmprp-table"><thead><tr><th>Semaine</th><th>Répartition</th><th>Planning</th><th>Écart</th>
+        <th>Séances conformes</th><th>À placer</th><th>En trop</th><th></th></tr></thead><tbody>`;
+    lignes.forEach(({ s, t, e }) => {
+        const w = s.semaine, dt = _plDates(w, _cmprpFermes);
+        const ecart = t.place - t.attendu, ouvert = _cmprpOuvertes.has(w);
+        html += `<tr class="cmprp-sem${e.length ? ' ecart' : ''}" onclick="cmprpBascule(${w})" style="cursor:pointer">
+            <td><b>${e.length ? (ouvert ? '▾' : '▸') : ' '} S${w}</b>${dt ? ` <span class="edtg-note">${_plJJMM(dt[0])} → ${_plJJMM(dt[5])}</span>` : ''}</td>
+            <td>${_cmprpH(t.attendu)}</td><td>${_cmprpH(t.place)}${t.figes ? ` <span class="edtg-note">(${t.figes} 📌)</span>` : ''}</td>
+            <td style="color:${ecart < 0 ? '#b45309' : ecart > 0 ? '#1d4ed8' : '#15803d'};font-weight:600">${ecart > 0 ? '+' : ecart < 0 ? '−' : ''}${_cmprpH(Math.abs(ecart))}</td>
+            <td>${t.ok}</td>
+            <td>${t.manque ? `<span class="cmprp-b manque">${t.manque} · ${_cmprpH(t.h_manque)}</span>` : '—'}</td>
+            <td>${t.trop ? `<span class="cmprp-b trop">${t.trop} · ${_cmprpH(t.h_trop)}</span>` : '—'}</td>
+            <td><button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();cmprpVoirPlanning(${w})"
+                title="Ouvrir cette semaine dans le Planning">Planning →</button></td></tr>`;
+        if (ouvert && e.length) {
+            html += `<tr class="cmprp-detail"><td colspan="8"><table class="pn-table"><thead><tr><th>Promotion</th><th>Matière</th>
+                <th>Type</th><th>Enseignant</th><th>Répartition</th><th>Planning</th><th>Écart</th></tr></thead><tbody>${e.map(x => `<tr>
+                <td>${x.annee || '?'}A ${_CMPRP_FORM[x.formation] || ''}</td>
+                <td><b>${esc(x.code)}</b> ${esc(x.matiere || '')}</td>
+                <td>${esc(x.type)}${x.groupe ? ' gr' + x.groupe : ''}</td>
+                <td>${esc(x.enseignant || '—')}</td>
+                <td>${_cmprpH(x.attendu)} <span class="edtg-note">(${x.n_attendu} séance${x.n_attendu > 1 ? 's' : ''})</span></td>
+                <td>${_cmprpH(x.place)} <span class="edtg-note">(${x.n_place} cours${x.figes ? `, ${x.figes} 📌` : ''})</span></td>
+                <td><span class="cmprp-b ${x.statut}">${x.statut === 'manque' ? 'à placer −' : 'en trop +'}${_cmprpH(Math.abs(x.place - x.attendu))}</span></td>
+                </tr>`).join('')}</tbody></table></td></tr>`;
+        }
+    });
+    zone.innerHTML = html + '</tbody></table>';
+}
+
+// ----- Export Hyperplanning (état récapitulatif) -----
+async function _loadComparaisonHp() {
     try {
         const data = await api('/years');
         // Sous-onglet du Service enseignant : on s'aligne sur son année de consultation.
@@ -19717,7 +19897,7 @@ function showRepTab(tab) {
     else _showRepTab(tab);
 }
 
-const _REP_TABS = ['annuelle', 'jour', 'planning'];
+const _REP_TABS = ['annuelle', 'jour'];
 function _showRepTab(tab) {
     _repTab = tab;
     refreshTabEditMode();
@@ -19728,7 +19908,6 @@ function _showRepTab(tab) {
         document.getElementById('rep-pane-' + t).style.display = tab === t ? '' : 'none';
     });
     if (tab === 'jour') loadRepJour();
-    else if (tab === 'planning') loadPlanning();
 }
 
 // Numéro de semaine ISO de la date courante (présélection de la semaine)
@@ -19918,35 +20097,40 @@ async function toggleRepJourStatus(kind) {
     }
 }
 
-// ----- Générer l'EDT (solveur PuLP du serveur, solveur_edt.py) -----
-// Place les cours de la répartition enregistrée : la semaine affichée ou toutes,
-// toutes les années d'étude ou seulement celle affichée (les autres gardent leurs
-// créneaux, qui bloquent enseignants et salles). Le serveur rend la main au bout
-// d'environ 100 s avec les semaines qui restent : on relance jusqu'au bout. En
-// aperçu rien n'est écrit ; sinon l'EDT généré de ces semaines est remplacé
-// (table timetable_slots — Hyperplanning n'est pas touché).
+// ----- Optimiser l'EDT (Service › Planning ; solveur PuLP du serveur, solveur_edt.py) -----
+// Place les cours de la répartition enregistrée : la semaine affichée dans le Planning
+// ou toutes, toutes les années d'étude ou une seule (les autres gardent leurs
+// créneaux, qui bloquent enseignants et salles). Les cours figés gardent leur place.
+// Le serveur rend la main au bout d'environ 100 s avec les semaines qui restent : on
+// relance jusqu'au bout. En aperçu rien n'est écrit ; sinon l'EDT de ces semaines est
+// remplacé (table timetable_slots — Hyperplanning n'est pas touché).
 const _EDTG_JOURS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
 let _edtGen = { run: false, stop: false, agg: null, apercu: true, semaine: null };
+let _edtgSemaineChoisie = null;   // semaine affichée dans le Planning à l'ouverture
 
-function _edtgAnneeLabel() {
-    const sel = document.getElementById('repj-annee');
-    return sel.options[sel.selectedIndex].text.replace(/\s*\(.*\)$/, '');
+// Promotion montrée au départ : la première affichée dans le Planning
+function _edtgPromoDepart() {
+    const k = _PL_PROMOS.map(p => p.join('-')).find(x => _pl.promos && _pl.promos.has(x)) || '1-FTP';
+    const [yg, cohorte] = k.split('-');
+    return { yg: parseInt(yg), cohorte };
 }
 
 async function openEdtGen() {
     if (state.resp && state.resp.length) {
-        toast('La génération est réservée à la session administrateur', 'error');
+        toast('L\'optimisation de l\'EDT est réservée à la session administrateur', 'error');
         return;
     }
-    const w = parseInt(document.getElementById('repj-week').value);
-    document.getElementById('edtgen-week-label').textContent = w ? 'S' + w : '—';
-    document.getElementById('edtgen-year-label').textContent = _edtgAnneeLabel();
+    const depart = _edtgPromoDepart();
+    if (!_edtGen.run) {                       // calcul en cours : ses choix restent affichés
+        _edtgSemaineChoisie = _pl.semaine || null;
+        document.getElementById('edtgen-week-label').textContent = _edtgSemaineChoisie ? 'S' + _edtgSemaineChoisie : '—';
+        document.getElementById('edtgen-year-sel').value = String(depart.yg);
+    }
+    const w = _edtgSemaineChoisie;
     openModal('modal-edt-gen');
     if (!_edtgPoids) _edtgChargerPoids();     // une fois : les saisies non enregistrées restent
     if (_edtGen.run) return;                  // calcul en cours : on retrouve son avancement
-    // Promotion affichée au départ : celle choisie en haut de l'écran
-    _edtgVue = { yg: parseInt(document.getElementById('repj-annee').value) || 1,
-                 cohorte: document.getElementById('repj-cohorte').value };
+    _edtgVue = depart;
     _edtgCache = null;
     _edtGen.agg = null;
     document.getElementById('edtgen-progress').innerHTML = '';
@@ -19962,12 +20146,12 @@ async function openEdtGen() {
     else document.getElementById('edtgen-grid').innerHTML = '';
 }
 
-// ----- Poids du calcul : panneau commun (Générer l'EDT, Optimiser la répartition) -----
+// ----- Poids du calcul : panneau commun (Optimiser l'EDT, Optimiser la répartition) -----
 // Réglage du site, commun à toutes les années. Les champs affichés servent au
 // prochain calcul même s'ils ne sont pas enregistrés (essais) ; « Enregistrer »
 // les garde pour tous les calculs. État d'un panneau : { poids (enregistrés), defauts,
 // max, modifies, infos: [{cle, libelle, unite, aide}] }, lu par GET `api`.
-let _edtgPoids = null;   // Générer l'EDT (GET/PUT /api/edt-poids)
+let _edtgPoids = null;   // Optimiser l'EDT (GET/PUT /api/edt-poids)
 let _roptPoids = null;   // Optimiser la répartition annuelle (GET/PUT /api/repartition/poids)
 const _POIDS_PANNEAUX = {
     edt: { api: '/edt-poids', corps: 'edtgen-poids-corps', resume: 'edtgen-poids-resume', pref: 'edtgp',
@@ -20057,7 +20241,7 @@ async function poidsEnregistrer(nom) {
     }
 }
 
-// Générer l'EDT : noms d'origine
+// Optimiser l'EDT : noms d'origine
 function _edtgChargerPoids() { return poidsCharger('edt'); }
 function _edtgPoidsSaisis() { return poidsSaisis('edt'); }
 function edtgPoidsMaj() { poidsMaj('edt'); }
@@ -20076,8 +20260,8 @@ function _edtgProgress(html, err) {
 
 async function runEdtGen() {
     if (_edtGen.run) return;
-    const w = parseInt(document.getElementById('repj-week').value);
-    const yg = parseInt(document.getElementById('repj-annee').value) || 1;
+    const w = _edtgSemaineChoisie;
+    const yg = parseInt(document.getElementById('edtgen-year-sel').value) || 1;
     const toutes = document.querySelector('input[name="edtgen-weeks"]:checked').value === 'all';
     const uneAnnee = document.querySelector('input[name="edtgen-years"]:checked').value === 'one';
     const apercu = document.getElementById('edtgen-preview').checked;
@@ -20144,7 +20328,10 @@ async function runEdtGen() {
         const traitees = agg.semaines.filter(s => s.places != null).map(s => s.semaine);
         const voir = traitees.includes(w) ? w : traitees[0];
         if (voir) edtGenAfficherSemaine(voir, apercu);
-        if (!apercu && traitees.length) toast(`EDT enregistré : ${agg.ecrits} créneaux`);
+        if (!apercu && traitees.length) {
+            toast(`EDT enregistré : ${agg.ecrits} créneaux`);
+            loadPlanning();             // le Planning, derrière la fenêtre, montre le nouvel EDT
+        }
     }
 }
 
@@ -20290,7 +20477,7 @@ function edtGenGrilleHtml(slots, w, apercu) {
         + plEdtHtml(slots, { yg, cohorte, dates, fermes });
 }
 
-// ----- Emploi du temps en grille horaire (Planning et fenêtre « Générer l'EDT ») -----
+// ----- Emploi du temps en grille horaire (Planning et fenêtre « Optimiser l'EDT ») -----
 // Jours en colonnes, heures en lignes (8 h → 20 h, demi-heures), un rectangle par
 // cours à sa place et à sa hauteur, une couleur par matière ; les cours simultanés
 // (groupes de TP en parallèle) se partagent la largeur du jour.
@@ -20359,24 +20546,32 @@ function _plVoies(cours) {
     return res;
 }
 
-function _plBloc(x) {
+// clic : le cours se fige ou se libère d'un clic (Planning, droit « modifier » ; cours enregistré)
+function _plBloc(x, clic) {
     const s = x.s, H = _PL_H;
     const tt = String(s.teaching_type || '').toUpperCase();
     const gr = s.group_index != null ? ' gr' + s.group_index : '';
     const larg = 100 / x.nb;
+    const cliquable = clic && s.id != null;
     const info = [`${s.course_code || ''}${s.course_name ? ' — ' + s.course_name : ''}`,
         `${tt}${gr} · ${s.start_time}–${s.end_time}`, s.teacher_name || 'sans enseignant',
         s.room_name ? 'Salle ' + s.room_name : 'salle à choisir',
-        ...(s.fige ? ['📌 Figé : gardé à sa place au prochain « Générer l\'EDT »'] : [])].join('\n');
-    return `<div class="pl-cours" title="${esc(info)}" style="--pl-t:${_plTeinte(s.course_code)};top:${(x.d - _PL_DEBUT) / 30 * H}px;`
+        ...(s.origine === 'hp' ? ['Repris d\'Hyperplanning' + (s.fige ? '' : ' : libre, « Optimiser l\'EDT » peut le déplacer')] : []),
+        ...(s.fige ? ['📌 Figé : gardé à sa place au prochain « Optimiser l\'EDT »'] : []),
+        ...(cliquable ? [s.fige ? 'Clic : le libérer (« Optimiser l\'EDT » pourra le déplacer)'
+                                : 'Clic : le figer à cette place'] : [])].join('\n');
+    const repere = s.fige ? '📌 ' : (s.origine === 'hp' ? '<span class="pl-hp-libre">HP</span> ' : '');
+    return `<div class="pl-cours${cliquable ? ' pl-clic' : ''}${s.fige ? ' pl-fige' : ''}"${
+        cliquable ? ` data-slot="${s.id}" onclick="plBasculerFige(${s.id})"` : ''} title="${esc(info)}" `
+        + `style="--pl-t:${_plTeinte(s.course_code)};top:${(x.d - _PL_DEBUT) / 30 * H}px;`
         + `height:${(x.f - x.d) / 30 * H - 1}px;left:calc(${x.voie * larg}% + 1px);width:calc(${larg}% - 2px)">
-        <div>${s.fige ? '📌 ' : ''}<b>${esc(s.course_code || '')}</b> ${esc(tt)}${gr}</div>
+        <div>${repere}<b>${esc(s.course_code || '')}</b> ${esc(tt)}${gr}</div>
         ${s.course_name ? `<div class="pl-c2">${esc(s.course_name)}</div>` : ''}
         <div class="pl-c3">${esc(s.teacher_name || '—')}</div>
         <div class="pl-c3">${esc(s.room_name || '')}</div></div>`;
 }
 
-// o = { yg, cohorte, dates: [Date ×6] | null, fermes: {jour: {type, libelle}} }
+// o = { yg, cohorte, dates: [Date ×6] | null, fermes: {jour: {type, libelle}}, clic: figer d'un clic ? }
 function plEdtHtml(slots, o) {
     const vus = slots.filter(s => plDansPromo(s, o.yg, o.cohorte));
     const fermes = o.fermes || {};
@@ -20395,7 +20590,7 @@ function plEdtHtml(slots, o) {
         if (d === 3 && !f && o.cohorte === 'FTP' && !jeudiOuvert)
             h += `<div class="pl-libre" style="top:${(12 * 60 + 30 - _PL_DEBUT) / 30 * H}px">après-midi libre</div>`;
         if (d === 5) h += `<div class="pl-hors" style="top:${(12 * 60 + 30 - _PL_DEBUT) / 30 * H}px"></div>`;
-        h += _plVoies(cours).map(_plBloc).join('');
+        h += _plVoies(cours).map(x => _plBloc(x, o.clic)).join('');
         cols += `<div class="pl-col${f ? ' ferme' : ''}">${h}</div>`;
     }
     let axe = '';
@@ -20404,11 +20599,12 @@ function plEdtHtml(slots, o) {
         <div class="pl-corps" style="height:${haut}px"><div class="pl-axe">${axe}</div>${cols}</div></div>`;
 }
 
-// ----- Sous-onglet Planning : l'EDT généré enregistré, semaine par semaine -----
+// ----- Service › Planning : l'EDT de l'appli, semaine par semaine -----
 // Barre des semaines de l'année (en couleur : un EDT est enregistré ; trait orange :
 // jour férié ou pont), puis une grille par promotion choisie ; impression d'une
-// promotion par page.
-let _pl = { semaines: [], semaine: null, slots: [], fermes: null, annee: '', promos: null };
+// promotion par page. L'EDT vient de « Optimiser l'EDT » ou de l'import de celui
+// d'Hyperplanning (iCal : cours GIM figés 📌 ou libres « HP »).
+let _pl = { semaines: [], semaine: null, slots: [], fermes: null, annee: '', promos: null, hp: null };
 
 function _plPromosChoisies() {
     try {
@@ -20444,9 +20640,14 @@ async function loadPlanning() {
         _pl.semaines = sem.semaines || [];
         _pl.annee = sem.annee;
         _pl.fermes = fermes;
+        _pl.hp = sem.hp || null;
+        _plHpEtat();
         const avec = _pl.semaines.filter(s => s.creneaux > 0).map(s => s.semaine);
         let w = _pl.semaine;
-        if (!avec.includes(w)) {   // la semaine en cours (ou la suivante) qui a un EDT, sinon la première
+        const voulue = _pl.forcer;  // semaine demandée d'ailleurs (Comparaison), même sans EDT
+        _pl.forcer = null;
+        if (voulue != null && _pl.semaines.some(s => s.semaine === voulue)) w = voulue;
+        else if (!avec.includes(w)) {   // la semaine en cours (ou la suivante) qui a un EDT, sinon la première
             const ordre = _pl.semaines.map(s => s.semaine), i = ordre.indexOf(_isoWeekNow());
             w = (i >= 0 ? ordre.slice(i).find(x => avec.includes(x)) : null) || avec[0] || ordre[0] || null;
         }
@@ -20493,10 +20694,12 @@ function _plRendre() {
     const zone = document.getElementById('pl-content'), w = _pl.semaine;
     const dates = _plDates(w, _pl.fermes), fermes = _plFermes(w, _pl.fermes);
     let html = `<div class="pl-titre">Semaine ${w}${dates ? ` — du ${_plJJMM(dates[0])} au ${_plJJMM(dates[5])}/${dates[5].getUTCFullYear()}` : ''}
-        <span class="edtg-note">· EDT généré enregistré${_pl.annee ? ' · ' + esc(_pl.annee) : ''}</span></div>`;
+        <span class="edtg-note">· EDT enregistré${_pl.annee ? ' · ' + esc(_pl.annee) : ''}${
+            adminPower('svc:planning') ? ' · clic sur un cours : le figer 📌 ou le libérer' : ''}</span></div>`;
     if (!_pl.slots.length) {
-        zone.innerHTML = html + `<div class="empty">Pas d'EDT généré enregistré pour cette semaine. Il se calcule dans
-            Répartition journalière › « Générer l'EDT », « Aperçu seulement » décoché.</div>`;
+        zone.innerHTML = html + `<div class="empty">Pas d'EDT enregistré pour cette semaine. Il se calcule avec
+            « Optimiser l'EDT… » (« Aperçu seulement » décoché), ou se reprend d'Hyperplanning avec « Importer l'EDT
+            d'Hyperplanning… ».</div>`;
         return;
     }
     const choisies = _PL_PROMOS.filter(([yg, c]) => _pl.promos.has(yg + '-' + c));
@@ -20504,9 +20707,99 @@ function _plRendre() {
     html += choisies.map(([yg, c]) => {
         const n = _pl.slots.filter(s => plDansPromo(s, yg, c)).length;
         return `<div class="pl-promo"><div class="pl-promo-t">${_PL_ANNEES[yg]} — ${c} <span class="edtg-note">${n} cours</span></div>${
-            n ? plEdtHtml(_pl.slots, { yg, cohorte: c, dates, fermes }) : '<div class="empty" style="padding:10px">Aucun cours cette semaine.</div>'}</div>`;
+            n ? plEdtHtml(_pl.slots, { yg, cohorte: c, dates, fermes, clic: adminPower('svc:planning') })
+              : '<div class="empty" style="padding:10px">Aucun cours cette semaine.</div>'}</div>`;
     }).join('');
     zone.innerHTML = html;
+}
+
+// Clic sur un cours du Planning : figé <-> libre, enregistré aussitôt. Figé, « Générer
+// l'EDT » le garde à sa place ; libre, il peut le déplacer. Un cours mutualisé s'affiche
+// dans plusieurs promotions : toutes ses cases suivent.
+async function plBasculerFige(id) {
+    const s = _pl.slots.find(x => x.id === id);
+    if (!s || !adminPower('svc:planning')) return;
+    const fige = !s.fige;
+    document.querySelectorAll(`#pl-content .pl-cours[data-slot="${id}"]`).forEach(el => el.classList.add('pl-encours'));
+    try {
+        await api(`/timetable/slots/${id}/fige` + svcQ(), { method: 'PUT', body: JSON.stringify({ fige }) });
+        s.fige = fige ? 1 : 0;
+        if (s.origine === 'hp' && _pl.hp) {
+            _pl.hp.figes += fige ? 1 : -1;
+            _pl.hp.libres += fige ? -1 : 1;
+            _plHpEtat();
+        }
+        toast(fige ? `${s.course_code || 'Cours'} figé à cette place`
+                   : `${s.course_code || 'Cours'} libéré : « Optimiser l'EDT » pourra le déplacer`);
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+    _plRendre();
+}
+
+// ----- Planning › Réinitialiser l'EDT : toute l'année ou des semaines choisies -----
+// Les cours figés peuvent être gardés ; la répartition et les indisponibilités ne
+// bougent pas (POST /timetable/reinitialiser).
+let _plReinit = new Set();       // semaines cochées
+
+function _plReinitTout() { return document.querySelector('input[name="pl-reinit-quoi"]:checked').value === 'tout'; }
+
+function plReinitOuvrir() {
+    if (!adminPower('svc:planning')) return;
+    _plReinit = new Set(_pl.semaine ? [_pl.semaine] : []);
+    document.querySelector('input[name="pl-reinit-quoi"][value="choix"]').checked = true;
+    document.getElementById('pl-reinit-figes').checked = false;
+    plReinitMaj();
+    openModal('modal-pl-reinit');
+}
+
+function plReinitCocher(quoi) {
+    _plReinit = new Set(quoi === 'affichee' ? (_pl.semaine ? [_pl.semaine] : [])
+        : quoi === 'edt' ? _pl.semaines.filter(s => s.creneaux > 0).map(s => s.semaine) : []);
+    document.querySelector('input[name="pl-reinit-quoi"][value="choix"]').checked = true;
+    plReinitMaj();
+}
+
+function plReinitSemaine(w) {
+    if (_plReinitTout()) _plReinit = new Set();
+    if (_plReinit.has(w)) _plReinit.delete(w); else _plReinit.add(w);
+    document.querySelector('input[name="pl-reinit-quoi"][value="choix"]').checked = true;
+    plReinitMaj();
+}
+
+function plReinitMaj() {
+    const tout = _plReinitTout(), garder = document.getElementById('pl-reinit-figes').checked;
+    document.getElementById('pl-reinit-liste').innerHTML = _pl.semaines.map(s => {
+        const d = _plDates(s.semaine, _pl.fermes);
+        const t = `S${s.semaine}${d ? ' · du ' + _plJJMM(d[0]) + ' au ' + _plJJMM(d[5]) : ''} · ${s.creneaux
+            ? `${s.creneaux} créneau(x)${s.figes ? `, dont ${s.figes} figé(s)` : ''}` : "pas d'EDT"}`;
+        return `<button type="button" class="pl-sem${s.creneaux ? ' edt' : ''}${tout || _plReinit.has(s.semaine) ? ' sel' : ''}"
+            title="${esc(t)}" onclick="plReinitSemaine(${s.semaine})">${s.semaine}</button>`;
+    }).join('');
+    document.getElementById('pl-reinit-semaines').style.opacity = tout ? .55 : 1;
+    const vises = _pl.semaines.filter(s => tout || _plReinit.has(s.semaine));
+    const n = vises.reduce((a, s) => a + s.creneaux - (garder ? s.figes || 0 : 0), 0);
+    const nf = vises.reduce((a, s) => a + (s.figes || 0), 0);
+    document.getElementById('pl-reinit-resume').innerHTML = !tout && !_plReinit.size ? 'Choisissez au moins une semaine.'
+        : `<b>${n} créneau(x)</b> retiré(s) sur ${tout ? "toute l'année" : `${_plReinit.size} semaine(s)`}${
+            nf ? (garder ? ` · ${nf} cours figé(s) gardé(s)` : ` · dont ${nf} cours figé(s)`) : ''}.`;
+    document.getElementById('pl-reinit-ok').disabled = (!tout && !_plReinit.size) || n === 0;
+}
+
+async function plReinitAppliquer() {
+    const tout = _plReinitTout(), garder = document.getElementById('pl-reinit-figes').checked;
+    const btn = document.getElementById('pl-reinit-ok');
+    btn.disabled = true;
+    try {
+        const r = await api('/timetable/reinitialiser' + svcQ(), { method: 'POST',
+            body: JSON.stringify({ semaines: tout ? null : [..._plReinit], garder_figes: garder }) });
+        toast(`EDT réinitialisé : ${r.supprimes} créneau(x) retiré(s)`);
+        closeModal('modal-pl-reinit');
+        await loadPlanning();
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+        btn.disabled = false;
+    }
 }
 
 // Impression : la semaine affichée, une promotion par page (A4 paysage), dans une fenêtre à part
@@ -20526,10 +20819,274 @@ function plImprimer() {
         .pl-promo { break-inside: avoid; break-after: page; }
         .pl-promo:last-child { break-after: auto; }`;
     f.document.write(`<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>EDT S${_pl.semaine} ${esc(_pl.annee || '')}</title>
-        <style>${css}</style></head><body>${document.getElementById('pl-content').innerHTML}</body></html>`);
+        <style>${css}</style></head><body>${document.getElementById('pl-content').innerHTML
+            .replace(/ onclick="[^"]*"/g, '').replace(/ pl-clic/g, '')}</body></html>`);
     f.document.close();
     f.focus();
     setTimeout(() => f.print(), 300);
+}
+
+// ----- Planning › Importer l'EDT d'Hyperplanning (iCal) -----
+// Le .ics est déposé une fois (/planning/hp/fichier) ; le rapport (/planning/hp sans
+// apply) rapproche les noms du fichier des enseignants de l'année, et les cours GIM des
+// séances de l'appli ; un nom se rattache à la main. Chaque cours GIM repris est figé
+// (par défaut) ou libre : pour tout le fichier, par enseignant ou cours par cours. Rien
+// n'est écrit avant « Importer ».
+let _ical = null;          // { n, jeton, fichier, cours, du, au, associations, libres: Set, rapport }
+let _icalCompteur = 0;     // un nouveau fichier interrompt le précédent
+
+// Bandeau au-dessus des semaines : ce que l'import a laissé dans l'année
+function _plHpEtat() {
+    const outil = adminPower('svc:planning');
+    document.querySelectorAll('.pl-hp-outil').forEach(b => { b.style.display = outil ? '' : 'none'; });
+    const el = document.getElementById('pl-hp-etat'), hp = _pl.hp;
+    if (!hp || !(hp.cours || hp.bloques)) { el.style.display = 'none'; return; }
+    el.style.display = '';
+    el.innerHTML = `<b>Repris d'Hyperplanning</b> : ${hp.cours} cours GIM (${hp.figes} figés 📌, ${hp.libres} libres
+        <span class="pl-hp-libre">HP</span>) · ${hp.bloques} créneaux bloqués pour ${hp.enseignants_bloques} enseignant(s)
+        <span class="edtg-note">(autres départements, cours GIM sans séance dans l'appli)</span>${
+        hp.source ? ` · « ${esc(hp.source)} »` : ''}${hp.date ? ` le ${_dateFr(hp.date)}` : ''}${outil
+        ? `<button type="button" class="btn btn-secondary btn-sm" onclick="icalRetirer()"
+              title="Retirer les cours repris et les créneaux bloqués par l'import">Retirer l'import</button>` : ''}`;
+}
+
+async function icalRetirer() {
+    if (!confirm('Retirer tout ce que l\'import d\'Hyperplanning a écrit pour cette année : les cours GIM repris '
+                 + '(figés et libres) et les créneaux bloqués ? Les séances qu\'ils remplaçaient seront à replacer '
+                 + 'avec « Optimiser l\'EDT ».')) return;
+    try {
+        const r = await api('/planning/hp' + svcQ(), { method: 'DELETE' });
+        toast(`Import retiré : ${r.cours} cours, ${r.bloques} créneaux bloqués`);
+        await loadPlanning();
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+function icalOuvrirImport() {
+    _ical = null;
+    _icalCompteur++;
+    document.getElementById('ical-import-file').value = '';
+    document.getElementById('ical-import-report').innerHTML = '';
+    document.getElementById('ical-import-apply').disabled = true;
+    openModal('modal-ical-import');
+}
+
+function icalFermerImport() {
+    _icalCompteur++;
+    _ical = null;
+    closeModal('modal-ical-import');
+}
+
+async function icalLireFichier(input) {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    const n = ++_icalCompteur;
+    const zone = document.getElementById('ical-import-report');
+    document.getElementById('ical-import-apply').disabled = true;
+    zone.innerHTML = `<div class="edtg-note">Envoi de « ${esc(f.name)} »…</div>`;
+    try {
+        const fd = new FormData();
+        fd.append('file', f);
+        const r = await fetch('/api/planning/hp/fichier' + svcQ(), { method: 'POST', body: fd });
+        const dep = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(dep.error || 'Échec de l\'envoi');
+        if (n !== _icalCompteur) return;
+        _ical = { n, jeton: dep.jeton, fichier: dep.fichier, cours: dep.cours, du: dep.du, au: dep.au,
+                  associations: {}, libres: null, rapport: null };
+        zone.innerHTML = '<div class="edtg-note">Rapprochement des enseignants et des cours…</div>';
+        await icalRapport();
+    } catch (e) {
+        if (n === _icalCompteur) zone.innerHTML = `<div class="empty" style="color:#b91c1c">Erreur : ${esc(e.message)}</div>`;
+    }
+}
+
+// Rapport du serveur ; relancé à chaque rattachement fait à la main
+async function icalRapport() {
+    const imp = _ical;
+    if (!imp) return;
+    const zone = document.getElementById('ical-import-report');
+    const bouton = document.getElementById('ical-import-apply');
+    bouton.disabled = true;
+    try {
+        const rap = await api('/planning/hp' + svcQ(), {
+            method: 'POST', body: JSON.stringify({ jeton: imp.jeton, associations: imp.associations }) });
+        if (imp !== _ical) return;
+        imp.rapport = rap;
+        // au départ : libres ceux qu'un import précédent avait laissés libres, figés les autres
+        if (!imp.libres) imp.libres = new Set();
+        rap.enseignants.forEach(e => (e.cours_gim || []).forEach(c => { if (c.deja === false) imp.libres.add(c.cle); }));
+        zone.innerHTML = _icalRapportHtml(imp);
+        _icalMajChoix();
+        const retenus = rap.enseignants.filter(e => e.teacher_id);
+        bouton.disabled = !retenus.length || !rap.semaines.length || !!rap.erreur;
+    } catch (e) {
+        if (imp === _ical) zone.innerHTML = `<div class="empty" style="color:#b91c1c">Erreur : ${esc(e.message)}</div>`;
+    }
+}
+
+function _icalRapportHtml(imp) {
+    const rap = imp.rapport;
+    const fr = s => String(s || '').split('-').reverse().join('/');
+    const retenus = rap.enseignants.filter(e => e.teacher_id);
+    const aVoir = e => e.teacher_id || e.how === 'conflit' || e.nb_gim;
+    const principaux = rap.enseignants.filter(aVoir).sort((a, b) => (!a.teacher_id) - (!b.teacher_id));
+    const autres = rap.enseignants.filter(e => !aVoir(e));
+    const nGim = retenus.reduce((s, e) => s + (e.cours_gim || []).length, 0);
+    const nBloq = retenus.reduce((s, e) => s + (e.nb_autres || 0) + (e.nb_non_rapproches || 0), 0);
+    const ligne = e => {
+        const how = { approché: 'nom rapproché : à vérifier', homonyme: 'homonyme : celui qui a des cours GIM, à vérifier',
+                      conflit: '<b style="color:#b45309">deux noms du fichier pour le même enseignant : choisissez</b>' }[e.how] || '';
+        return `<tr class="${e.teacher_id ? '' : 'hp-ignore'}">
+            <td><b>${esc(e.qui)}</b>${e.complet ? `<br><span class="edtg-note">${esc(e.complet)}</span>` : ''}</td>
+            <td><select data-qui="${esc(e.qui)}" onchange="icalAssocier(this)">${_icalOpts(rap, e.teacher_id)}</select></td>
+            <td style="white-space:nowrap">${e.nb_cours} cours<br><span class="edtg-note">${e.nb_gim} GIM · ${e.semaines} sem.</span></td>
+            <td>${e.teacher_id ? _icalCoursHtml(e) : '<span class="edtg-note">—</span>'}</td>
+            <td class="edtg-note">${e.teacher_id ? _icalBloquesHtml(e) : ''}</td>
+            <td class="edtg-note">${how}</td></tr>`;
+    };
+    const tete = `<thead><tr><th>Nom dans le fichier</th><th>Enseignant de l'année</th><th>Cours</th>
+        <th>Cours GIM repris dans l'EDT</th><th>Créneaux bloqués</th><th>Remarques</th></tr></thead>`;
+    return `
+        <p style="font-size:.85rem;margin:4px 0 8px">« ${esc(imp.fichier)} » : ${imp.cours} cours du ${fr(imp.du)} au ${fr(imp.au)}
+            · ${rap.enseignants.length} nom(s) d'enseignants · <b>${retenus.length} enseignant(s) de l'année ${esc(rap.annee)}
+            mis à jour</b> sur ${rap.semaines.length} semaine(s)${rap.hors_annee ? ` · ${rap.hors_annee} cours hors de l'année ignoré(s)` : ''}.</p>
+        ${rap.erreur ? `<div class="empty" style="color:#b91c1c;margin-bottom:8px">${esc(rap.erreur)}</div>` : ''}
+        ${!rap.semaines.length ? `<div class="empty" style="color:#b91c1c;margin-bottom:8px">Aucune semaine de l'année
+            ${esc(rap.annee)} dans ce calendrier : exportez celui de l'année affichée dans le Service.</div>` : ''}
+        <p style="font-size:.85rem;margin:0 0 8px"><b>${nGim} cours GIM</b> rapprochés d'une séance de l'appli, repris à leur
+            place Hyperplanning : <span class="ical-choix" id="ical-choix-tout">
+                <button type="button" data-m="fige" onclick="icalChoixTout('fige')" title="« Optimiser l'EDT » ne les bouge plus">Tous figés 📌</button>
+                <button type="button" data-m="libre" onclick="icalChoixTout('libre')" title="Posés à leur place, mais « Optimiser l'EDT » peut les déplacer">Tous libres</button>
+            </span> <span class="edtg-note" id="ical-compte-tout"></span>
+            · <b>${nBloq}</b> autres cours bloquent le créneau de leur enseignant.</p>
+        <table class="pn-table hp-rap">${tete}<tbody>${principaux.map(ligne).join('')}</tbody></table>
+        ${autres.length ? `<details style="margin-top:8px"><summary class="edtg-note" style="cursor:pointer">${autres.length}
+            autre(s) nom(s) du fichier, sans enseignant de l'année ni cours GIM (autres départements) : rien n'est importé pour eux</summary>
+            <table class="pn-table hp-rap" style="margin-top:6px">${tete}<tbody>${autres.map(ligne).join('')}</tbody></table></details>` : ''}
+        ${rap.absents.length ? `<p class="edtg-note" style="margin-top:8px">Enseignants de l'année absents du fichier
+            (rien ne change pour eux) : ${rap.absents.map(esc).join(', ')}.</p>` : ''}`;
+}
+
+function _icalOpts(rap, sel) {
+    return '<option value="">— ignorer —</option>' + rap.profs.map(p =>
+        `<option value="${p.id}"${p.id === sel ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
+}
+
+// Cours GIM repris d'un enseignant : figés / libres pour tous, et cours par cours (liste
+// construite à l'ouverture du détail : plus d'un millier de cours sur l'année)
+function _icalCoursHtml(e) {
+    const gim = e.cours_gim || [];
+    if (!gim.length) return '<span class="edtg-note">aucun cours GIM rapproché</span>';
+    const tid = e.teacher_id;
+    const ambigus = gim.filter(c => c.ambigu).length;
+    return `<span class="ical-choix" data-tid="${tid}">
+            <button type="button" data-m="fige" onclick="icalChoixEns(${tid}, 'fige')">Figés 📌</button>
+            <button type="button" data-m="libre" onclick="icalChoixEns(${tid}, 'libre')">Libres</button></span>
+        <span class="edtg-note ical-compte" data-tid="${tid}"></span>${
+        ambigus ? `<br><span class="edtg-note" style="color:#b45309">${ambigus} rapprochement(s) incertain(s) (?)</span>` : ''}
+        <details ontoggle="icalDetail(this, ${tid})"><summary class="edtg-note" style="cursor:pointer">cours par cours</summary>
+            <div style="max-height:200px;overflow:auto;margin-top:4px"></div></details>`;
+}
+
+function icalDetail(det, tid) {
+    const zone = det.querySelector('div');
+    const e = _ical && _ical.rapport && _ical.rapport.enseignants.find(x => x.teacher_id === tid);
+    if (!det.open || !zone || zone.childElementCount || !e) return;
+    zone.innerHTML = (e.cours_gim || []).map(c => `<div class="ical-ligne">
+        <select data-cle="${esc(c.cle)}" data-tid="${tid}" onchange="icalChoixCours(this)">
+            <option value="fige">📌 figé</option><option value="libre">libre</option></select>
+        S${c.semaine} ${_HP_JOURS[c.jour] || ''} ${esc(c.debut)}–${esc(c.fin)} · ${esc(c.texte)} → <b>${esc(c.seance)}</b>${
+        c.ambigu ? ' <span style="color:#b45309" title="Plusieurs séances possibles : la plus proche (durée, nom de la matière) a été retenue">?</span>' : ''}${
+        c.deja != null ? ` <span class="edtg-note">(déjà repris${c.deja ? ', figé' : ', libre'})</span>` : ''}</div>`).join('');
+    _icalMajChoix();
+}
+
+function _icalBloquesHtml(e) {
+    const t = [];
+    if (e.nb_autres) t.push(`${e.nb_autres} d'autres départements`);
+    if (e.nb_non_rapproches) t.push(`<span title="${esc('Cours GIM sans séance correspondante dans l’appli (matière hors '
+        + 'répartition, réunion, séance en plus…) :\n' + (e.non_rapproches || []).join('\n'))}"
+        style="text-decoration:underline dotted">${e.nb_non_rapproches} GIM sans séance dans l'appli</span>`);
+    if (!t.length) return 'aucun';
+    return t.join(' · ') + (e.exemples_bloques.length ? `<br>${e.exemples_bloques.map(esc).join('<br>')}` : '');
+}
+
+// Boutons figés / libres (tous, par enseignant) et listes cours par cours, d'après le choix en cours
+function _icalMajChoix() {
+    const imp = _ical;
+    if (!imp || !imp.rapport) return;
+    const zone = document.getElementById('ical-import-report');
+    const marquer = (el, nLibres, total) => {
+        if (!el) return;
+        el.querySelectorAll('button').forEach(b => {
+            const m = b.dataset.m;
+            b.classList.toggle('on', total > 0 && (m === 'libre' ? nLibres === total : nLibres === 0));
+            b.classList.toggle('mixte', nLibres > 0 && nLibres < total);
+        });
+    };
+    let total = 0, libres = 0;
+    imp.rapport.enseignants.forEach(e => {
+        const gim = e.cours_gim || [];
+        if (!e.teacher_id || !gim.length) return;
+        const n = gim.filter(c => imp.libres.has(c.cle)).length;
+        total += gim.length;
+        libres += n;
+        marquer(zone.querySelector(`.ical-choix[data-tid="${e.teacher_id}"]`), n, gim.length);
+        const lib = zone.querySelector(`.ical-compte[data-tid="${e.teacher_id}"]`);
+        if (lib) lib.textContent = `${gim.length - n} figé(s), ${n} libre(s)`;
+    });
+    zone.querySelectorAll('select[data-cle]').forEach(s => { s.value = imp.libres.has(s.dataset.cle) ? 'libre' : 'fige'; });
+    marquer(document.getElementById('ical-choix-tout'), libres, total);
+    const t = document.getElementById('ical-compte-tout');
+    if (t) t.textContent = total ? `(${total - libres} figé(s), ${libres} libre(s))` : '';
+}
+
+function icalChoixTout(mode) {
+    const imp = _ical;
+    if (!imp || !imp.rapport) return;
+    imp.rapport.enseignants.forEach(e => (e.cours_gim || []).forEach(c => {
+        if (mode === 'libre') imp.libres.add(c.cle); else imp.libres.delete(c.cle);
+    }));
+    _icalMajChoix();
+}
+
+function icalChoixEns(tid, mode) {
+    const imp = _ical;
+    const e = imp && imp.rapport && imp.rapport.enseignants.find(x => x.teacher_id === tid);
+    if (!e) return;
+    (e.cours_gim || []).forEach(c => { if (mode === 'libre') imp.libres.add(c.cle); else imp.libres.delete(c.cle); });
+    _icalMajChoix();
+}
+
+function icalChoixCours(sel) {
+    if (!_ical) return;
+    if (sel.value === 'libre') _ical.libres.add(sel.dataset.cle); else _ical.libres.delete(sel.dataset.cle);
+    _icalMajChoix();
+}
+
+function icalAssocier(sel) {
+    if (!_ical) return;
+    _ical.associations[sel.dataset.qui] = sel.value || null;
+    icalRapport();
+}
+
+async function icalAppliquer() {
+    const imp = _ical;
+    if (!imp || !imp.rapport) return;
+    const bouton = document.getElementById('ical-import-apply');
+    bouton.disabled = true;
+    try {
+        const r = await api('/planning/hp' + svcQ(), {
+            method: 'POST', body: JSON.stringify({ jeton: imp.jeton, associations: imp.associations,
+                libres: [...imp.libres], source: imp.fichier, apply: true }) });
+        toast(`EDT d'Hyperplanning importé : ${r.figes} cours figés, ${r.libres} libres, ${r.bloques} créneaux bloqués`);
+        icalFermerImport();
+        await loadPlanning();
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+        bouton.disabled = false;
+    }
 }
 
 // ----- Jours fériés et ponts de l'année -----
@@ -20574,7 +21131,7 @@ function jfRepere(liste) {
         (f ? 'F' : '') + (p ? 'P' : '')}</span>`;
 }
 
-// Rappel en tête de la fenêtre « Générer l'EDT »
+// Rappel en tête de la fenêtre « Optimiser l'EDT »
 function _edtgFermes(etat) {
     _edtgFermesEtat = etat;
     const el = document.getElementById('edtgen-fermes');

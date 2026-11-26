@@ -122,7 +122,7 @@ POIDS_DEFAUT = {
 # Ancien nom → nouveau (requêtes ou réglages enregistrés avant le renommage)
 POIDS_ALIAS = {'etalement': 'matiere_meme_jour'}
 
-# Poids réglables dans la fenêtre « Générer l'EDT » : (clé, libellé, unité, explication).
+# Poids réglables dans la fenêtre « Optimiser l'EDT » : (clé, libellé, unité, explication).
 # « non_place » n'y figure pas : le placement passe toujours avant les préférences
 # (phase 1 du calcul, puis niveau imposé à la phase 2), son poids n'y change rien.
 POIDS_INFOS = [
@@ -443,6 +443,15 @@ class Donnees:
             self.grilles_hp = {(r['teacher_id'], r['week_number']): r['grille'] for r in _rows(
                 db, 'SELECT teacher_id, week_number, grille FROM teacher_availability_hp')
                 if r['teacher_id'] in self.enseignants and '0' in (r['grille'] or '')}
+        # Cours d'Hyperplanning que l'appli ne place pas (autres départements, cours GIM
+        # sans séance correspondante…), lus dans son export iCal : ils occupent leurs
+        # enseignants cette semaine-là — {(enseignant, semaine): [(jour, début, fin)]}
+        self.occupe_hp = defaultdict(list)
+        if _table_existe(db, 'teacher_busy_hp'):
+            for r in _rows(db, 'SELECT teacher_id, week_number, day_of_week, start_time, end_time FROM teacher_busy_hp'):
+                if r['teacher_id'] in self.enseignants:
+                    self.occupe_hp[(r['teacher_id'], r['week_number'])].append(
+                        (int(r['day_of_week']), _minutes(r['start_time']), _minutes(r['end_time'])))
 
         debut_annee = 36
         if _table_existe(db, 'app_settings'):
@@ -508,7 +517,8 @@ class Donnees:
     def dispos_de(self, tid, semaine):
         """(créneaux interdits, coût par créneau, dispos saisies ?) de l'enseignant
         pour cette semaine : sa grille propre s'il en a une, sinon sa semaine type ;
-        les indisponibilités importées d'Hyperplanning s'y ajoutent."""
+        les indisponibilités importées d'Hyperplanning (PDF) et ses cours d'Hyperplanning
+        que l'appli ne place pas (iCal) s'y ajoutent."""
         cle = (tid, semaine)
         if cle in self._dispos_sem:
             return self._dispos_sem[cle]
@@ -517,6 +527,13 @@ class Donnees:
         hp = self.grilles_hp.get(cle)
         if hp:
             ferme = self._dispos([l for l in lignes_grille(hp) if not l['available']])[0]
+            res = (res[0] | ferme, res[1], res[2])
+        occupe = self.occupe_hp.get(cle)
+        if occupe:
+            reg = self.reg
+            ferme = {(d, u) for d in reg.jours for u in range(reg.nb_pas)
+                     if any(j == d and s < reg.debut + (u + 1) * reg.pas and f > reg.debut + u * reg.pas
+                            for j, s, f in occupe)}
             res = (res[0] | ferme, res[1], res[2])
         self._dispos_sem[cle] = res
         return res
@@ -600,6 +617,7 @@ def evenements_semaine(db, don, semaine, avert):
         JOIN courses c ON c.id = cs.course_id
         JOIN semesters s ON s.id = c.semester_id
         WHERE wh.week_number = ? AND wh.hours > 0{filtre}
+          AND NOT (c.name LIKE 'AaR%' OR c.name LIKE 'Aide à la réussite%')   -- hors répartition (app.py)
         ORDER BY cs.id, wh.group_index''', (semaine, *args))
     evts = []
     for r in lignes:

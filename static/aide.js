@@ -731,10 +731,11 @@ function _aideService() {
             ['svc:repartition-enseignant', _aUi('Bilan Global'), `Le service de chaque enseignant, en heures et en HETD. ${_aLien('bilan', 'Voir')}`],
             ['svc:repartition', _aUi('Répartition Calendaire'), `Les heures de chaque matière placées semaine par semaine${
                 _aSi('rep:jour', ", et ce qu'il reste à poser semaine après semaine (vue journalière)")}. ${_aLien('rep-annuelle', 'Voir')}`],
+            ['svc:planning', _aUi('Planning'), `L'emploi du temps de l'appli, semaine par semaine et promotion par promotion ; l'import de celui d'Hyperplanning. ${_aLien('planning', 'Voir')}`],
             ['svc:matieres', _aUi('Matières'), `Les matières de l'année : volumes, durées de séance, salles, enseignants, référents. ${_aLien('matieres', 'Voir')}`],
             ['svc:contraintes', _aUi('Contraintes Enseignant'), `Les indisponibilités et préférences de chacun. ${_aLien('contraintes', 'Voir')}`],
             ['svc:contraintes-matiere', _aUi('Contraintes Matière'), `Les contraintes propres à une matière (salle, ordre, période) et la répartition souhaitée des séances semaine après semaine. ${_aLien('contraintes-matiere', 'Voir')}`],
-            ['svc:comparaison', _aUi('Comparaison'), `Confronter un export Hyperplanning aux heures saisies ici. ${_aLien('comparaison', 'Voir')}`],
+            ['svc:comparaison', _aUi('Comparaison'), `Les écarts entre la Répartition Calendaire et le Planning, semaine par semaine ; un export Hyperplanning confronté aux heures saisies ici. ${_aLien('comparaison', 'Voir')}`],
             ['nav:enseignants', _aUi('Enseignants'), `La liste des enseignants de l'année active : coordonnées, statut, accès. ${_aLien('enseignants', 'Voir')}`],
             ['nav:salles', _aUi('Salles'), `La liste des salles de l'année active. ${_aLien('salles', 'Voir')}`],
         ])}</tbody></table>
@@ -786,7 +787,11 @@ function _aideService() {
       mots: 'répartition calendaire planning semaine placer heures reste h module brouillon retour arrière taux horaire vacances orange jours fériés ponts',
       html: () => `
         <p>Le tableau de bord de l'emploi du temps : pour chaque matière, chaque type d'enseignement et chaque groupe, les heures
-        placées sur chacune des semaines de l'année.</p>
+        placées sur chacune des semaines de l'année. ${_aUi('Optimiser la répartition…')} y propose la répartition des heures semaine
+        par semaine ; les jours et heures des cours se calculent ensuite dans ${_aOng('Service › Planning')}.</p>
+        ${_aTip(`l'<b>aide à la réussite</b> (AaR 1 … AaR 6) n'y figure pas : ses heures, ajoutées au compte-gouttes (surveillances de
+            DS…), ne se répartissent pas semaine par semaine et l'appli ne les place pas dans l'EDT. La matière reste dans
+            ${_aOng('Matières')}.`)}
         <h3>Afficher</h3>
         <p>Rien ne s'affiche tant qu'aucun semestre n'est choisi : cliquez sur ${_aUi('S1')} … ${_aUi('S6')} (plusieurs à la fois si besoin).
         Puis affinez avec ${_aUi('Type')} (CM, TD, TP, PT), ${_aUi('Formation')}, ${_aUi('Enseignant')}, ${_aUi('Salle')}, la recherche de matière,
@@ -796,7 +801,7 @@ function _aideService() {
             <li>Une ligne bleue par <b>matière</b>, puis une ligne par formation (MUT, FTP, ALT) et par type. Les <b>TD</b> et les <b>TP</b> partagés en groupes ont <b>une ligne par groupe</b>, avec son numéro (gr.1, gr.2… ; ALT pour les groupes d'apprentis d'un TP mutualisé) et son enseignant : chaque groupe se place à part, deux groupes de TD peuvent donc avoir la même séance des semaines différentes.</li>
             <li>${_aUi('H. module')} : le volume à placer ; ${_aUi('Reste')} : ce qu'il reste à placer, <b>en rouge tant qu'il n'est pas à zéro</b>. Le reste compte toutes les semaines, même celles qu'un filtre masque.</li>
             <li>Les semaines <b style="color:#c2410c">orange</b> sont des semaines de vacances, de stage (FTP) ou d'entreprise (ALT), d'après le ${_aLien('promo-calendrier', 'calendrier')} de la promotion.</li>
-            <li>En haut, les <b>taux horaires</b> (FTP1, ALT1… FTP3, ALT3) donnent les heures de cours d'un étudiant de chaque promo, semaine par semaine : celles du <b>groupe le plus chargé</b> de la semaine, TD et TP compris (un étudiant ne suit qu'un groupe de TD et un de TP ; le survol d'une case dit lequel). Ce sont les mêmes heures que la charge des promotions du ${_aUi('Contrôle')} et de ${_aUi('Optimiser…')}. Filtré sur un enseignant ou une salle, le tableau ajoute sa charge hebdomadaire.</li>
+            <li>En haut, les <b>taux horaires</b> (FTP1, ALT1… FTP3, ALT3) donnent les heures de cours d'un étudiant de chaque promo, semaine par semaine : celles du <b>groupe le plus chargé</b> de la semaine, TD et TP compris (un étudiant ne suit qu'un groupe de TD et un de TP ; le survol d'une case dit lequel). Ce sont les mêmes heures que la charge des promotions du ${_aUi('Contrôle')} et de ${_aUi('Optimiser la répartition…')}. Filtré sur un enseignant ou une salle, le tableau ajoute sa charge hebdomadaire.</li>
             <li>La ligne des <b>commentaires</b> de semaine (écrits dans le calendrier) s'affiche au-dessus des semaines.</li>
             <li>Une semaine qui a un <b>jour férié</b> ou un <b>pont</b> porte un repère à côté de son numéro : <span class="jf-rep">F</span>
                 pour un jour férié, <span class="jf-rep pont">P</span> pour un pont ; le survol donne les dates, et leur nom s'ajoute à la
@@ -862,22 +867,22 @@ function _aideService() {
         semaines qui se suivent forment une <b>période libre</b> : ses séances peuvent se placer n'importe où dans la période. Elles
         n'attendent que ce que le vœu met avant la période ; ce qui est placé pendant la période n'attend aucune d'elles ; ce qui la suit
         les attend toutes ; la grille n'en fixe que le total. Le survol l'indique d'un bloc (« 5 TP sur 4 sem. »).
-        ${_aUi('Optimiser…')} applique les mêmes règles.</p>
+        ${_aUi('Optimiser la répartition…')} applique les mêmes règles.</p>
         <h3>Outils de la barre</h3>
         <ul>
             ${_aSiModif('rep:annuelle', `<li>${_aUi('Contrôle')} : un panneau à droite liste la <b>charge des enseignants par semaine</b> (orange au-delà de 20 h, rouge au-delà de 30 h) , les <b>conflits de salle</b> (plus de 2 matières la même semaine) et les <b>contraintes d'ordre non respectées</b>. Le brouillon est compris dans le contrôle.</li>
-            <li>${_aUi('Optimiser…')} : propose un placement des semestres affichés (voir ci-dessous).</li>`)}
+            <li>${_aUi('Optimiser la répartition…')} : propose un placement des semestres affichés (voir ci-dessous).</li>`)}
             <li>${_aUi('Export Excel')} : exactement ce qui est affiché (semestres, formation, enseignant)${_aSiModif('rep:annuelle', ', brouillon compris')}.</li>
             ${_aSiModif('rep:annuelle', `<li>${_aUi('Import Excel')} : recharge des heures depuis un fichier au format de l'export — elles <b>remplacent</b> les heures existantes, après confirmation.</li>`)}
             <li>${_aUi('Taux horaires')} : la case masque les lignes de taux pour gagner de la place.</li>
         </ul>
         ${_aTip(`les vacataires ne voient ni les taux horaires ni l'export.`)}` },
 
-    { id: 'rep-optimiser', rub: R, titre: 'Optimiser la répartition annuelle', chemin: 'Service › Répartition Calendaire › Répartition annuelle › Optimiser…',
+    { id: 'rep-optimiser', rub: R, titre: 'Optimiser la répartition annuelle', chemin: 'Service › Répartition Calendaire › Répartition annuelle › Optimiser la répartition…',
       onglet: 'rep:annuelle', cible: 'repartition/annuelle', pour: 'modifier',
       mots: 'optimiser optimisation optimiseur ordonnancement répartition souhaitée vœu grille automatique placer calculer brouillon interruption surcharge charge poids',
       html: `
-        <p>${_aUi('Optimiser…')} propose un placement des séances, semaine par semaine, pour les <b>semestres affichés</b> (et le
+        <p>${_aUi('Optimiser la répartition…')} propose un placement des séances, semaine par semaine, pour les <b>semestres affichés</b> (et le
         filtre ${_aUi('Formation')} : les lignes MUT en font toujours partie). Les autres semestres ne bougent pas, mais leurs heures
         comptent dans les charges et dans les ordonnancements.</p>
         <h3>Ce qu'il respecte</h3>
@@ -913,17 +918,17 @@ function _aideService() {
         ${_aUi('Poser dans le brouillon')} remplace les cases du périmètre par la proposition, en un seul pas : les repères se mettent à
         jour, ${_aUi('Contrôle')} la vérifie, <kbd>Ctrl</kbd>+<kbd>Z</kbd> l'annule. Rien n'est enregistré avant ${_aUi('Enregistrer')}.</p>
         ${_aEx('régler un ordonnancement', `Une matière de S1 doit être terminée avant une matière de S2 qui commence trop tôt : on coche
-            S1 et S2, ${_aUi('Optimiser…')}, ${_aUi('Bouger le moins possible')}, ${_aUi('Lancer')}. Le bilan indique « Ordonnancements non
+            S1 et S2, ${_aUi('Optimiser la répartition…')}, ${_aUi('Bouger le moins possible')}, ${_aUi('Lancer')}. Le bilan indique « Ordonnancements non
             respectés : 1 → 0 » et le nombre de séances déplacées ; ${_aUi('Poser dans le brouillon')}, un coup d'œil aux repères, puis
             ${_aUi('Enregistrer')}.`)}
         ${_aEx('suivre les vœux', `Les matières de S2 portent <span class="wish-badge ord-warn">vœu ~12</span> : leurs séances ne suivent
-            pas la grille des enseignants. ${_aUi('Optimiser…')} sur S2 : le bilan donne « décalages à la grille » avant / après et liste
+            pas la grille des enseignants. ${_aUi('Optimiser la répartition…')} sur S2 : le bilan donne « décalages à la grille » avant / après et liste
             les matières encore décalées, avec leur semaine de début. Pour que la grille l'emporte sur la charge des promotions,
             augmenter son poids dans ${_aUi('Poids du calcul')} avant de relancer.`)}` },
 
     { id: 'rep-jour', rub: R, titre: 'Répartition journalière (semaine par semaine)', chemin: 'Service › Répartition Calendaire › Répartition journalière',
       onglet: 'rep:jour', cible: 'repartition/jour',
-      mots: 'journalière semaine posée optimisée hyperplanning avancement cohorte mut reste à poser générer edt emploi du temps automatique jours fériés ponts pont férié solveur aperçu',
+      mots: 'journalière semaine posée optimisée hyperplanning avancement cohorte mut reste à poser',
       html: `
         <p>La vue de travail pour construire l'emploi du temps <b>semaine après semaine</b> : pour une année d'étude, une cohorte et une
         semaine, tous les cours à placer, et le suivi de ce qui a déjà été fait.</p>
@@ -947,8 +952,29 @@ function _aideService() {
         <b>restant à poser</b> ou <b>à optimiser</b> en pastilles cliquables. Cocher FTP ne coche ni ALT ni MUT : chaque cohorte a son suivi.</p>
         ${_aEx('construire le S1', `Année 1, cohorte FTP, semaine 37 : on dépose les cours dans Hyperplanning, on coche ${_aUi('Posée à l\'EDT')} ;
             une fois les placements arrangés, ${_aUi('Optimisée')}. Le bandeau indique alors « reste à poser : S38, S39… » — un clic sur S38 y mène.`)}
-        <h3>Générer l'EDT automatiquement</h3>
-        <p>${_aUi('Générer l\'EDT')} place les cours de la répartition à des horaires précis, jour par jour, avec leur salle : du lundi au vendredi
+        <p>L'emploi du temps lui-même (jours, heures et salles) se calcule dans ${_aOng('Service › Planning')}, avec
+        ${_aUi('Optimiser l\'EDT')} (${_aLien('planning', 'détail')}).</p>
+        ${_aWarn(`la vue journalière lit la répartition <b>enregistrée</b> : un brouillon en cours dans la vue annuelle est à enregistrer ou abandonner avant.`)}` },
+
+    { id: 'planning', rub: R, titre: 'Planning (EDT par promotion, import d\'Hyperplanning)', chemin: 'Service › Planning',
+      onglet: 'svc:planning', cible: 'planning',
+      mots: 'planning emploi du temps edt grille semaine promotion imprimer pdf généré enregistré couleur matière hyperplanning ical ics import figé libre bloqué optimiser générer automatique solveur aperçu poids jours fériés ponts réinitialiser vider effacer',
+      html: () => `
+        <p>L'emploi du temps <b>enregistré</b> de l'appli, présenté comme dans un logiciel d'emploi du temps : les jours en colonnes, les
+        heures de 8 h à 20 h en lignes, un rectangle par cours (matière, type et groupe, enseignant, salle), une couleur par matière ; les
+        groupes de TP en parallèle se partagent la largeur du jour. Le détail d'un cours s'affiche au survol. Il vient de
+        ${_aUi('Optimiser l\'EDT…')} (« Aperçu seulement » décoché) ou de l'import de l'emploi du temps
+        d'Hyperplanning : 📌 marque un cours figé, <span class="pl-hp-libre">HP</span> un cours repris d'Hyperplanning et laissé libre.</p>
+        <ul>
+            <li>La barre des semaines suit l'année : en couleur, les semaines qui ont un EDT enregistré ; soulignées en orange, celles
+            d'un jour férié ou d'un pont ; les flèches vont à la semaine précédente ou suivante qui a un EDT ;</li>
+            <li>${_aUi('Promotions')} : 1A FTP, 1A ALT, 2A FTP… à afficher ou masquer (choix gardé par le navigateur). Une promotion voit
+            ses cours et les cours mutualisés ; un TP mutualisé partagé en groupes n'apparaît que chez les étudiants de ses groupes ;</li>
+            <li>les jours fériés et les ponts sont grisés ; le jeudi après-midi des FTP est hachuré quand il doit rester libre ;</li>
+            <li>${_aUi('Imprimer')} ouvre la semaine prête à imprimer ou à enregistrer en PDF, une promotion par page.</li>
+        </ul>
+        ${_aSiModif('svc:planning', `<h3>Optimiser l'EDT</h3>
+        <p>${_aUi('Optimiser l\'EDT…')} place les cours de la répartition enregistrée à des horaires précis, jour par jour, avec leur salle : du lundi au vendredi
         de 8 h à 20 h, le samedi de 8 h à 12 h 30. Il respecte toujours ces règles : jamais deux cours en même temps pour un enseignant, un groupe
         ou une salle ; les dispos saisies des enseignants ; 6 h de CM/TD par jour au plus ; le <b>jeudi après-midi libre pour les FTP</b>
         (dès 12 h 30), sauf la semaine d'un jour férié ou d'un pont, où il sert à rattraper ; aucun cours un <b>jour férié</b> ni un
@@ -968,39 +994,54 @@ function _aideService() {
         en rappelle le nombre, avec un lien vers cet écran. Tant que la liste n'est pas enregistrée, le calcul prend les jours fériés
         légaux, sans pont. Dans la grille du résultat, ces jours apparaissent grisés.</p>
         <ul>
-            <li>${_aUi('Semaines')} : la semaine affichée, ou toute l'année (une dizaine de minutes, avec l'avancement à l'écran) ;</li>
-            <li>${_aUi('Années d\'étude')} : toutes (conseillé, car enseignants et salles sont partagés entre les années), ou seulement celle
-            affichée — les autres gardent alors leur EDT, et leurs créneaux sont tenus pour occupés ;</li>
-            <li>${_aUi('Aperçu seulement')} (coché d'office) : on voit le résultat sans rien enregistrer. Décoché, l'EDT généré des semaines
-            calculées est remplacé.</li>
+            <li>${_aUi('Semaines')} : la semaine affichée dans le Planning, ou toute l'année (une dizaine de minutes, avec l'avancement à l'écran) ;</li>
+            <li>${_aUi('Années d\'étude')} : toutes (conseillé, car enseignants et salles sont partagés entre les années), ou une seule, choisie dans
+            la fenêtre — les autres gardent alors leur EDT, et leurs créneaux sont tenus pour occupés ;</li>
+            <li>${_aUi('Aperçu seulement')} (coché d'office) : on voit le résultat sans rien enregistrer. Décoché, l'EDT des semaines
+            calculées est remplacé, sauf les cours figés.</li>
         </ul>
         <p>Le bilan donne le nombre de séances placées, les <b>séances non placées</b> (à poser à la main) et des alertes : enseignant qui a plus
         d'heures que de créneaux, semaine ALT au-delà de 40 h ou FTP hors 25–30 h. Dessous, l'emploi du temps de la semaine en grille
         horaire (un rectangle par cours, une couleur par matière) ; ${_aUi('Promotion')} et les flèches de ${_aUi('Semaine')}, juste
-        au-dessus, passent d'une promotion ou d'une semaine à l'autre sans perdre l'aperçu. Une fois enregistré, l'EDT se consulte
-        aussi dans le sous-onglet ${_aUi('Planning')}.</p>
+        au-dessus, passent d'une promotion ou d'une semaine à l'autre sans perdre l'aperçu. Une fois enregistré, l'EDT s'affiche
+        dans le Planning. Les cours <b>figés</b> (📌) gardent leur place ; les autres, repris d'Hyperplanning et laissés <b>libres</b>
+        compris, sont replacés.</p>
         ${_aTip(`une semaine très chargée qui garde des séances non placées peut se relancer seule avec ${_aUi('60 s')} par semaine.`)}
-        ${_aWarn(`sans dispos saisies, un enseignant est supposé libre toute la semaine. L'EDT généré n'est pas envoyé à Hyperplanning :
+        ${_aWarn(`sans dispos saisies, un enseignant est supposé libre toute la semaine. L'EDT calculé n'est pas envoyé à Hyperplanning :
             il sert de base pour y reporter les cours.`)}
-        ${_aWarn(`la vue journalière lit la répartition <b>enregistrée</b> : un brouillon en cours dans la vue annuelle est à enregistrer ou abandonner avant.`)}` },
-
-    { id: 'rep-planning', rub: R, titre: 'Planning (EDT généré, par promotion)', chemin: 'Service › Répartition Calendaire › Planning',
-      onglet: 'rep:planning', cible: 'repartition/planning',
-      mots: 'planning emploi du temps edt grille semaine promotion imprimer pdf généré enregistré couleur matière',
-      html: `
-        <p>L'emploi du temps <b>généré et enregistré</b> (${_aUi('Générer l\'EDT')}, « Aperçu seulement » décoché), présenté comme dans
-        un logiciel d'emploi du temps : les jours en colonnes, les heures de 8 h à 20 h en lignes, un rectangle par cours (matière, type
-        et groupe, enseignant, salle), une couleur par matière ; les groupes de TP en parallèle se partagent la largeur du jour. Le détail
-        d'un cours s'affiche au survol.</p>
+        <h3>Réinitialiser l'EDT</h3>
+        <p>${_aUi('Réinitialiser l\'EDT…')} retire les cours placés (générés ou repris d'Hyperplanning) de <b>toute l'année</b>
+        ou des <b>semaines choisies</b> (${_aUi('Semaine affichée')}, ${_aUi('Toutes celles qui ont un EDT')}, ou un clic sur chaque
+        semaine) ; ${_aUi('Garder les cours figés 📌')} les laisse en place. Le nombre de créneaux retirés s'affiche avant de
+        confirmer. La répartition des heures et les indisponibilités des enseignants (créneaux bloqués par l'import
+        d'Hyperplanning compris) ne bougent pas : ${_aUi('Optimiser l\'EDT…')} replace ensuite les cours.</p>
+        <h3>Figer ou libérer un cours d'un clic</h3>
+        <p>Un <b>clic</b> sur un cours de la grille le <b>fige</b> (📌, cadre renforcé) : ${_aUi('Optimiser l\'EDT')} le gardera à
+        cette place et dans sa salle. Un nouveau clic le <b>libère</b> : le calcul pourra le déplacer. C'est enregistré aussitôt,
+        pour un cours généré comme pour un cours repris d'Hyperplanning ; un cours mutualisé, affiché dans plusieurs promotions,
+        change partout.</p>
+        <h3>Importer l'emploi du temps d'Hyperplanning</h3>
+        <p>${_aUi('Importer l\'EDT d\'Hyperplanning…')} reprend les cours déjà posés dans Hyperplanning, depuis son export
+        <b>iCal</b> (.ics) : l'emploi du temps « Professeur » de tous les enseignants, en un seul fichier pour l'année. Un tableau
+        rapproche chaque nom du fichier (« M. RICHIER ») d'un enseignant de l'année ; un nom non reconnu se rattache à la main ou
+        s'ignore, et de deux homonymes (« M. » et « Mme ») est retenu celui dont l'emploi du temps est exporté, sinon celui qui a des
+        cours GIM. <b>Rien n'est écrit avant</b> ${_aUi('Importer')}.</p>
         <ul>
-            <li>La barre des semaines suit l'année : en couleur, les semaines qui ont un EDT enregistré ; soulignées en orange, celles
-            d'un jour férié ou d'un pont ; les flèches vont à la semaine précédente ou suivante qui a un EDT ;</li>
-            <li>${_aUi('Promotions')} : 1A FTP, 1A ALT, 2A FTP… à afficher ou masquer (choix gardé par le navigateur). Une promotion voit
-            ses cours et les cours mutualisés ; un TP mutualisé partagé en groupes n'apparaît que chez les étudiants de ses groupes ;</li>
-            <li>les jours fériés et les ponts sont grisés ; le jeudi après-midi des FTP est hachuré quand il doit rester libre ;</li>
-            <li>${_aUi('Imprimer')} ouvre la semaine prête à imprimer ou à enregistrer en PDF, une promotion par page.</li>
+            <li>chaque <b>cours GIM</b> est rapproché de la séance de l'appli qu'il représente (enseignant, année, formation, groupe,
+            type, numéro de semestre et nom de la matière, durée ; « ? » signale un choix incertain) et repris dans l'emploi du temps
+            de l'appli, à sa place Hyperplanning, à la place de la même séance placée par l'appli ;</li>
+            <li>il est repris <b>figé</b> (📌 : ${_aUi('Optimiser l\'EDT')} ne le bouge plus) ou <b>libre</b> (posé là, mais le calcul
+            peut le déplacer) : pour tout le fichier (${_aUi('Tous figés')} / ${_aUi('Tous libres')}), par enseignant, ou cours par
+            cours dans le détail ;</li>
+            <li>les <b>autres cours</b> — d'autres départements, ou GIM sans séance correspondante dans l'appli (aide à la réussite,
+            réunion, séance en plus de la répartition…) — rendent le créneau <b>indisponible</b> pour leurs enseignants : le calcul de
+            l'emploi du temps ne place rien d'autre pour eux à ce moment.</li>
         </ul>
-        ${_aWarn(`c'est l'EDT calculé dans le site, pas celui d'Hyperplanning : il sert de base pour y reporter les cours.`)}` },
+        <p>Pour chaque enseignant du fichier, un nouvel import remplace les semaines qu'il couvre (cours repris et créneaux bloqués) ;
+        un cours d'abord laissé libre le reste d'emblée. Le bandeau au-dessus des semaines résume ce qui est repris ;
+        ${_aUi('Retirer l\'import')} efface tout, et les séances qu'il remplaçait sont alors à replacer avec ${_aUi('Optimiser l\'EDT')}.</p>
+        ${_aTip(`les indisponibilités (zones hachurées d'Hyperplanning) ne sont pas dans l'export iCal : elles s'importent depuis le
+            PDF imprimé, dans ${_aOng('Contraintes Enseignant')}.`)}`)}` },
 
     { id: 'matieres', rub: R, titre: 'Matières (volumes, séances, enseignants)', chemin: 'Service › Matières',
       onglet: 'svc:matieres', cible: 'matieres',
@@ -1101,26 +1142,9 @@ function _aideService() {
         plus de la grille. Le pinceau ne les modifie pas. Un nouvel import remplace les semaines que le fichier couvre et laisse les
         autres ; ${_aUi('Retirer l\'import Hyperplanning')} les efface pour l'enseignant affiché. Dans la liste des enseignants,
         « HP n sem. » compte les semaines qui en ont.</p>
-        <h3>Les cours déjà posés dans Hyperplanning</h3>
-        <p>Imprimé <b>une semaine par page</b>, l'emploi du temps montre aussi le texte complet de chaque cours (matière, classe,
-        groupe, salle) : l'import le lit. Imprimé avec les <b>semaines en colonnes</b>, ce texte est presque complet (la salle,
-        en bout de ligne, devient souvent « (...) ») : l'import le lit aussi. Quand la classe y est coupée, elle est déduite des
-        autres cases de la même matière dans le fichier (« classe déduite »). Avec les jours datés et plusieurs semaines côte à
-        côte, la classe est le plus souvent masquée : les cours n'y sont pas lus.</p>
-        <ul>
-            <li>les cours d'<b>autres départements</b> rendent toujours le créneau indisponible, comme une zone hachurée ;</li>
-            <li>un cours dont la case est trop petite pour son texte (« ... », semaines en colonnes) est compté « illisible » et
-            bloqué de même ;</li>
-            <li>chaque <b>cours GIM</b> est rapproché de la séance de l'appli qu'il représente (enseignant, année, groupe, type,
-            numéro de semestre de la matière, durée) ; la colonne ${_aUi('Cours dans Hyperplanning')} propose alors de le
-            <b>reprendre</b> : tous les cours d'un enseignant d'un clic, ou cours par cours. Repris, il entre dans l'emploi du temps
-            de l'appli à sa place Hyperplanning, figé (📌 dans la vue Planning ; « Générer l'EDT » ne le bouge plus), à la place de
-            la même séance placée par l'appli. Non repris, il n'en est pas tenu compte : l'appli place la séance elle-même ;</li>
-            <li>un cours GIM sans séance correspondante dans l'appli (matière absente de la répartition…) est seulement bloqué.</li>
-        </ul>
-        <p>Un nouvel import retire les cours repris lors du précédent sur les semaines qu'il couvre, puis reprend ceux qui sont
-        cochés (d'emblée, ceux déjà repris). Un cours qui n'est plus repris laisse sa séance à placer : relancez « Générer l'EDT »
-        sur ces semaines.</p>
+        <p>Seules les <b>hachures</b> sont importées ici. Les cours déjà posés dans Hyperplanning (cours GIM à reprendre figés ou
+        libres, cours d'autres départements qui occupent l'enseignant) s'importent depuis l'export iCal d'Hyperplanning, dans
+        ${_aOng('Service › Planning')} (${_aLien('planning', 'détail')}).</p>
         ${_aTip(`les jours hors de l'année affichée dans le Service sont ignorés : importez le fichier de l'année que vous préparez.`)}
         ${_aTip(`pour donner ses contraintes de l'an prochain, choisissez d'abord l'année suivante dans la liste ${_aUi('Année')} du Service.`)}` },
 
@@ -1153,7 +1177,7 @@ function _aideService() {
         renseignée, par qui et quand. C'est un <b>vœu</b> : rien n'est placé tout seul dans la répartition calendaire, mais
         l'administration y voit l'enchaînement voulu, les séances placées dans un autre ordre (cadre rouge) et les semaines qui
         s'écartent de la grille (cadre orange) — une colonne est une semaine disponible de la face, la semaine de début restant
-        son choix —, et ${_aUi('Optimiser…')} la suit.</p>
+        son choix —, et ${_aUi('Optimiser la répartition…')} la suit.</p>
         <p>Le volet ${_aUi('Matières à placer avant')} liste les matières qui doivent être <b>terminées avant le début</b> de celle-ci.
         ${_aUi('+ Ajouter une matière à placer avant')} propose toutes les matières de l'année (celles du même semestre d'abord) ;
         on peut viser une partie de chaque côté : « le CM de R1.01 terminé avant le TD de cette matière », et demander un
@@ -1162,19 +1186,30 @@ function _aideService() {
         Sous la liste, « Cette matière doit elle-même être terminée avant… » rappelle les contraintes posées sur d'autres matières :
         un clic sur un code y amène, c'est là qu'elles se modifient.</p>
         <p>C'est le <b>seul endroit</b> où se posent ces ordonnancements : la répartition annuelle les vérifie (repère 🔗 sur la ligne bleue,
-        qui ramène ici d'un clic, et ${_aUi('Contrôle')}) et ${_aUi('Optimiser…')} les respecte.</p>
+        qui ramène ici d'un clic, et ${_aUi('Contrôle')}) et ${_aUi('Optimiser la répartition…')} les respecte.</p>
         <p>Chaque matière a son bouton ${_aUi('Enregistrer')} (texte et répartition ensemble) ; quitter l'onglet avec des modifications non
         enregistrées demande quoi en faire. Un enseignant ne voit et ne modifie que les matières <b>où il intervient</b> ;
         l'administration et le responsable FTP les renseignent toutes. Filtres : semestres, recherche, ${_aUi('Avec répartition souhaitée')}
         et ${_aUi('Avec ordonnancement')} (les matières qui ont une matière à placer avant elles, ou qui doivent passer avant une autre).</p>` },
 
-    { id: 'comparaison', rub: R, titre: 'Comparaison avec Hyperplanning', chemin: 'Service › Comparaison',
+    { id: 'comparaison', rub: R, titre: 'Comparaison : Répartition ↔ Planning, export Hyperplanning', chemin: 'Service › Comparaison',
       onglet: 'svc:comparaison', cible: 'comparaison',
-      mots: 'hyperplanning état récapitulatif export écart comparer maquette dispensées',
+      mots: 'hyperplanning état récapitulatif export écart comparer maquette dispensées répartition planning à placer en trop semaine',
       html: `
+        <p>Deux sous-onglets ; <b>rien n'est enregistré</b> : l'écran ne fait que montrer les écarts.</p>
+        <h3>Répartition ↔ Planning</h3>
+        <p>Pour chaque semaine, les heures que la ${_aOng('Répartition Calendaire')} prévoit, séance par séance et groupe par groupe
+        (mêmes règles de groupes que ${_aUi('Optimiser l\'EDT…')}), confrontées aux cours posés dans le ${_aOng('Planning')}, générés
+        ou repris d'Hyperplanning. Une ligne par semaine : heures prévues, heures posées, écart, séances conformes, <b>à placer</b>
+        (le Planning en a moins que prévu) et <b>en trop</b> (il en a plus : répartition modifiée depuis le calcul, cours
+        d'Hyperplanning plus longs ou en plus…). Un clic sur la semaine en donne le détail (promotion, matière, type et groupe,
+        enseignant) ; ${_aUi('Planning →')} l'ouvre dans le Planning. Les filtres ${_aUi('Année d\'étude')}, ${_aUi('Formation')} et la
+        recherche (matière, enseignant) restreignent la liste ; ${_aUi('Semaines sans écart aussi')} montre toute l'année.</p>
+        ${_aEx('après un import d\'Hyperplanning', `S38 affiche « 6 à placer » : un TD de R1.08 prévu par la répartition n'a pas
+            de cours dans Hyperplanning cette semaine-là. ${_aUi('Optimiser l\'EDT…')} sur S38 le place, les cours figés restant où ils sont.`)}
+        <h3>Export Hyperplanning</h3>
         <p>Pour vérifier que l'emploi du temps réel correspond à ce qui est prévu ici : on dépose l'<b>état récapitulatif</b> exporté
-        d'Hyperplanning, et le site confronte ses heures à celles saisies, matière par matière et enseignant par enseignant.
-        <b>Rien n'est enregistré</b> : l'écran ne fait que montrer les écarts.</p>
+        d'Hyperplanning, et le site confronte ses heures à celles saisies, matière par matière et enseignant par enseignant.</p>
         ${_aSteps([
             `Dans Hyperplanning : <code>Imports/Exports › TXT/CSV/XML/SQL › Exporter un fichier texte</code>, colonnes d'origine conservées (TXT, CSV ou Excel acceptés).`,
             `Choisissez le ${_aUi('Fichier')}, l'${_aUi('Année comparée')}, la ${_aUi('Face')} (FTP / ALT — déduite du nom du fichier par défaut) et, si besoin, les ${_aUi('Semestres')}.`,
@@ -1364,7 +1399,7 @@ function _aidePromotions() {
         propose les jours fériés légaux de l'année (fêtes fixes, lundi de Pâques, Ascension, lundi de Pentecôte)${_aSiModif('promo:calendrier', ` :
         on retire ceux où l'on travaille, on ajoute les ponts (${_aUi('+ Ajouter un jour')}, type « Pont »), et
         ${_aUi('Ajouter les jours fériés légaux manquants')} complète la liste. Ils s'enregistrent avec le reste du calendrier`)}.
-        Tant que la liste n'est pas enregistrée, « Générer l'EDT » prend les jours fériés légaux, sans pont. Une semaine qui a un jour
+        Tant que la liste n'est pas enregistrée, « Optimiser l'EDT » prend les jours fériés légaux, sans pont. Une semaine qui a un jour
         fermé du lundi au vendredi rouvre le jeudi après-midi aux FTP, pour rattraper.</p>
         ${_aSiModif('promo:calendrier', `<p>${_aUi('Relever dans un PDF Hyperplanning…')} reprend les jours fermés de l'établissement
         tels qu'Hyperplanning les marque (« Férié » en travers du jour) dans un emploi du temps imprimé avec les <b>jours datés</b>
