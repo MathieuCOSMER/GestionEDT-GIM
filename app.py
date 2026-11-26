@@ -5137,6 +5137,22 @@ def _ical_lire(texte):
     return cours, ((b0, b1) if b0 and b1 else None)
 
 
+def _lib_groupe(e, tp_type=None):
+    """Libellé d'une séance du solveur comme dans Hyperplanning et le Planning : CM, TD_1,
+    TP12_3, TP8_2, PT_1 ; TP12_ALT pour les apprentis (séance de la face ALT, numérotée
+    s'il y a plusieurs groupes d'alternants, ou groupe d'un TP MUT qui ne compte que des
+    alternants). `e` : Evenement (type, formation, groupe, nb_groupes, public)."""
+    tt = (e.type or '').upper()
+    if tt == 'CM':
+        return 'CM'
+    base = ('TP8' if str(tp_type or '').upper().replace(' ', '') == 'TP8' else 'TP12') if tt.startswith('TP') else tt
+    g = e.groupe if e.nb_groupes > 1 else None
+    alt = e.formation == 1 or (tt.startswith('TP') and e.public and all(p[1] == 'ALT' for p in e.public))
+    if alt and not tt.startswith('TD'):
+        return f"{base}_ALT{g if e.formation == 1 and g else ''}"
+    return f'{base}_{g}' if g else base
+
+
 def _ical_mots(s):
     """Mots d'un nom de matière, comparables (sans accents ni chiffres, 3 lettres au moins)."""
     import hp_pdf
@@ -5159,7 +5175,9 @@ def _ical_rapprocher(u, cands, pas, noms_cours):
     Indices : année (« BUT 1 »), formation (« ISP ALT », « Temps plein »), groupe (TD_1,
     TP12_3, TP12_ALT, GP2, FTP, ALT ; aucun = promotion entière), type, numéro de
     semestre en fin de nom de matière (« Anglais 3 »), puis durée et ressemblance des
-    noms de matière. Renvoie (événement | None, ambigu ?)."""
+    noms de matière. Un groupe « …ALT » (TP12_ALT, TP8_ALT : Hyperplanning nomme ainsi le
+    dernier groupe, celui des apprentis) va à la séance de la face ALT, ou au dernier groupe
+    d'une séance MUT à TP communs. Renvoie (événement | None, ambigu ?)."""
     classe, grp = u['classe'].upper(), (u['groupe'] or '').upper().replace(' ', '')
     m = re.search(r'BUT\s*(\d)', classe)
     annee = int(m.group(1)) if m else None
@@ -5270,6 +5288,7 @@ def _ical_preparer(db, cours, bornes, associations, libres):
             evts_sem[w] = solveur_edt.evenements_semaine(db, don, w, [])
         return evts_sem[w]
     noms_cours = {r[0]: r[1] or '' for r in db.execute('SELECT id, name FROM courses')}
+    tp_types = {r[0]: r[1] for r in db.execute('SELECT id, tp_type FROM courses')}
     salles = {r['name'].strip().upper(): r['id'] for r in db.execute('SELECT id, name FROM rooms')}
 
     def salle_id(nom):              # « E123 - SALLE INFORMATIQUE » -> salle « 123 » de l'appli
@@ -5304,40 +5323,47 @@ def _ical_preparer(db, cours, bornes, associations, libres):
         ecr = ecritures.setdefault(tid, {'cours': [], 'occupe': []})
         pris = defaultdict(set)              # semaine -> séances déjà rapprochées
         gim, non_rap, autres = [], [], 0
+        lus = []
         for c in lst:
             d = c['debut'].date()
-            w, j = d.isocalendar()[1], d.weekday()
+            w = d.isocalendar()[1]
             a = c['debut'].hour * 60 + c['debut'].minute
             b = c['fin'].hour * 60 + c['fin'].minute if c['fin'].date() == d else 24 * 60
             cle_type = hp_pdf.cle_nom(c['type'])
             typ = _ICAL_TYPES.get(cle_type)
-            texte = c['matiere'] + (f" · {c['type']}" if c['type'] else '')
             unites = [(cl, g) for cl, g in c['unites'] if 'GIM' in cl.upper()] or [('', None)]
-            repris = False
-            if c['gim'] and (typ or cle_type in _ICAL_TYPES_LIBRES):
-                for k, (cl, g) in enumerate(unites):
-                    cands = [x for x in seances(w) if x.enseignant == tid and x.idx not in pris[w]]
-                    e, ambigu = _ical_rapprocher({'classe': cl, 'groupe': g, 'type': typ, 'matiere': c['matiere'],
-                                                  'duree': b - a}, cands, don.reg.pas, noms_cours)
-                    if e is None:
-                        continue
-                    pris[w].add(e.idx)
-                    repris = True
-                    cle = f"{tid}|{c['uid']}|{k}"
-                    groupe = g or (cl.replace('BUT ', '') if cl else '')
-                    gim.append({'cle': cle, 'semaine': w, 'jour': j, 'date': d.isoformat(),
-                                'debut': hm(a), 'fin': hm(b), 'texte': f"{texte} · {groupe}" if groupe else texte,
-                                'seance': f"{e.code} {e.type}{f' gr{e.groupe}' if e.nb_groupes > 1 else ''}",
-                                'ambigu': ambigu, 'salle': c['salle'],
-                                'deja': deja.get((tid, w, j, hm(a), e.session_id))})
-                    ecr['cours'].append({'semaine': w, 'jour': j, 'debut': hm(a), 'fin': hm(b),
-                                         'session_id': e.session_id, 'groupe': e.groupe, 'nb_groupes': e.nb_groupes,
-                                         'formation': e.formation, 'room_id': salle_id(c['salle']),
-                                         'fige': cle not in libres,
-                                         # séances de ce (séance, groupe) que la répartition prévoit cette semaine
-                                         'attendu': sum(1 for x in seances(w)
-                                                        if x.session_id == e.session_id and x.groupe == e.groupe)})
-            if repris:
+            lu = {'c': c, 'd': d, 'w': w, 'j': d.weekday(), 'a': a, 'b': b, 'unites': unites, 'repris': [],
+                  'texte': c['matiere'] + (f" · {c['type']}" if c['type'] else '')}
+            lus.append(lu)
+            if not (c['gim'] and (typ or cle_type in _ICAL_TYPES_LIBRES)):
+                continue
+            for k, (cl, g) in enumerate(unites):
+                u = {'classe': cl, 'groupe': g, 'type': typ, 'matiere': c['matiere'], 'duree': b - a}
+                cands = [x for x in seances(w) if x.enseignant == tid and x.idx not in pris[w]]
+                e, ambigu = _ical_rapprocher(u, cands, don.reg.pas, noms_cours)
+                if e is None:
+                    continue
+                pris[w].add(e.idx)
+                lu['repris'].append((k, e, ambigu))
+        for lu in lus:
+            c, d, w, j, a, b, texte = lu['c'], lu['d'], lu['w'], lu['j'], lu['a'], lu['b'], lu['texte']
+            for k, e, ambigu in sorted(lu['repris'], key=lambda x: x[0]):
+                cl, g = lu['unites'][k]
+                cle = f"{tid}|{c['uid']}|{k}"
+                groupe = g or (cl.replace('BUT ', '') if cl else '')
+                gim.append({'cle': cle, 'semaine': w, 'jour': j, 'date': d.isoformat(),
+                            'debut': hm(a), 'fin': hm(b), 'texte': f"{texte} · {groupe}" if groupe else texte,
+                            'seance': f"{e.code} {_lib_groupe(e, tp_types.get(e.course_id))}",
+                            'ambigu': ambigu, 'salle': c['salle'],
+                            'deja': deja.get((tid, w, j, hm(a), e.session_id))})
+                ecr['cours'].append({'semaine': w, 'jour': j, 'debut': hm(a), 'fin': hm(b),
+                                     'session_id': e.session_id, 'groupe': e.groupe, 'nb_groupes': e.nb_groupes,
+                                     'formation': e.formation, 'room_id': salle_id(c['salle']),
+                                     'fige': cle not in libres,
+                                     # séances de ce (séance, groupe) que la répartition prévoit cette semaine
+                                     'attendu': sum(1 for x in seances(w)
+                                                    if x.session_id == e.session_id and x.groupe == e.groupe)})
+            if lu['repris']:
                 continue
             # pas dans l'EDT de l'appli : le créneau est pris pour l'enseignant
             classes = ', '.join(sorted({cl for cl, _ in c['unites']}))
@@ -5348,6 +5374,7 @@ def _ical_preparer(db, cours, bornes, associations, libres):
                 non_rap.append(f"S{w} {_ICAL_JOURS[j]} {hm(a)} {texte}")
             else:
                 autres += 1
+
         ligne.update({'cours_gim': gim, 'nb_autres': autres, 'nb_non_rapproches': len(non_rap),
                       'non_rapproches': non_rap[:60], 'exemples_bloques': [
                           f"S{o['semaine']} {_ICAL_JOURS[o['jour']]} {o['debut']}–{o['fin']} {o['libelle']}"
@@ -19738,8 +19765,9 @@ def _split_sessions_from_mut(db, course_id, teaching_types):
             _delete_session(m['id'])
         else:
             db.execute('UPDATE course_sessions SET formation_type = 0 WHERE id = ?', (m['id'],))
+        alt_id = rows[1]['id'] if 1 in rows else None
         if 1 not in rows:
-            db.execute('''
+            alt_id = db.execute('''
                 INSERT INTO course_sessions
                     (course_id, teacher_id, formation_type, teaching_type,
                      nb_sessions, total_hours, slot_duration, room_name, promo,
@@ -19747,7 +19775,30 @@ def _split_sessions_from_mut(db, course_id, teaching_types):
                 VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
             ''', (m['course_id'], m['teacher_id'], tt, m['nb_sessions'],
                   m['total_hours'], m['slot_duration'], m['room_name'],
-                  m['promo'], m['sessions_per_week_max']))
+                  m['promo'], m['sessions_per_week_max'])).lastrowid
+        if 0 not in rows and tt.upper().startswith('TP'):
+            _tp_alt_vers_face_alt(db, course_id, m['id'], alt_id)
+
+
+def _tp_alt_vers_face_alt(db, course_id, ftp_id, alt_id):
+    """TP communs -> distincts : la séance MUT devenue celle des FTP gardait les heures de
+    ses DERNIERS groupes, ceux des apprentis (au-delà des groupes FTP du semestre), que
+    la Répartition n'affiche plus. Elles passent sur la séance ALT (groupe 1, 2…), sauf
+    une semaine où ce groupe y a déjà des heures ; la séance FTP ne les garde pas."""
+    r = db.execute('''SELECT s.code, c.tp_type FROM courses c JOIN semesters s ON s.id = c.semester_id
+                      WHERE c.id = ?''', (course_id,)).fetchone()
+    g = r and db.execute('''SELECT tp_groups, tp8_groups FROM semester_groups
+                            WHERE semester_code = ? AND formation_type = 0''', (r[0],)).fetchone()
+    if not g:
+        return
+    n_ftp = int((g[1] if str(r[1] or '').upper().replace(' ', '') == 'TP8' else g[0]) or 0)
+    if n_ftp < 1:
+        return
+    for wk, gi, h in db.execute('''SELECT week_number, group_index, hours FROM weekly_hours
+                                   WHERE course_session_id = ? AND group_index > ?''', (ftp_id, n_ftp)).fetchall():
+        db.execute('''INSERT OR IGNORE INTO weekly_hours (course_session_id, week_number, hours, group_index)
+                      VALUES (?, ?, ?, ?)''', (alt_id, wk, h, gi - n_ftp))
+    db.execute('DELETE FROM weekly_hours WHERE course_session_id = ? AND group_index > ?', (ftp_id, n_ftp))
 
 @app.route('/api/semesters/<sem_code>/mutualized', methods=['PUT'])
 def set_semester_mutualized(sem_code):
@@ -20230,6 +20281,7 @@ def compare_repartition_planning():
         return error_response('Accès réservé à l\'administration', 403)
     import solveur_edt
     from collections import defaultdict
+    from types import SimpleNamespace
     db = get_db()
     cfg = get_year_config()
     debut = cfg['academic_start_week']
@@ -20250,7 +20302,8 @@ def compare_repartition_planning():
     semaines = sorted(get_valid_school_weeks(debut, cfg['academic_end_week'], cfg['academic_max_week'])
                       | {w for w, _, _ in place}, key=ordre)
     # Répartition : séances à placer de chaque semaine (celles du solveur)
-    attendu, nb_attendu, info = defaultdict(int), defaultdict(int), {}
+    attendu, nb_attendu, info, libs = defaultdict(int), defaultdict(int), {}, {}
+    tp_types = {r[0]: r[1] for r in db.execute('SELECT id, tp_type FROM courses')}
     for w in semaines:
         for e in solveur_edt.evenements_semaine(db, don, w, []):
             k = (w, e.session_id, e.groupe)
@@ -20260,6 +20313,7 @@ def compare_repartition_planning():
                                            'semestre': e.semestre, 'course_id': e.course_id,
                                            'groupes': e.nb_groupes, 'enseignants': {}})
             info[e.session_id]['enseignants'][e.groupe] = e.enseignant
+            libs[(e.session_id, e.groupe)] = _lib_groupe(e, tp_types.get(e.course_id))
     # Séances seulement posées (répartition modifiée depuis) : leurs libellés
     manquantes = {sid for _, sid, _ in place} - set(info)
     if manquantes:
@@ -20297,7 +20351,13 @@ def compare_repartition_planning():
             if statut == 'ok':
                 continue
             tid = (i.get('enseignants') or {}).get(g)
-            ecarts.append({'semaine': w, 'session_id': sid, 'groupe': g if i.get('groupes', 1) > 1 else None,
+            # groupe que le semestre ne déclare plus (la Répartition ne l'affiche pas) : cours posé en trop
+            hors = g > i.get('groupes', 1) and solveur_edt._par_groupe(i.get('type', ''))
+            lib = libs.get((sid, g)) or _lib_groupe(SimpleNamespace(
+                type=i.get('type', ''), formation=i.get('formation'), groupe=g,
+                nb_groupes=max(i.get('groupes', 1), g), public=None), tp_types.get(i.get('course_id')))
+            ecarts.append({'semaine': w, 'session_id': sid, 'groupe': g if i.get('groupes', 1) > 1 or hors else None,
+                           'lib': lib, 'hors_groupes': hors,
                            'code': i.get('code', '?'), 'matiere': noms_cours.get(i.get('course_id'), ''),
                            'type': i.get('type', ''), 'annee': i.get('annee'), 'formation': i.get('formation'),
                            'semestre': i.get('semestre', ''), 'enseignant': noms_ens.get(tid, ''),
@@ -20812,13 +20872,15 @@ def reinitialiser_timetable():
 @app.route('/api/timetable/planning/<int:week_number>', methods=['GET'])
 def get_timetable_planning(week_number):
     """EDT généré enregistré d'une semaine ; chaque créneau porte ses publics
-    [[année, 'FTP'|'ALT'], …], calculés avec les règles de groupes du solveur."""
+    [[année, 'FTP'|'ALT'], …], calculés avec les règles de groupes du solveur, le type de
+    TP de sa matière (TP12 / TP8, pour le libellé du groupe) et si son semestre est
+    mutualisé (le Planning montre alors une seule grille pour la promotion)."""
     import solveur_edt
     db = get_db()
     slots = rows_to_list(db.execute('''
         SELECT ts.*, cs.teaching_type, cs.formation_type AS form_type,
-               c.code AS course_code, c.name AS course_name,
-               s.code AS semester_code, s.year_group,
+               c.code AS course_code, c.name AS course_name, c.tp_type,
+               s.code AS semester_code, s.year_group, COALESCE(s.mutualized, 0) AS sem_mut,
                t.name AS teacher_name, r.name AS room_name
         FROM timetable_slots ts
         JOIN course_sessions cs ON ts.course_session_id = cs.id

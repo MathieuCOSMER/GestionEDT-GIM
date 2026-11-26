@@ -961,15 +961,22 @@ function _aideService() {
       mots: 'planning emploi du temps edt grille semaine promotion imprimer pdf généré enregistré couleur matière hyperplanning ical ics import figé libre bloqué optimiser générer automatique solveur aperçu poids jours fériés ponts réinitialiser vider effacer',
       html: () => `
         <p>L'emploi du temps <b>enregistré</b> de l'appli, présenté comme dans un logiciel d'emploi du temps : les jours en colonnes, les
-        heures de 8 h à 20 h en lignes, un rectangle par cours (matière, type et groupe, enseignant, salle), une couleur par matière ; les
-        groupes de TP en parallèle se partagent la largeur du jour. Le détail d'un cours s'affiche au survol. Il vient de
+        heures de 8 h à 20 h en lignes, sur toute la largeur de l'écran, un rectangle par cours (matière, groupe, enseignant, salle),
+        une couleur par matière ; les groupes en parallèle se partagent la largeur du jour. Le groupe est nommé comme dans
+        Hyperplanning : CM, TD_1, TP12_3, TP8_2, PT_1, et TP12_ALT pour les apprentis. Le détail d'un cours s'affiche au survol. Il vient de
         ${_aUi('Optimiser l\'EDT…')} (« Aperçu seulement » décoché) ou de l'import de l'emploi du temps
         d'Hyperplanning : 📌 marque un cours figé, <span class="pl-hp-libre">HP</span> un cours repris d'Hyperplanning et laissé libre.</p>
         <ul>
             <li>La barre des semaines suit l'année : en couleur, les semaines qui ont un EDT enregistré ; soulignées en orange, celles
             d'un jour férié ou d'un pont ; les flèches vont à la semaine précédente ou suivante qui a un EDT ;</li>
             <li>${_aUi('Promotions')} : 1A FTP, 1A ALT, 2A FTP… à afficher ou masquer (choix gardé par le navigateur). Une promotion voit
-            ses cours et les cours mutualisés ; un TP mutualisé partagé en groupes n'apparaît que chez les étudiants de ses groupes ;</li>
+            ses cours et les cours mutualisés ; un TP mutualisé partagé en groupes n'apparaît que chez les étudiants de ses groupes.
+            Quand tous les cours de la semaine d'une année sont d'un <b>semestre mutualisé</b>, une seule grille « FTP + ALT » la
+            montre, les groupes propres à chaque face côte à côte ; une promotion sans cours n'a pas de grille ;</li>
+            <li>les filtres ${_aUi('Type')} (CM, TD, TP, PT), ${_aUi('Groupe')} (ses cours et ceux de toute la promotion : CM…),
+            ${_aUi('Matière')} (toute une matière, ou une sous-matière) n'affichent que ce qu'ils retiennent ; ${_aUi('Enseignant')} ou
+            ${_aUi('Salle')} réunit tous ses cours de la semaine dans une seule grille, la promotion écrite dans chaque cours.
+            ${_aUi('Tout afficher')} les retire ;</li>
             <li>les jours fériés et les ponts sont grisés ; le jeudi après-midi des FTP est hachuré quand il doit rester libre ;</li>
             <li>${_aUi('Imprimer')} ouvre la semaine prête à imprimer ou à enregistrer en PDF, une promotion par page.</li>
         </ul>
@@ -1030,6 +1037,9 @@ function _aideService() {
             <li>chaque <b>cours GIM</b> est rapproché de la séance de l'appli qu'il représente (enseignant, année, formation, groupe,
             type, numéro de semestre et nom de la matière, durée ; « ? » signale un choix incertain) et repris dans l'emploi du temps
             de l'appli, à sa place Hyperplanning, à la place de la même séance placée par l'appli ;</li>
+            <li>un groupe nommé <b>ALT</b> au lieu de son numéro (TP12_ALT, TP8_ALT : le groupe des apprentis) va à la séance ALT de
+            la matière, ou au dernier groupe d'une séance MUT à TP communs — comme les groupes déclarés dans
+            ${_aOng('Promotions › Groupes')} (par exemple 4 groupes FTP et 1 ALT) ;</li>
             <li>il est repris <b>figé</b> (📌 : ${_aUi('Optimiser l\'EDT')} ne le bouge plus) ou <b>libre</b> (posé là, mais le calcul
             peut le déplacer) : pour tout le fichier (${_aUi('Tous figés')} / ${_aUi('Tous libres')}), par enseignant, ou cours par
             cours dans le détail ;</li>
@@ -1204,7 +1214,10 @@ function _aideService() {
         (le Planning en a moins que prévu) et <b>en trop</b> (il en a plus : répartition modifiée depuis le calcul, cours
         d'Hyperplanning plus longs ou en plus…). Un clic sur la semaine en donne le détail (promotion, matière, type et groupe,
         enseignant) ; ${_aUi('Planning →')} l'ouvre dans le Planning. Les filtres ${_aUi('Année d\'étude')}, ${_aUi('Formation')} et la
-        recherche (matière, enseignant) restreignent la liste ; ${_aUi('Semaines sans écart aussi')} montre toute l'année.</p>
+        recherche (matière, enseignant) restreignent la liste ; ${_aUi('Semaines sans écart aussi')} montre toute l'année.
+        Les groupes sont nommés comme dans Hyperplanning (TD_1, TP12_3, TP12_ALT…). Un cours posé sur un groupe que le
+        semestre ne déclare plus (${_aOng('Promotions › Groupes')}) est marqué « groupe non déclaré » : la Répartition ne
+        l'affiche pas et ${_aUi('Optimiser l\'EDT…')} ne le place plus, il est à retirer.</p>
         ${_aEx('après un import d\'Hyperplanning', `S38 affiche « 6 à placer » : un TD de R1.08 prévu par la répartition n'a pas
             de cours dans Hyperplanning cette semaine-là. ${_aUi('Optimiser l\'EDT…')} sur S38 le place, les cours figés restant où ils sont.`)}
         <h3>Export Hyperplanning</h3>

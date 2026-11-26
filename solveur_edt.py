@@ -626,6 +626,13 @@ def evenements_semaine(db, don, semaine, avert):
         n = _nb_groupes(don.sg, don.mut, don.tpsep, r['sem'], ft, tt, r['tp_type'])
         gi = int(r['group_index'] or 1)
         if _par_groupe(tt):
+            if gi > n:
+                # groupe au-delà de ceux que le semestre déclare (Promotions › Groupes) : la
+                # Répartition Calendaire ne l'affiche plus, ses heures ne comptent pas (ex. le
+                # groupe des apprentis resté sur la séance FTP quand les TP sont devenus distincts)
+                avert.append(f'S{semaine} · {r["code"]} {tt} gr{gi} : groupe que le semestre ne déclare plus '
+                             f'({n} groupe{"s" if n > 1 else ""}), heures ignorées')
+                continue
             groupes = [gi]
         elif gi != 1:
             continue          # CM / PT : seul le groupe 1 porte le placement
