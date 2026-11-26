@@ -10520,7 +10520,9 @@ def _pv_adresse(s):
     if not ville or ville.casefold() in rue.casefold():
         return rue
     # « 12 avenue de la Mer, 83500 » + ville : « 12 avenue de la Mer, 83500 La Seyne-sur-Mer »
-    return f"{rue}{' ' if re.search(r'(?<!\d)\d{5}$', rue) else ', '}{ville}"
+    # (séparateur hors de la f-string : un « \ » dans ses accolades est refusé avant Python 3.12)
+    sep = ' ' if re.search(r'(?<!\d)\d{5}$', rue) else ', '
+    return f'{rue}{sep}{ville}'
 
 def _alt_visites_alternants(pdb, start, moi, tous):
     """Les alternants de l'année universitaire commençant en `start`, avec leur fiche
