@@ -3,7 +3,7 @@ Flask backend application for IUT Gestion Emploi Du Temps (EDT)
 Manages timetables for IUT GIM Toulon
 """
 
-from flask import Flask, request, jsonify, send_file, send_from_directory, g, session, redirect
+from flask import Flask, request, jsonify, send_file, send_from_directory, g, session, redirect, has_app_context
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -13,6 +13,7 @@ import re
 import json
 import unicodedata
 import math
+import pickle
 import shutil
 import hmac
 import time
@@ -688,6 +689,7 @@ def full_backup_import():
     # Caches et migrations de schéma sur les bases restaurées
     global _settings_cache
     _settings_cache = None
+    _JURY_CACHE.clear()
     for y in imported_years:
         try:
             db = sqlite3.connect(db_path_for_year(y))
@@ -1601,9 +1603,10 @@ def _apply_promotions_migrations(db):
     # Coordonnées du tuteur entreprise (fonction, mail, téléphone) et mission confiée
     # (sujet du stage, poste de l'alternant) : saisies dans les onglets Stages et
     # Alternance, elles alimentent la liste des entreprises.
-    # Adresse de l'entreprise (n°, rue, code postal), reprise sur le PV de visite.
+    # Adresse de l'entreprise (n°, rue, code postal) et contrat de l'alternant
+    # (apprentissage, professionnalisation), repris sur le PV de visite.
     for _col in ('ville', 'departement', 'tuteur_fonction', 'tuteur_email', 'tuteur_tel', 'mission',
-                 'adresse'):
+                 'adresse', 'contrat'):
         try:
             db.execute('ALTER TABLE student_tutors ADD COLUMN %s TEXT' % _col)
         except sqlite3.OperationalError:
@@ -1872,6 +1875,22 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
         )
     ''')
+    # Stages : la fiche de poste d'un stagiaire FTP pour son année de stage (2e ou 3e),
+    # déposée par le responsable des stages ou l'admin. Suit la fiche de l'étudiant
+    # dans sa cohorte.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS stage_fiches_poste (
+            student_id  INTEGER NOT NULL,
+            year        INTEGER NOT NULL CHECK (year IN (2, 3)),
+            nom         TEXT NOT NULL,
+            taille      INTEGER NOT NULL,
+            data        BLOB NOT NULL,
+            auteur      TEXT,
+            updated_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (student_id, year),
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
     # Date limite de dépôt des fiches d'évaluation, par année universitaire et par
     # parité de semestre (impair : S1/S3/S5 ; pair : S2/S4/S6), AAAA-MM-JJ.
     db.execute('''
@@ -2118,6 +2137,37 @@ def _merge_formation_promotions(db):
             db.execute("UPDATE promotions SET programme_id=? WHERE id=?", (prog, survivor['id']))
     db.commit()
 
+# ===== JETON DE MODIFICATION (cache du calcul jury) =====
+# Chaque écriture dans promotions.db ou programmes.db tire un nouveau jeton au hasard,
+# par des déclencheurs SQLite posés sur toutes les tables : quelle que soit la route
+# qui écrit (saisie, import, jury, effectif, programme, restauration…), le
+# changement se voit, sans qu'aucune route ait à y penser. Un calcul gardé en mémoire
+# n'est resservi que sous le jeton qu'il a vu naître (cf _jury_compute).
+# Tables exclues : sans effet sur le calcul et souvent écrites (lecture d'une
+# notification, dépôt d'un fichier) ; une table nouvelle est couverte d'office.
+_JETON_TABLES_EXCLUES = {'cache_jeton', 'notifications', 'notification_targets',
+                         'notification_reads', 'student_photos',
+                         'alternance_documents', 'alternance_depots', 'stage_fiches_poste'}
+
+def _poser_jeton_cache(db):
+    """Crée la table du jeton et les déclencheurs manquants. Idempotent : rappelé à
+    chaque démarrage après les migrations, car une table recréée perd les siens."""
+    db.execute('''CREATE TABLE IF NOT EXISTS cache_jeton (
+                      id    INTEGER PRIMARY KEY CHECK (id = 1),
+                      jeton INTEGER NOT NULL)''')
+    db.execute('INSERT OR IGNORE INTO cache_jeton (id, jeton) VALUES (1, random())')
+    tables = [r[0] for r in db.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
+    for t in tables:
+        if t in _JETON_TABLES_EXCLUES:
+            continue
+        for op in ('INSERT', 'UPDATE', 'DELETE'):
+            db.execute(f'''CREATE TRIGGER IF NOT EXISTS "jeton_{t}_{op.lower()}"
+                           AFTER {op} ON "{t}" BEGIN
+                               UPDATE cache_jeton SET jeton = random() WHERE id = 1;
+                           END''')
+    db.commit()
+
 def _init_promotions_db():
     os.makedirs(os.path.dirname(_PROMOTIONS_DB), exist_ok=True)
     db = _open_promotions_db()
@@ -2139,6 +2189,11 @@ def _init_promotions_db():
         except Exception as e:
             db.rollback()
             _audit('RED_REPAIR_ERROR', error=str(e))
+        try:
+            _poser_jeton_cache(db)
+        except Exception as e:
+            db.rollback()
+            _audit('CACHE_JETON_ERROR', base='promotions', error=str(e))
     finally:
         db.close()
 
@@ -2209,6 +2264,11 @@ def _init_programmes_db():
                           VALUES(?,?,CURRENT_TIMESTAMP)''',
                        (cur.lastrowid, json.dumps(data, ensure_ascii=False)))
             db.commit()
+        try:
+            _poser_jeton_cache(db)
+        except Exception as e:
+            db.rollback()
+            _audit('CACHE_JETON_ERROR', base='programmes', error=str(e))
     finally:
         db.close()
 
@@ -2289,6 +2349,32 @@ def _apply_migrations(db):
             FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE
         )
     ''')
+    # Indisponibilités importées d'Hyperplanning (zones hachurées de son emploi du
+    # temps imprimé en PDF, cf. hp_pdf.py) : une grille par semaine importée, au format
+    # de teacher_availability_weeks ('0' = indisponible, '1' = rien d'importé, '.' =
+    # fermé). Gardées À PART de ce que l'enseignant peint (un nouvel import remplace
+    # les semaines qu'il couvre, sans toucher à sa grille) ; le solveur ferme ces
+    # créneaux en plus des siens.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS teacher_availability_hp (
+            teacher_id  INTEGER NOT NULL,
+            week_number INTEGER NOT NULL,
+            grille      TEXT NOT NULL,
+            source      TEXT,
+            imported_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (teacher_id, week_number),
+            FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE
+        )
+    ''')
+    # Cours placés gardés à leur place (« figés ») : « Générer l'EDT » ne les déplace
+    # plus (solveur_edt.cours_figes). Origine 'hp' : cours posé dans Hyperplanning et
+    # repris à l'import de son emploi du temps (PDF), enseignant par enseignant ou cours
+    # par cours ; un nouvel import les remplace.
+    for col in ('group_index INTEGER', 'fige INTEGER DEFAULT 0', 'origine TEXT'):
+        try:
+            db.execute(f'ALTER TABLE timetable_slots ADD COLUMN {col}')
+        except sqlite3.OperationalError:
+            pass
     try:
         db.execute('ALTER TABLE course_sessions ADD COLUMN sessions_per_week_max INTEGER DEFAULT 1')
     except sqlite3.OperationalError:
@@ -3705,6 +3791,10 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     (r'^/api/compare/hyperplanning$', ['svc:comparaison'], 'readlike'),
     (r'^/api/constraints/me(/file|/dispos)?$', ['svc:contraintes'], ''),
     (r'^/api/constraints/\d+/dispos$', ['svc:contraintes'], 'strict'),
+    # Import des indisponibilités d'Hyperplanning (PDF) et retrait d'un import ; la
+    # lecture du PDF sert aussi à relever les jours fériés et ponts (Calendrier)
+    (r'^/api/constraints/dispos/hp/(fichier|lire)$', ['svc:contraintes', 'promo:calendrier'], 'strict'),
+    (r'^/api/constraints/(\d+/)?dispos/hp$', ['svc:contraintes'], 'strict'),
     (r'^/api/qr-attendance$', ['svc:repartition-enseignant'], ''),
     (r'^/api/my-account(/.*)?$', ['nav:mon-compte'], ''),
     # Calendrier de la promotion, jours fériés et ponts de l'année compris (Promotions › Calendrier)
@@ -3712,6 +3802,9 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     (r'^/api/programmes/\d+/data(/reset)?$', ['prog:coeff', 'prog:matieres'], ''),
     (r'^/api/programmes(/.*)?$', ['prog:actions'], ''),
     (r'^/api/promotions/\d+/saisie/S[1-6]/(notes|weights|import)$', ['nav:saisie', 'promo:saisie'], ''),
+    # Fiche de poste d'un stagiaire : responsable des stages et admin (le droit
+    # « modifier » par défaut de l'enseignant ne couvre que les fiches qu'il suit)
+    (r'^/api/promotions/\d+/tuteurs/\d+/\d+/fiche-poste$', ['nav:stages'], 'strict'),
     (r'^/api/promotions/\d+/tuteurs/', ['nav:stages', 'nav:alternance'], ''),
     (r'^/api/promotions/\d+/groupes/', ['promo:groupes'], ''),
     (r'^/api/promotions/\d+/jury/', ['promo:jury'], ''),
@@ -4469,9 +4562,16 @@ def _dispos_etat(teacher_id):
         fermes = _jours_fermes_etat(db)
     except Exception:
         fermes = {'annee': get_current_year(), 'debut': None, 'jours': []}
+    hp = db.execute('''SELECT week_number, grille, source, imported_at FROM teacher_availability_hp
+                       WHERE teacher_id = ?''', (teacher_id,)).fetchall()
+    dernier = max(hp, key=lambda r: r['imported_at'] or '', default=None)
     return {'creneaux': creneaux,
             'type': _dsp_grille_depuis_creneaux(creneaux) if creneaux else None,
             'semaines': {str(w): g for w, g in sorted(semaines.items(), key=lambda x: ordre(x[0]))},
+            # indisponibilités importées d'Hyperplanning (semaines couvertes par l'import)
+            'hp': {str(r['week_number']): r['grille'] for r in sorted(hp, key=lambda r: ordre(r['week_number']))},
+            'hp_source': dernier['source'] if dernier else None,
+            'hp_date': dernier['imported_at'] if dernier else None,
             'liste': [{'semaine': w, 'cours': w in cours} for w in liste],
             'annee': fermes['annee'], 'debut': fermes['debut'],
             'fermes': [{'semaine': j['semaine'], 'jour': j['jour'], 'type': j['type'],
@@ -4547,10 +4647,13 @@ def list_dispos():
     rows = get_db().execute('''
         SELECT t.id, t.name, t.status,
                (SELECT COUNT(*) FROM teacher_availability ta WHERE ta.teacher_id = t.id) AS nb,
-               (SELECT COUNT(*) FROM teacher_availability_weeks tw WHERE tw.teacher_id = t.id) AS nbs
+               (SELECT COUNT(*) FROM teacher_availability_weeks tw WHERE tw.teacher_id = t.id) AS nbs,
+               (SELECT COUNT(*) FROM teacher_availability_hp th WHERE th.teacher_id = t.id
+                                                               AND th.grille LIKE '%0%') AS nbh
         FROM teachers t ORDER BY t.name''').fetchall()
     return jsonify([{'teacher_id': r['id'], 'teacher_name': r['name'], 'status': r['status'] or '',
-                     'saisie': r['nb'] > 0 or r['nbs'] > 0, 'semaines_propres': r['nbs']} for r in rows])
+                     'saisie': r['nb'] > 0 or r['nbs'] > 0, 'semaines_propres': r['nbs'],
+                     'semaines_hp': r['nbh']} for r in rows])
 
 @app.route('/api/constraints/<int:teacher_id>/dispos', methods=['GET'])
 def get_teacher_dispos(teacher_id):
@@ -4578,6 +4681,506 @@ def save_teacher_dispos(teacher_id):
     _audit('DISPOS_SAVE', ip=_client_ip(), user=session.get('user'), teacher=teacher_id,
            creneaux=len(etat['creneaux']), semaines=len(etat['semaines']))
     return jsonify(etat)
+
+# ----- Indisponibilités importées d'Hyperplanning (PDF) -----
+# L'emploi du temps des enseignants imprimé par Hyperplanning, journée complète
+# (8 h → 21 h), jours datés (« lundi 4 janvier 2027 ») ou semaines en colonnes
+# (« 24 août - 29 août », jours en rangées), un ou plusieurs enseignants par fichier,
+# est lu par hp_pdf.py : ses zones hachurées sont leurs indisponibilités. Import en trois temps,
+# pour qu'un gros fichier (tous les enseignants sur l'année : plusieurs centaines de
+# pages) ne bute pas sur la durée d'une requête :
+#   1. POST …/hp/fichier : dépôt du PDF -> {jeton, pages} ;
+#   2. POST …/hp/lire {jeton, debut, fin} : lecture d'une tranche de pages ->
+#      {enseignants: {nom affiché: {date: [[début, fin], …]}}} (minutes) ; l'écran
+#      réunit les tranches ;
+#   3. POST …/hp {lu, associations, apply} : rapprochement des noms et rapport ; avec
+#      apply, enregistrement dans teacher_availability_hp. Les semaines couvertes par
+#      le fichier remplacent celles d'un import précédent, les autres restent.
+_HP_IMPORT_DIR = os.environ.get('EDT_HP_IMPORT_DIR') or os.path.join(_BASE_DIR, 'uploads', 'hp_import')
+_HP_MAX = 60 * 1024 * 1024
+_HP_JETON_RE = _re.compile(r'^[0-9a-f]{32}$')
+
+def _hp_droit(onglets=('svc:contraintes',)):
+    """Import réservé à qui administre l'onglet Contraintes ; la lecture du PDF sert
+    aussi à relever les jours fériés et ponts (Promotions › Calendrier)."""
+    if not any(_admin_view(k) for k in onglets):
+        return error_response('Accès réservé à l\'administrateur', 403)
+    return _require_admin()
+
+_HP_LECTURE = ('svc:contraintes', 'promo:calendrier')
+
+def _hp_menage():
+    """Fichiers déposés il y a plus de 6 heures (import abandonné) : supprimés."""
+    try:
+        limite = time.time() - 6 * 3600
+        for nom in os.listdir(_HP_IMPORT_DIR):
+            p = os.path.join(_HP_IMPORT_DIR, nom)
+            if os.path.isfile(p) and os.path.getmtime(p) < limite:
+                os.remove(p)
+    except OSError:
+        pass
+
+@app.route('/api/constraints/dispos/hp/fichier', methods=['POST'])
+def hp_deposer():
+    import secrets
+    err = _hp_droit(_HP_LECTURE)
+    if err:
+        return err
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return error_response('Aucun fichier reçu', 400)
+    if os.path.splitext(f.filename)[1].lower() != '.pdf':
+        return error_response(f'{f.filename} : un PDF d\'Hyperplanning est attendu', 400)
+    if request.content_length and request.content_length > _HP_MAX:
+        return error_response('Fichier trop volumineux (max 60 Mo)', 400)
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return error_response('Lecture des PDF indisponible sur ce serveur : '
+                              'installez le module pypdf (pip install pypdf)', 500)
+    os.makedirs(_HP_IMPORT_DIR, exist_ok=True)
+    _hp_menage()
+    jeton = secrets.token_hex(16)
+    chemin = os.path.join(_HP_IMPORT_DIR, jeton + '.pdf')
+    f.save(chemin)
+    try:
+        pages = len(PdfReader(chemin).pages)
+    except Exception as e:
+        try:
+            os.remove(chemin)
+        except OSError:
+            pass
+        return error_response(f'{f.filename} : lecture impossible ({e})', 400)
+    return jsonify({'jeton': jeton, 'pages': pages, 'fichier': f.filename})
+
+@app.route('/api/constraints/dispos/hp/lire', methods=['POST'])
+def hp_lire():
+    import hp_pdf
+    err = _hp_droit(_HP_LECTURE)
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    jeton = str(data.get('jeton') or '')
+    if not _HP_JETON_RE.match(jeton):
+        return error_response('Jeton invalide', 400)
+    chemin = os.path.join(_HP_IMPORT_DIR, jeton + '.pdf')
+    if not os.path.isfile(chemin):
+        return error_response('Fichier expiré : déposez-le à nouveau', 410)
+    try:
+        debut, fin = int(data.get('debut', 0)), int(data.get('fin', 0))
+    except (TypeError, ValueError):
+        return error_response('Plage de pages invalide', 400)
+    try:
+        res = hp_pdf.lire_pdf(chemin, pages=(debut, fin))
+    except Exception as e:
+        return error_response(f'Lecture impossible ({e})', 400)
+    if fin >= res['pages']:              # dernière tranche : le fichier ne sert plus
+        try:
+            os.remove(chemin)
+        except OSError:
+            pass
+    return jsonify({'pages': res['pages'], 'lues': res['lues'], 'ignorees': res['ignorees'],
+                    'enseignants': {q: {d.isoformat(): [[a, b] for a, b in z] for d, z in jours.items()}
+                                    for q, jours in res['enseignants'].items()},
+                    # cours posés dans Hyperplanning (pages « une semaine », ou semaines en
+                    # colonnes) : [début, fin, GIM ?, matière, classes, groupes, salle] ;
+                    # case illisible (« ... ») : matière, classes, groupes et salle vides
+                    'cours_hp': {q: {d.isoformat(): [[c['debut'], c['fin'], int(c['gim']), c['matiere'][:120],
+                                                      ' | '.join(c['classes'])[:120], ' | '.join(c['groupes'])[:60],
+                                                      (c['salles'] or [''])[0][:40]] for c in cs]
+                                     for d, cs in jours.items() if cs}
+                                 for q, jours in res['cours_hp'].items()},
+                    'pages_cours': res['pages_cours'],
+                    # jours marqués « Férié » (calendrier de l'établissement), et jours
+                    # affichés : nombre de pages, pour Promotions › Calendrier
+                    'feries': {d.isoformat(): n for d, n in res['feries'].items()},
+                    'jours_vus': {d.isoformat(): n for d, n in res['jours_vus'].items()}})
+
+def _hp_lu_valide(lu):
+    """{nom: {date ISO: [[début, fin], …]}} envoyé par l'écran -> même structure
+    nettoyée (dates réelles, minutes entières, début < fin), ou None si invalide."""
+    from datetime import date as _date
+    if not isinstance(lu, dict) or len(lu) > 400:
+        return None
+    out = {}
+    for qui, jours in lu.items():
+        if not isinstance(qui, str) or not qui.strip() or len(qui) > 120 or not isinstance(jours, dict) \
+                or len(jours) > 600:
+            return None
+        propres = {}
+        for ds, zones in jours.items():
+            try:
+                d = _date.fromisoformat(str(ds))
+            except ValueError:
+                return None
+            if not isinstance(zones, list) or len(zones) > 50:
+                return None
+            zs = []
+            for z in zones:
+                try:
+                    a, b = int(z[0]), int(z[1])
+                except (TypeError, ValueError, IndexError, KeyError):
+                    return None
+                if not 0 <= a < b <= 24 * 60:
+                    return None
+                zs.append((a, b))
+            propres[d] = zs
+        out[qui.strip()] = propres
+    return out
+
+def _hp_cours_valide(cours):
+    """Cours posés dans Hyperplanning, envoyés par l'écran : {nom: {date ISO: [[début,
+    fin, GIM 0/1, matière, classes, groupes, salle], …]}} -> même structure nettoyée
+    (dates réelles), ou None si invalide."""
+    from datetime import date as _date
+    if not isinstance(cours, dict) or len(cours) > 400:
+        return None
+    out = {}
+    for qui, jours in cours.items():
+        if not isinstance(qui, str) or len(qui) > 120 or not isinstance(jours, dict) or len(jours) > 600:
+            return None
+        propres = {}
+        for ds, cs in jours.items():
+            try:
+                d = _date.fromisoformat(str(ds))
+            except ValueError:
+                return None
+            if not isinstance(cs, list) or len(cs) > 40:
+                return None
+            lst = []
+            for c in cs:
+                if not isinstance(c, list) or len(c) != 7:
+                    return None
+                try:
+                    a, b, gim = int(c[0]), int(c[1]), bool(int(c[2]))
+                except (TypeError, ValueError):
+                    return None
+                if not 0 <= a < b <= 24 * 60:
+                    return None
+                lst.append({'debut': a, 'fin': b, 'gim': gim,
+                            **{k: str(v or '')[:120] for k, v in zip(('matiere', 'classes', 'groupes', 'salle'), c[3:])}})
+            propres[d] = lst
+        out[qui.strip()] = propres
+    return out
+
+
+def _hp_rapprocher_cours(c, cands, pas):
+    """Séance de l'appli (événement du solveur) qui correspond à un cours GIM posé dans
+    Hyperplanning, parmi les séances de son enseignant cette semaine-là. Indices lus
+    dans la case : année (« BUT 1 »), formation (« ISP ALT », « Temps plein », « MUT »),
+    groupe (TP12_3, TD_1, TP12_ALT ; aucun = CM ou promotion entière), numéro de
+    semestre en fin de nom de matière (« Anglais 1 »), durée. Renvoie (événement ou
+    None, ambigu ?)."""
+    classes, grp = c['classes'].upper(), (c['groupes'].split('|')[0].strip().upper() if c['groupes'] else '')
+    m = re.search(r'BUT\s*(\d)', classes)
+    annee = int(m.group(1)) if m else None
+    m = re.search(r'(\d)\s*$', c['matiere'])
+    sem = f'S{m.group(1)}' if m else None
+    alt_classe = 'ALT' in classes.replace('GIM', '')
+    plein = 'TEMPS PLEIN' in classes
+    out = []
+    for e in cands:
+        if annee and e.annee != annee:
+            continue
+        if sem and e.semestre and e.semestre != sem:
+            continue
+        if alt_classe and e.formation == 0 or plein and e.formation == 1:
+            continue
+        if grp:
+            typ = 'TP' if grp.startswith('TP') else ('TD' if grp.startswith('TD') else None)
+            if typ and not e.type.startswith(typ):
+                continue
+            if 'ALT' in grp:
+                if not (e.formation == 1 or (e.formation == 2 and e.groupe == e.nb_groupes and e.nb_groupes > 1)):
+                    continue
+            else:
+                n = re.search(r'(\d+)\s*$', grp)
+                if n and (e.formation == 1 or e.groupe != int(n.group(1))):
+                    continue
+        elif e.nb_groupes > 1 and e.type.startswith('TP'):
+            continue                    # TP par groupe : un cours sans groupe n'en est pas un
+        out.append(e)
+    if not out:
+        return None, False
+    duree = c['fin'] - c['debut']
+    out.sort(key=lambda e: (abs(e.lon * pas - duree) > 5, e.session_id, e.rang))
+    meilleur = out[0]
+    ambigu = len({(e.session_id, e.groupe) for e in out
+                  if (abs(e.lon * pas - duree) > 5) == (abs(meilleur.lon * pas - duree) > 5)}) > 1
+    return meilleur, ambigu
+
+
+def _hp_classes_deduites(cours_hp):
+    """Classe masquée : imprimé avec les semaines en colonnes, une case d'une heure et
+    demie coupe souvent la ligne de la classe (« Techno. Méca. Flu. 3,(...) »). Elle se
+    déduit des cases lisibles de la même matière dans le fichier, quel qu'en soit
+    l'enseignant : si toutes sont de classes GIM, le cours est GIM (classe reprise si
+    elle est unique, marqué « deduit »). Sinon (aucune case lisible, ou une classe d'un
+    autre département), il reste bloqué comme avant. Modifie et renvoie cours_hp."""
+    vues = {}
+    for jours in cours_hp.values():
+        for cs in jours.values():
+            for c in cs:
+                if c['matiere'] and c['classes']:
+                    vues.setdefault(c['matiere'], set()).add((c['gim'], c['classes']))
+    for jours in cours_hp.values():
+        for cs in jours.values():
+            for c in cs:
+                v = vues.get(c['matiere']) if not c['gim'] and not c['classes'] else None
+                if v and all(g for g, _ in v):
+                    c['gim'], c['deduit'] = True, True
+                    if len(v) == 1:
+                        c['classes'] = next(iter(v))[1]
+    return cours_hp
+
+
+def _hp_preparer(db, lu, associations, cours_hp=None):
+    """Rapprochement des noms du fichier avec les enseignants de l'année, grilles à
+    écrire et cours posés dans Hyperplanning. Les cours d'autres départements, les cours
+    illisibles (case trop petite : « ... ») et les cours GIM sans séance correspondante
+    dans l'appli bloquent le créneau comme une zone hachurée ; un cours GIM rapproché
+    d'une séance peut être repris dans l'EDT de l'appli (figé), sinon il ne compte pas.
+    Renvoie (rapport, grilles {teacher_id: {semaine: grille}}, reprises {teacher_id:
+    {clé: cours à reprendre}}, erreur)."""
+    import hp_pdf
+    import solveur_edt
+    from collections import defaultdict
+    cours_hp = _hp_classes_deduites(cours_hp or {})
+    profs = [(r['id'], r['name']) for r in db.execute('SELECT id, name FROM teachers ORDER BY name')]
+    noms = dict(profs)
+    cfg = get_year_config()
+    valides = get_valid_school_weeks(cfg['academic_start_week'], cfg['academic_end_week'], cfg['academic_max_week'])
+    debut_an, fin_an = _jours_fermes_bornes(get_current_year())
+    ordre = lambda w: (w < cfg['academic_start_week'], w)   # noqa: E731
+    deja = {r[0]: r[1] for r in db.execute(
+        'SELECT teacher_id, COUNT(*) FROM teacher_availability_hp GROUP BY teacher_id')}
+    # 1. rapprochement (automatique, ou choix fait à l'écran)
+    choix = {}
+    for qui in set(lu) | set(cours_hp):
+        tid, how = hp_pdf.rapprocher(qui, profs)
+        if qui in associations:
+            v = associations[qui]
+            try:
+                tid = int(v) if v not in (None, '') else None
+            except (TypeError, ValueError):
+                tid = None
+            tid, how = (tid, 'choisi') if tid in noms else (None, None)
+        choix[qui] = [tid, how]
+    # deux noms du fichier rapprochés d'office du même enseignant (« M. RICHIER » et
+    # « Mme RICHIER ») : à trancher à l'écran ; choisis tous deux à la main : erreur
+    par_tid = defaultdict(list)
+    for qui, (tid, how) in choix.items():
+        if tid is not None:
+            par_tid[tid].append(qui)
+    erreur = None
+    for tid, quis in par_tid.items():
+        if len(quis) > 1:
+            if all(choix[q][1] == 'choisi' for q in quis):
+                erreur = f'{" et ".join(quis)} sont associés au même enseignant ({noms[tid]})'
+            for q in quis:
+                if choix[q][1] != 'choisi':
+                    choix[q] = [None, 'conflit']
+    # Séances à placer de chaque semaine (celles du solveur), pour rapprocher les cours
+    # GIM ; cours déjà repris d'Hyperplanning (origine 'hp'), pour les cocher d'emblée
+    don, evts_sem = None, {}
+
+    def seances(w):
+        nonlocal don
+        if w not in evts_sem:
+            if don is None:
+                don = solveur_edt.Donnees(db, solveur_edt.lire_reglages({'annee_universitaire': get_current_year()}))
+            evts_sem[w] = solveur_edt.evenements_semaine(db, don, w, [])
+        return evts_sem[w]
+    repris = set()
+    try:
+        for r in db.execute("""SELECT teacher_id, week_number, day_of_week, start_time, course_session_id
+                               FROM timetable_slots WHERE origine = 'hp' AND COALESCE(fige, 0) = 1"""):
+            repris.add((r[0], r[1], r[2], str(r[3])[:5], r[4]))
+    except sqlite3.OperationalError:
+        pass
+    salles = {r['name'].strip().upper(): r['id'] for r in db.execute('SELECT id, name FROM rooms')}
+
+    def salle_id(nom):
+        m = re.match(r'^\s*([A-Z]?)(\d{2,4}[A-Z]?)\b', (nom or '').upper())
+        if not m:
+            return None
+        return salles.get(m.group(1) + m.group(2)) or salles.get(m.group(2))
+    # 2. grilles par semaine et cours posés dans Hyperplanning
+    rapport, grilles, reprises = [], {}, {}
+    jours_lib = ['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.']
+    hm = lambda m: f'{m // 60:02d}:{m % 60:02d}'   # noqa: E731
+    for qui in sorted(choix, key=lambda q: hp_pdf.cle_nom(hp_pdf.nom_sans_civilite(q))):
+        tid, how = choix[qui]
+        sem_g, hors, demi = {}, 0, 0
+        exemples = []
+
+        def bloquer(d, a, b):
+            nonlocal demi
+            g = sem_g.setdefault(d.isocalendar()[1], list(_dsp_grille_defaut()))
+            j = d.weekday()
+            for u in range(_DSP_U):
+                k = j * _DSP_U + u
+                t0 = _DSP_DEBUT + u * _DSP_PAS
+                if g[k] == '1' and a < t0 + _DSP_PAS and b > t0:
+                    g[k] = '0'
+                    demi += 1
+
+        def dans_annee(d):
+            return debut_an <= d <= fin_an and d.isocalendar()[1] in valides and d.weekday() < _DSP_NJ
+        for d in sorted(lu.get(qui, {})):
+            if not dans_annee(d):
+                hors += 1
+                continue
+            sem_g.setdefault(d.isocalendar()[1], list(_dsp_grille_defaut()))
+            for a, b in lu[qui][d]:
+                bloquer(d, a, b)
+                if len(exemples) < 4:
+                    exemples.append(f"S{d.isocalendar()[1]} {jours_lib[d.weekday()]} "
+                                    f"{d.day:02d}/{d.month:02d} {a // 60}h{a % 60:02d}–{b // 60}h{b % 60:02d}")
+        # cours posés dans Hyperplanning
+        gim, autres, illisibles, non_rap = [], 0, 0, []
+        pris = defaultdict(set)              # semaine -> séances déjà rapprochées
+        for d in sorted(cours_hp.get(qui, {})):
+            if not dans_annee(d):
+                continue
+            w, j = d.isocalendar()[1], d.weekday()
+            sem_g.setdefault(w, list(_dsp_grille_defaut()))
+            for k, c in enumerate(cours_hp[qui][d]):
+                if not c['gim']:
+                    # case trop petite pour son texte (« ... ») : cours inconnu, bloqué aussi
+                    if not any(c[x] for x in ('matiere', 'classes', 'groupes', 'salle')):
+                        illisibles += 1
+                    else:
+                        autres += 1
+                    bloquer(d, c['debut'], c['fin'])
+                    continue
+                e, ambigu = None, False
+                if tid is not None:
+                    cands = [x for x in seances(w) if x.enseignant == tid and x.idx not in pris[w]]
+                    e, ambigu = _hp_rapprocher_cours(c, cands, don.reg.pas)
+                texte = f"{c['matiere']} {c['groupes'] or c['classes']}".strip()
+                if e is None:
+                    non_rap.append(f"S{w} {jours_lib[j]} {hm(c['debut'])} {texte}")
+                    bloquer(d, c['debut'], c['fin'])
+                    continue
+                pris[w].add(e.idx)
+                cle = f"{d.isoformat()}T{hm(c['debut'])}-{hm(c['fin'])}#{k}"
+                lib = f"{e.code} {e.type}{f' gr{e.groupe}' if e.nb_groupes > 1 else ''}"
+                gim.append({'cle': cle, 'semaine': w, 'jour': j, 'date': d.isoformat(),
+                            'debut': hm(c['debut']), 'fin': hm(c['fin']), 'texte': texte, 'seance': lib,
+                            'ambigu': ambigu, 'salle': c['salle'], 'deduit': bool(c.get('deduit')),
+                            'deja': (tid, w, j, hm(c['debut']), e.session_id) in repris})
+                reprises.setdefault(tid, {})[cle] = {
+                    'semaine': w, 'jour': j, 'debut': hm(c['debut']), 'fin': hm(c['fin']),
+                    'session_id': e.session_id, 'groupe': e.groupe, 'nb_groupes': e.nb_groupes,
+                    'formation': e.formation, 'room_id': salle_id(c['salle'])}
+        semaines = sorted(sem_g, key=ordre)
+        gim.sort(key=lambda x: (ordre(x['semaine']), x['jour'], x['debut']))
+        rapport.append({'qui': qui, 'teacher_id': tid, 'teacher_name': noms.get(tid) if tid else None,
+                        'how': how, 'semaines': semaines,
+                        'semaines_hp': sum(1 for w in semaines if '0' in sem_g[w]),
+                        'heures': demi / 2, 'hors_annee': hors, 'exemples': exemples,
+                        'deja': deja.get(tid, 0) if tid else 0,
+                        'cours_gim': gim, 'cours_autres': autres, 'cours_illisibles': illisibles,
+                        'cours_non_rapproches': non_rap[:40],
+                        'nb_non_rapproches': len(non_rap)})
+        if tid is not None and semaines:
+            grilles[tid] = {w: ''.join(sem_g[w]) for w in semaines}
+    vus = {tid for tid, _ in choix.values() if tid is not None}
+    absents = [n for i, n in profs if i not in vus]
+    return {'annee': get_current_year(), 'enseignants': rapport, 'absents': absents,
+            'profs': [{'id': i, 'name': n} for i, n in profs]}, grilles, reprises, erreur
+
+@app.route('/api/constraints/dispos/hp', methods=['POST'])
+def hp_importer():
+    """Rapport de l'import (sans apply) ou enregistrement (apply). Corps :
+    {lu: {nom affiché: {date: [[début, fin], …]}}, cours_hp: {nom: {date: [[…]]}}
+    (cours posés dans Hyperplanning), associations: {nom: teacher_id | null},
+    reprendre: {teacher_id: [clés des cours GIM à reprendre]}, source, apply}.
+
+    À l'enregistrement, pour chaque enseignant du fichier et les semaines qu'il couvre :
+    sa grille d'indisponibilités est remplacée (hachures, cours d'autres départements,
+    cours GIM non rapprochés) ; les cours repris d'un import précédent sont retirés de
+    l'EDT de l'appli ; chaque cours GIM choisi y est repris à sa place, figé (origine
+    'hp'), à la place d'une séance identique non figée de la même semaine."""
+    err = _hp_droit()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    lu = _hp_lu_valide(data.get('lu'))
+    cours_hp = _hp_cours_valide(data.get('cours_hp') or {})
+    if lu is None or cours_hp is None:
+        return error_response('Lecture invalide : relancez l\'import', 400)
+    if not lu and not cours_hp:
+        return error_response('Aucun emploi du temps reconnu dans ce fichier : imprimez-le depuis '
+                              'Hyperplanning avec la journée complète (8 h → 21 h), jours datés ou '
+                              'semaines en colonnes', 400)
+    associations = data.get('associations') if isinstance(data.get('associations'), dict) else {}
+    reprendre = data.get('reprendre') if isinstance(data.get('reprendre'), dict) else {}
+    db = get_db()
+    rapport, grilles, reprises, erreur = _hp_preparer(db, lu, associations, cours_hp)
+    if not data.get('apply'):
+        rapport['erreur'] = erreur
+        return jsonify(rapport)
+    if erreur:
+        return error_response(erreur, 400)
+    if not grilles:
+        return error_response('Aucun enseignant de l\'année à mettre à jour', 400)
+    source = str(data.get('source') or '')[:200]
+    maintenant = datetime.now().strftime('%Y-%m-%d %H:%M')
+    repris = remplaces = 0
+    for tid, sems in grilles.items():
+        db.executemany('DELETE FROM teacher_availability_hp WHERE teacher_id = ? AND week_number = ?',
+                       [(tid, w) for w in sems])
+        db.executemany('''INSERT INTO teacher_availability_hp (teacher_id, week_number, grille, source, imported_at)
+                          VALUES (?,?,?,?,?)''', [(tid, w, g, source, maintenant) for w, g in sems.items()])
+        # cours repris d'un import précédent, sur ces semaines : retirés (repris à nouveau ci-dessous si choisis)
+        pl = ','.join('?' * len(sems))
+        db.execute(f"DELETE FROM timetable_slots WHERE origine = 'hp' AND teacher_id = ? AND week_number IN ({pl})",
+                   (tid, *sems))
+        choisis = reprendre.get(str(tid)) or []
+        if not isinstance(choisis, list):
+            return error_response('Choix des cours à reprendre invalide', 400)
+        for cle in choisis:
+            r = reprises.get(tid, {}).get(str(cle))
+            if r is None:
+                continue
+            gi = r['groupe'] if r['nb_groupes'] > 1 else None
+            # la séance placée par l'appli que ce cours remplace (même séance, même groupe, non figée)
+            ancien = db.execute('''SELECT id FROM timetable_slots WHERE week_number = ? AND course_session_id = ?
+                                   AND COALESCE(group_index, 1) = ? AND COALESCE(fige, 0) = 0
+                                   AND COALESCE(origine, '') <> 'hp' ORDER BY id LIMIT 1''',
+                                (r['semaine'], r['session_id'], r['groupe'])).fetchone()
+            if ancien:
+                db.execute('DELETE FROM timetable_slots WHERE id = ?', (ancien[0],))
+                remplaces += 1
+            db.execute('''INSERT INTO timetable_slots (course_session_id, week_number, day_of_week, start_time, end_time,
+                              room_id, teacher_id, formation_type, group_index, fige, origine)
+                          VALUES (?,?,?,?,?,?,?,?,?,1,'hp')''',
+                       (r['session_id'], r['semaine'], r['jour'], r['debut'], r['fin'], r['room_id'], tid,
+                        r['formation'], gi))
+            repris += 1
+    db.commit()
+    _audit('DISPOS_HP_IMPORT', ip=_client_ip(), user=session.get('user'), source=source,
+           enseignants=len(grilles), semaines=sum(len(s) for s in grilles.values()), cours_repris=repris)
+    rapport['applique'] = True
+    rapport['ecrits'] = {str(t): len(s) for t, s in grilles.items()}
+    rapport['cours_repris'], rapport['seances_remplacees'] = repris, remplaces
+    return jsonify(rapport)
+
+@app.route('/api/constraints/<int:teacher_id>/dispos/hp', methods=['DELETE'])
+def hp_effacer(teacher_id):
+    """Retire les indisponibilités importées d'Hyperplanning d'un enseignant."""
+    err = _hp_droit()
+    if err:
+        return err
+    db = get_db()
+    if not db.execute('SELECT 1 FROM teachers WHERE id = ?', (teacher_id,)).fetchone():
+        return error_response('Enseignant introuvable', 404)
+    n = db.execute('DELETE FROM teacher_availability_hp WHERE teacher_id = ?', (teacher_id,)).rowcount
+    db.commit()
+    _audit('DISPOS_HP_DELETE', ip=_client_ip(), user=session.get('user'), teacher=teacher_id, semaines=n)
+    return jsonify(_dispos_etat(teacher_id))
 
 # ======================= NOTIFICATIONS =======================
 # Onglet Notifications : ce que le site signale à chaque utilisateur connecté avec
@@ -8658,9 +9261,11 @@ def export_year_effectif(pid, year):
 # Champs d'une fiche de suivi (table student_tutors) et longueur maximale saisie
 _TUTOR_FIELDS = {'tuteur_univ': 120, 'tuteur_entreprise': 120, 'entreprise': 160,
                  'adresse': 200, 'ville': 60, 'departement': 30, 'tuteur_fonction': 120,
-                 'tuteur_email': 160, 'tuteur_tel': 40, 'mission': 1000}
+                 'tuteur_email': 160, 'tuteur_tel': 40, 'mission': 1000, 'contrat': 30}
 # Coordonnées du tuteur entreprise : seules, elles ne font pas une fiche
 _TUTOR_CONTACT = ('tuteur_fonction', 'tuteur_email', 'tuteur_tel')
+# Contrat d'un alternant (fiche ALT seulement ; vide : non renseigné)
+_TUTOR_CONTRATS = ('apprentissage', 'professionnalisation')
 
 def _tuteurs_students(pdb, pid, year):
     """Étudiants de l'effectif d'une année d'étude avec leur fiche de suivi. ALT :
@@ -8738,6 +9343,11 @@ def set_year_tuteurs(pid, year, sid):
                                   "dont vous êtes le tuteur universitaire", 403)
     data = request.get_json() or {}
     sent = {f: str(data.get(f) or '').strip()[:n] for f, n in _TUTOR_FIELDS.items() if f in data}
+    # Le contrat ne concerne que l'alternant ; une autre valeur que les deux connues est refusée
+    if face != 'ALT':
+        sent.pop('contrat', None)
+    elif sent.get('contrat') and sent['contrat'] not in _TUTOR_CONTRATS:
+        return error_response('Contrat inconnu (apprentissage ou professionnalisation)', 400)
     if tuteur_seul and 'tuteur_univ' in sent and _suivi_key(sent['tuteur_univ']) != _suivi_key(actuel):
         return error_response('Le tuteur universitaire est attribué par le responsable', 403)
     cols = ', '.join(_TUTOR_FIELDS)
@@ -8918,6 +9528,11 @@ def get_suivi(kind):
     pdb = get_promotions_db()
     power = tabs is None or key in tabs['power']
     me = _suivi_key(session.get('teacher_name')) if (tabs is not None and key in tabs['edit']) else ''
+    # Stages : la fiche de poste déposée pour chaque stagiaire (sans son contenu)
+    fiches = {} if kind != 'stages' else {
+        (r['student_id'], r['year']): {'nom': r['nom'], 'taille': r['taille'],
+                                       'auteur': r['auteur'], 'updated_at': r['updated_at']}
+        for r in pdb.execute('SELECT student_id, year, nom, taille, auteur, updated_at FROM stage_fiches_poste')}
     cohorts, current = [], []
     for pid, name, yg in _suivi_cohorts(pdb, start):
         data = _tuteurs_students(pdb, pid, yg)
@@ -8936,6 +9551,8 @@ def get_suivi(kind):
                                  'prenom': s['prenom'], 'semestre': f'S{2 * yg}',
                                  'etablissement': mob[s['id']]})
             else:
+                if kind == 'stages':
+                    s['fiche_poste'] = fiches.get((s['id'], yg))
                 mine.append(s)
         current += mine
         if mine or mobilite:
@@ -8943,6 +9560,100 @@ def get_suivi(kind):
                             'mobilite': mobilite})
     return jsonify({'kind': kind, 'year_label': year_label, 'cohorts': cohorts,
                     'editable': power, 'stats': _suivi_stats(pdb, kind, current, start)})
+
+# ----- Stages › Fiche de poste -----
+# Le descriptif du poste proposé au stagiaire (offre de l'entreprise, fiche remplie…),
+# un fichier par stagiaire FTP et par année de stage : déposé, remplacé ou retiré par
+# le responsable des stages et l'admin, téléchargé par qui voit l'onglet Stages.
+# Fichier dans promotions.db (sauvegarde). Mêmes formats et taille que les documents
+# de l'alternance.
+
+def _fichier_recu():
+    """(nom, contenu, None) du fichier envoyé en multipart (champ « file »), ou
+    (None, None, réponse d'erreur). Nom sans chemin ni caractère de contrôle : il
+    repart dans l'en-tête du téléchargement."""
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return None, None, error_response('Aucun fichier reçu', 400)
+    nom = ''.join(c for c in re.split(r'[\\/]', f.filename)[-1] if c.isprintable()).strip()
+    base, ext = os.path.splitext(nom)
+    if ext.lower() not in _ALT_DOC_EXT:
+        return None, None, error_response('Type de fichier non autorisé (PDF, Word, Excel ou OpenDocument)', 400)
+    data = f.read(_ALT_DOC_MAX + 1)
+    if len(data) > _ALT_DOC_MAX:
+        return None, None, error_response('Fichier trop volumineux (15 Mo au plus)', 400)
+    if not data:
+        return None, None, error_response('Fichier vide', 400)
+    return base[:140] + ext, data, None
+
+def _stage_fiche_cible(pdb, pid, year, sid, ecrire):
+    """Réponse d'erreur, ou None si la session peut lire (ecrire=False) ou déposer
+    la fiche de poste de ce stagiaire. Lire : voir l'onglet Stages. Déposer :
+    l'administrer (admin, responsable des stages), pour un stagiaire FTP de 2e ou
+    3e année qui n'est pas en mobilité au semestre du stage."""
+    key = _SUIVI_KINDS['stages'][0]
+    tabs = _session_tabs()
+    if tabs is not None and key not in tabs['visible']:
+        return error_response('Accès réservé', 403)
+    if ecrire and tabs is not None and key not in tabs['power']:
+        return error_response("Réservé à l'admin et au responsable des stages", 403)
+    if year not in (2, 3):
+        return error_response('Pas de stage en 1re année', 400)
+    if not pdb.execute('SELECT 1 FROM promotion_students WHERE id = ? AND promotion_id = ?',
+                       (sid, pid)).fetchone():
+        return error_response('Étudiant introuvable', 404)
+    if ecrire:
+        if _year_formation_map(pdb, pid, year).get(sid, 'FTP') != 'FTP':
+            return error_response("Cet étudiant n'est pas stagiaire FTP cette année-là", 400)
+        if sid in _suivi_stage_mobilite(pdb, 'stages', pid, year):
+            return error_response(f'Étudiant en mobilité internationale au S{2 * year} : pas de stage', 400)
+    return None
+
+@app.route('/api/promotions/<int:pid>/tuteurs/<int:year>/<int:sid>/fiche-poste', methods=['GET'])
+def get_stage_fiche_poste(pid, year, sid):
+    pdb = get_promotions_db()
+    err = _stage_fiche_cible(pdb, pid, year, sid, ecrire=False)
+    if err:
+        return err
+    r = pdb.execute('SELECT nom, data FROM stage_fiches_poste WHERE student_id = ? AND year = ?',
+                    (sid, year)).fetchone()
+    if not r:
+        return error_response('Aucune fiche de poste déposée', 404)
+    # Toujours en téléchargement : un fichier déposé ne s'exécute jamais dans la page
+    return send_file(io.BytesIO(r['data']), as_attachment=True, download_name=r['nom'])
+
+@app.route('/api/promotions/<int:pid>/tuteurs/<int:year>/<int:sid>/fiche-poste', methods=['PUT'])
+def put_stage_fiche_poste(pid, year, sid):
+    """Dépose (ou remplace) la fiche de poste d'un stagiaire pour son année de stage."""
+    pdb = get_promotions_db()
+    err = _stage_fiche_cible(pdb, pid, year, sid, ecrire=True)
+    if err:
+        return err
+    nom, data, err = _fichier_recu()
+    if err:
+        return err
+    pdb.execute('''INSERT INTO stage_fiches_poste (student_id, year, nom, taille, data, auteur)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (student_id, year) DO UPDATE SET nom = excluded.nom,
+                       taille = excluded.taille, data = excluded.data, auteur = excluded.auteur,
+                       updated_at = CURRENT_TIMESTAMP''',
+                (sid, year, nom, len(data), sqlite3.Binary(data), session.get('user')))
+    pdb.commit()
+    _audit('STAGE_FICHE_POSTE', ip=_client_ip(), user=session.get('user'), etudiant=sid,
+           annee_etude=year, fichier=nom)
+    return jsonify({'nom': nom, 'taille': len(data)})
+
+@app.route('/api/promotions/<int:pid>/tuteurs/<int:year>/<int:sid>/fiche-poste', methods=['DELETE'])
+def delete_stage_fiche_poste(pid, year, sid):
+    pdb = get_promotions_db()
+    err = _stage_fiche_cible(pdb, pid, year, sid, ecrire=True)
+    if err:
+        return err
+    pdb.execute('DELETE FROM stage_fiches_poste WHERE student_id = ? AND year = ?', (sid, year))
+    pdb.commit()
+    _audit('STAGE_FICHE_POSTE_SUPPR', ip=_client_ip(), user=session.get('user'), etudiant=sid,
+           annee_etude=year)
+    return jsonify({'deleted': True})
 
 # ----- Alternance › Documents -----
 # Le livret d'alternance de chaque promotion et les modèles à remplir : les titulaires
@@ -9142,28 +9853,17 @@ def put_alternance_document(cle):
     connu, promotion_id = _alt_doc_promotion(pdb, cle)
     if not connu:
         return error_response('Document inconnu', 404)
-    f = request.files.get('file')
-    if not f or not f.filename:
-        return error_response('Aucun fichier reçu', 400)
-    # Sans chemin ni caractère de contrôle : ce nom repart dans l'en-tête du téléchargement
-    nom = ''.join(c for c in re.split(r'[\\/]', f.filename)[-1] if c.isprintable()).strip()
-    base, ext = os.path.splitext(nom)
-    if ext.lower() not in _ALT_DOC_EXT:
-        return error_response('Type de fichier non autorisé (PDF, Word, Excel ou OpenDocument)', 400)
-    data = f.read(_ALT_DOC_MAX + 1)
-    if len(data) > _ALT_DOC_MAX:
-        return error_response('Fichier trop volumineux (15 Mo au plus)', 400)
-    if not data:
-        return error_response('Fichier vide', 400)
+    nom, data, err = _fichier_recu()
+    if err:
+        return err
     pdb.execute('''INSERT INTO alternance_documents (cle, promotion_id, nom, taille, data, auteur)
                    VALUES (?, ?, ?, ?, ?, ?)
                    ON CONFLICT (cle) DO UPDATE SET nom = excluded.nom, taille = excluded.taille,
                        data = excluded.data, auteur = excluded.auteur,
                        updated_at = CURRENT_TIMESTAMP''',
-                (cle, promotion_id, base[:140] + ext, len(data), sqlite3.Binary(data),
-                 session.get('user')))
+                (cle, promotion_id, nom, len(data), sqlite3.Binary(data), session.get('user')))
     pdb.commit()
-    return jsonify({'cle': cle, 'nom': base[:140] + ext, 'taille': len(data)})
+    return jsonify({'cle': cle, 'nom': nom, 'taille': len(data)})
 
 @app.route('/api/alternance/documents/<cle>', methods=['DELETE'])
 def delete_alternance_document(cle):
@@ -9378,20 +10078,9 @@ def put_alternance_depot(sid, sem):
     s, tuteur, yg, err = _alt_depot_cible(pdb, sid, sem, ecrire=True)
     if err:
         return err
-    f = request.files.get('file')
-    if not f or not f.filename:
-        return error_response('Aucun fichier reçu', 400)
-    # Sans chemin ni caractère de contrôle : ce nom repart dans l'en-tête du téléchargement
-    nom = ''.join(c for c in re.split(r'[\\/]', f.filename)[-1] if c.isprintable()).strip()
-    base, ext = os.path.splitext(nom)
-    if ext.lower() not in _ALT_DOC_EXT:
-        return error_response('Type de fichier non autorisé (PDF, Word, Excel ou OpenDocument)', 400)
-    data = f.read(_ALT_DOC_MAX + 1)
-    if len(data) > _ALT_DOC_MAX:
-        return error_response('Fichier trop volumineux (15 Mo au plus)', 400)
-    if not data:
-        return error_response('Fichier vide', 400)
-    nom = base[:140] + ext
+    nom, data, err = _fichier_recu()
+    if err:
+        return err
     pdb.execute('''INSERT INTO alternance_depots (student_id, semestre, nom, taille, data, auteur)
                    VALUES (?, ?, ?, ?, ?, ?)
                    ON CONFLICT (student_id, semestre) DO UPDATE SET nom = excluded.nom,
@@ -9463,7 +10152,9 @@ def put_alternance_echeances():
 # alternant prérempli, à partir de la trame Excel data/pv_visite_alternance.xlsx.
 _PV_VISITE_MODELE = os.path.join(_BASE_DIR, 'data', 'pv_visite_alternance.xlsx')
 _PV_VISITE_PARCOURS = 'Ingénierie des systèmes pluritechniques (ISP)'
-_PV_VISITE_CAMPUS = 'G13'      # site de formation coché : « ⃝ Campus de la Garde »
+# Cases cochées : (cellule, rang de la case dans la cellule)
+_PV_VISITE_CAMPUS = ('G13', 0)   # site de formation : « ⃝ Campus de la Garde »
+_PV_VISITE_CONTRATS = {'apprentissage': ('B17', 0), 'professionnalisation': ('B17', 1)}
 _PV_VISITE_BLEU = 'FF1F4E79'   # ce que le site a prérempli, distinct de l'écriture à la main
 
 def _prenom_casse(prenom):
@@ -9489,9 +10180,10 @@ def _pv_nom_prenom(texte):
 def _pv_visite_xlsx(champs, coches=()):
     """Le .xlsx du PV : la trame, chaque cellule de `champs` ({réf: valeur})
     complétée. Le libellé de la cellule reste dans sa police ; la valeur le suit,
-    dans la même police sans gras et en bleu. Les cases `coches` (« ⃝ … ») sont
-    cochées (« ◉ … », en bleu). Le reste du classeur (logo, mise en page, zone
-    d'impression) est recopié tel quel."""
+    dans la même police sans gras et en bleu. Les cases `coches` [(cellule, rang)]
+    sont cochées : la rang-ième « ⃝ » de la cellule devient « ◉ », elle et son
+    libellé en bleu. Le reste du classeur (logo, mise en page, zone d'impression)
+    est recopié tel quel."""
     def xml(t):
         return str(t).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     with zipfile.ZipFile(_PV_VISITE_MODELE) as z:
@@ -9528,15 +10220,21 @@ def _pv_visite_xlsx(champs, coches=()):
     def cellule(ref):
         return re.search(rf'<c r="{ref}"(?: s="(\d+)")?( t="s")?\s*(?:/>|>(?:<v>(\d+)</v>)?</c>)', feuille)
 
-    for ref in coches:
+    # Cases cochées, par cellule : rang de la case dans la cellule (B17 en a deux)
+    par_cellule = {}
+    for ref, rang in coches:
+        par_cellule.setdefault(ref, set()).add(rang)
+    for ref, rangs in par_cellule.items():
         m = cellule(ref)
         if not (m and m[2] and m[3] is not None) or '⃝' not in chaines[int(m[3])]:
             continue
         style = m[1] or '0'
         partages += 1
-        texte = chaines[int(m[3])].replace('⃝', '◉', 1)
-        feuille = (feuille[:m.start()] + f'<c r="{ref}" s="{style}" t="inlineStr"><is><r>{police(style, True)}'
-                   f'<t xml:space="preserve">{xml(texte)}</t></r></is></c>' + feuille[m.end():])
+        avant, *options = chaines[int(m[3])].split('⃝')
+        morceaux = [(avant, False)] + [(('◉' if i in rangs else '⃝') + t, i in rangs) for i, t in enumerate(options)]
+        runs = ''.join(f'<r>{police(style, bleu)}<t xml:space="preserve">{xml(t)}</t></r>' for t, bleu in morceaux if t)
+        feuille = (feuille[:m.start()] + f'<c r="{ref}" s="{style}" t="inlineStr"><is>{runs}</is></c>'
+                   + feuille[m.end():])
     for ref, valeur in champs.items():
         valeur = ' '.join(str(valeur or '').split())
         m = cellule(ref)
@@ -9693,8 +10391,8 @@ def _pv_visite_pdf(champs, coches=(), titre='PV de visite'):
         boite('B', 'AG', r, r)
         texte('B', 'AG', r, r, [(libelle, 'b' if gras else '', NOIR), (champs.get(ref) or '', '', BLEU)], 9.9)
 
-    def option(c1, c2, r, ref, libelle, aligne='centre'):
-        coche = ref in coches
+    def option(c1, c2, r, case, libelle, aligne='centre'):
+        coche = case in coches
         coul = BLEU if coche else NOIR
         texte(c1, c2, r, r, [('◉' if coche else '◯', '', coul), (' ' + libelle, '', coul)], 9.9, aligne)
 
@@ -9730,16 +10428,16 @@ def _pv_visite_pdf(champs, coches=(), titre='PV de visite'):
     rubrique(12, 'Nom du tuteur universitaire : ', 'B12')
     boite('B', 'AG', 13, 13)
     texte('B', 'F', 13, 13, [('Site de formation :', '', NOIR)], 9.9)
-    option('G', 'O', 13, 'G13', 'Campus de la Garde')
-    option('P', 'X', 13, 'P13', 'Campus de Toulon')
-    option('Y', 'AG', 13, 'Y13', 'Campus de Draguignan')
+    option('G', 'O', 13, ('G13', 0), 'Campus de la Garde')
+    option('P', 'X', 13, ('P13', 0), 'Campus de Toulon')
+    option('Y', 'AG', 13, ('Y13', 0), 'Campus de Draguignan')
     # Étudiant, entreprise, tuteur entreprise
     bandeau(14, "Partie concernant l'étudiant/e")
     rubrique(15, 'Nom : ', 'B15')
     rubrique(16, 'Prénom : ', 'B16')
     boite('B', 'AG', 17, 17)
-    option('E', 'P', 17, '-', "contrat d'apprentissage")
-    option('Q', 'AE', 17, '-', 'contrat de professionalisation')
+    option('E', 'P', 17, ('B17', 0), "contrat d'apprentissage")
+    option('Q', 'AE', 17, ('B17', 1), 'contrat de professionalisation')   # orthographe de la trame
     bandeau(18, "Partie concernant l'entreprise d'accueil")
     rubrique(19, "Nom de l'entreprise visitée : ", 'B19')
     rubrique(20, "Adresse de l'entreprise visitée : ", 'B20', gras=False)
@@ -9853,7 +10551,7 @@ def get_alternance_visites():
     tous = droits['tout'] or droits['recap']
     gens = _alt_visites_alternants(pdb, start, _suivi_key(session.get('teacher_name')), tous)
     champs = ('id', 'person_id', 'nom', 'prenom', 'pid', 'promotion', 'annee_etude', 'mien',
-              'tuteur_univ', 'entreprise', 'adresse', 'ville', 'departement', 'tuteur_entreprise')
+              'tuteur_univ', 'entreprise', 'adresse', 'ville', 'departement', 'tuteur_entreprise', 'contrat')
     return jsonify({'annee': annee, 'echeances': _alt_echeances(pdb, annee, 'visite'),
                     'droits': {'echeances': droits['echeances'], 'tous': tous},
                     'aujourdhui': datetime.now().strftime('%Y-%m-%d'),
@@ -9865,9 +10563,9 @@ def get_alternance_visites():
 def get_alternance_pv_visite(sid):
     """Le PV de visite d'un alternant pour l'année ?annee=, en Excel (défaut) ou en PDF
     (?format=pdf), prérempli : année, formation et année d'étude, parcours, tuteur
-    universitaire, site de formation (La Garde), l'alternant, son entreprise et son
-    adresse si la fiche en a une (_pv_adresse), le tuteur entreprise. Pour son tuteur
-    universitaire, l'admin et les responsables ALT et FTP."""
+    universitaire, site de formation (La Garde), l'alternant et son contrat, son
+    entreprise et son adresse si la fiche en a une (_pv_adresse), le tuteur entreprise.
+    Pour son tuteur universitaire, l'admin et les responsables ALT et FTP."""
     droits = _alt_depots_droits()
     if not droits['voir']:
         return error_response('Accès réservé', 403)
@@ -9893,11 +10591,13 @@ def get_alternance_pv_visite(sid):
         'B19': s['entreprise'], 'B20': _pv_adresse(s),
         'B22': t_nom, 'B23': t_prenom,
     }
+    # Campus de la Garde, et le contrat de la fiche s'il est renseigné
+    coches = [_PV_VISITE_CAMPUS] + ([_PV_VISITE_CONTRATS[s['contrat']]] if s.get('contrat') in _PV_VISITE_CONTRATS else [])
     fichier = _zip_nom(f'PV visite {nom} {prenom} {annee}', 150)
     if request.args.get('format') == 'pdf':
-        return send_file(io.BytesIO(_pv_visite_pdf(champs, [_PV_VISITE_CAMPUS], f'PV de visite {nom} {prenom} {annee}')),
+        return send_file(io.BytesIO(_pv_visite_pdf(champs, coches, f'PV de visite {nom} {prenom} {annee}')),
                          as_attachment=True, download_name=fichier + '.pdf', mimetype='application/pdf')
-    return send_file(io.BytesIO(_pv_visite_xlsx(champs, coches=[_PV_VISITE_CAMPUS])), as_attachment=True,
+    return send_file(io.BytesIO(_pv_visite_xlsx(champs, coches=coches)), as_attachment=True,
                      download_name=fichier + '.xlsx',
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
@@ -13292,7 +13992,69 @@ def _jury_ue_numbers(ref_all):
                 nums[nm] = len(nums) + 1
     return nums
 
+# Calcul jury gardé en mémoire, par base et par promotion : {(fichier, pid): (clé, résultat
+# sérialisé)}. Resservi tant que rien n'a été écrit depuis (jetons de _poser_jeton_cache).
+# Un jeton par BASE et non par promotion : les notes d'une cohorte comptent dans le jury
+# d'une autre (redoublants). EDT_JURY_CACHE=0 le coupe (diagnostic).
+_JURY_CACHE = {}
+_JURY_CACHE_ACTIF = os.environ.get('EDT_JURY_CACHE', '1') != '0'
+
+def _jury_cache_cle(pdb):
+    """(fichier de la base, clé de validité) ou None quand le cache ne peut pas servir
+    (coupé, hors contexte Flask, jeton absent). La clé réunit les jetons des deux bases
+    et la date du fichier de coefficients de référence (BONUS/PEN manquants y sont
+    pris). Lue AVANT le calcul : un résultat ne peut ainsi porter qu'une clé plus
+    ancienne que ses données, jamais l'inverse."""
+    if not _JURY_CACHE_ACTIF or not has_app_context():
+        return None
+    try:
+        fichier = pdb.execute('PRAGMA database_list').fetchone()[2]
+        jp = pdb.execute('SELECT jeton FROM cache_jeton WHERE id = 1').fetchone()
+        jg = get_programmes_db().execute('SELECT jeton FROM cache_jeton WHERE id = 1').fetchone()
+    except (sqlite3.Error, TypeError, IndexError):
+        return None
+    if not fichier or jp is None or jg is None:
+        return None
+    try:
+        ref = os.stat(_REF_COEFF_FILE).st_mtime_ns
+    except OSError:
+        ref = None
+    return fichier, (jp[0], jg[0], ref)
+
 def _jury_compute(pdb, pid):
+    """Calcul jury d'une promotion (cf _jury_calcul), refait seulement si promotions.db
+    ou programmes.db ont changé depuis le dernier. Chaque appel reçoit sa propre copie :
+    un appelant qui la modifie ne touche pas à celle des autres."""
+    cle = _jury_cache_cle(pdb)
+    if cle is not None:
+        garde = _JURY_CACHE.get((cle[0], pid))
+        if garde is not None and garde[0] == cle[1]:
+            return pickle.loads(garde[1])
+    comp = _jury_calcul(pdb, pid)
+    if cle is not None:
+        _JURY_CACHE[(cle[0], pid)] = (cle[1], pickle.dumps(comp, pickle.HIGHEST_PROTOCOL))
+    return comp
+
+def _jury_prechauffer():
+    """Calcul jury de toutes les promotions, au démarrage du serveur : le premier
+    visiteur après un rechargement trouve tout prêt. Fait d'un seul tenant (pas de
+    thread : un hébergement WSGI peut ne pas les faire tourner) ; une erreur ici
+    n'empêche jamais le site de démarrer, la page refera simplement le calcul."""
+    if not _JURY_CACHE_ACTIF:
+        return
+    t0 = time.perf_counter()
+    n = 0
+    try:
+        with app.app_context():
+            pdb = get_promotions_db()
+            for r in pdb.execute('SELECT id FROM promotions ORDER BY id').fetchall():
+                _jury_compute(pdb, r['id'])
+                n += 1
+        _audit('JURY_PRECHAUFFAGE', promotions=n, duree=f'{time.perf_counter() - t0:.2f}s')
+    except Exception as e:
+        _audit('JURY_PRECHAUFFAGE_ERROR', promotions=n, error=str(e))
+
+def _jury_calcul(pdb, pid):
     """Cœur du calcul jury pour TOUTES les années (1..3) d'une promotion. Retourne les
     structures réutilisables : moyennes semestrielles/annuelles par UE, codes UE
     (ADM/ADMJ/CMP/AJ) et décision d'année par étudiant.
@@ -19340,6 +20102,15 @@ def _generate_timetable_glouton():
 
         # Clear existing timetable for these weeks
         placeholders = ','.join('?' * len(weeks))
+        # Ce générateur de secours ne sait pas garder les cours figés : il les effacerait
+        try:
+            figes = cursor.execute(f'SELECT COUNT(*) FROM timetable_slots WHERE fige = 1 '
+                                   f'AND week_number IN ({placeholders})', weeks).fetchone()[0]
+        except sqlite3.OperationalError:
+            figes = 0
+        if figes:
+            return error_response(f'{figes} cours figé(s) dans ces semaines : seul le solveur PuLP sait les garder '
+                                  'à leur place (pip install -r requirements.txt)', 409)
         cursor.execute(f'DELETE FROM timetable_slots WHERE week_number IN ({placeholders})', weeks)
 
         # Build time grid: 30-min slots from day_start to day_end
@@ -23262,6 +24033,7 @@ os.makedirs('static', exist_ok=True)
 init_db()
 _init_promotions_db()
 _init_programmes_db()
+_jury_prechauffer()   # après les migrations : bases à jour, jetons posés
 
 if __name__ == '__main__':
     # Run Flask app

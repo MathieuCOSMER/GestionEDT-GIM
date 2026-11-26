@@ -369,6 +369,10 @@ class Evenement:
     salle: tuple | None     # ('STD',) | ('INFO',) | ('R', room_id) | ('X', nom)
     public: tuple           # ((annee, face, part_min, part_max), …)
     semestre: str = ''
+    # Cours gardé à sa place (timetable_slots.fige) : (jour, pas) imposé, et sa salle
+    fixe: tuple | None = None
+    salle_fixe: int | None = None
+    origine: str | None = None      # 'hp' : repris d'Hyperplanning à l'import de son EDT
 
     @property
     def libelle(self):
@@ -432,6 +436,13 @@ class Donnees:
                 db, 'SELECT teacher_id, week_number, grille FROM teacher_availability_weeks')
                 if r['teacher_id'] in self.enseignants}
         self._dispos_sem = {}
+        # Indisponibilités importées d'Hyperplanning (même format de grille) : fermées
+        # EN PLUS de la grille de l'enseignant, cette semaine-là
+        self.grilles_hp = {}
+        if _table_existe(db, 'teacher_availability_hp'):
+            self.grilles_hp = {(r['teacher_id'], r['week_number']): r['grille'] for r in _rows(
+                db, 'SELECT teacher_id, week_number, grille FROM teacher_availability_hp')
+                if r['teacher_id'] in self.enseignants and '0' in (r['grille'] or '')}
 
         debut_annee = 36
         if _table_existe(db, 'app_settings'):
@@ -496,14 +507,19 @@ class Donnees:
 
     def dispos_de(self, tid, semaine):
         """(créneaux interdits, coût par créneau, dispos saisies ?) de l'enseignant
-        pour cette semaine : sa grille propre s'il en a une, sinon sa semaine type."""
-        g = self.grilles_semaine.get((tid, semaine))
-        if g is None:
-            return self.dispos[tid]
+        pour cette semaine : sa grille propre s'il en a une, sinon sa semaine type ;
+        les indisponibilités importées d'Hyperplanning s'y ajoutent."""
         cle = (tid, semaine)
-        if cle not in self._dispos_sem:
-            self._dispos_sem[cle] = self._dispos(lignes_grille(g))
-        return self._dispos_sem[cle]
+        if cle in self._dispos_sem:
+            return self._dispos_sem[cle]
+        g = self.grilles_semaine.get(cle)
+        res = self.dispos[tid] if g is None else self._dispos(lignes_grille(g))
+        hp = self.grilles_hp.get(cle)
+        if hp:
+            ferme = self._dispos([l for l in lignes_grille(hp) if not l['available']])[0]
+            res = (res[0] | ferme, res[1], res[2])
+        self._dispos_sem[cle] = res
+        return res
 
     def a_des_dispos(self, tid):
         """Semaine type ou au moins une semaine particulière saisie."""
@@ -624,6 +640,51 @@ def evenements_semaine(db, don, semaine, avert):
                     enseignant=ens, salle=don.salle_de(r['room_name']),
                     public=don.public(r['year_group'], ft, g, nn, r['sem'], tt), semestre=r['sem']))
     return evts
+
+
+def cours_figes(db, reg, semaine):
+    """Cours de la semaine gardés à leur place (timetable_slots.fige = 1), pour les
+    années recalculées : posés par un calcul précédent et figés, par exemple à l'import
+    des indisponibilités d'Hyperplanning, pour ne plus bouger."""
+    cols = [r[1] for r in db.execute('PRAGMA table_info(timetable_slots)').fetchall()]
+    if 'fige' not in cols:
+        return []
+    filtre, args = _filtre_annees(reg)
+    origine = 'ts.origine' if 'origine' in cols else 'NULL'
+    return _rows(db, f'''
+        SELECT ts.id, ts.course_session_id, ts.group_index, ts.day_of_week, ts.start_time, ts.end_time,
+               ts.room_id, c.code, {origine} AS origine
+        FROM timetable_slots ts
+        JOIN course_sessions cs ON cs.id = ts.course_session_id
+        JOIN courses c ON c.id = cs.course_id
+        JOIN semesters s ON s.id = c.semester_id
+        WHERE ts.week_number = ? AND ts.fige = 1{filtre}
+        ORDER BY ts.day_of_week, ts.start_time''', (semaine, *args))
+
+
+def appliquer_figes(evts, figes, reg, semaine, avert):
+    """Rattache chaque cours figé à une séance de la répartition de la semaine (même
+    séance, même groupe, de préférence même durée) : elle garde son jour, son heure et
+    sa salle. Un cours figé sans séance correspondante (répartition modifiée depuis)
+    est signalé ; le nouveau calcul ne le garde pas."""
+    libres = defaultdict(list)
+    for e in evts:
+        libres[(e.session_id, e.groupe)].append(e)
+    for f in figes:
+        t0, t1 = _minutes(f['start_time']), _minutes(f['end_time'])
+        u, reste = divmod(t0 - reg.debut, reg.pas)
+        lon = max(1, round((t1 - t0) / reg.pas))
+        cands = libres.get((f['course_session_id'], int(f['group_index'] or 1)), [])
+        e = next((e for e in cands if e.lon == lon), cands[0] if cands else None)
+        quand = f'{JOURS[int(f["day_of_week"])]} {f["start_time"][:5]}' if 0 <= int(f['day_of_week']) < 6 else ''
+        if e is None or reste or u < 0:
+            avert.append(f'S{semaine} · {f["code"]} ({quand}) : cours figé sans séance correspondante dans la '
+                         'répartition, pas gardé')
+            continue
+        cands.remove(e)
+        e.fixe = (int(f['day_of_week']), int(u))
+        e.salle_fixe = f['room_id']
+        e.origine = f.get('origine')
 
 
 def occupations_fixes(db, don, semaine):
@@ -927,8 +988,23 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
     # Débuts possibles de chaque séance (fermetures et indisponibilités exclues d'emblée)
     debuts = {}
     for e in evts:
-        interdit = don.dispos_de(e.enseignant, semaine)[0] if e.enseignant else set()
         bl = set().union(*(bloque[(an, f)] for an, f, _, _ in e.public))
+        if e.fixe:
+            # Cours figé : sa place seulement. Ses dispos (indisponibilités importées
+            # comprises) ne comptent pas — on a choisi de le garder ; les jours fermés,
+            # les blocages des étudiants et les cours des autres années, si.
+            d, u = e.fixe
+            couvre = [(d, v) for v in range(u, u + e.lon)]
+            pris = e.enseignant and any((e.enseignant, d, v) in ens_occupe for v in range(u, u + e.lon))
+            if d in J and u + e.lon <= U and not any(c in bl or c in ferme for c in couvre) and not pris:
+                debuts[e.idx] = [(d, u)]
+            else:
+                debuts[e.idx] = []
+                avert.append(f'S{semaine} · {e.libelle} ({JOURS[d] if 0 <= d < 6 else "?"} '
+                             f'{_hhmm(reg.debut + u * reg.pas)}) : cours figé qui ne peut plus rester à sa place '
+                             f'({"enseignant pris par une autre année" if pris else "jour fermé ou créneau bloqué"})')
+            continue
+        interdit = don.dispos_de(e.enseignant, semaine)[0] if e.enseignant else set()
         poss = []
         autorises = sorted(reg.debuts_pour(e.lon))
         for d in J:
@@ -955,9 +1031,13 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
         if e.enseignant:
             par_ens[e.enseignant].append(e)
     par_atome = {k: [evts[i] for i in a] for k, a in enumerate(maximaux)}
+    # Chaînes de séances interchangeables (même séance, même groupe), ordonnées pour
+    # casser les symétries ; un cours figé n'en fait pas partie (sa place est imposée)
     chaines = defaultdict(list)
     for e in evts:
-        chaines[(e.session_id, e.groupe)].append(e)
+        if not e.fixe:
+            chaines[(e.session_id, e.groupe)].append(e)
+    seuls_figes = [[e] for e in evts if e.fixe]
     for es in chaines.values():
         es.sort(key=lambda e: e.rang)
     espacement = _espacement_matieres(evts, maximaux)
@@ -983,7 +1063,8 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
         for e in evts:
             if vars_de[e.idx]:
                 prob += place[e.idx] <= 1, f'une_fois_{e.idx}'
-                cout['placement'].append(-P['non_place'] * e.lon * place[e.idx])
+                # un cours figé pèse bien plus : il n'est jamais sacrifié tant que sa place est possible
+                cout['placement'].append(-P['non_place'] * e.lon * (100 if e.fixe else 1) * place[e.idx])
 
         # Occupation par ressource : (ressource, jour, pas) -> variables
         occ = defaultdict(list)
@@ -1224,8 +1305,9 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
         matj = defaultdict(int)    # (atome, matière, jour) -> séances déjà posées
         cap_std = lambda d, w: don.nb_std - salle_reduite[(('STD',), d, w)]   # noqa: E731
         choisi = {}
-        ordre = sorted(chaines.values(), key=lambda es: (min(len(debuts[e.idx]) for e in es),
-                                                         -sum(e.lon for e in es)))
+        # les cours figés (une seule place possible) passent en premier
+        ordre = sorted(list(chaines.values()) + seuls_figes,
+                       key=lambda es: (not es[0].fixe, min(len(debuts[e.idx]) for e in es), -sum(e.lon for e in es)))
         for es in ordre:
             fin_prec = 0
             for e in es:
@@ -1439,13 +1521,19 @@ def attribuer_salles(don, placements, fixes, semaine, avert):
 
     salle = {}
     tri = sorted(placements, key=lambda p: (p[1], p[2], -p[0].lon))
+    for e, d, u in tri:                                  # cours figés : leur salle d'avant
+        if e.fixe and e.salle_fixe and libre(e.salle_fixe, d, u, e.lon):
+            salle[e.idx] = e.salle_fixe
+            prendre(e.salle_fixe, d, u, e.lon)
     for e, d, u in tri:                                  # salles précises d'abord
+        if e.idx in salle:
+            continue
         if e.salle and e.salle[0] == 'R':
             salle[e.idx] = e.salle[1]
             prendre(e.salle[1], d, u, e.lon)
     besoin_std = []
     for e, d, u in tri:
-        if not e.salle or e.salle[0] in ('R', 'X'):
+        if e.idx in salle or not e.salle or e.salle[0] in ('R', 'X'):
             continue
         if e.salle == ('INFO',):
             fixe = don.salle_info['id'] if don.salle_info else None
@@ -1497,8 +1585,12 @@ def _ordre_semaines(semaines, debut_annee):
 
 def _ecrire(db, semaines_ok, resultats, reg):
     cols = [r[1] for r in db.execute('PRAGMA table_info(timetable_slots)').fetchall()]
-    if 'group_index' not in cols:       # migration additive, faite à la première écriture
+    if 'group_index' not in cols:       # migrations additives, faites à la première écriture
         db.execute('ALTER TABLE timetable_slots ADD COLUMN group_index INTEGER')
+    if 'fige' not in cols:
+        db.execute('ALTER TABLE timetable_slots ADD COLUMN fige INTEGER DEFAULT 0')
+    if 'origine' not in cols:
+        db.execute('ALTER TABLE timetable_slots ADD COLUMN origine TEXT')
     filtre, args = _filtre_annees(reg)
     for w in semaines_ok:
         if reg.annees:
@@ -1511,10 +1603,11 @@ def _ecrire(db, semaines_ok, resultats, reg):
     for c in resultats:
         db.execute('''INSERT INTO timetable_slots
                           (course_session_id, week_number, day_of_week, start_time, end_time,
-                           room_id, teacher_id, formation_type, group_index)
-                      VALUES (?,?,?,?,?,?,?,?,?)''',
+                           room_id, teacher_id, formation_type, group_index, fige, origine)
+                      VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
                    (c['course_session_id'], c['week_number'], c['day_of_week'], c['start_time'],
-                    c['end_time'], c['room_id'], c['teacher_id'], c['formation_type'], c['group_index']))
+                    c['end_time'], c['room_id'], c['teacher_id'], c['formation_type'], c['group_index'],
+                    1 if c.get('fige') else 0, c.get('origine')))
         n += 1
     return n
 
@@ -1553,6 +1646,7 @@ def generer(db, data):
             rapport.append({'semaine': w, 'statut': 'vide', 'seances': 0})
             continue
         charges.extend(_charges(w, evts, reg))
+        appliquer_figes(evts, cours_figes(db, reg, w), reg, w, avert)
         fixes = occupations_fixes(db, don, w)
         cal = calendrier_semaine(don, w)
         ferme, ferie_semaine, feries, jours_fermes = cal
@@ -1563,8 +1657,8 @@ def generer(db, data):
                          + (', jeudi après-midi ouvert aux FTP' if rouvert else ''))
         # Contrôle préalable (pré-analyse de flop!) : assez de dispos pour ses heures ?
         ouverts = {(d, u) for d in reg.jours for u in range(reg.nb_pas)} - ferme
-        for tid in {e.enseignant for e in evts if e.enseignant}:
-            besoin = sum(e.lon for e in evts if e.enseignant == tid)
+        for tid in {e.enseignant for e in evts if e.enseignant and not e.fixe}:
+            besoin = sum(e.lon for e in evts if e.enseignant == tid and not e.fixe)
             offre = len(ouverts - don.dispos_de(tid, w)[0])
             if offre < besoin:
                 avert.append(f'S{w} · {don.enseignants[tid]["name"]} : {besoin * reg.pas / 60:g} h à placer '
@@ -1598,14 +1692,18 @@ def generer(db, data):
                 'teacher_name': nom_ens(e.enseignant), 'room_name': nom_salle.get(rid),
                 'course_name': noms_cours.get(e.course_id),
                 # promotions concernées (vue Planning) : [[année, 'FTP'|'ALT'], …]
-                'publics': sorted({(a, f) for a, f, _, _ in e.public})})
+                'publics': sorted({(a, f) for a, f, _, _ in e.public}),
+                # cours gardé à sa place : il le reste au prochain calcul (et garde son origine)
+                'fige': 1 if e.fixe else 0, 'origine': e.origine if e.fixe else None})
         for e in non_places:
             conflits.append({'week': w, 'session_id': e.session_id, 'course': e.code, 'type': e.type,
                              'group': e.groupe if e.nb_groupes > 1 else None, 'teacher_id': e.enseignant,
                              'teacher_name': nom_ens(e.enseignant), 'year_group': e.annee,
                              'form_type': e.formation, 'hours': e.lon * reg.pas / 60,
-                             'reason': 'Aucun créneau compatible (enseignant, groupe ou salle)'})
-        infos.update({'places': len(placements), 'non_places': len(non_places)})
+                             'reason': ('Cours figé : sa place n\'est plus possible' if e.fixe
+                                        else 'Aucun créneau compatible (enseignant, groupe ou salle)')})
+        infos.update({'places': len(placements), 'non_places': len(non_places),
+                      'figes': sum(1 for e, _, _ in placements if e.fixe)})
         rapport.append(infos)
 
     ecrits = 0

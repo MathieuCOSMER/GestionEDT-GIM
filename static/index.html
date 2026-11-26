@@ -252,6 +252,16 @@
         .dsp-grid tr:hover td.dsp-h { background: transparent; }
         /* Case qui diffère entre les semaines choisies (hachures, comme Hyperplanning) */
         .dsp-mixte, .dsp-grid td.dsp-mixte { background: repeating-linear-gradient(45deg, #86efac 0 3px, #fca5a5 3px 6px); color: #374151; }
+        /* Indisponibilités importées d'Hyperplanning : hachures par-dessus le niveau peint */
+        .dsp-hp, .dsp-grid td.dsp-hp { background-image: repeating-linear-gradient(135deg, rgba(30,41,59,.6) 0 2px, transparent 2px 6px); }
+        .dsp-grid td.dsp-hp-part { background-image: repeating-linear-gradient(135deg, rgba(30,41,59,.28) 0 1px, transparent 1px 7px); }
+        span.dsp-hp { background-color: #e5e7eb; color: #1e293b; }
+        .dsp-sem.hp { background-image: repeating-linear-gradient(135deg, rgba(30,41,59,.22) 0 2px, transparent 2px 5px); }
+        .hp-rap td, .hp-rap th { font-size: .8rem; padding: 4px 6px; vertical-align: top; }
+        .hp-rap tr.hp-ignore td { color: #9ca3af; }
+        .hp-rap select { padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 5px; font-size: .8rem; max-width: 190px; }
+        .hp-barre { height: 8px; background: #e5e7eb; border-radius: 4px; overflow: hidden; margin: 6px 0; }
+        .hp-barre > div { height: 100%; background: #4f46e5; transition: width .2s; }
         .dsp-ferie { font-size: .65rem; font-weight: 700; color: #b45309; }
         .dsp-sel-titre { font-size: .82rem; color: #374151; margin: 2px 0 4px; }
         /* Barre des semaines (choix des semaines peintes) */
@@ -1258,6 +1268,8 @@
             <div class="dsp-actions">
                 <button type="button" class="btn btn-secondary btn-sm" onclick="jfAjouter()">+ Ajouter un jour</button>
                 <button type="button" class="btn btn-secondary btn-sm" id="jf-legaux" onclick="jfLegaux()">Ajouter les jours fériés légaux manquants</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="jf-hp" onclick="jfHpOuvrir()"
+                    title="Les jours marqués « Férié » dans un emploi du temps imprimé depuis Hyperplanning (PDF)">📥 Relever dans un PDF Hyperplanning…</button>
                 <span class="dsp-status" id="jf-modif"></span>
             </div>
         </div>
@@ -1936,6 +1948,57 @@
     </div>
 </div>
 
+<!-- ===== MODAL IMPORT DES INDISPONIBILITÉS D'HYPERPLANNING (Contraintes) ===== -->
+<div class="modal-backdrop" id="modal-hp-import">
+    <div class="modal" style="max-width:980px">
+        <h2 style="font-size:1.05rem;margin-bottom:4px">Importer les indisponibilités d'Hyperplanning</h2>
+        <p style="color:#6b7280;font-size:.84rem;margin:0 0 6px">
+            PDF de l'emploi du temps des enseignants imprimé depuis Hyperplanning avec la <strong>journée complète</strong>
+            (8h00 → 21h00) : <strong>jours datés</strong> (« lundi 4 janvier 2027 »), une semaine par page ou plusieurs
+            côte à côte, ou <strong>semaines en colonnes</strong> (« 24 août - 29 août », jours en rangées). Un ou
+            plusieurs enseignants par fichier, toute l'année si besoin. Les zones <strong>hachurées</strong> deviennent
+            des indisponibilités. Imprimé <strong>une semaine par page</strong> ou <strong>semaines en colonnes</strong>,
+            les cours posés dans Hyperplanning sont lus aussi : ceux d'autres départements sont bloqués, et les cours GIM
+            peuvent être repris dans l'emploi du temps de l'appli, figés. Des horaires compactés (heures sans cours
+            réduites) ne conviennent pas : les hachures y sont coupées.</p>
+        <p style="color:#6b7280;font-size:.84rem;margin:0 0 8px">
+            Les indisponibilités importées sont gardées <strong>à part</strong> de la grille que l'enseignant peint :
+            elles s'y ajoutent pour le calcul de l'emploi du temps. Un nouvel import remplace les semaines que le
+            fichier couvre ; les autres semaines restent. <strong>Rien n'est écrit avant votre confirmation.</strong></p>
+        <div class="form-group">
+            <label>Fichier PDF *</label>
+            <input type="file" id="hp-import-file" accept=".pdf" onchange="hpLireFichier(this)">
+        </div>
+        <div id="hp-import-report" style="max-height:58vh;overflow:auto"></div>
+        <div class="form-actions" style="margin-top:14px">
+            <button type="button" class="btn btn-secondary" onclick="hpFermerImport()">Fermer</button>
+            <button type="button" class="btn btn-primary" id="hp-import-apply" onclick="hpAppliquer()" disabled>Importer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODAL JOURS FÉRIÉS ET PONTS RELEVÉS DANS HYPERPLANNING (Calendrier) ===== -->
+<div class="modal-backdrop" id="modal-jf-hp">
+    <div class="modal" style="max-width:760px">
+        <h2 style="font-size:1.05rem;margin-bottom:4px">Relever les jours fériés et ponts dans Hyperplanning</h2>
+        <p style="color:#6b7280;font-size:.84rem;margin:0 0 8px">
+            PDF de l'emploi du temps imprimé depuis Hyperplanning avec les <strong>jours datés</strong>
+            (« lundi 4 janvier 2027 ») ou les <strong>semaines en colonnes</strong> (« 24 août - 29 août ») : celui
+            d'un seul enseignant suffit, sur toute l'année, car les jours fermés de
+            l'établissement y sont marqués « Férié ». Les jours qui manquent à la liste sont proposés ; cochés, ils y
+            sont ajoutés, à vérifier puis à <strong>enregistrer avec le calendrier</strong>.</p>
+        <div class="form-group">
+            <label>Fichier PDF *</label>
+            <input type="file" id="jf-hp-file" accept=".pdf" onchange="jfHpLire(this)">
+        </div>
+        <div id="jf-hp-report" style="max-height:55vh;overflow:auto"></div>
+        <div class="form-actions" style="margin-top:14px">
+            <button type="button" class="btn btn-secondary" onclick="jfHpFermer()">Fermer</button>
+            <button type="button" class="btn btn-primary" id="jf-hp-apply" onclick="jfHpAjouter()" disabled>Ajouter à la liste</button>
+        </div>
+    </div>
+</div>
+
 <!-- ===== AIDE : mode d'emploi du site (rendu par aide.js) ===== -->
 <div class="page" id="page-aide">
     <div class="toolbar">
@@ -2534,11 +2597,20 @@
 
 <!-- ===== MODAL ENSEIGNANT ===== -->
 <!-- Fiche de suivi d'un stagiaire ou d'un alternant (onglets Stages / Alternance) -->
+<!-- Fiche de poste d'un stagiaire (onglet Stages) : fichier choisi puis envoyé aussitôt -->
+<input type="file" id="stage-fiche-file" style="display:none" onchange="stageFicheEnvoyer(this)"
+       accept=".pdf,.doc,.docx,.odt,.rtf,.xls,.xlsx,.ods">
 <div class="modal-backdrop" id="modal-suivi">
     <div class="modal" style="max-width:640px">
         <h2 id="suivi-modal-title" style="margin-bottom:4px">Fiche de suivi</h2>
         <p id="suivi-modal-sub" style="color:#6b7280;margin:0 0 14px;font-size:.85rem"></p>
         <form onsubmit="submitSuivi(event)">
+            <div class="form-group" id="suivi-contrat-groupe"><label>Contrat <span style="font-weight:400;color:#6b7280">(coché sur le PV de visite)</span></label>
+                <select id="suivi-contrat">
+                    <option value="">— non renseigné —</option>
+                    <option value="apprentissage">Contrat d'apprentissage</option>
+                    <option value="professionnalisation">Contrat de professionnalisation</option>
+                </select></div>
             <div class="form-group"><label>Entreprise / organisme</label>
                 <input id="suivi-entreprise" list="suivi-entreprises" oninput="suiviEntrepriseInput()" autocomplete="off"></div>
             <datalist id="suivi-entreprises"></datalist>
@@ -2562,6 +2634,9 @@
             </div>
             <div class="form-group"><label id="suivi-mission-label">Mission</label>
                 <textarea id="suivi-mission" rows="3" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font:inherit;resize:vertical"></textarea></div>
+            <!-- Stages seulement : déposée, remplacée ou retirée tout de suite, sans « Enregistrer » -->
+            <div class="form-group" id="suivi-fiche-poste-groupe"><label>Fiche de poste</label>
+                <div id="suivi-fiche-poste"></div></div>
             <div class="form-group"><label>Tuteur universitaire</label><select id="suivi-tuteur_univ"></select></div>
             <div class="form-actions">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('modal-suivi')">Annuler</button>
@@ -5063,7 +5138,8 @@ function renderConstraintsTeacher(d) {
             <p style="color:#6b7280;margin:0 0 4px">Choisissez les semaines dans la barre (toutes au départ : c'est votre semaine
                type ; ou une, plusieurs, une plage, les paires…), puis peignez : choisissez un pinceau et cliquez ou glissez sur les
                demi-heures (un clic sur un jour ou une heure peint toute la colonne ou la ligne). La peinture vaut pour les semaines
-               choisies. Cette grille sert directement au calcul automatique de l'emploi du temps.</p>
+               choisies. Cette grille sert directement au calcul automatique de l'emploi du temps. Les créneaux hachurés sont vos
+               indisponibilités relevées dans Hyperplanning (importées par l'administration) : elles s'ajoutent à votre grille.</p>
             <div id="dsp-me"></div>
         </div>`;
     dspCharger('dsp-me', '/constraints/me/dispos', true);
@@ -5132,8 +5208,12 @@ function renderConstraintsAdmin(list, below = false) {
             <select id="dsp-adm-sel" onchange="dspAdminChoisir()" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
                 <option value="">Chargement…</option></select>
             <span id="dsp-adm-compte" class="edtg-note"></span>
+            ${adminPower('svc:contraintes') ? `<button type="button" class="btn btn-secondary btn-sm" style="margin-left:auto"
+                onclick="hpOuvrirImport()" title="Lire les zones hachurées de l'emploi du temps imprimé depuis Hyperplanning (PDF)">
+                📥 Importer les indisponibilités d'Hyperplanning…</button>` : ''}
         </div>
-        <p class="edtg-note" style="margin:0 0 6px">✓ = grille enregistrée (« n sem. » : semaines avec leur propre grille). Sans grille,
+        <p class="edtg-note" style="margin:0 0 6px">✓ = grille enregistrée (« n sem. » : semaines avec leur propre grille ;
+            « HP n sem. » : semaines avec des indisponibilités importées d'Hyperplanning, hachurées dans la grille). Sans grille,
             l'enseignant est supposé disponible toutes les semaines pour le calcul de l'emploi du temps. Ses contraintes écrites
             s'affichent à côté pour les reporter, semaine par semaine si besoin.</p>
         <div class="dsp-wrap"><div id="dsp-adm"></div><div id="dsp-adm-texte" class="dsp-texte" style="display:none"></div></div>
@@ -5229,6 +5309,9 @@ function _dspAppliquer(id, etat, garderSel) {
         type: etat.type ? _dspCases(etat.type) : _dspDepuisCreneaux(etat.creneaux || []),
         typeDefini: !!etat.type,
         semaines: new Map(Object.entries(etat.semaines || {}).map(([w, s]) => [+w, _dspCases(s)])),
+        // indisponibilités importées d'Hyperplanning : n° de semaine -> grille ('0' = indisponible)
+        hp: new Map(Object.entries(etat.hp || {}).filter(([, s]) => s.includes('0')).map(([w, s]) => [+w, s])),
+        hpSource: etat.hp_source || '', hpDate: etat.hp_date || '',
         liste, url: prec.url, edit: prec.edit, modif: false, pinceau: prec.pinceau ?? 0,
         etat: { annee: etat.annee, debut: etat.debut, fermes: etat.fermes || [] },
         ancre: null, sel: new Set(liste.map(s => s.semaine)),
@@ -5275,6 +5358,17 @@ function _dspCase(g, k) {
     return ws.every(w => _dspGrilleDe(g, w)[k] === v0) ? v0 : 'mixte';
 }
 
+// Indisponibilité importée d'Hyperplanning sur la case k, pour les semaines choisies :
+// 'tout' (toutes), 'part' (certaines) ou ''
+function _dspHp(g, k) {
+    if (!g.hp || !g.hp.size) return '';
+    const ws = _dspSelListe(g);
+    const liste = ws.length ? ws : g.liste.map(s => s.semaine);
+    let n = 0;
+    liste.forEach(w => { const s = g.hp.get(w); if (s && s[k] === '0') n++; });
+    return !n ? '' : (n === liste.length ? 'tout' : 'part');
+}
+
 // Peint la case k au niveau n pour les semaines choisies
 function _dspPoser(g, k, n) {
     if (g.type[k] === null) return;                    // le fermé reste fermé
@@ -5304,10 +5398,12 @@ function _dspLibSel(g) {
 function _dspStatut(g) {
     if (g.modif) return '<span class="dsp-status dirty">Modifications non enregistrées</span>';
     const propres = g.liste.map(s => s.semaine).filter(w => g.semaines.has(w));
+    const hp = g.hp && g.hp.size ? ` · Hyperplanning : indisponibilités importées sur ${g.hp.size} semaine(s)${
+        g.hpDate ? ` (import du ${esc(g.hpDate)})` : ''}` : '';
     if (!g.typeDefini && !propres.length)
-        return '<span class="dsp-status">Aucune grille enregistrée : disponible toutes les semaines par défaut</span>';
+        return `<span class="dsp-status">Aucune grille enregistrée : disponible toutes les semaines par défaut${hp}</span>`;
     return `<span class="dsp-status">${g.typeDefini ? 'Semaine type enregistrée' : 'Pas de semaine type (disponible par défaut)'}${
-        propres.length ? ` · ${propres.length} semaine(s) particulière(s) : S${propres.slice(0, 10).join(', S')}${propres.length > 10 ? '…' : ''}` : ''}</span>`;
+        propres.length ? ` · ${propres.length} semaine(s) particulière(s) : S${propres.slice(0, 10).join(', S')}${propres.length > 10 ? '…' : ''}` : ''}${hp}</span>`;
 }
 
 function _dspBarreSemaines(id, g) {
@@ -5319,11 +5415,13 @@ function _dspBarreSemaines(id, g) {
         const lib = mois !== moisPrec ? mois : '';
         moisPrec = mois;
         const fer = g.etat.fermes.filter(f => f.semaine === w && f.jour <= 5);
+        const hp = g.hp && g.hp.has(w);
         const titre = `S${w}${d ? ` · du ${_plJJMM(d[0])} au ${_plJJMM(d[5])}` : ''}${
             g.semaines.has(w) ? ' · grille propre' : ' · semaine type'}${cours ? ' · cours prévus' : ' · pas de cours prévu'}${
+            hp ? ' · indisponibilités Hyperplanning' : ''}${
             fer.length ? ' · ' + fer.map(f => (f.type === 'pont' ? 'pont' : 'férié') + ' ' + _DSP_JOURS[f.jour].toLowerCase()).join(', ') : ''}`;
         return `<div class="dsp-sem-col"><span class="dsp-mois">${esc(lib)}</span><button type="button" data-w="${w}"
-            class="dsp-sem${g.sel.has(w) ? ' sel' : ''}${cours ? ' cours' : ''}${g.semaines.has(w) ? ' propre' : ''}${fer.length ? ' fer' : ''}"
+            class="dsp-sem${g.sel.has(w) ? ' sel' : ''}${cours ? ' cours' : ''}${g.semaines.has(w) ? ' propre' : ''}${fer.length ? ' fer' : ''}${hp ? ' hp' : ''}"
             title="${esc(titre)}">${w}</button></div>`;
     }).join('');
     return `<div class="dsp-sem-bloc">
@@ -5334,7 +5432,7 @@ function _dspBarreSemaines(id, g) {
         <div class="dsp-sem-barre">${cols}</div>
         <div class="edtg-note" style="margin-top:3px">Clic : une semaine · Ctrl+clic : en ajouter ou en retirer une ·
             Maj+clic ou glisser : une plage. En gras, les semaines où des cours sont prévus ; point rouge : grille
-            propre à la semaine ; souligné : jour férié ou pont.</div>
+            propre à la semaine ; souligné : jour férié ou pont${g.hp && g.hp.size ? ' ; hachuré : indisponibilités importées d\'Hyperplanning' : ''}.</div>
     </div>`;
 }
 
@@ -5344,7 +5442,9 @@ function dspRendre(id) {
     const legende = _DSP_NIVEAUX.map(([n, lib]) => g.edit
         ? `<button type="button" class="dsp-brush dsp-n${n}${g.pinceau === n ? ' active' : ''}" onclick="dspPinceau('${id}', ${n})">${lib}</button>`
         : `<span class="dsp-brush dsp-n${n}">${lib}</span>`).join('')
-        + '<span class="dsp-brush dsp-mixte" title="La case diffère entre les semaines choisies">Diffère selon la semaine</span>';
+        + '<span class="dsp-brush dsp-mixte" title="La case diffère entre les semaines choisies">Diffère selon la semaine</span>'
+        + (g.hp && g.hp.size ? `<span class="dsp-brush dsp-hp" title="Zones hachurées de l'emploi du temps Hyperplanning, importées${
+            g.hpSource ? ' de « ' + esc(g.hpSource) + ' »' : ''} : elles s'ajoutent à la grille peinte pour le calcul de l'emploi du temps (le pinceau ne les modifie pas)">Indisponible dans Hyperplanning</span>` : '');
     // Une seule semaine choisie : les dates, et les jours fériés ou ponts signalés
     const ws = _dspSelListe(g);
     const une = !_dspToutes(g) && ws.length === 1 ? ws[0] : null;
@@ -5361,8 +5461,12 @@ function dspRendre(id) {
         lignes += `<tr><td class="dsp-h" data-u="${u}">${m % 60 ? '' : _dspHeure(m)}</td>${_DSP_JOURS.map((jour, j) => {
             if (!_dspOuvert(j, u)) return '<td class="dsp-ferme" title="Samedi après-midi : pas de cours"></td>';
             const v = _dspCase(g, j * _DSP_U + u);
-            const t = `${jour} ${_dspHeure(m)}–${_dspHeure(m + _DSP_PAS)}${v === 'mixte' ? ' : diffère selon la semaine' : ''}`;
-            return `<td class="dsp-c ${v === 'mixte' ? 'dsp-mixte' : 'dsp-n' + v}" data-j="${j}" data-u="${u}" title="${t}"></td>`;
+            const hp = _dspHp(g, j * _DSP_U + u);
+            const t = `${jour} ${_dspHeure(m)}–${_dspHeure(m + _DSP_PAS)}${
+                hp === 'tout' ? ' · indisponible dans Hyperplanning' : hp === 'part' ? ' · indisponible dans Hyperplanning certaines de ces semaines' : ''}${
+                v === 'mixte' ? ' : diffère selon la semaine' : ''}`;
+            return `<td class="dsp-c ${v === 'mixte' ? 'dsp-mixte' : 'dsp-n' + v}${hp === 'tout' ? ' dsp-hp' : hp === 'part' ? ' dsp-hp-part' : ''}"
+                data-j="${j}" data-u="${u}" title="${t}"></td>`;
         }).join('')}</tr>`;
     }
     const propresSel = ws.filter(w => g.semaines.has(w));
@@ -5373,6 +5477,9 @@ function dspRendre(id) {
             title="Ces semaines reprennent la semaine type">Revenir à la semaine type (${propresSel.length})</button>` : ''}
         ${_dspToutes(g) && (g.typeDefini || g.semaines.size) ? `<button type="button" class="btn btn-secondary btn-sm" style="color:#b91c1c"
             onclick="dspEffacer('${id}')">Supprimer toutes les grilles</button>` : ''}
+        ${id === 'dsp-adm' && g.hp && g.hp.size ? `<button type="button" class="btn btn-secondary btn-sm" style="color:#b91c1c"
+            onclick="dspRetirerHp('${id}')" title="Retire les indisponibilités importées d'Hyperplanning ; la grille peinte reste">
+            Retirer l'import Hyperplanning</button>` : ''}
         <button type="button" class="btn btn-primary btn-sm" onclick="dspEnregistrer('${id}')">Enregistrer</button>` : '';
     zone.innerHTML = `${_dspBarreSemaines(id, g)}
         <div class="dsp-palette">${g.edit ? 'Pinceau :' : ''} ${legende}</div>
@@ -5393,7 +5500,9 @@ function _dspPeindre(id, td) {
     const g = _dspGrilles[id], k = (+td.dataset.j) * _DSP_U + (+td.dataset.u);
     if (_dspCase(g, k) === g.pinceau) return;
     _dspPoser(g, k, g.pinceau);
-    td.className = 'dsp-c dsp-n' + g.pinceau;
+    // les hachures d'Hyperplanning restent : le pinceau ne les touche pas
+    const hp = [...td.classList].filter(c => c.startsWith('dsp-hp')).join(' ');
+    td.className = 'dsp-c dsp-n' + g.pinceau + (hp ? ' ' + hp : '');
     td.title = td.title.replace(/ : diffère selon la semaine$/, '');
     if (!g.modif) _dspModif(id);
 }
@@ -5537,23 +5646,287 @@ async function dspEffacer(id) {
 // Quitter sans enregistrer (garde des modifications non enregistrées)
 function dspAbandonner(id) { const g = _dspGrilles[id]; if (g) g.modif = false; }
 
+// Vue admin : retire les indisponibilités importées d'Hyperplanning de l'enseignant
+// affiché (sa grille peinte, même non enregistrée, n'est pas touchée)
+async function dspRetirerHp(id) {
+    const g = _dspGrilles[id];
+    if (!g || !_dspAdmTid) return;
+    if (!confirm('Retirer les indisponibilités importées d\'Hyperplanning pour cet enseignant ? Sa propre grille reste telle quelle.')) return;
+    try {
+        await api(`/constraints/${_dspAdmTid}/dispos/hp` + svcQ(), { method: 'DELETE' });
+        g.hp = new Map();
+        g.hpSource = g.hpDate = '';
+        dspRendre(id);
+        const sel = document.getElementById('dsp-adm-sel');
+        const opt = sel && sel.options[sel.selectedIndex];
+        if (opt && opt.value) {
+            opt.dataset.hp = '0';
+            opt.textContent = opt.textContent.replace(/ · HP \d+ sem\.$/, '');
+        }
+        toast('Indisponibilités Hyperplanning retirées');
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+// ===== IMPORT DES INDISPONIBILITÉS D'HYPERPLANNING (PDF) =====
+// Le PDF est déposé une fois (/hp/fichier), puis lu par tranches de pages (/hp/lire,
+// barre de progression : un fichier de tous les enseignants sur l'année fait
+// plusieurs centaines de pages) ; les tranches sont réunies ici. Le rapport
+// (/hp sans apply) rapproche les noms du fichier des enseignants de l'année ; un
+// nom se rattache à la main dans le tableau. Rien n'est écrit avant « Importer ».
+const _HP_TRANCHE = 20;          // pages par requête de lecture (≈ 5 s ici pour les pages chargées)
+let _hpImport = null;            // { n, fichier, pages, ignorees, lu, associations, rapport }
+let _hpCompteur = 0;             // un nouveau fichier interrompt la lecture du précédent
+
+function hpOuvrirImport() {
+    _hpImport = null;
+    _hpCompteur++;
+    document.getElementById('hp-import-file').value = '';
+    document.getElementById('hp-import-report').innerHTML = '';
+    document.getElementById('hp-import-apply').disabled = true;
+    openModal('modal-hp-import');
+}
+
+function hpFermerImport() {
+    _hpCompteur++;               // arrête une lecture en cours
+    _hpImport = null;
+    closeModal('modal-hp-import');
+}
+
+async function hpLireFichier(input) {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    const n = ++_hpCompteur;
+    const zone = document.getElementById('hp-import-report');
+    const bouton = document.getElementById('hp-import-apply');
+    bouton.disabled = true;
+    _hpImport = { n, fichier: f.name, pages: 0, ignorees: 0, pagesCours: 0, lu: {}, cours: {}, associations: {},
+                  reprendre: {}, rapport: null };
+    const progres = (txt, part) => {
+        zone.innerHTML = `<div class="edtg-note">${esc(txt)}</div>
+            <div class="hp-barre"><div style="width:${Math.round(100 * part)}%"></div></div>`;
+    };
+    progres(`Envoi de « ${f.name} »…`, 0);
+    try {
+        const fd = new FormData();
+        fd.append('file', f);
+        const r = await fetch('/api/constraints/dispos/hp/fichier' + svcQ(), { method: 'POST', body: fd });
+        const dep = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(dep.error || 'Échec de l\'envoi');
+        _hpImport.pages = dep.pages;
+        for (let p = 0; p < dep.pages; p += _HP_TRANCHE) {
+            if (n !== _hpCompteur) return;                      // fermé, ou autre fichier choisi
+            progres(`Lecture des pages ${p + 1} à ${Math.min(p + _HP_TRANCHE, dep.pages)} sur ${dep.pages}…`, p / dep.pages);
+            const res = await api('/constraints/dispos/hp/lire' + svcQ(), {
+                method: 'POST', body: JSON.stringify({ jeton: dep.jeton, debut: p, fin: p + _HP_TRANCHE }) });
+            if (n !== _hpCompteur) return;
+            _hpImport.ignorees += res.ignorees || 0;
+            for (const [qui, jours] of Object.entries(res.enseignants || {})) {
+                const dest = _hpImport.lu[qui] || (_hpImport.lu[qui] = {});
+                for (const [d, zones] of Object.entries(jours)) dest[d] = (dest[d] || []).concat(zones);
+            }
+            // cours posés dans Hyperplanning (pages « une semaine par page », ou semaines en colonnes)
+            _hpImport.pagesCours += res.pages_cours || 0;
+            for (const [qui, jours] of Object.entries(res.cours_hp || {})) {
+                const dest = _hpImport.cours[qui] || (_hpImport.cours[qui] = {});
+                for (const [d, cs] of Object.entries(jours)) dest[d] = cs;
+            }
+        }
+        if (!Object.keys(_hpImport.lu).length)
+            throw new Error('Aucun emploi du temps reconnu dans ce fichier : imprimez-le depuis Hyperplanning avec la journée '
+                            + 'complète (8h00 → 21h00), jours datés (une semaine par page ou plusieurs côte à côte) ou semaines '
+                            + 'en colonnes (« 24 août - 29 août »).');
+        progres('Rapprochement des enseignants…', 1);
+        await hpRapport();
+    } catch (e) {
+        if (n === _hpCompteur) zone.innerHTML = `<div class="empty" style="color:#b91c1c">Erreur : ${esc(e.message)}</div>`;
+    }
+}
+
+// Rapport du serveur (rapprochement des noms, semaines et heures) ; relancé à chaque
+// rattachement fait à la main
+async function hpRapport() {
+    const imp = _hpImport;
+    if (!imp) return;
+    const zone = document.getElementById('hp-import-report');
+    const bouton = document.getElementById('hp-import-apply');
+    bouton.disabled = true;
+    try {
+        const rap = await api('/constraints/dispos/hp' + svcQ(), {
+            method: 'POST', body: JSON.stringify({ lu: imp.lu, cours_hp: imp.cours, associations: imp.associations }) });
+        if (imp !== _hpImport) return;
+        imp.rapport = rap;
+        // cours GIM à reprendre, par enseignant : au départ, ceux repris lors d'un import précédent
+        rap.enseignants.forEach(e => {
+            if (e.teacher_id && !imp.reprendre[e.teacher_id])
+                imp.reprendre[e.teacher_id] = new Set((e.cours_gim || []).filter(c => c.deja).map(c => c.cle));
+        });
+        const lignes = rap.enseignants.slice().sort((a, b) => (!a.teacher_id) - (!b.teacher_id));
+        const retenus = lignes.filter(e => e.teacher_id && e.semaines.length);
+        const opts = sel => '<option value="">— ignorer —</option>' + rap.profs.map(p =>
+            `<option value="${p.id}"${p.id === sel ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
+        const plage = ws => ws.length ? `S${ws[0]} → S${ws[ws.length - 1]}` : '—';
+        const remarques = e => [
+            e.how === 'approché' ? 'nom rapproché : à vérifier' : '',
+            e.how === 'conflit' ? '<b style="color:#b45309">deux noms du fichier pour le même enseignant : choisissez</b>' : '',
+            e.teacher_id && e.deja ? 'remplace l\'import précédent sur les semaines couvertes' : '',
+            e.hors_annee ? `${e.hors_annee} jour(s) hors de l'année ${esc(rap.annee)}, ignoré(s)` : '',
+            e.teacher_id && !e.semaines.length ? 'aucune semaine de l\'année dans le fichier' : '',
+        ].filter(Boolean).join(' · ');
+        const nbSem = new Set(retenus.flatMap(e => e.semaines)).size;
+        zone.innerHTML = `
+            <p style="font-size:.85rem;margin:4px 0 8px">« ${esc(imp.fichier)} » : ${imp.pages} page(s)${
+                imp.ignorees ? `, dont <b>${imp.ignorees} non reconnue(s)</b> (mise en page inconnue)` : ''} ·
+                ${rap.enseignants.length} nom(s) dans le fichier · <b>${retenus.length} enseignant(s) de l'année ${esc(rap.annee)}
+                mis à jour</b>${retenus.length ? ` sur ${nbSem} semaine(s)` : ''}.</p>
+            ${rap.erreur ? `<div class="empty" style="color:#b91c1c;margin-bottom:8px">${esc(rap.erreur)}</div>` : ''}
+            ${imp.pagesCours ? `<p class="edtg-note" style="margin:0 0 6px"><b>Cours dans Hyperplanning</b> (lus sur
+                ${imp.pagesCours} page(s)) : ceux d'autres départements, ceux dont la case est trop petite pour être lue (« ... »),
+                et les cours GIM sans séance correspondante dans l'appli, rendent le créneau indisponible. Un cours GIM rapproché d'une séance de l'appli
+                peut être <b>repris</b> dans l'emploi du temps de l'appli, à sa place et figé (« Générer l'EDT » ne le bouge
+                plus), à la place de la même séance placée par l'appli ; sinon il n'en est pas tenu compte. Tous les cours
+                d'un enseignant d'un clic, ou cours par cours dans le détail.</p>`
+              : `<p class="edtg-note" style="margin:0 0 6px">Plusieurs semaines côte à côte avec les jours datés : la classe des
+                cours y est masquée, seules les hachures sont lues. Pour les cours posés dans Hyperplanning (autres départements
+                bloqués, cours GIM à reprendre), imprimez l'emploi du temps une semaine par page, ou les semaines en colonnes
+                (« 24 août - 29 août »).</p>`}
+            <table class="pn-table hp-rap"><thead><tr>
+                <th>Nom dans le fichier</th><th>Enseignant de l'année</th><th>Semaines</th>
+                <th>Indisponibilités</th>${imp.pagesCours ? '<th>Cours dans Hyperplanning</th>' : ''}<th>Exemples</th>
+                <th>Remarques</th></tr></thead><tbody>
+            ${lignes.map(e => `<tr class="${e.teacher_id ? '' : 'hp-ignore'}">
+                <td><b>${esc(e.qui)}</b></td>
+                <td><select data-qui="${esc(e.qui)}" onchange="hpAssocier(this)">${opts(e.teacher_id)}</select></td>
+                <td style="white-space:nowrap">${plage(e.semaines)}<br><span class="edtg-note">${e.semaines.length} sem.</span></td>
+                <td style="white-space:nowrap">${e.heures ? `${String(e.heures).replace('.', ',')} h<br><span class="edtg-note">${
+                    e.semaines_hp} sem. concernée(s)</span>` : '<span class="edtg-note">aucune</span>'}</td>
+                ${imp.pagesCours ? `<td>${_hpCoursHtml(e, imp)}</td>` : ''}
+                <td class="edtg-note">${e.exemples.map(esc).join('<br>')}</td>
+                <td class="edtg-note">${remarques(e)}</td></tr>`).join('')}
+            </tbody></table>
+            ${rap.absents.length ? `<p class="edtg-note" style="margin-top:8px">Enseignants de l'année absents du fichier
+                (rien ne change pour eux) : ${rap.absents.map(esc).join(', ')}.</p>` : ''}`;
+        lignes.forEach(e => { if (e.teacher_id) _hpReprendreMaj(e.teacher_id); });
+        bouton.disabled = !retenus.length || !!rap.erreur;
+    } catch (e) {
+        if (imp === _hpImport) zone.innerHTML = `<div class="empty" style="color:#b91c1c">Erreur : ${esc(e.message)}</div>`;
+    }
+}
+
+function hpAssocier(sel) {
+    if (!_hpImport) return;
+    _hpImport.associations[sel.dataset.qui] = sel.value || null;
+    hpRapport();
+}
+
+// Cellule « Cours dans Hyperplanning » d'un enseignant : cours GIM rapprochés d'une
+// séance de l'appli (case « reprendre », partielle si une partie seulement, détail
+// cours par cours), et cours bloqués (autres départements, GIM non rapprochés)
+const _HP_JOURS = ['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
+function _hpCoursHtml(e, imp) {
+    if (!e.teacher_id) return '<span class="edtg-note">—</span>';
+    const gim = e.cours_gim || [], tid = e.teacher_id, choix = imp.reprendre[tid] || new Set();
+    const nonRap = e.nb_non_rapproches ? `<span title="${esc('Cours GIM sans séance correspondante dans l’appli :\n'
+        + (e.cours_non_rapproches || []).join('\n'))}" style="text-decoration:underline dotted">${
+        e.nb_non_rapproches} GIM non rapproché(s)</span>` : '';
+    const illisibles = e.cours_illisibles ? `<span title="Case trop petite dans le PDF : seul « ... » y est écrit"
+        style="text-decoration:underline dotted">${e.cours_illisibles} illisible(s)</span>` : '';
+    const bloques = [e.cours_autres ? `${e.cours_autres} d’autres départements` : '', illisibles, nonRap]
+        .filter(Boolean).join(' · ');
+    const ligne = c => `<label style="display:block;white-space:nowrap;font-size:.76rem">
+        <input type="checkbox" class="hp-r-c" data-tid="${tid}" data-cle="${esc(c.cle)}"${choix.has(c.cle) ? ' checked' : ''}
+               onchange="hpReprendreCours(this)">
+        S${c.semaine} ${_HP_JOURS[c.jour] || ''} ${esc(c.debut)}–${esc(c.fin)} · ${esc(c.texte)} → <b>${esc(c.seance)}</b>${
+            c.ambigu ? ' <span style="color:#b45309" title="Plusieurs séances possibles : la première a été retenue">?</span>' : ''}${
+            c.deduit ? ' <span class="edtg-note" title="Classe coupée dans la case (« (...) ») : déduite des autres cases de la même matière">(classe déduite)</span>' : ''}${
+            c.deja ? ' <span class="edtg-note">(déjà repris)</span>' : ''}</label>`;
+    return `${gim.length ? `<label style="white-space:nowrap"><input type="checkbox" class="hp-r-tout" data-tid="${tid}"
+                onchange="hpReprendreTout(this)"> reprendre les ${gim.length} cours GIM</label>
+            <br><span class="edtg-note"><span class="hp-r-n" data-tid="${tid}"></span></span>
+            <details><summary class="edtg-note" style="cursor:pointer">cours par cours</summary>
+                <div style="max-height:180px;overflow:auto;margin-top:4px">${gim.map(ligne).join('')}</div></details>`
+          : '<span class="edtg-note">aucun cours GIM</span>'}
+        ${bloques ? `<div class="edtg-note">bloqués : ${bloques}</div>` : ''}`;
+}
+
+// Case « reprendre tout », partielle, et compte d'un enseignant, d'après le choix en cours
+function _hpReprendreMaj(tid) {
+    const imp = _hpImport;
+    const e = imp && imp.rapport && imp.rapport.enseignants.find(x => x.teacher_id === tid);
+    if (!e || !(e.cours_gim || []).length) return;
+    const n = (imp.reprendre[tid] || new Set()).size, total = e.cours_gim.length;
+    const zone = document.getElementById('hp-import-report');
+    const tout = zone.querySelector(`.hp-r-tout[data-tid="${tid}"]`);
+    if (tout) { tout.checked = n === total; tout.indeterminate = n > 0 && n < total; }
+    const lib = zone.querySelector(`.hp-r-n[data-tid="${tid}"]`);
+    if (lib) lib.textContent = n ? `${n} repris, figés` : 'non repris : il n’en est pas tenu compte';
+}
+
+function hpReprendreTout(el) {
+    const imp = _hpImport, tid = +el.dataset.tid;
+    const e = imp && imp.rapport.enseignants.find(x => x.teacher_id === tid);
+    if (!e) return;
+    imp.reprendre[tid] = new Set(el.checked ? e.cours_gim.map(c => c.cle) : []);
+    document.querySelectorAll(`#hp-import-report .hp-r-c[data-tid="${tid}"]`).forEach(c => { c.checked = el.checked; });
+    _hpReprendreMaj(tid);
+}
+
+function hpReprendreCours(el) {
+    const imp = _hpImport, tid = +el.dataset.tid;
+    if (!imp) return;
+    const s = imp.reprendre[tid] || (imp.reprendre[tid] = new Set());
+    if (el.checked) s.add(el.dataset.cle); else s.delete(el.dataset.cle);
+    _hpReprendreMaj(tid);
+}
+
+async function hpAppliquer() {
+    const imp = _hpImport;
+    if (!imp || !imp.rapport) return;
+    const bouton = document.getElementById('hp-import-apply');
+    bouton.disabled = true;
+    try {
+        const rap = await api('/constraints/dispos/hp' + svcQ(), {
+            method: 'POST', body: JSON.stringify({
+                lu: imp.lu, cours_hp: imp.cours, associations: imp.associations, source: imp.fichier, apply: true,
+                reprendre: Object.fromEntries(Object.entries(imp.reprendre).map(([t, s]) => [t, [...s]])) }) });
+        const n = Object.keys(rap.ecrits || {}).length;
+        toast(`Indisponibilités Hyperplanning importées pour ${n} enseignant(s)${
+            rap.cours_repris ? ` · ${rap.cours_repris} cours GIM repris dans l'EDT, figés` : ''}`);
+        hpFermerImport();
+        await dspAdminInit(null, true);
+        if (_dspAdmTid) {
+            const g = _dspGrilles['dsp-adm'];
+            if (g && g.modif) toast('Grille affichée modifiée et non enregistrée : rechargez-la pour voir l\'import', 'error');
+            else dspCharger('dsp-adm', `/constraints/${_dspAdmTid}/dispos`, adminPower('svc:contraintes'));
+        }
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+        bouton.disabled = false;
+    }
+}
+
 // Vue admin : liste des enseignants (✓ = grille enregistrée) et grille de celui choisi
 function _dspAdminLibelle(e) {
     return `${e.saisie ? '✓ ' : ''}${e.teacher_name}${e.status ? ' (' + e.status + ')' : ''}${
-        e.semaines_propres ? ` · ${e.semaines_propres} sem.` : ''}`;
+        e.semaines_propres ? ` · ${e.semaines_propres} sem.` : ''}${e.semaines_hp ? ` · HP ${e.semaines_hp} sem.` : ''}`;
 }
-async function dspAdminInit(list) {
-    _dspTextes = Object.fromEntries((list || []).map(c => [String(c.teacher_id), c.content || '']));
+// garder : liste rechargée après un import (l'enseignant affiché reste choisi)
+async function dspAdminInit(list, garder = false) {
+    if (list) _dspTextes = Object.fromEntries(list.map(c => [String(c.teacher_id), c.content || '']));
     const sel = document.getElementById('dsp-adm-sel');
     if (!sel) return;
     try {
         const ens = await api('/constraints/dispos' + svcQ());
         sel.innerHTML = '<option value="">— Choisir un enseignant —</option>' + ens.map(e =>
-            `<option value="${e.teacher_id}" data-nom="${esc(e.teacher_name)}" data-statut="${esc(e.status || '')}">${
-                esc(_dspAdminLibelle(e))}</option>`).join('');
+            `<option value="${e.teacher_id}" data-nom="${esc(e.teacher_name)}" data-statut="${esc(e.status || '')}"
+                data-hp="${e.semaines_hp || 0}">${esc(_dspAdminLibelle(e))}</option>`).join('');
+        const nbHp = ens.filter(e => e.semaines_hp).length;
         document.getElementById('dsp-adm-compte').textContent =
-            `${ens.filter(e => e.saisie).length} / ${ens.length} enseignant(s) avec une grille`;
-        _dspAdmTid = '';
+            `${ens.filter(e => e.saisie).length} / ${ens.length} enseignant(s) avec une grille${
+                nbHp ? ` · ${nbHp} avec des indisponibilités Hyperplanning` : ''}`;
+        if (garder && _dspAdmTid && [...sel.options].some(o => o.value === _dspAdmTid)) sel.value = _dspAdmTid;
+        else _dspAdmTid = '';
     } catch (e) {
         sel.innerHTML = '<option value="">Erreur de chargement</option>';
     }
@@ -5586,7 +5959,7 @@ function _dspAdminCoche(saisie, nbSem) {
     const opt = sel && sel.options[sel.selectedIndex];
     if (!opt || !opt.value) return;
     opt.textContent = _dspAdminLibelle({ saisie, teacher_name: opt.dataset.nom || '', status: opt.dataset.statut || '',
-                                         semaines_propres: nbSem });
+                                         semaines_propres: nbSem, semaines_hp: +(opt.dataset.hp || 0) });
     const n = [...sel.options].filter(o => o.value && o.textContent.startsWith('✓ ')).length;
     document.getElementById('dsp-adm-compte').textContent =
         `${n} / ${sel.options.length - 1} enseignant(s) avec une grille`;
@@ -7677,7 +8050,14 @@ const SUIVI_KINDS = {
     stages: { who: 'stagiaire', mission: 'Sujet du stage', years: [2, 3] },
     alternance: { who: 'alternant', mission: 'Poste et missions', years: [1, 2, 3] },
 };
-const SUIVI_FIELDS = ['entreprise', 'adresse', 'ville', 'departement', 'tuteur_entreprise', 'tuteur_fonction',
+// Contrat de l'alternant (fiche de l'onglet Alternance seulement)
+const SUIVI_CONTRATS = { apprentissage: "Contrat d'apprentissage", professionnalisation: 'Contrat de professionnalisation' };
+// Le contrat sous le nom de l'alternant, ou ce qu'il reste à renseigner
+function _suiviContratHtml(s) {
+    return s.contrat ? `<div style="font-size:.74rem;color:#6b7280">${esc(SUIVI_CONTRATS[s.contrat] || s.contrat)}</div>`
+                     : '<div style="font-size:.74rem;color:#b45309">contrat à renseigner</div>';
+}
+const SUIVI_FIELDS = ['contrat', 'entreprise', 'adresse', 'ville', 'departement', 'tuteur_entreprise', 'tuteur_fonction',
                       'tuteur_email', 'tuteur_tel', 'mission', 'tuteur_univ'];
 const _suivi = {};
 let _suiviEdit = null;   // fiche ouverte dans le modal : {kind, pid, year, sid}
@@ -7840,14 +8220,16 @@ function renderSuiviBody(kind) {
                 <td><span onclick="${fiche}" title="Fiche de renseignements de l'étudiant"
                     style="cursor:pointer;color:#1d4ed8;text-decoration:underline dotted"><strong>${
                     esc(s.nom || '')}</strong> ${esc(s.prenom || '')}</span>${s.inherited_from
-                    ? `<div style="font-size:.72rem;color:#6b7280">fiche reprise de la ${_suiviYearLabel(s.inherited_from)}</div>` : ''}</td>
+                    ? `<div style="font-size:.72rem;color:#6b7280">fiche reprise de la ${_suiviYearLabel(s.inherited_from)}</div>` : ''}${
+                    kind === 'alternance' ? _suiviContratHtml(s) : ''}</td>
                 <td>${s.entreprise ? `<strong>${esc(s.entreprise)}</strong>` : missing}${
                     _suiviAdresse(s) ? `<div style="font-size:.78rem;color:#6b7280">${esc(_suiviAdresse(s))}</div>` : ''}</td>
                 <td>${s.tuteur_entreprise ? esc(s.tuteur_entreprise) : missing}${
                     s.tuteur_fonction ? `<div style="font-size:.78rem;color:#6b7280">${esc(s.tuteur_fonction)}</div>` : ''}${
                     contact ? `<div style="font-size:.78rem">${contact}</div>` : ''}</td>
                 <td style="font-size:.8rem;color:#374151;max-width:260px" title="${esc(s.mission || '')}">${
-                    esc((s.mission || '').length > 90 ? s.mission.slice(0, 90) + '…' : (s.mission || ''))}</td>
+                    esc((s.mission || '').length > 90 ? s.mission.slice(0, 90) + '…' : (s.mission || ''))}${
+                    kind === 'stages' ? _stageFicheHtml(c, s, edit, false) : ''}</td>
                 <td>${univ}</td>
                 <td style="white-space:nowrap">
                     <button class="btn btn-secondary btn-sm" onclick="openSuiviModal('${kind}', ${c.pid}, ${c.year}, ${s.id})"
@@ -7897,6 +8279,10 @@ function openSuiviModal(kind, pid, year, sid) {
             ? ` · fiche reprise de la ${_suiviYearLabel(s.inherited_from)} : l'enregistrer la remplace à partir de cette année`
             : '');
     document.getElementById('suivi-mission-label').textContent = SUIVI_KINDS[kind].mission;
+    // Le contrat ne concerne que l'alternant, la fiche de poste que le stagiaire
+    document.getElementById('suivi-contrat-groupe').style.display = kind === 'alternance' ? '' : 'none';
+    document.getElementById('suivi-fiche-poste-groupe').style.display = kind === 'stages' ? '' : 'none';
+    _stageFicheModalMaj();
     const univ = document.getElementById('suivi-tuteur_univ');
     univ.innerHTML = _suiviUnivOptions(st, s.tuteur_univ);
     SUIVI_FIELDS.forEach(f => { document.getElementById('suivi-' + f).value = s[f] || ''; });
@@ -7968,6 +8354,103 @@ async function submitSuivi(ev) {
     } catch (e) {
         toast('Erreur : ' + e.message, 'error');
     }
+}
+
+// ----- Stages › Fiche de poste -----
+// Un fichier par stagiaire et par année de stage (offre de l'entreprise, descriptif
+// du poste) : téléchargé par qui voit l'onglet, déposé, remplacé ou retiré par le
+// responsable des stages et l'admin (d.editable), depuis la liste ou la fiche.
+let _stageFicheEnvoi = null;   // stagiaire dont la fiche part en ce moment : 'pid|année|id'
+
+function _stageFicheUrl(pid, year, sid) { return `/promotions/${pid}/tuteurs/${year}/${sid}/fiche-poste`; }
+
+function _stageFicheEleve(pid, year, sid) {
+    const d = _suiviState('stages').data;
+    const c = d && d.cohorts.find(x => x.pid === pid && x.year === year);
+    return { c, s: c && c.students.find(x => x.id === sid) };
+}
+
+// Lien de téléchargement et, pour le responsable, boutons déposer / remplacer / retirer.
+// dansFiche : dans le modal (nom du fichier en clair) plutôt que dans la liste.
+function _stageFicheHtml(c, s, edit, dansFiche) {
+    const f = s.fiche_poste, envoi = _stageFicheEnvoi === `${c.pid}|${c.year}|${s.id}`;
+    const detail = f ? `${_tailleFichier(f.taille)} · déposée le ${_dateFr(f.updated_at)}${f.auteur ? ' par ' + f.auteur : ''}` : '';
+    const lien = f ? `<a href="/api${_stageFicheUrl(c.pid, c.year, s.id)}" title="Télécharger « ${esc(f.nom)} » (${esc(detail)})"
+            style="color:#1d4ed8;white-space:nowrap">📎 ${dansFiche ? esc(f.nom) : 'Fiche de poste'}</a>${
+            dansFiche ? ` <span style="color:#6b7280;font-size:.8rem">${esc(detail)}</span>` : ''}` : '';
+    if (!edit) {
+        if (dansFiche) return lien || '<span style="color:#9ca3af">Aucune fiche de poste déposée</span>';
+        return lien ? `<div style="margin-top:4px">${lien}</div>` : '';
+    }
+    const off = _stageFicheEnvoi ? 'disabled' : '';
+    const btn = `<button type="button" class="btn btn-secondary btn-sm" style="padding:1px 7px;font-size:.74rem" ${off}
+        title="PDF, Word, Excel ou OpenDocument, 15 Mo au plus" onclick="stageFicheChoisir(${c.pid}, ${c.year}, ${s.id})">${
+        envoi ? 'Envoi…' : f ? 'Remplacer' : dansFiche ? 'Déposer' : '+ Fiche de poste'}</button>`;
+    const suppr = f ? `<button type="button" class="btn btn-secondary btn-sm" style="padding:1px 7px;font-size:.74rem" ${off}
+        title="Retirer la fiche de poste" onclick="stageFicheSupprimer(${c.pid}, ${c.year}, ${s.id})">🗑</button>` : '';
+    return `<div style="margin-top:4px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">${lien}${btn}${suppr}</div>`;
+}
+
+// Bloc « Fiche de poste » du modal, pour le stagiaire ouvert
+function _stageFicheModalMaj() {
+    const box = document.getElementById('suivi-fiche-poste');
+    if (!box || !_suiviEdit || _suiviEdit.kind !== 'stages') return;
+    const { c, s } = _stageFicheEleve(_suiviEdit.pid, _suiviEdit.year, _suiviEdit.sid);
+    box.innerHTML = s ? _stageFicheHtml(c, s, _suiviState('stages').data.editable, true) : '';
+}
+
+function stageFicheChoisir(pid, year, sid) {
+    const input = document.getElementById('stage-fiche-file');
+    input.dataset.cle = `${pid}|${year}|${sid}`;
+    input.click();
+}
+
+// Liste et modal redessinés une fois l'onglet rechargé
+async function _stageFicheApres() {
+    _stageFicheEnvoi = null;
+    await loadSuivi('stages');
+    _stageFicheModalMaj();
+}
+
+async function stageFicheEnvoyer(input) {
+    const f = input.files && input.files[0], cle = input.dataset.cle;
+    input.value = '';
+    if (!f || !cle) return;
+    if (f.size > 15 * 1024 * 1024) { toast('Fichier trop volumineux (15 Mo au plus)', 'error'); return; }
+    const [pid, year, sid] = cle.split('|').map(Number);
+    const { s } = _stageFicheEleve(pid, year, sid);
+    const deja = s && s.fiche_poste;
+    if (deja && !confirm(`Remplacer « ${deja.nom} » par « ${f.name} » ?`)) return;
+    const fd = new FormData();
+    fd.append('file', f);
+    _stageFicheEnvoi = cle;
+    renderSuiviBody('stages');
+    _stageFicheModalMaj();
+    try {
+        const r = await fetch('/api' + _stageFicheUrl(pid, year, sid), { method: 'PUT', body: fd });
+        if (!r.ok) {
+            let msg = "Échec de l'envoi";
+            try { msg = JSON.parse(await r.text()).error || msg; } catch (_) { /* garde le défaut */ }
+            throw new Error(msg);
+        }
+        toast('Fiche de poste déposée');
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+    await _stageFicheApres();
+}
+
+async function stageFicheSupprimer(pid, year, sid) {
+    const { s } = _stageFicheEleve(pid, year, sid);
+    const f = s && s.fiche_poste;
+    if (!f || !confirm(`Retirer la fiche de poste « ${f.nom} » ?`)) return;
+    try {
+        await api(_stageFicheUrl(pid, year, sid), { method: 'DELETE' });
+        toast('Fiche de poste retirée');
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+    await _stageFicheApres();
 }
 
 // ----- Statistiques : couverture, suivis par enseignant, départements, entreprises -----
@@ -8476,13 +8959,13 @@ function _altVisTableau(D, liste, avecTuteur) {
             <thead><tr><th style="width:24%">Alternant</th><th>Entreprise</th><th>Tuteur entreprise</th>${
                 avecTuteur ? '<th>Tuteur universitaire</th>' : ''}<th style="width:1%"></th></tr></thead>
             <tbody>${liste.map(e => {
-                const incomplet = !e.entreprise || !e.adresse || !e.tuteur_entreprise || !e.tuteur_univ;
+                const incomplet = !e.contrat || !e.entreprise || !e.adresse || !e.tuteur_entreprise || !e.tuteur_univ;
                 const aide = incomplet ? 'Fiche incomplète : ce qui manque reste vide sur le PV (à compléter dans Tuteurs, ou à la main)'
                                        : 'Le PV de visite prérempli pour cet alternant';
                 const lien = (fmt, lib, cls) => `<a class="btn ${cls} btn-sm" style="text-decoration:none"
                     href="/api/alternance/visites/${e.id}/pv${q}${fmt}" title="${esc(aide)}">${lib}</a>`;
                 return `<tr${e.mien && avecTuteur ? ' style="background:#f5f3ff" title="Alternant que vous suivez"' : ''}>
-                <td style="vertical-align:top">${_altDepNom(e)}</td>
+                <td style="vertical-align:top">${_altDepNom(e)}${_suiviContratHtml(e)}</td>
                 <td style="vertical-align:top">${e.entreprise ? `<strong>${esc(e.entreprise)}</strong>` : manque}${
                     _suiviAdresse(e) ? `<div style="font-size:.78rem;color:#6b7280">${esc(_suiviAdresse(e))}</div>` : ''}${
                     e.entreprise && !e.adresse ? '<div style="color:#b45309;font-size:.76rem">adresse à renseigner</div>' : ''}</td>
@@ -19883,10 +20366,11 @@ function _plBloc(x) {
     const larg = 100 / x.nb;
     const info = [`${s.course_code || ''}${s.course_name ? ' — ' + s.course_name : ''}`,
         `${tt}${gr} · ${s.start_time}–${s.end_time}`, s.teacher_name || 'sans enseignant',
-        s.room_name ? 'Salle ' + s.room_name : 'salle à choisir'].join('\n');
+        s.room_name ? 'Salle ' + s.room_name : 'salle à choisir',
+        ...(s.fige ? ['📌 Figé : gardé à sa place au prochain « Générer l\'EDT »'] : [])].join('\n');
     return `<div class="pl-cours" title="${esc(info)}" style="--pl-t:${_plTeinte(s.course_code)};top:${(x.d - _PL_DEBUT) / 30 * H}px;`
         + `height:${(x.f - x.d) / 30 * H - 1}px;left:calc(${x.voie * larg}% + 1px);width:calc(${larg}% - 2px)">
-        <div><b>${esc(s.course_code || '')}</b> ${esc(tt)}${gr}</div>
+        <div>${s.fige ? '📌 ' : ''}<b>${esc(s.course_code || '')}</b> ${esc(tt)}${gr}</div>
         ${s.course_name ? `<div class="pl-c2">${esc(s.course_name)}</div>` : ''}
         <div class="pl-c3">${esc(s.teacher_name || '—')}</div>
         <div class="pl-c3">${esc(s.room_name || '')}</div></div>`;
@@ -20216,6 +20700,144 @@ function jfRetirer(i) {
     _jf.jours.splice(i, 1);
     _jf.modif = true;
     _jfRendre();
+}
+
+// ----- Jours fermés relevés dans un PDF d'Hyperplanning -----
+// Le PDF (jours datés, ou semaines en colonnes) est lu comme pour l'import des indisponibilités (dépôt, puis
+// lecture par tranches) ; seuls servent ici les jours marqués « Férié », qui sont les
+// mêmes pour tous les enseignants : la lecture s'arrête dès qu'une tranche n'apporte
+// plus de jour nouveau. Les jours qui manquent à la liste sont proposés : fériés
+// légaux et ponts cochés, jours d'une longue fermeture (vacances) décochés.
+let _jfHp = null;        // { props: [{date, type, libelle, coche, note}] }
+let _jfHpN = 0;
+
+function jfHpOuvrir() {
+    if (!_jf.etat) { toast('Sélectionnez d\'abord une promotion', 'error'); return; }
+    _jfHp = null;
+    _jfHpN++;
+    document.getElementById('jf-hp-file').value = '';
+    document.getElementById('jf-hp-report').innerHTML = '';
+    document.getElementById('jf-hp-apply').disabled = true;
+    openModal('modal-jf-hp');
+}
+
+function jfHpFermer() {
+    _jfHpN++;
+    _jfHp = null;
+    closeModal('modal-jf-hp');
+}
+
+// AAAA-MM-JJ du jour d'ouverture suivant (le dimanche est sauté)
+function _jfLendemain(s) {
+    const [a, m, j] = s.split('-').map(Number);
+    const d = new Date(Date.UTC(a, m - 1, j + 1));
+    if (d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().slice(0, 10);
+}
+
+async function jfHpLire(input) {
+    const f = input.files && input.files[0];
+    if (!f || !_jf.etat) return;
+    const n = ++_jfHpN;
+    const zone = document.getElementById('jf-hp-report');
+    const bouton = document.getElementById('jf-hp-apply');
+    bouton.disabled = true;
+    const progres = (txt, part) => {
+        zone.innerHTML = `<div class="edtg-note">${esc(txt)}</div>
+            <div class="hp-barre"><div style="width:${Math.round(100 * part)}%"></div></div>`;
+    };
+    progres(`Envoi de « ${f.name} »…`, 0);
+    try {
+        const fd = new FormData();
+        fd.append('file', f);
+        const r = await fetch('/api/constraints/dispos/hp/fichier' + _calQ(), { method: 'POST', body: fd });
+        const dep = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(dep.error || 'Échec de l\'envoi');
+        const feries = new Set(), vus = new Set();
+        let lues = 0;
+        for (let p = 0; p < dep.pages; p += _HP_TRANCHE) {
+            if (n !== _jfHpN) return;
+            progres(`Lecture des pages ${p + 1} à ${Math.min(p + _HP_TRANCHE, dep.pages)} sur ${dep.pages}…`, p / dep.pages);
+            const res = await api('/constraints/dispos/hp/lire' + _calQ(), {
+                method: 'POST', body: JSON.stringify({ jeton: dep.jeton, debut: p, fin: p + _HP_TRANCHE }) });
+            const avant = vus.size;
+            Object.keys(res.jours_vus || {}).forEach(d => vus.add(d));
+            Object.keys(res.feries || {}).forEach(d => feries.add(d));
+            lues = Math.min(p + _HP_TRANCHE, dep.pages);
+            if (p > 0 && vus.size === avant) break;        // les pages suivantes répètent le calendrier
+        }
+        if (lues < dep.pages)                               // fichier déposé : effacé sans lire la suite
+            api('/constraints/dispos/hp/lire' + _calQ(), {
+                method: 'POST', body: JSON.stringify({ jeton: dep.jeton, debut: dep.pages, fin: dep.pages }) }).catch(() => {});
+        if (n !== _jfHpN) return;
+        if (!vus.size) throw new Error('Aucun jour reconnu dans ce fichier : imprimez l\'emploi du temps depuis Hyperplanning '
+                                       + 'avec les jours datés (« lundi 4 janvier 2027 ») ou les semaines en colonnes '
+                                       + '(« 24 août - 29 août »).');
+        _jfHpProposer(feries, vus, f.name, lues, dep.pages);
+    } catch (e) {
+        if (n === _jfHpN) zone.innerHTML = `<div class="empty" style="color:#b91c1c">Erreur : ${esc(e.message)}</div>`;
+    }
+}
+
+function _jfHpProposer(feries, vus, fichier, lues, pages) {
+    const { debut, fin, legaux, annee } = _jf.etat;
+    const legal = new Map((legaux || []).map(j => [j.date, j.libelle]));
+    const existants = new Set(_jf.jours.map(j => j.date));
+    const fermes = [...feries].filter(d => d >= debut && d <= fin && (_jfInfo(d) || {}).jour !== 6).sort();
+    // suites de jours fermés consécutifs (dimanches sautés) : longueur et fériés légaux voisins
+    const suite = new Map();
+    for (let i = 0; i < fermes.length;) {
+        let k = i;
+        while (k + 1 < fermes.length && _jfLendemain(fermes[k]) === fermes[k + 1]) k++;
+        const membres = fermes.slice(i, k + 1);
+        const lib = membres.map(d => legal.get(d)).find(Boolean) || '';
+        membres.forEach(d => suite.set(d, { n: membres.length, lib }));
+        i = k + 1;
+    }
+    const props = fermes.filter(d => !existants.has(d)).map(d => {
+        if (legal.has(d)) return { date: d, type: 'ferie', libelle: legal.get(d), coche: true, note: 'jour férié légal' };
+        const s = suite.get(d);
+        if (s.n >= 5) return { date: d, type: 'pont', libelle: 'Fermeture', coche: false,
+                               note: `dans une fermeture de ${s.n} jours : inutile si ces semaines sont déjà en vacances au calendrier` };
+        return { date: d, type: 'pont', libelle: s.lib ? `Pont (${s.lib})` : 'Pont', coche: true,
+                 note: s.lib ? `accolé à : ${s.lib}` : 'jour fermé isolé' };
+    });
+    const ignores = [...feries].filter(d => d < debut || d > fin).length;
+    const absents = _jf.jours.filter(j => j.date && vus.has(j.date) && !feries.has(j.date));
+    _jfHp = { props };
+    const fmt = d => { const inf = _jfInfo(d); return `${inf ? _JF_JOURS[inf.jour] + ' ' : ''}${d.split('-').reverse().join('/')}`; };
+    document.getElementById('jf-hp-report').innerHTML = `
+        <p style="font-size:.85rem;margin:4px 0 8px">« ${esc(fichier)} » : ${lues} page(s) lue(s)${lues < pages ? ` sur ${pages}
+            (le calendrier se répète d'un enseignant à l'autre)` : ''} · ${fermes.length} jour(s) marqué(s) « Férié » dans l'année
+            ${esc(annee)}${ignores ? ` (${ignores} hors de l'année, ignoré(s))` : ''}.</p>
+        ${props.length ? `<table class="pn-table hp-rap"><thead><tr><th></th><th>Jour</th><th>Proposé</th><th>Remarque</th></tr></thead><tbody>
+            ${props.map((p, i) => `<tr><td><input type="checkbox" ${p.coche ? 'checked' : ''} onchange="jfHpCocher(${i}, this.checked)"></td>
+                <td style="white-space:nowrap"><b>${esc(fmt(p.date))}</b></td>
+                <td>${p.type === 'pont' ? 'Pont' : 'Férié'} · ${esc(p.libelle)}</td>
+                <td class="edtg-note">${esc(p.note)}</td></tr>`).join('')}
+            </tbody></table>`
+          : '<div class="empty">La liste contient déjà tous les jours fermés relevés dans Hyperplanning.</div>'}
+        ${absents.length ? `<p class="edtg-note" style="margin-top:8px"><b>À vérifier</b> — dans la liste, mais pas marqués « Férié »
+            dans Hyperplanning : ${absents.map(j => esc(fmt(j.date) + (j.libelle ? ' (' + j.libelle + ')' : ''))).join(', ')}.</p>` : ''}`;
+    document.getElementById('jf-hp-apply').disabled = !props.some(p => p.coche);
+}
+
+function jfHpCocher(i, oui) {
+    if (!_jfHp) return;
+    _jfHp.props[i].coche = oui;
+    document.getElementById('jf-hp-apply').disabled = !_jfHp.props.some(p => p.coche);
+}
+
+function jfHpAjouter() {
+    if (!_jfHp || !_jf.etat) return;
+    const choisis = _jfHp.props.filter(p => p.coche);
+    const vus = new Set(_jf.jours.map(j => j.date));
+    choisis.filter(p => !vus.has(p.date)).forEach(p => _jf.jours.push({ date: p.date, type: p.type, libelle: p.libelle }));
+    _jfTrier();
+    _jf.modif = true;
+    _jfRendre();
+    jfHpFermer();
+    toast(`${choisis.length} jour(s) ajouté(s) à la liste : vérifiez-les, puis enregistrez le calendrier`);
 }
 
 // Enregistrement, par le bouton « Enregistrer » du Calendrier (`q` : ?year= de la

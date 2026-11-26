@@ -1044,7 +1044,7 @@ function _aideService() {
 
     { id: 'contraintes', rub: R, titre: "Contraintes d'emploi du temps (enseignant)", chemin: 'Service › Contraintes Enseignant',
       onglet: 'svc:contraintes', cible: 'contraintes',
-      mots: 'contraintes indisponibilité préférence fichier joint disponibilité dispos grille semaine type semaines particulières barre des semaines paires impaires hyperplanning pinceau priorité',
+      mots: 'contraintes indisponibilité préférence fichier joint disponibilité dispos grille semaine type semaines particulières barre des semaines paires impaires hyperplanning pinceau priorité import pdf hachures hachuré emploi du temps imprimé',
       html: `
         <p>Chaque enseignant y indique ses <b>indisponibilités et préférences</b> pour l'année affichée dans le Service :</p>
         <ul>
@@ -1084,6 +1084,44 @@ function _aideService() {
         de mise à jour ; un responsable voit d'abord les siennes, puis celles des autres. Le bloc ${_aUi('Disponibilités (grille)')} permet
         de choisir un enseignant (✓ = grille enregistrée, « n sem. » = semaines avec leur propre grille) et de saisir sa grille à sa
         place, semaine par semaine si besoin, ses contraintes écrites affichées à côté.</p>
+        <h3>Importer les indisponibilités d'Hyperplanning</h3>
+        <p>Les indisponibilités déjà déclarées dans Hyperplanning s'importent depuis l'emploi du temps des enseignants <b>imprimé en
+        PDF</b> : ${_aUi('Importer les indisponibilités d\'Hyperplanning…')} dans le bloc ${_aUi('Disponibilités (grille)')}
+        (administration). Dans Hyperplanning, imprimez l'emploi du temps avec la <b>journée complète</b> (8h00 → 21h00), au choix
+        avec les <b>jours datés</b> (« lundi 4 janvier 2027 »), une semaine par page ou plusieurs semaines côte à côte, ou avec les
+        <b>semaines en colonnes</b> (« 24 août - 29 août », jours en rangées, dix semaines par page), pour un enseignant ou pour
+        tous, sur toute l'année si besoin. Les zones <b>hachurées</b> sont lues comme des indisponibilités, à la demi-heure près.
+        Des horaires compactés (heures sans cours réduites), eux, ne conviennent pas : les hachures y sont coupées, et ces pages
+        sont refusées.</p>
+        <p>Le fichier est lu par tranches (une barre montre l'avancement : quelques secondes par dizaine de pages), puis un tableau
+        rapproche chaque nom du fichier d'un enseignant de l'année ; un nom non reconnu, ou deux noms pour un même enseignant (« M. »
+        et « Mme » du même nom), se rattachent à la main, ou s'ignorent. <b>Rien n'est écrit avant</b> ${_aUi('Importer')}.</p>
+        <p>Les indisponibilités importées sont gardées <b>à part</b> de la grille peinte : elles apparaissent <b>hachurées</b> par-dessus
+        (et dans la barre des semaines), pour l'enseignant comme pour l'administration, et le calcul de l'emploi du temps les ferme en
+        plus de la grille. Le pinceau ne les modifie pas. Un nouvel import remplace les semaines que le fichier couvre et laisse les
+        autres ; ${_aUi('Retirer l\'import Hyperplanning')} les efface pour l'enseignant affiché. Dans la liste des enseignants,
+        « HP n sem. » compte les semaines qui en ont.</p>
+        <h3>Les cours déjà posés dans Hyperplanning</h3>
+        <p>Imprimé <b>une semaine par page</b>, l'emploi du temps montre aussi le texte complet de chaque cours (matière, classe,
+        groupe, salle) : l'import le lit. Imprimé avec les <b>semaines en colonnes</b>, ce texte est presque complet (la salle,
+        en bout de ligne, devient souvent « (...) ») : l'import le lit aussi. Quand la classe y est coupée, elle est déduite des
+        autres cases de la même matière dans le fichier (« classe déduite »). Avec les jours datés et plusieurs semaines côte à
+        côte, la classe est le plus souvent masquée : les cours n'y sont pas lus.</p>
+        <ul>
+            <li>les cours d'<b>autres départements</b> rendent toujours le créneau indisponible, comme une zone hachurée ;</li>
+            <li>un cours dont la case est trop petite pour son texte (« ... », semaines en colonnes) est compté « illisible » et
+            bloqué de même ;</li>
+            <li>chaque <b>cours GIM</b> est rapproché de la séance de l'appli qu'il représente (enseignant, année, groupe, type,
+            numéro de semestre de la matière, durée) ; la colonne ${_aUi('Cours dans Hyperplanning')} propose alors de le
+            <b>reprendre</b> : tous les cours d'un enseignant d'un clic, ou cours par cours. Repris, il entre dans l'emploi du temps
+            de l'appli à sa place Hyperplanning, figé (📌 dans la vue Planning ; « Générer l'EDT » ne le bouge plus), à la place de
+            la même séance placée par l'appli. Non repris, il n'en est pas tenu compte : l'appli place la séance elle-même ;</li>
+            <li>un cours GIM sans séance correspondante dans l'appli (matière absente de la répartition…) est seulement bloqué.</li>
+        </ul>
+        <p>Un nouvel import retire les cours repris lors du précédent sur les semaines qu'il couvre, puis reprend ceux qui sont
+        cochés (d'emblée, ceux déjà repris). Un cours qui n'est plus repris laisse sa séance à placer : relancez « Générer l'EDT »
+        sur ces semaines.</p>
+        ${_aTip(`les jours hors de l'année affichée dans le Service sont ignorés : importez le fichier de l'année que vous préparez.`)}
         ${_aTip(`pour donner ses contraintes de l'an prochain, choisissez d'abord l'année suivante dans la liste ${_aUi('Année')} du Service.`)}` },
 
     { id: 'contraintes-matiere', rub: R, titre: 'Contraintes par matière', chemin: 'Service › Contraintes Matière',
@@ -1328,6 +1366,14 @@ function _aidePromotions() {
         ${_aUi('Ajouter les jours fériés légaux manquants')} complète la liste. Ils s'enregistrent avec le reste du calendrier`)}.
         Tant que la liste n'est pas enregistrée, « Générer l'EDT » prend les jours fériés légaux, sans pont. Une semaine qui a un jour
         fermé du lundi au vendredi rouvre le jeudi après-midi aux FTP, pour rattraper.</p>
+        ${_aSiModif('promo:calendrier', `<p>${_aUi('Relever dans un PDF Hyperplanning…')} reprend les jours fermés de l'établissement
+        tels qu'Hyperplanning les marque (« Férié » en travers du jour) dans un emploi du temps imprimé avec les <b>jours datés</b>
+        (« lundi 4 janvier 2027 ») ou les <b>semaines en colonnes</b> (« 24 août - 29 août ») : celui d'un seul enseignant sur
+        l'année suffit. Les jours qui manquent à la liste sont proposés :
+        les fériés légaux et les <b>ponts</b> (un jour fermé accolé à un férié, comme le vendredi après l'Ascension) cochés, les jours
+        d'une longue fermeture (Noël) décochés, puisque ces semaines sont d'ordinaire déjà en vacances au calendrier. Un jour de la
+        liste qu'Hyperplanning ne marque pas est signalé « à vérifier ». Les jours cochés s'ajoutent à la liste, à enregistrer ensuite
+        avec le calendrier.</p>`)}
         <p>Ces jours sont signalés partout où l'on répartit les matières : repère F / P sur la semaine dans la
         ${_aLien('rep-annuelle', 'répartition annuelle')} (et leur nom dans la ligne « Commentaires »)${_aSi('rep:jour', `, « férié » ou « pont »
         dans la liste des semaines de la ${_aLien('rep-jour', 'répartition journalière')}, avec un bandeau rappelant les jours sans cours`)},
@@ -1697,7 +1743,7 @@ function _aideSuivi() {
     return [
     { id: 'suivi-fiches', rub: R, titre: 'Fiches de suivi (tuteurs)', chemin: 'Étudiants › Stages / Alternance › Tuteurs',
       onglet: ['nav:stages', 'nav:alternance'], cible: ['stages/fiches', 'alternance/fiches'],
-      mots: 'stage stagiaire alternance alternant tuteur universitaire tuteur entreprise entreprise mission sujet fiche suivi ville département',
+      mots: 'stage stagiaire alternance alternant tuteur universitaire tuteur entreprise entreprise mission sujet fiche suivi ville département fiche de poste offre descriptif',
       html: `
         <p>Deux onglets jumeaux, pour une ${_aUi('Année universitaire')} :</p>
         <ul>
@@ -1709,11 +1755,15 @@ function _aideSuivi() {
         <h3>Remplir une fiche</h3>
         <p>Un clic sur un étudiant ouvre sa fiche :</p>
         <ul>
+            <li><b>Contrat</b> (alternance seulement) : contrat d'apprentissage ou de professionnalisation, coché sur le PV de visite ;
+                tant qu'il n'est pas choisi, l'alternant est signalé <b>contrat à renseigner</b> ;</li>
             <li><b>Entreprise / organisme</b> : la liste propose les entreprises déjà connues (toutes années) — en choisir une reprend son lieu et son adresse ;</li>
             <li><b>Adresse</b> (n°, rue, code postal), reprise sur le PV de visite de l'alternance ;</li>
             <li><b>Ville</b>, <b>Département</b> (numéro « 83 » ou nom « Var ») ;</li>
             <li><b>Tuteur entreprise</b> (Prénom Nom), sa <b>fonction</b>, son <b>e-mail</b> et son <b>téléphone</b> — un tuteur déjà connu dans cette entreprise reprend ses coordonnées ;</li>
             <li><b>Mission</b> ;</li>
+            <li><b>Fiche de poste</b> (stages seulement) : le descriptif du poste proposé au stagiaire (offre de l'entreprise…), en PDF, Word, Excel
+                ou OpenDocument, 15 Mo au plus. Elle se dépose, se remplace ou se retire aussitôt, sans passer par ${_aUi('Enregistrer')} ;</li>
             <li><b>Tuteur universitaire</b> : un enseignant de l'année affichée (les vacataires sont signalés « (vac.) »).</li>
         </ul>
         <p>Pour un <b>alternant</b>, la fiche saisie une année reste valable les années suivantes tant qu'elle n'est pas remplacée (« fiche reprise de
@@ -1725,7 +1775,8 @@ function _aideSuivi() {
         <h3>Qui fait quoi</h3>
         <ul>
             <li>L'administration et le <b>responsable</b> du domaine (stages pour les stagiaires FTP, ALT pour les alternants) remplissent toutes les fiches et
-                <b>attribuent les tuteurs universitaires</b>.</li>
+                <b>attribuent les tuteurs universitaires</b>. La <b>fiche de poste</b> d'un stagiaire est déposée par l'administration et le responsable des stages ;
+                elle est téléchargeable par tous ceux qui voient l'onglet ${_aOng('Stages')} (lien ${_aUi('📎 Fiche de poste')} sous le sujet du stage).</li>
             <li>Un enseignant connecté avec son mot de passe consulte toutes les fiches et complète celles des étudiants <b>qu'il suit</b>.</li>
         </ul>
         ${_aTip(`un stagiaire en mobilité internationale au semestre du stage n'a pas de stage à suivre : il est simplement signalé sous sa cohorte.`)}` },
@@ -1772,10 +1823,12 @@ function _aideSuivi() {
         <h3>Le PV de visite prérempli</h3>
         <p>${_aUi('⤓ PV (PDF)')} et ${_aUi('⤓ Excel')} téléchargent le PV, rempli d'après la fiche de l'alternant (sous-onglet Tuteurs) : année
         universitaire, formation et année d'étude, parcours, tuteur universitaire, site de formation (Campus de la Garde, coché), nom et prénom
-        de l'alternant, entreprise et son adresse, nom et prénom du tuteur entreprise. Ce qui est prérempli est écrit en bleu. Le PDF s'imprime
+        de l'alternant, son contrat (case cochée d'après la fiche), entreprise et son adresse, nom et prénom du tuteur entreprise.
+        Ce qui est prérempli est écrit en bleu. Le PDF s'imprime
         tel quel ; l'Excel (la trame d'origine) se complète aussi à l'ordinateur.</p>
         <p>L'<b>adresse</b> n'est écrite que si la fiche en a une (n°, rue, code postal) : la ville seule ne suffit pas, la ligne reste alors vide
-        et l'alternant est signalé <b>adresse à renseigner</b>. Restent à écrire le type de contrat, le compte rendu, la date et les signatures.</p>
+        et l'alternant est signalé <b>adresse à renseigner</b> ; de même, sans contrat choisi, aucune case n'est cochée (<b>contrat à renseigner</b>).
+        Restent à écrire le compte rendu, la date et les signatures.</p>
         <p>Le tuteur universitaire voit ses alternants ; l'administrateur et les responsables de l'alternance et FTP les voient tous
         (recherche, ${_aUi('Mes alternants')}).</p>` },
 
