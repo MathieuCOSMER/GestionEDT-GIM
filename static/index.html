@@ -236,6 +236,18 @@
         .cmprp-b { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: .76rem; font-weight: 600; white-space: nowrap; }
         .cmprp-b.manque { background: #fef3c7; color: #92400e; }
         .cmprp-b.trop { background: #dbeafe; color: #1e40af; }
+        /* Comparaison › Tableau Répartition / EDT : ligne EDT sous chaque ligne de la répartition */
+        .repartition-wrap tr.cmpt-rep td { border-bottom: 1px dashed #cbd5e1; }
+        .repartition-wrap tr.cmpt-edt td { background: #fafafa; }
+        .repartition-wrap tr.cmpt-edt td.s-col { background: #f3f4f6; color: #475569; }
+        .repartition-wrap td.cmpt-lib, .repartition-wrap th.cmpt-lib { font-size: .62rem; font-weight: 700; color: #475569; }
+        .cmpt-leg { display: inline-block; border-radius: 4px; padding: 0 6px; font-weight: 600; }
+        .cmpt-ok, .repartition-wrap td.cmpt-ok, .repartition-wrap th.cmpt-ok { background: #dcfce7 !important; color: #166534; }
+        .cmpt-manque, .repartition-wrap td.cmpt-manque, .repartition-wrap th.cmpt-manque { background: #fde68a !important; color: #92400e; }
+        .cmpt-trop, .repartition-wrap td.cmpt-trop, .repartition-wrap th.cmpt-trop { background: #bfdbfe !important; color: #1e3a8a; }
+        .repartition-wrap td.cmpt-c { text-align: center; font-weight: 600; padding: 1px; line-height: 1.2; }
+        .repartition-wrap th.cmpt-w { cursor: pointer; }
+        .repartition-wrap th.cmpt-w:hover { background: #e0e7ff; }
         .pl-promo-t { font-weight: 700; color: #334155; margin: 0 0 6px; }
         .edtg-vue { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin: 12px 0 4px; font-size: .85rem; }
         .edtg-vue select { padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 6px; font: inherit; }
@@ -1086,6 +1098,8 @@
     <div class="subtabs" id="cmp-subtabs">
         <button type="button" id="cmp-subtab-rp" class="subtab active" onclick="cmpOnglet('rp')"
                 title="Les heures prévues par la Répartition Calendaire confrontées aux cours posés dans le Planning">Répartition ↔ Planning</button>
+        <button type="button" id="cmp-subtab-tab" class="subtab" onclick="cmpOnglet('tab')"
+                title="Le tableau de la Répartition Calendaire, avec sous chaque ligne les heures posées dans l'EDT">Tableau Répartition / EDT</button>
         <button type="button" id="cmp-subtab-hp" class="subtab" onclick="cmpOnglet('hp')"
                 title="Un export « état récapitulatif » d'Hyperplanning confronté aux heures saisies ici">Export Hyperplanning</button>
     </div>
@@ -1096,8 +1110,8 @@
                 Pour chaque semaine, les heures que la <strong>Répartition Calendaire</strong> prévoit, séance par séance et
                 groupe par groupe, confrontées aux cours posés dans le <strong>Planning</strong> (générés par « Optimiser
                 l'EDT » ou repris d'Hyperplanning). <strong>À placer</strong> : le Planning en a moins que prévu ;
-                <strong>en trop</strong> : il en a plus (répartition modifiée depuis, cours d'Hyperplanning plus longs…).
-                Rien n'est modifié ici.</p>
+                <strong>en trop</strong> : il en a plus (cours d'Hyperplanning une autre semaine que la répartition, ou plus
+                longs, répartition modifiée depuis…). Rien n'est modifié ici.</p>
             <div class="filters" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
                 <div><label style="display:block;font-size:.75rem;color:#6b7280">Année d'étude</label>
                     <select id="cmprp-annee" onchange="cmprpRendre()" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
@@ -1116,6 +1130,32 @@
             </div>
         </div>
         <div id="cmprp-result"><div class="spinner">Chargement…</div></div>
+    </div>
+    <!-- Tableau de la Répartition Calendaire, chaque ligne suivie des heures posées dans l'EDT (Planning) -->
+    <div id="cmp-pane-tab" style="display:none">
+        <div class="card" style="margin-bottom:12px">
+            <p style="margin:0 0 10px;color:#4b5563;font-size:.85rem;line-height:1.5">
+                Le tableau de la <strong>Répartition Calendaire</strong> d'un semestre ; sous chacune de ses lignes, la ligne
+                <strong>EDT</strong> donne les heures posées dans le <strong>Planning</strong> la même semaine :
+                <span class="cmpt-leg cmpt-ok">autant</span> <span class="cmpt-leg cmpt-manque">moins (à placer)</span>
+                <span class="cmpt-leg cmpt-trop">plus (en trop)</span>. Un PT à plusieurs groupes montre les heures de chaque
+                groupe (« 3/0 ») quand elles diffèrent. Un clic sur un numéro de semaine l'ouvre dans le Planning.
+                Rien n'est modifié ici.</p>
+            <div class="filters" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
+                <div><label style="display:block;font-size:.75rem;color:#6b7280">Semestre</label>
+                    <select id="cmpt-sem" onchange="cmptCharger()" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px"></select></div>
+                <div><label style="display:block;font-size:.75rem;color:#6b7280">Formation</label>
+                    <select id="cmpt-form" onchange="cmptRendre()" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px">
+                        <option value="">Toutes</option><option value="FTP">FTP</option><option value="ALT">ALT</option></select></div>
+                <div><label style="display:block;font-size:.75rem;color:#6b7280">Matière, enseignant</label>
+                    <input type="search" id="cmpt-q" oninput="cmptRendre()" placeholder="R1.05, RICHIER…"
+                           style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;width:170px"></div>
+                <label style="font-weight:400;font-size:.85rem"><input type="checkbox" id="cmpt-ecarts" onchange="cmptRendre()">
+                    Seulement les lignes avec un écart</label>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="cmptCharger()">Actualiser</button>
+            </div>
+        </div>
+        <div id="cmpt-result"></div>
     </div>
     <div id="cmp-pane-hp" style="display:none">
     <div class="card" style="margin-bottom:14px">
@@ -1338,7 +1378,7 @@
                 <button type="button" class="btn btn-secondary btn-sm" onclick="jfAjouter()">+ Ajouter un jour</button>
                 <button type="button" class="btn btn-secondary btn-sm" id="jf-legaux" onclick="jfLegaux()">Ajouter les jours fériés légaux manquants</button>
                 <button type="button" class="btn btn-secondary btn-sm" id="jf-hp" onclick="jfHpOuvrir()"
-                    title="Les jours marqués « Férié » dans un emploi du temps imprimé depuis Hyperplanning (PDF)">📥 Relever dans un PDF Hyperplanning…</button>
+                    title="Les jours fermés (« Férié », « Vacances ») de l'export iCal d'Hyperplanning">📥 Relever dans l'iCal Hyperplanning…</button>
                 <span class="dsp-status" id="jf-modif"></span>
             </div>
         </div>
@@ -2045,7 +2085,8 @@
         <p style="color:#6b7280;font-size:.84rem;margin:0 0 6px">
             PDF de l'emploi du temps des enseignants imprimé depuis Hyperplanning avec la <strong>journée complète</strong>
             (8h00 → 21h00) : <strong>jours datés</strong> (« lundi 4 janvier 2027 »), une semaine par page ou plusieurs
-            côte à côte, ou <strong>semaines en colonnes</strong> (« 24 août - 29 août », jours en rangées). Un ou
+            côte à côte, une semaine par page à <strong>date courte</strong> (« lundi 01/02 », jours en colonnes), ou
+            <strong>semaines en colonnes</strong> (« 24 août - 29 août », jours en rangées). Un ou
             plusieurs enseignants par fichier, toute l'année si besoin. Seules les zones <strong>hachurées</strong> sont
             lues : elles deviennent des indisponibilités. Les cours posés dans Hyperplanning s'importent à part, depuis
             son export iCal, dans <strong>Service › Planning</strong>. Des horaires compactés (heures sans cours
@@ -2104,10 +2145,12 @@
             Export <strong>iCal</strong> (.ics) de l'emploi du temps des enseignants : dans Hyperplanning, l'emploi du temps
             « Professeur » de tous les enseignants exporté au format iCal, <strong>un seul fichier</strong> pour l'année.
             Chaque <strong>cours GIM</strong> est rapproché de la séance de l'appli qu'il représente (enseignant, année,
-            groupe, type, semestre, durée) et repris dans l'emploi du temps de l'appli, à sa place Hyperplanning :
-            <strong>figé</strong> (« Optimiser l'EDT » ne le bouge plus) ou <strong>libre</strong> (posé là, mais le calcul
-            peut le déplacer). Les autres cours (autres départements, cours GIM sans séance correspondante, réunions…)
-            rendent le créneau <strong>indisponible</strong> pour leurs enseignants.</p>
+            groupe, type, semestre, nom de la matière, durée) et repris dans l'emploi du temps de l'appli, à sa place
+            Hyperplanning, <strong>sans regarder la Répartition Calendaire</strong> : l'EDT d'Hyperplanning est repris tel
+            qu'il est, et <strong>Service › Comparaison</strong> montre ensuite où il s'écarte de la répartition. Chaque cours
+            est <strong>figé</strong> (« Optimiser l'EDT » ne le bouge plus) ou <strong>libre</strong> (posé là, mais le calcul
+            peut le déplacer). Les autres cours (autres départements, cours GIM sans séance dans l'appli, aide à la réussite,
+            réunions…) rendent le créneau <strong>indisponible</strong> pour leurs enseignants.</p>
         <p style="color:#6b7280;font-size:.84rem;margin:0 0 8px">
             Pour chaque enseignant du fichier, un nouvel import remplace les semaines qu'il couvre ; les indisponibilités
             (hachures) restent celles de Contraintes Enseignant. <strong>Rien n'est écrit avant votre confirmation.</strong></p>
@@ -2128,14 +2171,14 @@
     <div class="modal" style="max-width:760px">
         <h2 style="font-size:1.05rem;margin-bottom:4px">Relever les jours fériés et ponts dans Hyperplanning</h2>
         <p style="color:#6b7280;font-size:.84rem;margin:0 0 8px">
-            PDF de l'emploi du temps imprimé depuis Hyperplanning avec les <strong>jours datés</strong>
-            (« lundi 4 janvier 2027 ») ou les <strong>semaines en colonnes</strong> (« 24 août - 29 août ») : celui
-            d'un seul enseignant suffit, sur toute l'année, car les jours fermés de
-            l'établissement y sont marqués « Férié ». Les jours qui manquent à la liste sont proposés ; cochés, ils y
-            sont ajoutés, à vérifier puis à <strong>enregistrer avec le calendrier</strong>.</p>
+            <strong>Export iCal</strong> (.ics) de l'emploi du temps d'Hyperplanning, sur toute l'année : celui de
+            Service › Planning (« Emploi du temps Professeur ») ou celui d'un seul enseignant, car les jours fermés de
+            l'établissement y figurent (« Férié », « Vacances »). Le fichier est lu ici, sans être envoyé. Les jours qui
+            manquent à la liste sont proposés ; cochés, ils y sont ajoutés, à vérifier puis à
+            <strong>enregistrer avec le calendrier</strong>.</p>
         <div class="form-group">
-            <label>Fichier PDF *</label>
-            <input type="file" id="jf-hp-file" accept=".pdf" onchange="jfHpLire(this)">
+            <label>Fichier iCal *</label>
+            <input type="file" id="jf-hp-file" accept=".ics,text/calendar" onchange="jfHpLire(this)">
         </div>
         <div id="jf-hp-report" style="max-height:55vh;overflow:auto"></div>
         <div class="form-actions" style="margin-top:14px">
@@ -5882,7 +5925,8 @@ async function hpLireFichier(input) {
         }
         if (!Object.keys(_hpImport.lu).length)
             throw new Error('Aucun emploi du temps reconnu dans ce fichier : imprimez-le depuis Hyperplanning avec la journée '
-                            + 'complète (8h00 → 21h00), jours datés (une semaine par page ou plusieurs côte à côte) ou semaines '
+                            + 'complète (8h00 → 21h00), jours datés (une semaine par page ou plusieurs côte à côte, '
+                            + '« lundi 4 janvier 2027 » ou « lundi 01/02 ») ou semaines '
                             + 'en colonnes (« 24 août - 29 août »).');
         progres('Rapprochement des enseignants…', 1);
         await hpRapport();
@@ -17156,11 +17200,12 @@ let _cmpFiltre = 'ecarts';     // 'ecarts' | 'tout'
 let _cmpOnglet = 'rp';
 
 async function loadComparaison() {
-    ['rp', 'hp'].forEach(o => {
+    ['rp', 'tab', 'hp'].forEach(o => {
         document.getElementById('cmp-subtab-' + o).classList.toggle('active', o === _cmpOnglet);
         document.getElementById('cmp-pane-' + o).style.display = o === _cmpOnglet ? '' : 'none';
     });
     if (_cmpOnglet === 'rp') await cmprpCharger();
+    else if (_cmpOnglet === 'tab') await cmptCharger();
     else await _loadComparaisonHp();
 }
 
@@ -17278,6 +17323,190 @@ function cmprpRendre() {
         }
     });
     zone.innerHTML = html + '</tbody></table>';
+}
+
+// ----- Tableau Répartition / EDT -----
+// Les lignes de la Répartition Calendaire d'un semestre (GET /compare/repartition-edt :
+// une par séance, une par groupe pour les TD et les TP), chacune suivie de la ligne
+// « EDT » : les heures posées dans le Planning la même semaine, colorées selon l'écart.
+// Les sommes comptent les heures dispensées : une ligne de PT à n groupes vaut n fois.
+let _cmpt = null;              // { d: réponse du serveur, jf: jours fermés par semaine }
+let _cmptSems = null;          // { q: année (svcQ), codes: semestres }
+
+async function cmptCharger() {
+    const zone = document.getElementById('cmpt-result'), sel = document.getElementById('cmpt-sem');
+    zone.innerHTML = '<div class="spinner">Chargement…</div>';
+    try {
+        if (!_cmptSems || _cmptSems.q !== svcQ()) {
+            const num = c => parseInt(String(c).replace(/\D/g, '')) || 99;
+            const codes = [...new Set((await api('/semesters' + svcQ())).map(s => s.code).filter(Boolean))]
+                .sort((a, b) => num(a) - num(b) || a.localeCompare(b));
+            _cmptSems = { q: svcQ(), codes };
+            const avant = sel.value;
+            sel.innerHTML = codes.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+            if (codes.includes(avant)) sel.value = avant;
+        }
+        if (!sel.value) { zone.innerHTML = '<div class="empty">Aucun semestre pour cette année.</div>'; return; }
+        const [d, fermes] = await Promise.all([
+            api('/compare/repartition-edt?semester=' + encodeURIComponent(sel.value) + svcQ('&')),
+            api('/jours-fermes' + svcQ()).catch(() => null)]);
+        _cmpt = { d, jf: jfParSemaine(fermes && fermes.jours) };
+        cmptRendre();
+    } catch (e) {
+        zone.innerHTML = `<div class="empty">Erreur : ${esc(e.message)}</div>`;
+    }
+}
+
+const _cmptR = h => Math.round((h || 0) * 100) / 100;
+
+// Heures posées d'une ligne une semaine (w), ou sur l'année (w = null) :
+// { txt, vs (une valeur par groupe), e (prévu), statut '' | 'ok' | 'manque' | 'trop' }
+function _cmptEdt(r, w) {
+    const somme = o => Object.values(o || {}).reduce((s, v) => s + v, 0);
+    const e = _cmptR(w === null ? somme(r.by_week) : r.by_week[w]);
+    const vs = (r.edt_groupes || [r.edt]).map(g => _cmptR(w === null ? somme(g) : (g || {})[w]));
+    const rien = vs.every(v => !v);
+    const txt = rien ? '' : vs.every(v => v === vs[0]) ? String(vs[0]) : vs.join('/');
+    const statut = !e && rien ? '' : vs.some(v => v < e - 0.01) ? 'manque' : vs.some(v => v > e + 0.01) ? 'trop' : 'ok';
+    return { txt, vs, e, statut };
+}
+
+function cmptRendre() {
+    if (!_cmpt) return;
+    const { d, jf } = _cmpt, zone = document.getElementById('cmpt-result');
+    const ff = document.getElementById('cmpt-form').value;
+    const q = document.getElementById('cmpt-q').value.trim().toLowerCase();
+    const seulEcarts = document.getElementById('cmpt-ecarts').checked;
+    const weeks = d.weeks || [];
+    const ecart = r => _cmptEdt(r, null).statut === 'manque' || _cmptEdt(r, null).statut === 'trop'
+        || weeks.some(w => ['manque', 'trop'].includes(_cmptEdt(r, w).statut));
+    // mêmes lignes que la Répartition : faces MUT, FTP et ALT
+    const rows = d.rows.filter(r => ['MUT', 'FTP', 'ALT'].includes(r.formation)
+        && (!ff || r.formation === 'MUT' || r.formation === ff)
+        && (!q || `${r.course_code} ${r.course_name} ${(r.teachers || []).join(' ')} ${r.teacher}`.toLowerCase().includes(q))
+        && (!seulEcarts || ecart(r)));
+    // matières, dans l'ordre de la Répartition Calendaire
+    const byCode = {}, ordre = [];
+    rows.forEach(r => {
+        const k = r.course_code + '|' + r.semester;
+        if (!byCode[k]) { byCode[k] = { code: r.course_code, name: r.course_name, rows: {} }; ordre.push(k); }
+        (byCode[k].rows[r.formation] = byCode[k].rows[r.formation] || []).push(r);
+    });
+    const ordIdx = c => (c in _courseOrderIdx ? _courseOrderIdx[c] : Infinity);
+    ordre.sort((a, b) => ordIdx(byCode[a].code) - ordIdx(byCode[b].code));
+    Object.entries(_courseAfter).forEach(([mv, apres]) => {
+        const mi = ordre.findIndex(k => byCode[k].code === mv);
+        if (mi < 0 || !ordre.some(k => byCode[k].code === apres)) return;
+        const [it] = ordre.splice(mi, 1);
+        ordre.splice(ordre.findIndex(k => byCode[k].code === apres) + 1, 0, it);
+    });
+    // semaines spéciales du semestre (vacances, stage FTP, entreprise ALT), comme la Répartition
+    const sp = d.special_weeks || {};
+    const a = (k, w) => (sp[k] || []).includes(w);
+    const wcls = (w, form) => {
+        if (form === 'MUT') {
+            const f = a('stage_ftp', w) || a('vacation_ftp', w), c = a('company_alt', w);
+            return f && c ? 'w-both' : c ? 'w-company' : a('stage_ftp', w) ? 'w-stage' : a('vacation_ftp', w) ? 'w-vacation' : '';
+        }
+        if (form === 'FTP') return a('stage_ftp', w) ? 'w-stage' : a('vacation_ftp', w) ? 'w-vacation' : '';
+        return form === 'ALT' && a('company_alt', w) ? 'w-company' : '';
+    };
+    // colonnes fixes : Form. | Type | Enseignant | Ligne (Rép. / EDT) | Σ
+    const W = [34, 70, 110, 40, 56], L = [];
+    W.reduce((s, x, i) => { L[i] = s; return s + x; }, 0);
+    const fixe = W.reduce((s, x) => s + x, 0);
+    const avail = (zone.clientWidth || window.innerWidth) - 2;
+    const WK = Math.max(30, Math.floor((avail - fixe) / Math.max(1, weeks.length)));
+    const tableW = fixe + weeks.length * WK;
+    const typeColors = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' };
+    // sommes par semaine des lignes affichées, en heures dispensées
+    const sRep = {}, sEdt = {};
+    weeks.forEach(w => { sRep[w] = 0; sEdt[w] = 0; });
+    let nManque = 0, nTrop = 0, hManque = 0, hTrop = 0;
+    let body = '';
+    ordre.forEach(k => {
+        const b = byCode[k];
+        body += `<tr class="row-mat"><td class="s-col" colspan="${W.length}" style="left:0;z-index:2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            <div class="mat-head"><span class="mat-title"><strong>${esc(b.code)}</strong> — ${esc(b.name || '')}</span></div></td>
+            <td colspan="${weeks.length}"></td></tr>`;
+        ['MUT', 'FTP', 'ALT'].forEach(form => {
+            const rs = b.rows[form] || [];
+            rs.forEach((r, i) => {
+                const fcls = 'row-' + form.toLowerCase();
+                const grp = r.n_groups > 1
+                    ? `<span class="grp-tag${r.alt_group ? ' grp-tag-alt' : ''}">${esc(r.group_label || 'gr.' + r.group_index)}</span>`
+                    : (r.group_count > 1 ? `<span class="grp-tag">${r.group_count} groupes</span>` : '');
+                const badge = `<span class="badge ${typeColors[(r.type || '').toUpperCase()] || 'badge-cm'}">${esc(typeDisp(r))}</span>${grp}`;
+                const ng = r.n_groups > 1 ? 1 : (r.group_count || 1);     // groupes que la ligne représente
+                const an = _cmptEdt(r, null);
+                const celRep = weeks.map(w => {
+                    const h = r.by_week[w];
+                    sRep[w] += (h || 0) * ng;
+                    const c = wcls(w, form);
+                    return h ? `<td class="cell-hours ${c}">${h}</td>` : `<td class="cell-empty ${c}">·</td>`;
+                }).join('');
+                const celEdt = weeks.map(w => {
+                    const x = _cmptEdt(r, w);
+                    sEdt[w] += x.vs.reduce((s, v) => s + v, 0) * (r.edt_groupes ? 1 : ng);
+                    if (x.statut === 'manque') { nManque++; hManque += x.vs.reduce((s, v) => s + Math.max(0, x.e - v), 0); }
+                    if (x.statut === 'trop') { nTrop++; hTrop += x.vs.reduce((s, v) => s + Math.max(0, v - x.e), 0); }
+                    if (!x.statut) return `<td class="cell-empty ${wcls(w, form)}">·</td>`;
+                    const nf = (r.edt_figes || {})[w];
+                    const t = `S${w} · Répartition ${x.e} h · EDT ${x.txt || 0} h${nf ? ` (${nf} cours figé${nf > 1 ? 's' : ''})` : ''}`;
+                    return `<td class="cmpt-c cmpt-${x.statut}" title="${esc(t)}">${x.txt || '0'}</td>`;
+                }).join('');
+                const formTd = i === 0 ? `<td class="s-col form-col form-${form.toLowerCase()}" rowspan="${rs.length * 2}" style="left:0;z-index:2">${form}</td>` : '';
+                const nfAn = Object.values(r.edt_figes || {}).reduce((s, v) => s + v, 0);
+                body += `<tr class="row-data ${fcls} cmpt-rep">${formTd}
+                    <td class="s-col" rowspan="2" style="left:${L[1]}px">${badge}</td>
+                    <td class="s-col" rowspan="2" style="left:${L[2]}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.teacher || '')}">${esc(r.teacher || '')}</td>
+                    <td class="s-col cmpt-lib" style="left:${L[3]}px">Rép.</td>
+                    <td class="s-col col-module" style="left:${L[4]}px">${an.e ? an.e + 'h' : ''}</td>${celRep}</tr>
+                    <tr class="cmpt-edt ${fcls}">
+                    <td class="s-col cmpt-lib" style="left:${L[3]}px">EDT</td>
+                    <td class="s-col cmpt-c${an.statut ? ' cmpt-' + an.statut : ''}" style="left:${L[4]}px"${nfAn ? ` title="${nfAn} cours figé(s)"` : ''}>${an.txt ? an.txt + 'h' : (an.e ? '0h' : '')}</td>${celEdt}</tr>`;
+            });
+        });
+    });
+    const totR = weeks.reduce((s, w) => s + sRep[w], 0), totE = weeks.reduce((s, w) => s + sEdt[w], 0);
+    let html = `<p style="font-size:.88rem;margin:0 0 10px">${esc(d.semestre)} · ${esc(d.annee)} · <b>${rows.length}</b> ligne(s)${
+        seulEcarts || ff || q ? ' (filtre appliqué)' : ''} · Répartition <b>${_cmptR(totR)} h</b> · EDT <b>${_cmptR(totE)} h</b>
+        <span class="edtg-note">(heures dispensées : un PT à 2 groupes compte double)</span>
+        · <span style="color:#92400e"><b>${nManque}</b> case(s) à compléter (${_cmptR(hManque)} h)</span>
+        · <span style="color:#1e3a8a"><b>${nTrop}</b> en trop (${_cmptR(hTrop)} h)</span></p>`;
+    if (!rows.length) {
+        zone.innerHTML = html + `<div class="empty">${d.rows.length ? (seulEcarts ? 'Aucun écart : l\'EDT suit la Répartition Calendaire.'
+            : 'Aucune ligne pour ce filtre.') : 'Pas de répartition pour ce semestre.'}</div>` + _cmptHors(d.hors);
+        return;
+    }
+    const HROW = 26;
+    const tete = (lib, cls, cel, top) => `<tr style="--htop:${top}px"><th class="s-col ${cls}" colspan="${W.length}" style="left:0">${lib}</th>${cel}</tr>`;
+    const celSomme = (s, comparer) => weeks.map(w => {
+        const v = _cmptR(s[w]), e = _cmptR(sRep[w]);
+        const st = !comparer || (!v && !e) ? '' : v < e - 0.01 ? ' cmpt-manque' : v > e + 0.01 ? ' cmpt-trop' : ' cmpt-ok';
+        return `<th class="col-week${st}">${v || ''}</th>`;
+    }).join('');
+    const enTete = tete('Σ Répartition (h dispensées)', '', celSomme(sRep, false), 0)
+        + tete('Σ EDT (h posées)', '', celSomme(sEdt, true), HROW)
+        + `<tr class="hrow-weeks" style="--htop:${2 * HROW}px">
+            <th class="s-col col-week form-col" style="left:0">Form.</th>
+            <th class="s-col col-week" style="left:${L[1]}px">Type</th>
+            <th class="s-col col-week" style="left:${L[2]}px">Enseignant</th>
+            <th class="s-col col-week cmpt-lib" style="left:${L[3]}px">Ligne</th>
+            <th class="s-col col-week col-module" style="left:${L[4]}px">Σ</th>
+            ${weeks.map(w => `<th class="col-week cmpt-w" onclick="cmprpVoirPlanning(${w})" title="Ouvrir la semaine ${w} dans le Planning">${w}${jfRepere(jf[w])}</th>`).join('')}</tr>`;
+    zone.innerHTML = html + `<div class="repartition-wrap"><table style="table-layout:fixed;width:${tableW}px">
+        <colgroup>${W.map(x => `<col style="width:${x}px">`).join('')}${weeks.map(() => `<col style="width:${WK}px">`).join('')}</colgroup>
+        <thead>${enTete}</thead><tbody>${body}</tbody></table></div>` + _cmptHors(d.hors);
+}
+
+// Cours posés dans l'EDT hors des lignes de la répartition (séance retirée, groupe non déclaré)
+function _cmptHors(hors) {
+    if (!hors || !hors.length) return '';
+    return `<p class="edtg-note" style="margin-top:10px"><b>Posés dans l'EDT hors des lignes de la répartition</b> (séance retirée
+        de la répartition, ou groupe que le semestre ne déclare plus ; à retirer par « Réinitialiser l'EDT… » ou un nouvel
+        « Optimiser l'EDT ») : ${hors.map(h => esc(`${h.code} ${h.type} gr${h.groupe} ${h.formation} : ${h.heures} h (S${
+            Object.keys(h.edt).join(', S')})`)).join(' · ')}.</p>`;
 }
 
 // ----- Export Hyperplanning (état récapitulatif) -----
@@ -21112,6 +21341,13 @@ function _icalRapportHtml(imp) {
             · ${rap.enseignants.length} nom(s) d'enseignants · <b>${retenus.length} enseignant(s) de l'année ${esc(rap.annee)}
             mis à jour</b> sur ${rap.semaines.length} semaine(s)${rap.hors_annee ? ` · ${rap.hors_annee} cours hors de l'année ignoré(s)` : ''}.</p>
         ${rap.erreur ? `<div class="empty" style="color:#b91c1c;margin-bottom:8px">${esc(rap.erreur)}</div>` : ''}
+        ${rap.sans_type ? `<p style="font-size:.85rem;margin:0 0 8px;padding:6px 10px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px">
+            ⚠ <b>${rap.sans_type} cours GIM sans type</b> (CM, TD, TP…) dans ce fichier : c'est sans doute l'export
+            « Emploi du temps Classe ». Leur type est déduit du nom du groupe (TP12_1 : un TP ; TD_1 : un TD ou un PT), et un
+            cours de toute la promotion ne va qu'à une séance d'un seul groupe ; mais rien n'y distingue un CM d'un TD de toute la
+            promotion, ni un TD d'un PT : ces cours-là peuvent aller sur la mauvaise séance.
+            ${rap.hors_gim ? '' : 'Ce fichier n\'a pas non plus les cours des enseignants dans les autres départements : ces créneaux ne seront pas bloqués. '}
+            Préférez l'export <b>« Emploi du temps Professeur »</b>, qui donne le type et tous les cours des enseignants.</p>` : ''}
         ${!rap.semaines.length ? `<div class="empty" style="color:#b91c1c;margin-bottom:8px">Aucune semaine de l'année
             ${esc(rap.annee)} dans ce calendrier : exportez celui de l'année affichée dans le Service.</div>` : ''}
         <p style="font-size:.85rem;margin:0 0 8px"><b>${nGim} cours GIM</b> rapprochés d'une séance de l'appli, repris à leur
@@ -21165,8 +21401,8 @@ function icalDetail(det, tid) {
 function _icalBloquesHtml(e) {
     const t = [];
     if (e.nb_autres) t.push(`${e.nb_autres} d'autres départements`);
-    if (e.nb_non_rapproches) t.push(`<span title="${esc('Cours GIM sans séance correspondante dans l’appli (matière hors '
-        + 'répartition, réunion, séance en plus…) :\n' + (e.non_rapproches || []).join('\n'))}"
+    if (e.nb_non_rapproches) t.push(`<span title="${esc('Cours GIM sans séance correspondante dans l’appli (aide à la '
+        + 'réussite, réunion, séminaire, type ou groupe que la matière n’a pas…) :\n' + (e.non_rapproches || []).join('\n'))}"
         style="text-decoration:underline dotted">${e.nb_non_rapproches} GIM sans séance dans l'appli</span>`);
     if (!t.length) return 'aucun';
     return t.join(' · ') + (e.exemples_bloques.length ? `<br>${e.exemples_bloques.map(esc).join('<br>')}` : '');
@@ -21419,11 +21655,11 @@ function jfRetirer(i) {
     _jfRendre();
 }
 
-// ----- Jours fermés relevés dans un PDF d'Hyperplanning -----
-// Le PDF (jours datés, ou semaines en colonnes) est lu comme pour l'import des indisponibilités (dépôt, puis
-// lecture par tranches) ; seuls servent ici les jours marqués « Férié », qui sont les
-// mêmes pour tous les enseignants : la lecture s'arrête dès qu'une tranche n'apporte
-// plus de jour nouveau. Les jours qui manquent à la liste sont proposés : fériés
+// ----- Jours fermés relevés dans l'export iCal d'Hyperplanning -----
+// L'iCal (celui du Planning, « Emploi du temps Professeur », ou celui d'un seul
+// enseignant) porte les jours fermés de l'établissement : événements « Ferie-… » sur des
+// journées entières (« Férié », « Vacances »), jour de fin exclu. La page lit le fichier
+// elle-même, sans l'envoyer. Les jours qui manquent à la liste sont proposés : fériés
 // légaux et ponts cochés, jours d'une longue fermeture (vacances) décochés.
 let _jfHp = null;        // { props: [{date, type, libelle, coche, note}] }
 let _jfHpN = 0;
@@ -21452,55 +21688,80 @@ function _jfLendemain(s) {
     return d.toISOString().slice(0, 10);
 }
 
+// AAAA-MM-JJ du jour suivant (dimanche compris)
+function _jfJourSuivant(s) {
+    const [a, m, j] = s.split('-').map(Number);
+    return new Date(Date.UTC(a, m - 1, j + 1)).toISOString().slice(0, 10);
+}
+
+// Valeur d'un DTSTART / DTEND (« 20270506 », « 20261102T070000Z ») -> AAAA-MM-JJ
+function _jfIcalJour(v) {
+    const m = /^(\d{4})(\d{2})(\d{2})/.exec((v || '').trim());
+    return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+}
+
+// Texte d'un fichier iCal -> { fermes: Map(date -> « Férié » / « Vacances »), nb (périodes
+// de fermeture), premier / dernier : premier et dernier jour où commence un événement
+// (cours compris), c.-à-d. la période que couvre l'export }
+function _jfLireIcal(texte) {
+    const lignes = texte.replace(/\r\n?/g, '\n').replace(/\n[ \t]/g, '').split('\n');
+    const fermes = new Map();
+    let ev = null, premier = null, dernier = null, nb = 0;
+    for (const l of lignes) {
+        if (l === 'BEGIN:VEVENT') { ev = {}; continue; }
+        if (!ev) continue;
+        if (l === 'END:VEVENT') {
+            if (ev.debut) {
+                if (!premier || ev.debut < premier) premier = ev.debut;
+                if (!dernier || ev.debut > dernier) dernier = ev.debut;
+                if (/^Ferie-/i.test(ev.uid || '')) {
+                    nb++;
+                    const finEx = ev.fin && ev.fin > ev.debut ? ev.fin : _jfJourSuivant(ev.debut);
+                    for (let d = ev.debut, k = 0; d < finEx && k < 400; d = _jfJourSuivant(d), k++)
+                        if (!fermes.has(d) || ev.nature === 'Férié') fermes.set(d, ev.nature || 'Férié');
+                }
+            }
+            ev = null;
+            continue;
+        }
+        const i = l.indexOf(':');
+        if (i < 0) continue;
+        const cle = l.slice(0, i).split(';')[0].toUpperCase(), val = l.slice(i + 1);
+        if (cle === 'UID') ev.uid = val.trim();
+        else if (cle === 'DTSTART') ev.debut = _jfIcalJour(val);
+        else if (cle === 'DTEND') ev.fin = _jfIcalJour(val);
+        else if (cle === 'SUMMARY') ev.nature = val.replace(/\\(.)/g, '$1').trim();
+    }
+    return { fermes, nb, premier, dernier };
+}
+
 async function jfHpLire(input) {
     const f = input.files && input.files[0];
     if (!f || !_jf.etat) return;
     const n = ++_jfHpN;
     const zone = document.getElementById('jf-hp-report');
-    const bouton = document.getElementById('jf-hp-apply');
-    bouton.disabled = true;
-    const progres = (txt, part) => {
-        zone.innerHTML = `<div class="edtg-note">${esc(txt)}</div>
-            <div class="hp-barre"><div style="width:${Math.round(100 * part)}%"></div></div>`;
-    };
-    progres(`Envoi de « ${f.name} »…`, 0);
+    document.getElementById('jf-hp-apply').disabled = true;
+    zone.innerHTML = `<div class="edtg-note">Lecture de « ${esc(f.name)} »…</div>`;
     try {
-        const fd = new FormData();
-        fd.append('file', f);
-        const r = await fetch('/api/constraints/dispos/hp/fichier' + _calQ(), { method: 'POST', body: fd });
-        const dep = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(dep.error || 'Échec de l\'envoi');
-        const feries = new Set(), vus = new Set();
-        let lues = 0;
-        for (let p = 0; p < dep.pages; p += _HP_TRANCHE) {
-            if (n !== _jfHpN) return;
-            progres(`Lecture des pages ${p + 1} à ${Math.min(p + _HP_TRANCHE, dep.pages)} sur ${dep.pages}…`, p / dep.pages);
-            const res = await api('/constraints/dispos/hp/lire' + _calQ(), {
-                method: 'POST', body: JSON.stringify({ jeton: dep.jeton, debut: p, fin: p + _HP_TRANCHE }) });
-            const avant = vus.size;
-            Object.keys(res.jours_vus || {}).forEach(d => vus.add(d));
-            Object.keys(res.feries || {}).forEach(d => feries.add(d));
-            lues = Math.min(p + _HP_TRANCHE, dep.pages);
-            if (p > 0 && vus.size === avant) break;        // les pages suivantes répètent le calendrier
-        }
-        if (lues < dep.pages)                               // fichier déposé : effacé sans lire la suite
-            api('/constraints/dispos/hp/lire' + _calQ(), {
-                method: 'POST', body: JSON.stringify({ jeton: dep.jeton, debut: dep.pages, fin: dep.pages }) }).catch(() => {});
+        const lu = _jfLireIcal(await f.text());
         if (n !== _jfHpN) return;
-        if (!vus.size) throw new Error('Aucun jour reconnu dans ce fichier : imprimez l\'emploi du temps depuis Hyperplanning '
-                                       + 'avec les jours datés (« lundi 4 janvier 2027 ») ou les semaines en colonnes '
-                                       + '(« 24 août - 29 août »).');
-        _jfHpProposer(feries, vus, f.name, lues, dep.pages);
+        if (!lu.premier) throw new Error('Aucun événement dans ce fichier : choisissez l\'export iCal (.ics) de l\'emploi du '
+                                         + 'temps d\'Hyperplanning.');
+        if (!lu.nb) throw new Error('Aucun jour fermé (« Férié », « Vacances ») dans cet export iCal : exportez l\'emploi '
+                                    + 'du temps d\'Hyperplanning sur toute l\'année.');
+        _jfHpProposer(lu, f.name);
     } catch (e) {
         if (n === _jfHpN) zone.innerHTML = `<div class="empty" style="color:#b91c1c">Erreur : ${esc(e.message)}</div>`;
     }
 }
 
-function _jfHpProposer(feries, vus, fichier, lues, pages) {
+function _jfHpProposer(lu, fichier) {
     const { debut, fin, legaux, annee } = _jf.etat;
     const legal = new Map((legaux || []).map(j => [j.date, j.libelle]));
     const existants = new Set(_jf.jours.map(j => j.date));
-    const fermes = [...feries].filter(d => d >= debut && d <= fin && (_jfInfo(d) || {}).jour !== 6).sort();
+    const feries = lu.fermes;
+    const dimanche = d => (_jfInfo(d) || {}).jour === 6;
+    const fermes = [...feries.keys()].filter(d => d >= debut && d <= fin && !dimanche(d)).sort();
     // suites de jours fermés consécutifs (dimanches sautés) : longueur et fériés légaux voisins
     const suite = new Map();
     for (let i = 0; i < fermes.length;) {
@@ -21514,18 +21775,20 @@ function _jfHpProposer(feries, vus, fichier, lues, pages) {
     const props = fermes.filter(d => !existants.has(d)).map(d => {
         if (legal.has(d)) return { date: d, type: 'ferie', libelle: legal.get(d), coche: true, note: 'jour férié légal' };
         const s = suite.get(d);
+        const hp = ` (« ${feries.get(d)} » dans Hyperplanning)`;
         if (s.n >= 5) return { date: d, type: 'pont', libelle: 'Fermeture', coche: false,
-                               note: `dans une fermeture de ${s.n} jours : inutile si ces semaines sont déjà en vacances au calendrier` };
+                               note: `dans une fermeture de ${s.n} jours${hp} : inutile si ces semaines sont déjà en vacances au calendrier` };
         return { date: d, type: 'pont', libelle: s.lib ? `Pont (${s.lib})` : 'Pont', coche: true,
-                 note: s.lib ? `accolé à : ${s.lib}` : 'jour fermé isolé' };
+                 note: (s.lib ? `accolé à : ${s.lib}` : 'jour fermé isolé') + hp };
     });
-    const ignores = [...feries].filter(d => d < debut || d > fin).length;
-    const absents = _jf.jours.filter(j => j.date && vus.has(j.date) && !feries.has(j.date));
+    const ignores = [...feries.keys()].filter(d => (d < debut || d > fin) && !dimanche(d)).length;
+    // dans la liste, sur la période de l'export, mais pas fermé dans Hyperplanning
+    const absents = _jf.jours.filter(j => j.date && j.date >= lu.premier && j.date <= lu.dernier && !feries.has(j.date));
     _jfHp = { props };
     const fmt = d => { const inf = _jfInfo(d); return `${inf ? _JF_JOURS[inf.jour] + ' ' : ''}${d.split('-').reverse().join('/')}`; };
     document.getElementById('jf-hp-report').innerHTML = `
-        <p style="font-size:.85rem;margin:4px 0 8px">« ${esc(fichier)} » : ${lues} page(s) lue(s)${lues < pages ? ` sur ${pages}
-            (le calendrier se répète d'un enseignant à l'autre)` : ''} · ${fermes.length} jour(s) marqué(s) « Férié » dans l'année
+        <p style="font-size:.85rem;margin:4px 0 8px">« ${esc(fichier)} » : ${lu.nb} période(s) de fermeture, du
+            ${esc(fmt(lu.premier))} au ${esc(fmt(lu.dernier))} · ${fermes.length} jour(s) fermé(s) (hors dimanches) dans l'année
             ${esc(annee)}${ignores ? ` (${ignores} hors de l'année, ignoré(s))` : ''}.</p>
         ${props.length ? `<table class="pn-table hp-rap"><thead><tr><th></th><th>Jour</th><th>Proposé</th><th>Remarque</th></tr></thead><tbody>
             ${props.map((p, i) => `<tr><td><input type="checkbox" ${p.coche ? 'checked' : ''} onchange="jfHpCocher(${i}, this.checked)"></td>
@@ -21534,8 +21797,8 @@ function _jfHpProposer(feries, vus, fichier, lues, pages) {
                 <td class="edtg-note">${esc(p.note)}</td></tr>`).join('')}
             </tbody></table>`
           : '<div class="empty">La liste contient déjà tous les jours fermés relevés dans Hyperplanning.</div>'}
-        ${absents.length ? `<p class="edtg-note" style="margin-top:8px"><b>À vérifier</b> — dans la liste, mais pas marqués « Férié »
-            dans Hyperplanning : ${absents.map(j => esc(fmt(j.date) + (j.libelle ? ' (' + j.libelle + ')' : ''))).join(', ')}.</p>` : ''}`;
+        ${absents.length ? `<p class="edtg-note" style="margin-top:8px"><b>À vérifier</b> — dans la liste, mais pas fermés
+            dans Hyperplanning :${absents.map(j => esc(fmt(j.date) + (j.libelle ? ' (' + j.libelle + ')' : ''))).join(', ')}.</p>` : ''}`;
     document.getElementById('jf-hp-apply').disabled = !props.some(p => p.coche);
 }
 

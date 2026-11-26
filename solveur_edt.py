@@ -85,7 +85,7 @@ import math
 import re
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from fractions import Fraction
 
@@ -667,6 +667,44 @@ def evenements_semaine(db, don, semaine, avert):
     return evts
 
 
+def catalogue_seances(db, don):
+    """Toutes les séances de l'année, sans regarder la Répartition Calendaire : une par
+    (séance, groupe), avec l'enseignant du groupe, la durée de séance, le public — les
+    mêmes que celles que `evenements_semaine` découpe semaine par semaine (groupes
+    déclarés seulement, aide à la réussite exclue). Sert à reprendre l'EDT
+    d'Hyperplanning tel qu'il est (app.py, import iCal), et à garder à sa place un
+    cours figé que la répartition de sa semaine ne prévoit pas (`appliquer_figes`).
+    -> {(séance, groupe): Evenement} (rang 0, lon = durée de séance)."""
+    reg = don.reg
+    lignes = _rows(db, '''
+        SELECT cs.id AS sid, cs.course_id, cs.teacher_id, cs.formation_type, cs.teaching_type,
+               cs.slot_duration, cs.room_name, c.code, c.tp_type, s.code AS sem, s.year_group
+        FROM course_sessions cs
+        JOIN courses c ON c.id = cs.course_id
+        JOIN semesters s ON s.id = c.semester_id
+        WHERE (cs.nb_sessions > 0 OR cs.total_hours > 0)
+          AND NOT (c.name LIKE 'AaR%' OR c.name LIKE 'Aide à la réussite%')
+        ORDER BY cs.id''')
+    out = {}
+    for r in lignes:
+        tt = _norm_type(r['teaching_type'])
+        if not tt:
+            continue
+        ft = r['formation_type'] if r['formation_type'] is not None else 0
+        n = _nb_groupes(don.sg, don.mut, don.tpsep, r['sem'], ft, tt, r['tp_type'])
+        lon = max(1, round(float(r['slot_duration'] or 1.5) * 60 / reg.pas))
+        for g in range(1, n + 1):
+            ens = don.gt.get(r['sid'], {}).get(g, r['teacher_id'])
+            if ens is not None and ens not in don.enseignants:
+                ens = None
+            out[(r['sid'], g)] = Evenement(
+                idx=len(out), session_id=r['sid'], course_id=r['course_id'], code=r['code'], type=tt,
+                formation=ft, annee=r['year_group'], groupe=g, nb_groupes=n, rang=0, lon=lon,
+                enseignant=ens, salle=don.salle_de(r['room_name']),
+                public=don.public(r['year_group'], ft, g, n, r['sem'], tt), semestre=r['sem'])
+    return out
+
+
 def cours_figes(db, reg, semaine):
     """Cours de la semaine gardés à leur place (timetable_slots.fige = 1), pour les
     années recalculées : posés par un calcul précédent et figés, par exemple à l'import
@@ -687,11 +725,13 @@ def cours_figes(db, reg, semaine):
         ORDER BY ts.day_of_week, ts.start_time''', (semaine, *args))
 
 
-def appliquer_figes(evts, figes, reg, semaine, avert):
+def appliquer_figes(evts, figes, reg, semaine, avert, catalogue=None):
     """Rattache chaque cours figé à une séance de la répartition de la semaine (même
     séance, même groupe, de préférence même durée) : elle garde son jour, son heure et
-    sa salle. Un cours figé sans séance correspondante (répartition modifiée depuis)
-    est signalé ; le nouveau calcul ne le garde pas."""
+    sa salle. Un cours figé que la répartition de la semaine ne prévoit pas (cours
+    d'Hyperplanning repris tel quel, répartition modifiée depuis) est gardé quand même,
+    en séance en plus, si la séance existe encore (`catalogue`, cf. `catalogue_seances`) ;
+    sinon, il est signalé et le nouveau calcul ne le garde pas."""
     libres = defaultdict(list)
     for e in evts:
         libres[(e.session_id, e.groupe)].append(e)
@@ -699,10 +739,22 @@ def appliquer_figes(evts, figes, reg, semaine, avert):
         t0, t1 = _minutes(f['start_time']), _minutes(f['end_time'])
         u, reste = divmod(t0 - reg.debut, reg.pas)
         lon = max(1, round((t1 - t0) / reg.pas))
-        cands = libres.get((f['course_session_id'], int(f['group_index'] or 1)), [])
+        cle = (f['course_session_id'], int(f['group_index'] or 1))
+        cands = libres.get(cle, [])
         e = next((e for e in cands if e.lon == lon), cands[0] if cands else None)
         quand = f'{JOURS[int(f["day_of_week"])]} {f["start_time"][:5]}' if 0 <= int(f['day_of_week']) < 6 else ''
-        if e is None or reste or u < 0:
+        if not (reste or u < 0) and e is None and catalogue and cle in catalogue:
+            # séance en plus de la répartition de la semaine : gardée à sa place
+            e = replace(catalogue[cle], idx=len(evts), rang=100 + len(evts), lon=lon)
+            evts.append(e)
+            avert.append(f'S{semaine} · {f["code"]} ({quand}) : cours figé que la répartition ne prévoit pas '
+                         'cette semaine, gardé à sa place')
+            cands = [e]
+        if reste or u < 0:
+            avert.append(f'S{semaine} · {f["code"]} ({quand}) : cours figé qui ne commence pas sur la grille '
+                         f'du calcul (pas de {reg.pas} min depuis {_hhmm(reg.debut)}), pas gardé')
+            continue
+        if e is None:
             avert.append(f'S{semaine} · {f["code"]} ({quand}) : cours figé sans séance correspondante dans la '
                          'répartition, pas gardé')
             continue
@@ -1097,9 +1149,13 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
             cles = [('A', k) for k in atomes_de[e.idx]]
             if e.enseignant:
                 cles.append(('E', e.enseignant))
-            if e.salle:
-                cles.append(('S', e.salle))
-                if e.salle[0] == 'R' and e.salle[1] in don.id_pool_std:
+            # un cours figé occupe SA salle (celle d'Hyperplanning ou du calcul d'avant), pas
+            # la salle par défaut de sa séance : sinon deux cours figés dans des salles
+            # différentes se gêneraient pour une salle qu'aucun des deux n'occupe
+            salle = ('R', e.salle_fixe) if e.fixe and e.salle_fixe else e.salle
+            if salle:
+                cles.append(('S', salle))
+                if salle[0] == 'R' and salle[1] in don.id_pool_std:
                     cles.append(('S', ('STD',)))
             for d, u, v in vars_de[e.idx]:
                 for w in range(u, u + e.lon):
@@ -1312,9 +1368,10 @@ def resoudre_semaine(semaine, evts, don, fixes, temps, nom_solveur, avert, calen
         cles = [('A', k) for k in atomes_de[e.idx]]
         if e.enseignant:
             cles.append(('E', e.enseignant))
-        if e.salle:
-            cles.append(('S', e.salle))
-            if e.salle[0] == 'R' and e.salle[1] in don.id_pool_std:
+        salle = ('R', e.salle_fixe) if e.fixe and e.salle_fixe else e.salle   # comme construire()
+        if salle:
+            cles.append(('S', salle))
+            if salle[0] == 'R' and salle[1] in don.id_pool_std:
                 cles.append(('S', ('STD',)))
         return cles
 
@@ -1660,18 +1717,21 @@ def generer(db, data):
 
     rapport, conflits, charges, creneaux, ok, restantes = [], [], [], [], [], []
     noms_cours = {r[0]: r[1] for r in db.execute('SELECT id, name FROM courses')}
+    catalogue = catalogue_seances(db, don)
     for w in semaines:
         restant = reg.temps_total - (time.monotonic() - t_debut)
         if restant < 8:
             restantes.append(w)
             continue
         evts = evenements_semaine(db, don, w, avert)
+        charges_w = _charges(w, evts, reg) if evts else []        # charge prévue par la répartition
+        # cours figés (repris d'Hyperplanning…), même ceux que la répartition ne prévoit pas
+        appliquer_figes(evts, cours_figes(db, reg, w), reg, w, avert, catalogue)
         if not evts:
             ok.append(w)
             rapport.append({'semaine': w, 'statut': 'vide', 'seances': 0})
             continue
-        charges.extend(_charges(w, evts, reg))
-        appliquer_figes(evts, cours_figes(db, reg, w), reg, w, avert)
+        charges.extend(charges_w)
         fixes = occupations_fixes(db, don, w)
         cal = calendrier_semaine(don, w)
         ferme, ferie_semaine, feries, jours_fermes = cal

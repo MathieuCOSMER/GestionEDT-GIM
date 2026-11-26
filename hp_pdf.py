@@ -6,8 +6,9 @@ au samedi, avec son bandeau daté (« lundi 4 janvier 2027 ») et toute la journ
 (8 h 00 → 21 h 00) sur un axe régulier. Les indisponibilités y sont hachurées.
 Sont lus aussi : plusieurs semaines côte à côte, jours datés ; et les semaines en
 colonnes (« 24 août - 29 août »), jours en rangées sans date, dix semaines par page
-(cf. `_cases_semaines`). Des horaires compactés (heures sans cours réduites) ne
-conviennent pas : ils coupent les hachures.
+(cf. `_cases_semaines`) ; et une semaine par page, jours en colonnes à date courte
+(« lundi 01/02 », l'année vient du titre, cf. `_cases_jours_courts`). Des horaires
+compactés (heures sans cours réduites) ne conviennent pas : ils coupent les hachures.
 
 Rien n'y est balisé ; on lit le dessin de la page (PDF produit par wPDF4) :
   * les hachures sont des milliers de petits tirets « - », posés en rangées
@@ -36,8 +37,11 @@ JOURS = ('lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'
 _TITRE_JOUR = re.compile(r'^(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche) (\d{1,2}) (\S+) (\d{4})$')
 # Semaines en colonnes, jours non datés : en-tête « 24 août - 29 août », « 28 déc. - 02 janv. »
 _TITRE_SEMAINE = re.compile(r'^(\d{1,2}) ([^\s\d]+) - (\d{1,2}) ([^\s\d]+)$')
-# Période du titre de la page : « du 24 août au 31 octobre 2026 », « du 02 novembre 2026 au 09 janvier 2027 »
-_PERIODE = re.compile(r'\bdu (\d{1,2}) ([^\s\d]+)(?: (\d{4}))? au (\d{1,2}) ([^\s\d]+) (\d{4})\b')
+# Une semaine par page, jours en colonnes : en-tête court « lundi 01/02 » (jour/mois, sans année)
+_TITRE_JOUR_COURT = re.compile(r'^(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche) (\d{1,2})/(\d{1,2})$')
+# Période du titre de la page : « du 24 août au 31 octobre 2026 », « du 02 novembre 2026 au 09 janvier 2027 »,
+# « du 01 au 06 février 2027 » (même mois)
+_PERIODE = re.compile(r'\bdu (\d{1,2})(?: ([^\s\d]+))?(?: (\d{4}))? au (\d{1,2}) ([^\s\d]+) (\d{4})\b')
 _HEURE = re.compile(r'^(\d{1,2})h(\d{2})$')
 _CIVILITE = re.compile(r'^(?:M\.|MM\.|Mme|Mmes|Mlle|Melle|Dr\.?|Pr\.?)\s+', re.I)
 MIDI = 12 * 60
@@ -318,6 +322,76 @@ def _mois(tok):
     return ms.pop() if len(ms) == 1 else None
 
 
+def _periode(mots):
+    """Période du titre de la page (« M. NOM - du 24 août au 31 octobre 2026 »,
+    « … - du 01 au 06 février 2027 ») -> (premier jour, dernier jour), ou None."""
+    titre = next((w['s'] for w in mots if ' - du ' in w['s']), '')
+    m = _PERIODE.search(titre)
+    if not m:
+        return None
+    try:
+        fin = date(int(m.group(6)), _mois(m.group(5)), int(m.group(4)))
+        m1 = _mois(m.group(2)) if m.group(2) else fin.month
+        a1 = int(m.group(3)) if m.group(3) else (fin.year if m1 <= fin.month else fin.year - 1)
+        return date(a1, m1, int(m.group(1))), fin
+    except (TypeError, ValueError):
+        return None
+
+
+def _verticaux(traits):
+    """Traits verticaux -> [(x, y bas, y haut)]."""
+    return [(l['p'][0], min(l['p'][1], l['q'][1]), max(l['p'][1], l['q'][1]))
+            for l in traits if abs(l['p'][0] - l['q'][0]) < 0.5]
+
+
+def _cases_jours_courts(mots, traits):
+    """Une semaine par page, jours en colonnes : chaque colonne a pour en-tête son jour
+    à date courte (« lundi 01/02 ») dans un cadre de traits fins, l'année se déduit de
+    la période du titre (« M. NOM - du 01 au 06 février 2027 », « du 28 décembre 2026
+    au 02 janvier 2027 »). L'axe horaire commence au trait qui ferme le cadre de
+    l'en-tête et finit au bas des traits verticaux de la colonne.
+    -> cases [{date, haut, x0, x1, titre_haut, bas}] comme pour les jours datés."""
+    periode = _periode(mots)
+    if not periode:
+        return []
+    debut, fin = periode
+    verticaux = _verticaux(traits)
+    horizontaux = [(l['p'][1], min(l['p'][0], l['q'][0]), max(l['p'][0], l['q'][0]))
+                   for l in traits if abs(l['p'][1] - l['q'][1]) < 0.5 and abs(l['p'][0] - l['q'][0]) > 0.5]
+    cases = []
+    for w in mots:
+        m = _TITRE_JOUR_COURT.match(w['s'].strip())
+        if not m:
+            continue
+        d = None
+        for an in sorted({debut.year, fin.year}):
+            try:
+                c = date(an, int(m.group(3)), int(m.group(2)))
+            except ValueError:
+                continue
+            if debut - timedelta(days=1) <= c <= fin + timedelta(days=1) and JOURS[c.weekday()] == m.group(1):
+                d = c
+                break
+        if d is None:
+            continue
+        # colonne : entre les traits verticaux qui encadrent l'en-tête
+        xs = [x for x, ya, yb in verticaux if ya - 1 <= w['y'] <= yb + 1]
+        x0 = max((x for x in xs if x <= w['x'] + 0.5), default=None)
+        x1 = min((x for x in xs if x >= w['xe'] + 1), default=None)
+        if x0 is None or x1 is None:
+            continue
+        mx = (x0 + x1) / 2
+        dessous = [y for y, xa, xb in horizontaux if xa - 1 <= mx <= xb + 1 and y < w['y']]
+        dessus = [y for y, xa, xb in horizontaux if xa - 1 <= mx <= xb + 1 and y > w['y']]
+        if not dessous:
+            continue
+        haut = max(dessous)
+        bas = min((ya for x, ya, yb in verticaux if abs(x - x0) < 0.5 and ya < haut - 10), default=None)
+        cases.append({'date': d, 'haut': haut, 'x0': x0, 'x1': x1,
+                      'titre_haut': min(dessus) if dessus else w['y'], 'bas': bas})
+    return cases
+
+
 def _cases_semaines(mots, filigranes, traits):
     """Planning sur plusieurs semaines, semaines en colonnes et jours en rangées, sans
     date dans les cases : chaque colonne a pour en-tête sa semaine (« 24 août - 29 août »),
@@ -325,19 +399,11 @@ def _cases_semaines(mots, filigranes, traits):
     la période du titre (« M. NOM - du 24 août au 31 octobre 2026 »). La rangée est
     comprise entre deux traits épais ; son axe horaire commence au trait du haut.
     -> cases [{date, haut, x0, x1, titre_haut}] comme pour les jours datés."""
-    titre = next((w['s'] for w in mots if ' - du ' in w['s']), '')
-    m = _PERIODE.search(titre)
-    if not m:
+    periode = _periode(mots)
+    if not periode:
         return []
-    try:
-        fin = date(int(m.group(6)), _mois(m.group(5)), int(m.group(4)))
-        m1 = _mois(m.group(2))
-        a1 = int(m.group(3)) if m.group(3) else (fin.year if m1 <= fin.month else fin.year - 1)
-        debut = date(a1, m1, int(m.group(1)))
-    except (TypeError, ValueError):
-        return []
-    verticaux = [(l['p'][0], min(l['p'][1], l['q'][1]), max(l['p'][1], l['q'][1]))
-                 for l in traits if abs(l['p'][0] - l['q'][0]) < 0.5]
+    debut, fin = periode
+    verticaux = _verticaux(traits)
     semaines = []
     for w in mots:
         s = _TITRE_SEMAINE.match(w['s'].strip())
@@ -388,7 +454,9 @@ def analyser_page(data, avec_cours=False, gras=('/F1',)):
     seule colonne (une semaine par page) ou plusieurs (une semaine par colonne). Les
     cases d'une même rangée (même jour de la semaine) partagent l'axe horaire, à
     gauche de la page, et le trait rose de midi. Sans bandeau daté, les semaines en
-    colonnes (« 24 août - 29 août ») et les jours en rangées (cf. `_cases_semaines`).
+    colonnes (« 24 août - 29 août ») et les jours en rangées (cf. `_cases_semaines`) ;
+    ou une semaine par page, jours en colonnes à date courte (« lundi 01/02 », cf.
+    `_cases_jours_courts`), où les cours ne sont pas lus (ils viennent de l'iCal).
     `cours_lus` : la page donne aussi les cours posés (`cours_hp` de chaque jour)."""
     textes, tirets, rects, traits, filigranes = lire_page(data)
     mots = _mots(textes)
@@ -410,9 +478,15 @@ def analyser_page(data, avec_cours=False, gras=('/F1',)):
         except ValueError:
             continue
         cases.append({'date': d, 'haut': r['y0'], 'x0': r['x0'], 'x1': r['x1'], 'titre_haut': r['y1']})
+    court = False
+    if qui and not cases:
+        cases = _cases_jours_courts(mots, traits)
+        court = bool(cases)
     sans_date = bool(qui and not cases)
     if sans_date:
         cases = _cases_semaines(mots, filigranes, traits)
+    # axe à vérifier : semaines en colonnes ou jours à date courte (cf. plus bas)
+    axe_regulier = sans_date or court
     if not qui or not cases:
         return None
     grille_x0 = min(c['x0'] for c in cases)
@@ -432,6 +506,9 @@ def analyser_page(data, avec_cours=False, gras=('/F1',)):
         bas = max((y for y in epais if y < haut - 10), default=None)
         if suivant is not None and (bas is None or suivant > bas):
             bas = suivant
+        if bas is None:              # jours à date courte : bas des traits de la colonne
+            bas = max((c['bas'] for c in cases if c.get('bas') is not None and abs(c['haut'] - haut) <= 1),
+                      default=None)
         # première étiquette d'heure de la rangée (sur l'axe à gauche, la plus haute) ;
         # la dernière, au bas de la rangée, donne la fin de la journée affichée
         etiq = [(y, s, t) for y, s, t in heures if (bas is None or y > bas) and y < haut]
@@ -449,7 +526,7 @@ def analyser_page(data, avec_cours=False, gras=('/F1',)):
     # Un jour dont le premier cours est à 8h30 n'affiche que « 8h30 », posée sous le
     # haut de l'axe, qui reste 8h00.
     debut = min(tops) if tops else 8 * 60
-    if sans_date:
+    if axe_regulier:
         # Semaines en colonnes : « 8h00 » manque en haut de toutes les rangées quand une
         # « 8h30 » la chevaucherait (cours ou hachure à 8h30 dans l'une des dix
         # semaines). Le haut de l'axe se déduit alors du trait rose de midi et du bas de
@@ -473,8 +550,8 @@ def analyser_page(data, avec_cours=False, gras=('/F1',)):
             rg['uph'] = defaut
         if rg['bas'] is None:
             rg['bas'] = rg['haut'] - (FIN_JOUR - debut) / 60 * rg['uph'] - 2 * rg['uph']
-    if sans_date:
-        # Semaines en colonnes : axe régulier exigé (journée complète). Chaque étiquette
+    if axe_regulier:
+        # Semaines en colonnes, jours à date courte : axe régulier exigé (journée complète). Chaque étiquette
         # est posée contre le trait de son heure, juste dessous (ligne de base à environ
         # une hauteur de caractère) ou juste dessus ; des horaires compactés (heures
         # sans cours réduites) l'en éloigneraient, et les hachures seraient lues à de
