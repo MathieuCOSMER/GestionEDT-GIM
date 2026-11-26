@@ -2597,6 +2597,9 @@
 
 <!-- ===== MODAL ENSEIGNANT ===== -->
 <!-- Fiche de suivi d'un stagiaire ou d'un alternant (onglets Stages / Alternance) -->
+<!-- Fiche de poste d'un stagiaire (onglet Stages) : fichier choisi puis envoyé aussitôt -->
+<input type="file" id="stage-fiche-file" style="display:none" onchange="stageFicheEnvoyer(this)"
+       accept=".pdf,.doc,.docx,.odt,.rtf,.xls,.xlsx,.ods">
 <div class="modal-backdrop" id="modal-suivi">
     <div class="modal" style="max-width:640px">
         <h2 id="suivi-modal-title" style="margin-bottom:4px">Fiche de suivi</h2>
@@ -2631,6 +2634,9 @@
             </div>
             <div class="form-group"><label id="suivi-mission-label">Mission</label>
                 <textarea id="suivi-mission" rows="3" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font:inherit;resize:vertical"></textarea></div>
+            <!-- Stages seulement : déposée, remplacée ou retirée tout de suite, sans « Enregistrer » -->
+            <div class="form-group" id="suivi-fiche-poste-groupe"><label>Fiche de poste</label>
+                <div id="suivi-fiche-poste"></div></div>
             <div class="form-group"><label>Tuteur universitaire</label><select id="suivi-tuteur_univ"></select></div>
             <div class="form-actions">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('modal-suivi')">Annuler</button>
@@ -8222,7 +8228,8 @@ function renderSuiviBody(kind) {
                     s.tuteur_fonction ? `<div style="font-size:.78rem;color:#6b7280">${esc(s.tuteur_fonction)}</div>` : ''}${
                     contact ? `<div style="font-size:.78rem">${contact}</div>` : ''}</td>
                 <td style="font-size:.8rem;color:#374151;max-width:260px" title="${esc(s.mission || '')}">${
-                    esc((s.mission || '').length > 90 ? s.mission.slice(0, 90) + '…' : (s.mission || ''))}</td>
+                    esc((s.mission || '').length > 90 ? s.mission.slice(0, 90) + '…' : (s.mission || ''))}${
+                    kind === 'stages' ? _stageFicheHtml(c, s, edit, false) : ''}</td>
                 <td>${univ}</td>
                 <td style="white-space:nowrap">
                     <button class="btn btn-secondary btn-sm" onclick="openSuiviModal('${kind}', ${c.pid}, ${c.year}, ${s.id})"
@@ -8272,8 +8279,10 @@ function openSuiviModal(kind, pid, year, sid) {
             ? ` · fiche reprise de la ${_suiviYearLabel(s.inherited_from)} : l'enregistrer la remplace à partir de cette année`
             : '');
     document.getElementById('suivi-mission-label').textContent = SUIVI_KINDS[kind].mission;
-    // Le contrat ne concerne que l'alternant
+    // Le contrat ne concerne que l'alternant, la fiche de poste que le stagiaire
     document.getElementById('suivi-contrat-groupe').style.display = kind === 'alternance' ? '' : 'none';
+    document.getElementById('suivi-fiche-poste-groupe').style.display = kind === 'stages' ? '' : 'none';
+    _stageFicheModalMaj();
     const univ = document.getElementById('suivi-tuteur_univ');
     univ.innerHTML = _suiviUnivOptions(st, s.tuteur_univ);
     SUIVI_FIELDS.forEach(f => { document.getElementById('suivi-' + f).value = s[f] || ''; });
@@ -8345,6 +8354,103 @@ async function submitSuivi(ev) {
     } catch (e) {
         toast('Erreur : ' + e.message, 'error');
     }
+}
+
+// ----- Stages › Fiche de poste -----
+// Un fichier par stagiaire et par année de stage (offre de l'entreprise, descriptif
+// du poste) : téléchargé par qui voit l'onglet, déposé, remplacé ou retiré par le
+// responsable des stages et l'admin (d.editable), depuis la liste ou la fiche.
+let _stageFicheEnvoi = null;   // stagiaire dont la fiche part en ce moment : 'pid|année|id'
+
+function _stageFicheUrl(pid, year, sid) { return `/promotions/${pid}/tuteurs/${year}/${sid}/fiche-poste`; }
+
+function _stageFicheEleve(pid, year, sid) {
+    const d = _suiviState('stages').data;
+    const c = d && d.cohorts.find(x => x.pid === pid && x.year === year);
+    return { c, s: c && c.students.find(x => x.id === sid) };
+}
+
+// Lien de téléchargement et, pour le responsable, boutons déposer / remplacer / retirer.
+// dansFiche : dans le modal (nom du fichier en clair) plutôt que dans la liste.
+function _stageFicheHtml(c, s, edit, dansFiche) {
+    const f = s.fiche_poste, envoi = _stageFicheEnvoi === `${c.pid}|${c.year}|${s.id}`;
+    const detail = f ? `${_tailleFichier(f.taille)} · déposée le ${_dateFr(f.updated_at)}${f.auteur ? ' par ' + f.auteur : ''}` : '';
+    const lien = f ? `<a href="/api${_stageFicheUrl(c.pid, c.year, s.id)}" title="Télécharger « ${esc(f.nom)} » (${esc(detail)})"
+            style="color:#1d4ed8;white-space:nowrap">📎 ${dansFiche ? esc(f.nom) : 'Fiche de poste'}</a>${
+            dansFiche ? ` <span style="color:#6b7280;font-size:.8rem">${esc(detail)}</span>` : ''}` : '';
+    if (!edit) {
+        if (dansFiche) return lien || '<span style="color:#9ca3af">Aucune fiche de poste déposée</span>';
+        return lien ? `<div style="margin-top:4px">${lien}</div>` : '';
+    }
+    const off = _stageFicheEnvoi ? 'disabled' : '';
+    const btn = `<button type="button" class="btn btn-secondary btn-sm" style="padding:1px 7px;font-size:.74rem" ${off}
+        title="PDF, Word, Excel ou OpenDocument, 15 Mo au plus" onclick="stageFicheChoisir(${c.pid}, ${c.year}, ${s.id})">${
+        envoi ? 'Envoi…' : f ? 'Remplacer' : dansFiche ? 'Déposer' : '+ Fiche de poste'}</button>`;
+    const suppr = f ? `<button type="button" class="btn btn-secondary btn-sm" style="padding:1px 7px;font-size:.74rem" ${off}
+        title="Retirer la fiche de poste" onclick="stageFicheSupprimer(${c.pid}, ${c.year}, ${s.id})">🗑</button>` : '';
+    return `<div style="margin-top:4px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">${lien}${btn}${suppr}</div>`;
+}
+
+// Bloc « Fiche de poste » du modal, pour le stagiaire ouvert
+function _stageFicheModalMaj() {
+    const box = document.getElementById('suivi-fiche-poste');
+    if (!box || !_suiviEdit || _suiviEdit.kind !== 'stages') return;
+    const { c, s } = _stageFicheEleve(_suiviEdit.pid, _suiviEdit.year, _suiviEdit.sid);
+    box.innerHTML = s ? _stageFicheHtml(c, s, _suiviState('stages').data.editable, true) : '';
+}
+
+function stageFicheChoisir(pid, year, sid) {
+    const input = document.getElementById('stage-fiche-file');
+    input.dataset.cle = `${pid}|${year}|${sid}`;
+    input.click();
+}
+
+// Liste et modal redessinés une fois l'onglet rechargé
+async function _stageFicheApres() {
+    _stageFicheEnvoi = null;
+    await loadSuivi('stages');
+    _stageFicheModalMaj();
+}
+
+async function stageFicheEnvoyer(input) {
+    const f = input.files && input.files[0], cle = input.dataset.cle;
+    input.value = '';
+    if (!f || !cle) return;
+    if (f.size > 15 * 1024 * 1024) { toast('Fichier trop volumineux (15 Mo au plus)', 'error'); return; }
+    const [pid, year, sid] = cle.split('|').map(Number);
+    const { s } = _stageFicheEleve(pid, year, sid);
+    const deja = s && s.fiche_poste;
+    if (deja && !confirm(`Remplacer « ${deja.nom} » par « ${f.name} » ?`)) return;
+    const fd = new FormData();
+    fd.append('file', f);
+    _stageFicheEnvoi = cle;
+    renderSuiviBody('stages');
+    _stageFicheModalMaj();
+    try {
+        const r = await fetch('/api' + _stageFicheUrl(pid, year, sid), { method: 'PUT', body: fd });
+        if (!r.ok) {
+            let msg = "Échec de l'envoi";
+            try { msg = JSON.parse(await r.text()).error || msg; } catch (_) { /* garde le défaut */ }
+            throw new Error(msg);
+        }
+        toast('Fiche de poste déposée');
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+    await _stageFicheApres();
+}
+
+async function stageFicheSupprimer(pid, year, sid) {
+    const { s } = _stageFicheEleve(pid, year, sid);
+    const f = s && s.fiche_poste;
+    if (!f || !confirm(`Retirer la fiche de poste « ${f.nom} » ?`)) return;
+    try {
+        await api(_stageFicheUrl(pid, year, sid), { method: 'DELETE' });
+        toast('Fiche de poste retirée');
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+    await _stageFicheApres();
 }
 
 // ----- Statistiques : couverture, suivis par enseignant, départements, entreprises -----

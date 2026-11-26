@@ -1743,7 +1743,7 @@ function _aideSuivi() {
     return [
     { id: 'suivi-fiches', rub: R, titre: 'Fiches de suivi (tuteurs)', chemin: 'Étudiants › Stages / Alternance › Tuteurs',
       onglet: ['nav:stages', 'nav:alternance'], cible: ['stages/fiches', 'alternance/fiches'],
-      mots: 'stage stagiaire alternance alternant tuteur universitaire tuteur entreprise entreprise mission sujet fiche suivi ville département',
+      mots: 'stage stagiaire alternance alternant tuteur universitaire tuteur entreprise entreprise mission sujet fiche suivi ville département fiche de poste offre descriptif',
       html: `
         <p>Deux onglets jumeaux, pour une ${_aUi('Année universitaire')} :</p>
         <ul>
@@ -1762,6 +1762,8 @@ function _aideSuivi() {
             <li><b>Ville</b>, <b>Département</b> (numéro « 83 » ou nom « Var ») ;</li>
             <li><b>Tuteur entreprise</b> (Prénom Nom), sa <b>fonction</b>, son <b>e-mail</b> et son <b>téléphone</b> — un tuteur déjà connu dans cette entreprise reprend ses coordonnées ;</li>
             <li><b>Mission</b> ;</li>
+            <li><b>Fiche de poste</b> (stages seulement) : le descriptif du poste proposé au stagiaire (offre de l'entreprise…), en PDF, Word, Excel
+                ou OpenDocument, 15 Mo au plus. Elle se dépose, se remplace ou se retire aussitôt, sans passer par ${_aUi('Enregistrer')} ;</li>
             <li><b>Tuteur universitaire</b> : un enseignant de l'année affichée (les vacataires sont signalés « (vac.) »).</li>
         </ul>
         <p>Pour un <b>alternant</b>, la fiche saisie une année reste valable les années suivantes tant qu'elle n'est pas remplacée (« fiche reprise de
@@ -1773,7 +1775,8 @@ function _aideSuivi() {
         <h3>Qui fait quoi</h3>
         <ul>
             <li>L'administration et le <b>responsable</b> du domaine (stages pour les stagiaires FTP, ALT pour les alternants) remplissent toutes les fiches et
-                <b>attribuent les tuteurs universitaires</b>.</li>
+                <b>attribuent les tuteurs universitaires</b>. La <b>fiche de poste</b> d'un stagiaire est déposée par l'administration et le responsable des stages ;
+                elle est téléchargeable par tous ceux qui voient l'onglet ${_aOng('Stages')} (lien ${_aUi('📎 Fiche de poste')} sous le sujet du stage).</li>
             <li>Un enseignant connecté avec son mot de passe consulte toutes les fiches et complète celles des étudiants <b>qu'il suit</b>.</li>
         </ul>
         ${_aTip(`un stagiaire en mobilité internationale au semestre du stage n'a pas de stage à suivre : il est simplement signalé sous sa cohorte.`)}` },

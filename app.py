@@ -1875,6 +1875,22 @@ def _apply_promotions_migrations(db):
             FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
         )
     ''')
+    # Stages : la fiche de poste d'un stagiaire FTP pour son année de stage (2e ou 3e),
+    # déposée par le responsable des stages ou l'admin. Suit la fiche de l'étudiant
+    # dans sa cohorte.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS stage_fiches_poste (
+            student_id  INTEGER NOT NULL,
+            year        INTEGER NOT NULL CHECK (year IN (2, 3)),
+            nom         TEXT NOT NULL,
+            taille      INTEGER NOT NULL,
+            data        BLOB NOT NULL,
+            auteur      TEXT,
+            updated_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (student_id, year),
+            FOREIGN KEY (student_id) REFERENCES promotion_students(id) ON DELETE CASCADE
+        )
+    ''')
     # Date limite de dépôt des fiches d'évaluation, par année universitaire et par
     # parité de semestre (impair : S1/S3/S5 ; pair : S2/S4/S6), AAAA-MM-JJ.
     db.execute('''
@@ -2131,7 +2147,7 @@ def _merge_formation_promotions(db):
 # notification, dépôt d'un fichier) ; une table nouvelle est couverte d'office.
 _JETON_TABLES_EXCLUES = {'cache_jeton', 'notifications', 'notification_targets',
                          'notification_reads', 'student_photos',
-                         'alternance_documents', 'alternance_depots'}
+                         'alternance_documents', 'alternance_depots', 'stage_fiches_poste'}
 
 def _poser_jeton_cache(db):
     """Crée la table du jeton et les déclencheurs manquants. Idempotent : rappelé à
@@ -3786,6 +3802,9 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     (r'^/api/programmes/\d+/data(/reset)?$', ['prog:coeff', 'prog:matieres'], ''),
     (r'^/api/programmes(/.*)?$', ['prog:actions'], ''),
     (r'^/api/promotions/\d+/saisie/S[1-6]/(notes|weights|import)$', ['nav:saisie', 'promo:saisie'], ''),
+    # Fiche de poste d'un stagiaire : responsable des stages et admin (le droit
+    # « modifier » par défaut de l'enseignant ne couvre que les fiches qu'il suit)
+    (r'^/api/promotions/\d+/tuteurs/\d+/\d+/fiche-poste$', ['nav:stages'], 'strict'),
     (r'^/api/promotions/\d+/tuteurs/', ['nav:stages', 'nav:alternance'], ''),
     (r'^/api/promotions/\d+/groupes/', ['promo:groupes'], ''),
     (r'^/api/promotions/\d+/jury/', ['promo:jury'], ''),
@@ -9509,6 +9528,11 @@ def get_suivi(kind):
     pdb = get_promotions_db()
     power = tabs is None or key in tabs['power']
     me = _suivi_key(session.get('teacher_name')) if (tabs is not None and key in tabs['edit']) else ''
+    # Stages : la fiche de poste déposée pour chaque stagiaire (sans son contenu)
+    fiches = {} if kind != 'stages' else {
+        (r['student_id'], r['year']): {'nom': r['nom'], 'taille': r['taille'],
+                                       'auteur': r['auteur'], 'updated_at': r['updated_at']}
+        for r in pdb.execute('SELECT student_id, year, nom, taille, auteur, updated_at FROM stage_fiches_poste')}
     cohorts, current = [], []
     for pid, name, yg in _suivi_cohorts(pdb, start):
         data = _tuteurs_students(pdb, pid, yg)
@@ -9527,6 +9551,8 @@ def get_suivi(kind):
                                  'prenom': s['prenom'], 'semestre': f'S{2 * yg}',
                                  'etablissement': mob[s['id']]})
             else:
+                if kind == 'stages':
+                    s['fiche_poste'] = fiches.get((s['id'], yg))
                 mine.append(s)
         current += mine
         if mine or mobilite:
@@ -9534,6 +9560,100 @@ def get_suivi(kind):
                             'mobilite': mobilite})
     return jsonify({'kind': kind, 'year_label': year_label, 'cohorts': cohorts,
                     'editable': power, 'stats': _suivi_stats(pdb, kind, current, start)})
+
+# ----- Stages › Fiche de poste -----
+# Le descriptif du poste proposé au stagiaire (offre de l'entreprise, fiche remplie…),
+# un fichier par stagiaire FTP et par année de stage : déposé, remplacé ou retiré par
+# le responsable des stages et l'admin, téléchargé par qui voit l'onglet Stages.
+# Fichier dans promotions.db (sauvegarde). Mêmes formats et taille que les documents
+# de l'alternance.
+
+def _fichier_recu():
+    """(nom, contenu, None) du fichier envoyé en multipart (champ « file »), ou
+    (None, None, réponse d'erreur). Nom sans chemin ni caractère de contrôle : il
+    repart dans l'en-tête du téléchargement."""
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return None, None, error_response('Aucun fichier reçu', 400)
+    nom = ''.join(c for c in re.split(r'[\\/]', f.filename)[-1] if c.isprintable()).strip()
+    base, ext = os.path.splitext(nom)
+    if ext.lower() not in _ALT_DOC_EXT:
+        return None, None, error_response('Type de fichier non autorisé (PDF, Word, Excel ou OpenDocument)', 400)
+    data = f.read(_ALT_DOC_MAX + 1)
+    if len(data) > _ALT_DOC_MAX:
+        return None, None, error_response('Fichier trop volumineux (15 Mo au plus)', 400)
+    if not data:
+        return None, None, error_response('Fichier vide', 400)
+    return base[:140] + ext, data, None
+
+def _stage_fiche_cible(pdb, pid, year, sid, ecrire):
+    """Réponse d'erreur, ou None si la session peut lire (ecrire=False) ou déposer
+    la fiche de poste de ce stagiaire. Lire : voir l'onglet Stages. Déposer :
+    l'administrer (admin, responsable des stages), pour un stagiaire FTP de 2e ou
+    3e année qui n'est pas en mobilité au semestre du stage."""
+    key = _SUIVI_KINDS['stages'][0]
+    tabs = _session_tabs()
+    if tabs is not None and key not in tabs['visible']:
+        return error_response('Accès réservé', 403)
+    if ecrire and tabs is not None and key not in tabs['power']:
+        return error_response("Réservé à l'admin et au responsable des stages", 403)
+    if year not in (2, 3):
+        return error_response('Pas de stage en 1re année', 400)
+    if not pdb.execute('SELECT 1 FROM promotion_students WHERE id = ? AND promotion_id = ?',
+                       (sid, pid)).fetchone():
+        return error_response('Étudiant introuvable', 404)
+    if ecrire:
+        if _year_formation_map(pdb, pid, year).get(sid, 'FTP') != 'FTP':
+            return error_response("Cet étudiant n'est pas stagiaire FTP cette année-là", 400)
+        if sid in _suivi_stage_mobilite(pdb, 'stages', pid, year):
+            return error_response(f'Étudiant en mobilité internationale au S{2 * year} : pas de stage', 400)
+    return None
+
+@app.route('/api/promotions/<int:pid>/tuteurs/<int:year>/<int:sid>/fiche-poste', methods=['GET'])
+def get_stage_fiche_poste(pid, year, sid):
+    pdb = get_promotions_db()
+    err = _stage_fiche_cible(pdb, pid, year, sid, ecrire=False)
+    if err:
+        return err
+    r = pdb.execute('SELECT nom, data FROM stage_fiches_poste WHERE student_id = ? AND year = ?',
+                    (sid, year)).fetchone()
+    if not r:
+        return error_response('Aucune fiche de poste déposée', 404)
+    # Toujours en téléchargement : un fichier déposé ne s'exécute jamais dans la page
+    return send_file(io.BytesIO(r['data']), as_attachment=True, download_name=r['nom'])
+
+@app.route('/api/promotions/<int:pid>/tuteurs/<int:year>/<int:sid>/fiche-poste', methods=['PUT'])
+def put_stage_fiche_poste(pid, year, sid):
+    """Dépose (ou remplace) la fiche de poste d'un stagiaire pour son année de stage."""
+    pdb = get_promotions_db()
+    err = _stage_fiche_cible(pdb, pid, year, sid, ecrire=True)
+    if err:
+        return err
+    nom, data, err = _fichier_recu()
+    if err:
+        return err
+    pdb.execute('''INSERT INTO stage_fiches_poste (student_id, year, nom, taille, data, auteur)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (student_id, year) DO UPDATE SET nom = excluded.nom,
+                       taille = excluded.taille, data = excluded.data, auteur = excluded.auteur,
+                       updated_at = CURRENT_TIMESTAMP''',
+                (sid, year, nom, len(data), sqlite3.Binary(data), session.get('user')))
+    pdb.commit()
+    _audit('STAGE_FICHE_POSTE', ip=_client_ip(), user=session.get('user'), etudiant=sid,
+           annee_etude=year, fichier=nom)
+    return jsonify({'nom': nom, 'taille': len(data)})
+
+@app.route('/api/promotions/<int:pid>/tuteurs/<int:year>/<int:sid>/fiche-poste', methods=['DELETE'])
+def delete_stage_fiche_poste(pid, year, sid):
+    pdb = get_promotions_db()
+    err = _stage_fiche_cible(pdb, pid, year, sid, ecrire=True)
+    if err:
+        return err
+    pdb.execute('DELETE FROM stage_fiches_poste WHERE student_id = ? AND year = ?', (sid, year))
+    pdb.commit()
+    _audit('STAGE_FICHE_POSTE_SUPPR', ip=_client_ip(), user=session.get('user'), etudiant=sid,
+           annee_etude=year)
+    return jsonify({'deleted': True})
 
 # ----- Alternance › Documents -----
 # Le livret d'alternance de chaque promotion et les modèles à remplir : les titulaires
@@ -9733,28 +9853,17 @@ def put_alternance_document(cle):
     connu, promotion_id = _alt_doc_promotion(pdb, cle)
     if not connu:
         return error_response('Document inconnu', 404)
-    f = request.files.get('file')
-    if not f or not f.filename:
-        return error_response('Aucun fichier reçu', 400)
-    # Sans chemin ni caractère de contrôle : ce nom repart dans l'en-tête du téléchargement
-    nom = ''.join(c for c in re.split(r'[\\/]', f.filename)[-1] if c.isprintable()).strip()
-    base, ext = os.path.splitext(nom)
-    if ext.lower() not in _ALT_DOC_EXT:
-        return error_response('Type de fichier non autorisé (PDF, Word, Excel ou OpenDocument)', 400)
-    data = f.read(_ALT_DOC_MAX + 1)
-    if len(data) > _ALT_DOC_MAX:
-        return error_response('Fichier trop volumineux (15 Mo au plus)', 400)
-    if not data:
-        return error_response('Fichier vide', 400)
+    nom, data, err = _fichier_recu()
+    if err:
+        return err
     pdb.execute('''INSERT INTO alternance_documents (cle, promotion_id, nom, taille, data, auteur)
                    VALUES (?, ?, ?, ?, ?, ?)
                    ON CONFLICT (cle) DO UPDATE SET nom = excluded.nom, taille = excluded.taille,
                        data = excluded.data, auteur = excluded.auteur,
                        updated_at = CURRENT_TIMESTAMP''',
-                (cle, promotion_id, base[:140] + ext, len(data), sqlite3.Binary(data),
-                 session.get('user')))
+                (cle, promotion_id, nom, len(data), sqlite3.Binary(data), session.get('user')))
     pdb.commit()
-    return jsonify({'cle': cle, 'nom': base[:140] + ext, 'taille': len(data)})
+    return jsonify({'cle': cle, 'nom': nom, 'taille': len(data)})
 
 @app.route('/api/alternance/documents/<cle>', methods=['DELETE'])
 def delete_alternance_document(cle):
@@ -9969,20 +10078,9 @@ def put_alternance_depot(sid, sem):
     s, tuteur, yg, err = _alt_depot_cible(pdb, sid, sem, ecrire=True)
     if err:
         return err
-    f = request.files.get('file')
-    if not f or not f.filename:
-        return error_response('Aucun fichier reçu', 400)
-    # Sans chemin ni caractère de contrôle : ce nom repart dans l'en-tête du téléchargement
-    nom = ''.join(c for c in re.split(r'[\\/]', f.filename)[-1] if c.isprintable()).strip()
-    base, ext = os.path.splitext(nom)
-    if ext.lower() not in _ALT_DOC_EXT:
-        return error_response('Type de fichier non autorisé (PDF, Word, Excel ou OpenDocument)', 400)
-    data = f.read(_ALT_DOC_MAX + 1)
-    if len(data) > _ALT_DOC_MAX:
-        return error_response('Fichier trop volumineux (15 Mo au plus)', 400)
-    if not data:
-        return error_response('Fichier vide', 400)
-    nom = base[:140] + ext
+    nom, data, err = _fichier_recu()
+    if err:
+        return err
     pdb.execute('''INSERT INTO alternance_depots (student_id, semestre, nom, taille, data, auteur)
                    VALUES (?, ?, ?, ?, ?, ?)
                    ON CONFLICT (student_id, semestre) DO UPDATE SET nom = excluded.nom,
