@@ -445,10 +445,15 @@ class Donnees:
                 if r['teacher_id'] in self.enseignants and '0' in (r['grille'] or '')}
         # Cours d'Hyperplanning que l'appli ne place pas (autres départements, cours GIM
         # sans séance correspondante…), lus dans son export iCal : ils occupent leurs
-        # enseignants cette semaine-là — {(enseignant, semaine): [(jour, début, fin)]}
+        # enseignants cette semaine-là — {(enseignant, semaine): [(jour, début, fin)]}. Les
+        # lignes d'un cours repris dans l'EDT (nature 'repris' / 'matiere') ne bloquent
+        # rien : c'est le cours de l'EDT qui compte.
         self.occupe_hp = defaultdict(list)
         if _table_existe(db, 'teacher_busy_hp'):
-            for r in _rows(db, 'SELECT teacher_id, week_number, day_of_week, start_time, end_time FROM teacher_busy_hp'):
+            cols = {r[1] for r in db.execute('PRAGMA table_info(teacher_busy_hp)').fetchall()}
+            ou = " WHERE COALESCE(nature, '') NOT IN ('repris', 'matiere')" if 'nature' in cols else ''
+            for r in _rows(db, 'SELECT teacher_id, week_number, day_of_week, start_time, end_time '
+                               'FROM teacher_busy_hp' + ou):
                 if r['teacher_id'] in self.enseignants:
                     self.occupe_hp[(r['teacher_id'], r['week_number'])].append(
                         (int(r['day_of_week']), _minutes(r['start_time']), _minutes(r['end_time'])))
@@ -604,8 +609,14 @@ def _filtre_annees(reg, alias='s'):
     return f' AND {alias}.year_group IN ({",".join("?" * len(reg.annees))})', tuple(sorted(reg.annees))
 
 
-def evenements_semaine(db, don, semaine, avert):
-    """Découpe la répartition d'une semaine en séances à placer."""
+# Lignes DS / AaR d'une matière (app.py, _LIGNES_AAR) : le calcul ne les place pas — les DS
+# se posent dans Hyperplanning ; ceux qui sont posés restent à leur place (cours_figes)
+TYPES_HORS_CALCUL = ('DS', 'AAR')
+
+
+def evenements_semaine(db, don, semaine, avert, hors_calcul=False):
+    """Découpe la répartition d'une semaine en séances à placer ; les lignes DS / AaR
+    seulement avec hors_calcul (Comparaison : ce que la répartition prévoit)."""
     reg = don.reg
     filtre, args = _filtre_annees(reg)
     lignes = _rows(db, f'''
@@ -622,6 +633,8 @@ def evenements_semaine(db, don, semaine, avert):
     evts = []
     for r in lignes:
         tt = _norm_type(r['teaching_type'])
+        if tt in TYPES_HORS_CALCUL and not hors_calcul:
+            continue
         ft = r['formation_type'] if r['formation_type'] is not None else 0
         n = _nb_groupes(don.sg, don.mut, don.tpsep, r['sem'], ft, tt, r['tp_type'])
         gi = int(r['group_index'] or 1)
@@ -682,7 +695,7 @@ def catalogue_seances(db, don):
         FROM course_sessions cs
         JOIN courses c ON c.id = cs.course_id
         JOIN semesters s ON s.id = c.semester_id
-        WHERE (cs.nb_sessions > 0 OR cs.total_hours > 0)
+        WHERE (cs.nb_sessions > 0 OR cs.total_hours > 0 OR UPPER(cs.teaching_type) IN ('DS', 'AAR'))
           AND NOT (c.name LIKE 'AaR%' OR c.name LIKE 'Aide à la réussite%')
         ORDER BY cs.id''')
     out = {}
@@ -708,7 +721,8 @@ def catalogue_seances(db, don):
 def cours_figes(db, reg, semaine):
     """Cours de la semaine gardés à leur place (timetable_slots.fige = 1), pour les
     années recalculées : posés par un calcul précédent et figés, par exemple à l'import
-    des indisponibilités d'Hyperplanning, pour ne plus bouger."""
+    des indisponibilités d'Hyperplanning, pour ne plus bouger. Les DS / AaR posés le sont
+    toujours, figés ou non : le calcul ne les place pas (TYPES_HORS_CALCUL)."""
     cols = [r[1] for r in db.execute('PRAGMA table_info(timetable_slots)').fetchall()]
     if 'fige' not in cols:
         return []
@@ -716,22 +730,24 @@ def cours_figes(db, reg, semaine):
     origine = 'ts.origine' if 'origine' in cols else 'NULL'
     return _rows(db, f'''
         SELECT ts.id, ts.course_session_id, ts.group_index, ts.day_of_week, ts.start_time, ts.end_time,
-               ts.room_id, c.code, {origine} AS origine
+               ts.room_id, ts.teacher_id, c.code, {origine} AS origine
         FROM timetable_slots ts
         JOIN course_sessions cs ON cs.id = ts.course_session_id
         JOIN courses c ON c.id = cs.course_id
         JOIN semesters s ON s.id = c.semester_id
-        WHERE ts.week_number = ? AND ts.fige = 1{filtre}
+        WHERE ts.week_number = ? AND (ts.fige = 1 OR UPPER(cs.teaching_type) IN ('DS', 'AAR')){filtre}
         ORDER BY ts.day_of_week, ts.start_time''', (semaine, *args))
 
 
-def appliquer_figes(evts, figes, reg, semaine, avert, catalogue=None):
+def appliquer_figes(evts, figes, reg, semaine, avert, catalogue=None, enseignants=None):
     """Rattache chaque cours figé à une séance de la répartition de la semaine (même
     séance, même groupe, de préférence même durée) : elle garde son jour, son heure et
     sa salle. Un cours figé que la répartition de la semaine ne prévoit pas (cours
     d'Hyperplanning repris tel quel, répartition modifiée depuis) est gardé quand même,
     en séance en plus, si la séance existe encore (`catalogue`, cf. `catalogue_seances`) ;
-    sinon, il est signalé et le nouveau calcul ne le garde pas."""
+    sinon, il est signalé et le nouveau calcul ne le garde pas. Son enseignant est celui
+    du cours figé (`enseignants` : ceux de l'année) — un cours d'Hyperplanning défini dans
+    le Planning comme la séance d'un autre enseignant reste à celui qui le fait."""
     libres = defaultdict(list)
     for e in evts:
         libres[(e.session_id, e.groupe)].append(e)
@@ -747,8 +763,9 @@ def appliquer_figes(evts, figes, reg, semaine, avert, catalogue=None):
             # séance en plus de la répartition de la semaine : gardée à sa place
             e = replace(catalogue[cle], idx=len(evts), rang=100 + len(evts), lon=lon)
             evts.append(e)
-            avert.append(f'S{semaine} · {f["code"]} ({quand}) : cours figé que la répartition ne prévoit pas '
-                         'cette semaine, gardé à sa place')
+            if e.type not in TYPES_HORS_CALCUL:       # un DS posé est toujours gardé, sans le dire
+                avert.append(f'S{semaine} · {f["code"]} ({quand}) : cours figé que la répartition ne prévoit pas '
+                             'cette semaine, gardé à sa place')
             cands = [e]
         if reste or u < 0:
             avert.append(f'S{semaine} · {f["code"]} ({quand}) : cours figé qui ne commence pas sur la grille '
@@ -762,6 +779,8 @@ def appliquer_figes(evts, figes, reg, semaine, avert, catalogue=None):
         e.fixe = (int(f['day_of_week']), int(u))
         e.salle_fixe = f['room_id']
         e.origine = f.get('origine')
+        if enseignants is not None and f.get('teacher_id') in enseignants:
+            e.enseignant = f['teacher_id']
 
 
 def occupations_fixes(db, don, semaine):
@@ -1726,7 +1745,7 @@ def generer(db, data):
         evts = evenements_semaine(db, don, w, avert)
         charges_w = _charges(w, evts, reg) if evts else []        # charge prévue par la répartition
         # cours figés (repris d'Hyperplanning…), même ceux que la répartition ne prévoit pas
-        appliquer_figes(evts, cours_figes(db, reg, w), reg, w, avert, catalogue)
+        appliquer_figes(evts, cours_figes(db, reg, w), reg, w, avert, catalogue, don.enseignants)
         if not evts:
             ok.append(w)
             rapport.append({'semaine': w, 'statut': 'vide', 'seances': 0})

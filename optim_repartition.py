@@ -105,7 +105,9 @@ def lire_poids(poids):
 
 PLAFOND = {'FTP': 30.0, 'ALT': 40.0}
 PLAFOND_ENSEIGNANT = 20.0
-TYPES = ('CM', 'TD', 'TP', 'PT')
+# DS : ligne DS d'une matière (Répartition Calendaire), que la répartition souhaitée place
+# dans l'enchaînement des séances (Contraintes Matières) ; la ligne AaR n'a pas de vœu
+TYPES = ('CM', 'TD', 'TP', 'PT', 'DS')
 FT_CODE = {'FTP': 0, 'ALT': 1, 'MUT': 2}
 
 

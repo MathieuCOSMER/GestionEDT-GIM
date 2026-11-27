@@ -784,14 +784,14 @@ function _aideService() {
 
     { id: 'rep-annuelle', rub: R, titre: 'Répartition annuelle (heures par semaine)', chemin: 'Service › Répartition Calendaire › Répartition annuelle',
       onglet: 'rep:annuelle', cible: 'repartition/annuelle',
-      mots: 'répartition calendaire planning semaine placer heures reste h module brouillon retour arrière taux horaire vacances orange jours fériés ponts',
+      mots: 'répartition calendaire planning semaine placer heures reste h module brouillon retour arrière taux horaire vacances orange jours fériés ponts ds devoir surveillé aide à la réussite aar ligne clic droit',
       html: () => `
         <p>Le tableau de bord de l'emploi du temps : pour chaque matière, chaque type d'enseignement et chaque groupe, les heures
         placées sur chacune des semaines de l'année. ${_aUi('Optimiser la répartition…')} y propose la répartition des heures semaine
         par semaine ; les jours et heures des cours se calculent ensuite dans ${_aOng('Service › Planning')}.</p>
-        ${_aTip(`l'<b>aide à la réussite</b> (AaR 1 … AaR 6) n'y figure pas : ses heures, ajoutées au compte-gouttes (surveillances de
-            DS…), ne se répartissent pas semaine par semaine et l'appli ne les place pas dans l'EDT. La matière reste dans
-            ${_aOng('Matières')}.`)}
+        ${_aTip(`l'<b>aide à la réussite</b> (AaR 1 … AaR 6) n'y figure pas : c'est un <b>total</b> d'heures du semestre, que les
+            lignes <span class="badge badge-ds">DS</span> et <span class="badge badge-aar">AaR</span> des matières se partagent
+            (voir ci-dessous). La matière reste dans ${_aOng('Matières')}.`)}
         <h3>Afficher</h3>
         <p>Rien ne s'affiche tant qu'aucun semestre n'est choisi : cliquez sur ${_aUi('S1')} … ${_aUi('S6')} (plusieurs à la fois si besoin).
         Puis affinez avec ${_aUi('Type')} (CM, TD, TP, PT), ${_aUi('Formation')}, ${_aUi('Enseignant')}, ${_aUi('Salle')}, la recherche de matière,
@@ -828,6 +828,21 @@ function _aideService() {
         <p>Le menu indique le nombre de cases et d'heures concernées. Seules les <b>lignes affichées</b> sont vidées : avec un filtre
         (type, formation, enseignant, salle), les lignes masquées restent intactes. Le vidage compte pour <b>un seul pas</b> :
         <kbd>Ctrl</kbd>+<kbd>Z</kbd> remet tout, et rien n'est enregistré avant ${_aUi('Enregistrer')}.</p>
+        <h3>Lignes DS et AaR d'une matière</h3>
+        <p>Le même clic droit (ligne bleue, colonne ${_aUi('Form.')} ou libellé d'une ligne) propose
+        ${_aUi('Ajouter une ligne DS')} et ${_aUi('Ajouter une ligne AaR')} : les <b>devoirs surveillés</b> et l'<b>aide à la
+        réussite</b> propres à la matière, pour la promotion entière. La face suit l'aide à la réussite du semestre (une ligne MUT
+        si elle est commune, sinon FTP et ALT). Ces lignes se remplissent comme les autres, clic par clic ; leur
+        ${_aUi('H. module')} est ce qui est posé, et leur ${_aUi('Reste')} donne ce qui <b>reste d'aide à la réussite</b> au semestre
+        (en rouge s'il est dépassé ; le survol détaille par face — une ligne MUT compte pour les deux).</p>
+        <ul>
+            <li>leurs heures comptent comme du <b>TD</b> dans le service de leur enseignant (${_aOng('Bilan Global')}) : par défaut
+            celui de la matière ; ${_aUi('Enseignant, durée de séance…')}, au clic droit sur la ligne, le change ;</li>
+            <li>${_aUi('Optimiser l\'EDT')} ne les place pas : les DS se posent dans Hyperplanning, et l'import de son EDT les
+            reprend (${_aLien('planning', 'détail')}) ; ${_aUi('Optimiser la répartition…')} place les DS selon la répartition
+            souhaitée de l'enseignant ;</li>
+            <li>${_aUi('Retirer la ligne')} n'est possible que vide (heures retirées et enregistrées) et sans cours dans l'EDT.</li>
+        </ul>
         <h3>Le brouillon : rien n'est enregistré sans vous</h3>
         <p>Les clics modifient une <b>copie de travail</b> : la barre au-dessus du tableau compte les modifications en attente.
         ${_aUi('↶ Retour arrière')} (<kbd>Ctrl</kbd>+<kbd>Z</kbd>) et ${_aUi('↷ Rétablir')} (<kbd>Ctrl</kbd>+<kbd>Y</kbd>) défont et refont clic par clic ;
@@ -958,7 +973,7 @@ function _aideService() {
 
     { id: 'planning', rub: R, titre: 'Planning (EDT par promotion, import d\'Hyperplanning)', chemin: 'Service › Planning',
       onglet: 'svc:planning', cible: 'planning',
-      mots: 'planning emploi du temps edt grille semaine promotion imprimer pdf généré enregistré couleur matière hyperplanning ical ics import figé libre bloqué optimiser générer automatique solveur aperçu poids jours fériés ponts réinitialiser vider effacer',
+      mots: 'planning emploi du temps edt grille semaine promotion imprimer pdf généré enregistré couleur matière hyperplanning ical ics import figé libre bloqué optimiser générer automatique solveur aperçu poids jours fériés ponts réinitialiser vider effacer incertain à définir clic droit autre matière à préciser définition',
       html: () => `
         <p>L'emploi du temps <b>enregistré</b> de l'appli, présenté comme dans un logiciel d'emploi du temps : les jours en colonnes, les
         heures de 8 h à 20 h en lignes, sur toute la largeur de l'écran, un rectangle par cours (matière, groupe, enseignant, salle),
@@ -1052,6 +1067,32 @@ function _aideService() {
             <b>indisponible</b> pour leurs enseignants : le calcul de
             l'emploi du temps ne place rien d'autre pour eux à ce moment.</li>
         </ul>
+        <h3>Cours d'Hyperplanning à définir (clic droit)</h3>
+        <p>Les cours GIM qu'aucune séance de l'appli ne reprend restent <b>visibles dans le Planning</b>, à leur place, dans la grille
+        de leur promotion : en orange pointillé avec <span class="pl-q">?</span> ceux qui sont <b>à définir</b> (« Matière à préciser »,
+        nom que la maquette ne connaît pas…), hachurés en gris les <b>autres</b> (aide à la réussite, réunion, réservation de salle,
+        conférence, forum, rentrée : d'office). Une pastille orange marque dans la barre les semaines qui en ont ; ${_aUi('Voir ▶')},
+        dans le bandeau, va à la suivante. Les boutons ${_aUi('? À définir')} et ${_aUi('Autres')} du filtre ${_aUi('Type')} les
+        montrent ou les masquent, ${_aUi('seuls les ?')} ne garde qu'eux.</p>
+        <p>Un <b>clic droit</b> (ou un clic) sur l'un d'eux ouvre ${_aUi('Définir ce cours d\'Hyperplanning')} :</p>
+        <ul>
+            <li>${_aUi('Une matière de la maquette')} : cochez la séance qu'il fait (plusieurs pour un cours qui réunit des groupes) ;
+            la liste propose d'abord les séances de ses enseignants, celles de sa promotion (FTP / ALT) et de son type en tête, et se
+            filtre par code, nom, groupe ou enseignant. Le cours entre dans l'EDT à sa place Hyperplanning, figé 📌 ou libre ;</li>
+            <li>${_aUi('Autre')} : pas un cours de la maquette ; il reste affiché et bloque ses enseignants ;</li>
+            <li>${_aUi('À définir')} (quand une définition existe) : la retire ;</li>
+            <li>pour <b>ce cours seulement</b>, ou pour <b>tous les cours semblables</b> de l'année (même matière, type, groupes et
+            enseignants dans Hyperplanning) — d'office ce cours seulement pour une « Matière à préciser ».</li>
+        </ul>
+        <p>Le <b>mémo</b> d'un cours dans Hyperplanning (« DS MECA 3 », « Oral info 3 ») est repris : il s'affiche en italique
+        dans le cours et au survol. Un cours <b>« Aide à la réussite »</b> dont le mémo commence par <b>DS</b> est le DS de la
+        matière qu'il nomme (code « R1.05 », « SAé 1-02 », ou nom et numéro de semestre : « MECA 3 », « TMF3 », « Autom 3 ») :
+        il va à la <b>ligne DS</b> de cette matière dans la ${_aLien('rep-annuelle', 'Répartition Calendaire')}, créée à l'import si
+        elle manque (sans heures : la Comparaison montre l'écart). Un mémo que l'appli ne relie à aucune matière (« DS », « DS MM5 »)
+        laisse le cours « autre » : un clic droit le définit. Un Contrôle ou un Examen va de préférence à la ligne DS de sa matière.</p>
+        <p>La définition est <b>retenue</b> : les imports suivants l'appliquent avant tout rapprochement. Le clic droit sur un cours
+        repris d'Hyperplanning (📌 ou <span class="pl-hp-libre">HP</span>) ouvre la même fenêtre, pour corriger la séance choisie à
+        l'import. Un cours défini comme la séance d'un autre enseignant reste à celui qui le fait dans Hyperplanning.</p>
         <p>Pour chaque enseignant du fichier, un nouvel import remplace les semaines qu'il couvre (cours repris et créneaux bloqués) ;
         un cours d'abord laissé libre le reste d'emblée. Le bandeau au-dessus des semaines résume ce qui est repris ;
         ${_aUi('Retirer l\'import')} efface tout, et les séances qu'il remplaçait sont alors à replacer avec ${_aUi('Optimiser l\'EDT')}.</p>
@@ -1193,6 +1234,10 @@ function _aideService() {
         <p>Plus d'une séance de TP dans une semaine (souvent pour tenir dans les semaines des ALT), ou de TD quand la face n'a
         qu'<b>un seul groupe de TD</b> : les semaines qui se suivent forment une <b>période libre</b>, signalée sous la grille — ses
         séances peuvent se placer n'importe où dans la période, seul compte ce qui vient avant et après.</p>
+        <p>La ligne <span class="badge badge-ds">DS</span> place vos <b>devoirs surveillés</b> dans l'enchaînement (« le DS après
+        le 3e TD ») : une par face, ou une seule pour le mutualisé. Leur nombre est libre ; leurs heures se prennent sur l'aide à la
+        réussite du semestre et se posent dans la Répartition Calendaire (ligne DS de la matière), que
+        ${_aUi('Optimiser la répartition…')} place alors selon votre enchaînement.</p>
         <p>Un TD ou un TP à plusieurs groupes suit le même rythme pour chaque groupe. Le titre du volet indique si la répartition est
         renseignée, par qui et quand. C'est un <b>vœu</b> : rien n'est placé tout seul dans la répartition calendaire, mais
         l'administration y voit l'enchaînement voulu, les séances placées dans un autre ordre (cadre rouge) et les semaines qui

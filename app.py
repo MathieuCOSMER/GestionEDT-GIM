@@ -2387,6 +2387,45 @@ def _apply_migrations(db):
         )
     ''')
     db.execute('CREATE INDEX IF NOT EXISTS idx_teacher_busy_hp ON teacher_busy_hp(teacher_id, week_number)')
+    # Cours GIM du fichier, ce qu'il en faut pour les montrer dans le Planning et les
+    # définir d'un clic droit : matière, type, classes et groupes ([[classe, groupe]] en
+    # JSON), salle d'Hyperplanning, clé du cours (`_ical_cle_cours`) et nature —
+    #   'incertain' : sans séance de l'appli, à définir (montré dans le Planning) ;
+    #   'autre'     : pas un cours de la maquette (aide à la réussite, réunion, défini
+    #                 « autre »…), montré dans le Planning ;
+    #   'couvert'   : dans l'EDT sous un autre de ses enseignants (pas montré) ;
+    #   'repris' / 'matiere' : repris dans l'EDT (rapproché à l'import / défini par
+    #                 l'utilisateur) comme la séance session_id, groupe group_index : le
+    #                 cours de l'EDT le montre, la ligne ne bloque rien (solveur) ;
+    #   NULL        : cours d'un autre département.
+    # memo : le « Mémo » du cours dans Hyperplanning (« DS MECA 3 »…)
+    for col in ('matiere TEXT', 'type_hp TEXT', 'unites TEXT', 'salle TEXT', 'cle TEXT', 'nature TEXT',
+                'session_id INTEGER', 'group_index INTEGER', 'memo TEXT'):
+        try:
+            db.execute(f'ALTER TABLE teacher_busy_hp ADD COLUMN {col}')
+        except sqlite3.OperationalError:
+            pass
+    db.execute('CREATE INDEX IF NOT EXISTS idx_teacher_busy_hp_cle ON teacher_busy_hp(cle)')
+    # Définitions faites dans le Planning (clic droit) d'un cours d'Hyperplanning : une
+    # ou des séances de l'appli (seances = [[séance, groupe]] en JSON), ou « autre ».
+    # semaine = 0 : tous les cours de même clé (matière, type, groupes, enseignants) ;
+    # sinon ce cours-là seulement (semaine, jour, début). Les imports suivants les
+    # appliquent avant tout rapprochement.
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS planning_hp_regles (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            cle         TEXT NOT NULL,
+            semaine     INTEGER NOT NULL DEFAULT 0,
+            jour        INTEGER NOT NULL DEFAULT -1,
+            debut       TEXT NOT NULL DEFAULT '',
+            nature      TEXT NOT NULL,
+            seances     TEXT,
+            libelle     TEXT,
+            created_by  TEXT,
+            created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (cle, semaine, jour, debut)
+        )
+    ''')
     # Cours placés gardés à leur place (« figés ») : « Optimiser l'EDT » ne les déplace
     # plus (solveur_edt.cours_figes). Origine 'hp' : cours posé dans Hyperplanning et
     # repris à l'import de son emploi du temps (iCal, Service › Planning), figé ou libre
@@ -3820,6 +3859,8 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     # Optimiseur de la répartition : rien n'est écrit (proposition pour le brouillon),
     # mais seul qui administre la répartition annuelle s'en sert et en règle les poids
     (r'^/api/repartition/(optimiser|poids)$', ['rep:annuelle'], 'strict'),
+    # Lignes DS / AaR d'une matière (clic droit dans la répartition annuelle)
+    (r'^/api/repartition/lignes(/\d+)?$', ['rep:annuelle'], 'strict'),
     (r'^/api/(checks|export)/repartition$', ['rep:annuelle'], 'readlike'),
     (r'^/api/edt-planned-weeks$', ['rep:jour'], ''),
     (r'^/api/compare/hyperplanning$', ['svc:comparaison'], 'readlike'),
@@ -3830,8 +3871,9 @@ _WRITE_TAB_RULES = [(_re.compile(rx), keys, opts) for rx, keys, opts in [
     (r'^/api/constraints/dispos/hp/(fichier|lire)$', ['svc:contraintes'], 'strict'),
     (r'^/api/constraints/(\d+/)?dispos/hp$', ['svc:contraintes'], 'strict'),
     # Import de l'emploi du temps d'Hyperplanning (iCal) dans le Planning, et son retrait ;
-    # un cours de l'EDT figé ou libéré d'un clic dans le Planning
-    (r'^/api/planning/hp(/fichier)?$', ['svc:planning'], 'strict'),
+    # un cours de l'EDT figé ou libéré d'un clic dans le Planning, un cours d'Hyperplanning
+    # défini d'un clic droit (matière ou autre)
+    (r'^/api/planning/hp(/fichier|/definir)?$', ['svc:planning'], 'strict'),
     (r'^/api/timetable/slots/\d+/fige$', ['svc:planning'], 'strict'),
     (r'^/api/timetable/reinitialiser$', ['svc:planning'], 'strict'),
     (r'^/api/qr-attendance$', ['svc:repartition-enseignant'], ''),
@@ -5029,7 +5071,10 @@ def hp_effacer(teacher_id):
 # le bouge plus) ou LIBRE (posé là, mais le calcul peut le déplacer). Les autres —
 # autres départements, cours GIM sans séance correspondante, réunions… — occupent
 # leurs enseignants (teacher_busy_hp, fermé par le solveur). Pour chaque enseignant du
-# fichier, un nouvel import remplace les semaines qu'il couvre.
+# fichier, un nouvel import remplace les semaines qu'il couvre. Les cours GIM sans
+# séance restent visibles dans le Planning (à définir ou autres, colonne nature) et s'y
+# définissent d'un clic droit (POST /api/planning/hp/definir) : une ou des séances, ou
+# « autre », retenu dans planning_hp_regles et appliqué par les imports suivants.
 _ICAL_TYPES = {'CM': 'CM', 'TD': 'TD', 'TP': 'TP', 'PT': 'PT', 'PROJETTUTORE': 'PT'}
 # Types rapprochés d'une séance sans condition de type (une épreuve posée sur une séance)
 _ICAL_TYPES_LIBRES = {'', 'CONTROLE', 'EXAMEN', 'DS', 'EVALUATION'}
@@ -5037,6 +5082,110 @@ _ICAL_JOURS = ['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.']
 # « Matières » d'Hyperplanning qui ne sont pas des cours (début du nom, cf. hp_pdf.cle_nom) :
 # jamais rapprochées d'une séance, elles bloquent le créneau de leurs enseignants
 _ICAL_PAS_COURS = ('RESERVATIONDESALLE', 'MATIEREAPRECISER', 'REUNION')
+# … dont celles qui sont « autre » d'office dans le Planning (une « Matière à préciser »
+# de type CM, TD… reste à définir)
+_ICAL_AUTRES = ('RESERVATIONDESALLE', 'REUNION')
+
+
+def _ical_norm(s):
+    """Texte comparable, chiffres gardés : « BUT 1 GIM - MUT » -> BUT1GIMMUT."""
+    s = unicodedata.normalize('NFKD', s or '').encode('ascii', 'ignore').decode()
+    return re.sub(r'[^A-Z0-9]', '', s.upper())
+
+
+def _ical_cle_cours(c):
+    """Identité d'un cours d'Hyperplanning d'un export à l'autre, clé des définitions
+    faites dans le Planning : matière, type, classes et groupes GIM, enseignants — et
+    son mémo pour une matière passe-partout (aide à la réussite, matière à préciser :
+    « DS MECA 3 » n'est pas « Oral info 3 »)."""
+    import hp_pdf
+    unites = sorted(f'{_ical_norm(cl)}/{_ical_norm(g)}' for cl, g in c['unites'] if 'GIM' in cl.upper())
+    parts = [_ical_norm(c['matiere']), _ical_norm(c['type']), ';'.join(unites),
+             ';'.join(sorted(_ical_norm(n) for n in c['enseignants']))]
+    if c.get('memo') and (_hors_repartition(c['matiere']) or hp_pdf.cle_nom(c['matiere']).startswith('MATIEREAPRECISER')):
+        parts.append(_ical_norm(c['memo']))
+    return '|'.join(parts)[:600]
+
+
+def _ical_nature_auto(matiere, type_hp):
+    """Nature d'un cours GIM qu'aucune séance de l'appli ne reprend : 'autre' d'office
+    (aide à la réussite, réservation de salle, réunion ; type Forum, Séminaire,
+    Conférence, Rentrée…), sinon 'incertain' : à définir dans le Planning."""
+    import hp_pdf
+    t = hp_pdf.cle_nom(type_hp)
+    if _hors_repartition(matiere) or hp_pdf.cle_nom(matiere).startswith(_ICAL_AUTRES) \
+            or (t and t not in _ICAL_TYPES and t not in _ICAL_TYPES_LIBRES):
+        return 'autre'
+    return 'incertain'
+
+
+def _ical_publics(unites):
+    """Promotions d'un cours d'Hyperplanning d'après ses classes et groupes : [[année,
+    'FTP'|'ALT']] — « … ISP ALT » ou groupe « …ALT » : les apprentis ; « Temps plein »,
+    groupe FTP ou de TP numéroté (TP12_3) : le temps plein ; sinon (« BUT 1 GIM - MUT »,
+    TD_1…) : les deux."""
+    out = set()
+    for cl, g in unites or ():
+        m = re.search(r'BUT\s*(\d)', (cl or '').upper())
+        if not m:
+            continue
+        c, gg = (cl or '').upper().replace('GIM', ''), (g or '').upper().replace(' ', '')
+        if 'ALT' in c or 'ALT' in gg:
+            faces = ('ALT',)
+        elif 'TEMPS PLEIN' in c or 'FTP' in c or gg == 'FTP' or gg.startswith('TP'):
+            faces = ('FTP',)
+        else:
+            faces = ('FTP', 'ALT')
+        out.update((int(m.group(1)), f) for f in faces)
+    return [list(p) for p in sorted(out)]
+
+
+def _hp_salle_resolveur(db):
+    """Fonction : salle d'Hyperplanning (« E123 - SALLE INFORMATIQUE ») -> id de la salle
+    « 123 » (ou « E123 ») de l'appli, ou None."""
+    salles = {r['name'].strip().upper(): r['id'] for r in db.execute('SELECT id, name FROM rooms')}
+
+    def salle_id(nom):
+        m = re.match(r'^\s*([A-Z]?)(\d{2,4}[A-Z]?)\b', (nom or '').upper())
+        return (salles.get(m.group(1) + m.group(2)) or salles.get(m.group(2))) if m else None
+    return salle_id
+
+
+def _hp_regles(db):
+    """Définitions faites dans le Planning : {(clé, semaine, jour, début): {nature,
+    seances [(séance, groupe)]}} ; (clé, 0, -1, '') vaut pour tous les cours de la clé."""
+    try:
+        lignes = db.execute('SELECT cle, semaine, jour, debut, nature, seances FROM planning_hp_regles').fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    out = {}
+    for r in lignes:
+        try:
+            seances = [(int(s), int(g)) for s, g in json.loads(r[5] or '[]')]
+        except (ValueError, TypeError):
+            seances = []
+        out[(r[0], r[1], r[2], r[3])] = {'nature': r[4], 'seances': seances}
+    return out
+
+
+def _hp_regle_de(regles, cle, semaine, jour, debut):
+    """Définition qui vaut pour ce cours : la sienne, sinon celle de tous les cours de sa clé."""
+    return regles.get((cle, semaine, jour, debut)) or regles.get((cle, 0, -1, ''))
+
+
+_HP_BUSY_COLS = ('teacher_id, week_number, day_of_week, start_time, end_time, libelle, gim, source, imported_at, '
+                 'matiere, type_hp, unites, salle, cle, nature, session_id, group_index, memo')
+_HP_BUSY_PH = ','.join('?' * len(_HP_BUSY_COLS.split(',')))
+# Lignes de teacher_busy_hp qui bloquent leur enseignant (pas celles d'un cours repris
+# dans l'EDT : c'est lui qui compte) — même règle dans solveur_edt.Donnees
+_HP_BLOQUE = "COALESCE(nature, '') NOT IN ('repris', 'matiere')"
+
+
+def _hp_busy_valeurs(tid, o, source, quand):
+    """Ligne de teacher_busy_hp (colonnes _HP_BUSY_COLS) d'un cours d'Hyperplanning."""
+    return (tid, o['semaine'], o['jour'], o['debut'], o['fin'], o.get('libelle'), int(bool(o.get('gim'))), source, quand,
+            o.get('matiere'), o.get('type_hp'), o.get('unites'), o.get('salle'), o.get('cle'), o.get('nature'),
+            o.get('session_id'), o.get('group_index'), o.get('memo') or None)
 
 
 def _ical_utc_vers_paris(dt):
@@ -5132,6 +5281,7 @@ def _ical_lire(texte):
             'matiere': desc.get('Matière') or _ical_texte(e.get('SUMMARY') or '').split(' - ')[0].strip(),
             # l'export « Classe » n'a pas de ligne « Type » : sans_type
             'type': desc.get('Type', ''), 'sans_type': 'Type' not in desc, 'enseignants': ens,
+            'memo': (desc.get('Mémo') or desc.get('Memo') or '').strip(),
             'complet': m.group(1).replace('_', ' ') if m else '',
             'unites': unites,
             'gim': any('GIM' in c.upper() for c, _ in unites) or 'GIM' in desc.get('Regroupement', '').upper(),
@@ -5147,6 +5297,8 @@ def _lib_groupe(e, tp_type=None):
     tt = (e.type or '').upper()
     if tt == 'CM':
         return 'CM'
+    if tt in _LIGNES_AAR:           # lignes DS / AaR d'une matière : toute la promotion
+        return 'DS' if tt == 'DS' else 'AaR'
     base = ('TP8' if str(tp_type or '').upper().replace(' ', '') == 'TP8' else 'TP12') if tt.startswith('TP') else tt
     g = e.groupe if e.nb_groupes > 1 else None
     alt = e.formation == 1 or (tt.startswith('TP') and e.public and all(p[1] == 'ALT' for p in e.public))
@@ -5194,6 +5346,51 @@ def _ical_nom_score(mots_hp, sigle_hp, nom_app):
     return p
 
 
+def _ical_ds_matiere(memo, annees, pair, tids, cours_info, cours_de_ens):
+    """Matière d'un DS posé dans Hyperplanning en « Aide à la réussite », d'après son mémo
+    (« DS MECA 3 », « DS R1.05 », « DS SAé 1-02 », « DS TMF3 ») : le code, sinon le nom ou
+    le sigle avec le numéro de semestre final, parmi les matières des années `annees` ; à
+    égalité, une matière d'un des enseignants `tids`, puis du semestre de la saison (pair :
+    semestre pair). cours_info = [{id, code, nom, sem, annee}] (aide à la réussite
+    exclue), cours_de_ens = {enseignant: {matières}}. -> élément de cours_info | None."""
+    import hp_pdf
+    reste = re.sub(r'^\s*DS\b[\s:.\-n°]*', '', memo or '', flags=re.I).strip()
+    if not reste:
+        return None
+    cands = [k for k in cours_info if not annees or k['annee'] in annees]
+    m = re.search(r'\b(R|SA[EÉé])\s*(\d)\s*[.\-]?\s*(\d{1,2})\b', reste, re.I)
+    sel = []
+    if m:
+        pre = 'R' if m.group(1).upper() == 'R' else 'SAE'
+        variantes = {_ical_norm(f'{pre}{m.group(2)}.{int(m.group(3)):02d}'), _ical_norm(f'{pre}{m.group(2)}.{int(m.group(3))}')}
+        for k in cands:
+            n = _ical_norm(k['code'])
+            if any(n.startswith(v) and not n[len(v):len(v) + 1].isdigit() for v in variantes):
+                sel.append((1.0, k))
+    else:
+        n = re.search(r'(\d)\s*$', reste)
+        semn = n.group(1) if n else None
+        lettres = re.sub(r'\d', ' ', reste).strip()
+        mots, sigle = _ical_mots(lettres), _ical_sigle(lettres)
+        if re.fullmatch(r'[A-Za-zÀ-ÿ]+', lettres) and lettres.isupper():     # « TMF3 », « GE1 » : un sigle
+            sigle = hp_pdf.cle_nom(lettres)
+        for k in cands:
+            if semn and not k['sem'].endswith(semn):
+                continue
+            s = _ical_nom_score(mots, sigle, k['nom'])
+            if s > 0:
+                sel.append((s, k))
+    if not sel:
+        return None
+
+    def cle(x):
+        s, k = x
+        n = re.search(r'(\d)$', k['sem'])
+        hors_saison = pair is not None and n is not None and (int(n.group(1)) % 2 == 0) != pair
+        return (-s, not any(k['id'] in cours_de_ens.get(t, ()) for t in tids), hors_saison, k['code'])
+    return min(sel, key=cle)[1]
+
+
 def _ical_types_deduits(groupe):
     """Cours sans « Type » (l'export « Emploi du temps Classe » d'Hyperplanning n'en
     donne pas) : types de séance possibles d'après le nom de son groupe, constatés dans
@@ -5236,7 +5433,11 @@ def _ical_rapprocher(u, cands, pas, noms_cours, remplis=frozenset()):
     sans_type = u.get('sans_type') and not u['type']
     types = (u['type'],) if u['type'] else (_ical_types_deduits(grp) if sans_type else None)
     out = []
+    examen = u.get('examen')
     for e in cands:
+        # lignes DS / AaR d'une matière : un DS seulement pour une épreuve (Contrôle, Examen…)
+        if e.type in ('DS', 'AAR') and (e.type == 'AAR' or not examen):
+            continue
         if annee and e.annee != annee:
             continue
         if sem and e.semestre and e.semestre != sem:
@@ -5269,8 +5470,9 @@ def _ical_rapprocher(u, cands, pas, noms_cours, remplis=frozenset()):
     def cle(e):
         m = re.search(r'(\d+)$', e.semestre or '')
         hors_parite = pair is not None and m is not None and (int(m.group(1)) % 2 == 0) != pair
-        return (-_ical_nom_score(mots, sigle, noms_cours.get(e.course_id, '')), hors_parite,
-                abs(e.lon * pas - u['duree']) > 5, (e.session_id, e.groupe) in remplis, e.session_id, e.groupe)
+        return (-_ical_nom_score(mots, sigle, noms_cours.get(e.course_id, '')), bool(examen) and e.type != 'DS',
+                hors_parite, abs(e.lon * pas - u['duree']) > 5, (e.session_id, e.groupe) in remplis,
+                e.session_id, e.groupe)
     out.sort(key=cle)
     # Aucun nom ressemblant parmi les séances possibles, alors que l'enseignant a une séance
     # de cette matière (d'un autre type ou d'un autre groupe) : ce n'est pas une autre
@@ -5278,8 +5480,8 @@ def _ical_rapprocher(u, cands, pas, noms_cours, remplis=frozenset()):
     if cle(out[0])[0] == 0 and any(_ical_nom_score(mots, sigle, noms_cours.get(e.course_id, '')) > 0
                                    for e in cands):
         return None, False
-    k0 = cle(out[0])[:3]
-    ambigu = len({(e.session_id, e.groupe) for e in out if cle(e)[:3] == k0}) > 1
+    k0 = cle(out[0])[:4]
+    ambigu = len({(e.session_id, e.groupe) for e in out if cle(e)[:4] == k0}) > 1
     return out[0], ambigu
 
 
@@ -5342,10 +5544,44 @@ def _ical_preparer(db, cours, bornes, associations, libres):
     # sans regarder la Répartition Calendaire — l'EDT d'Hyperplanning est repris tel qu'il
     # est ; Service › Comparaison montre ensuite où il s'écarte de la répartition.
     don = solveur_edt.Donnees(db, solveur_edt.lire_reglages({'annee_universitaire': get_current_year()}))
+    catalogue = solveur_edt.catalogue_seances(db, don)
     par_ens = defaultdict(list)
-    for e in solveur_edt.catalogue_seances(db, don).values():
+    for e in catalogue.values():
         if e.enseignant is not None:
             par_ens[e.enseignant].append(e)
+    # Définitions faites dans le Planning (clic droit) : appliquées avant tout rapprochement
+    regles = _hp_regles(db)
+    # DS posés en « Aide à la réussite » (mémo « DS MECA 3 ») : ligne DS de la matière du
+    # mémo (Répartition Calendaire), créée à l'enregistrement si elle manque
+    cours_info = [{'id': r[0], 'code': r[1] or '', 'nom': r[2] or '', 'sem': r[3] or '', 'annee': r[4]}
+                  for r in db.execute('''SELECT c.id, c.code, c.name, s.code, s.year_group FROM courses c
+                                         JOIN semesters s ON s.id = c.semester_id''') if not _hors_repartition(r[2])]
+    infos_cours = {k['id']: k for k in cours_info}
+    cours_de_ens = defaultdict(set)
+    for e in catalogue.values():
+        if e.enseignant is not None:
+            cours_de_ens[e.enseignant].add(e.course_id)
+    lignes_ds = {(e.course_id, e.formation): e for e in catalogue.values() if e.type == 'DS'}
+    slot_aar = _slots_aar(db)
+
+    def ligne_ds(c, w):
+        """Séance (Evenement) de la ligne DS d'un cours « Aide à la réussite » au mémo
+        « DS … », existante ou à créer (session_id None), ou None."""
+        if not (_hors_repartition(c['matiere']) and re.match(r'\s*DS\b', c.get('memo') or '', re.I)):
+            return None
+        pubs = _ical_publics([u for u in c['unites'] if 'GIM' in u[0].upper()])
+        faces = {f for _, f in pubs}
+        k = _ical_ds_matiere(c['memo'], {a for a, _ in pubs}, pair_de(w), tids_du_cours(c), cours_info, cours_de_ens)
+        if k is None:
+            return None
+        ft = 2 if faces == {'FTP', 'ALT'} else (1 if faces == {'ALT'} else 0)
+        e = lignes_ds.get((k['id'], ft))
+        if e is None:
+            lon = max(1, round(slot_aar.get((k['sem'], ft), 1.5) * 60 / don.reg.pas))
+            e = lignes_ds[(k['id'], ft)] = solveur_edt.Evenement(
+                idx=-1, session_id=None, course_id=k['id'], code=k['code'], type='DS', formation=ft, annee=k['annee'],
+                groupe=1, nb_groupes=1, rang=0, lon=lon, enseignant=None, salle=None, public=(), semestre=k['sem'])
+        return e
     volume = {r[0]: int(r[1] or 0) for r in db.execute('SELECT id, nb_sessions FROM course_sessions')}
     # semaine du semestre pair (février → juillet) : départage les séances de même nom
     p0, p1 = cfg.get('semester_even_start_week'), cfg.get('semester_even_end_week')
@@ -5356,11 +5592,7 @@ def _ical_preparer(db, cours, bornes, associations, libres):
         return ordre(int(p0)) <= ordre(w) <= ordre(int(p1))
     noms_cours = {r[0]: r[1] or '' for r in db.execute('SELECT id, name FROM courses')}
     tp_types = {r[0]: r[1] for r in db.execute('SELECT id, tp_type FROM courses')}
-    salles = {r['name'].strip().upper(): r['id'] for r in db.execute('SELECT id, name FROM rooms')}
-
-    def salle_id(nom):              # « E123 - SALLE INFORMATIQUE » -> salle « 123 » de l'appli
-        m = re.match(r'^\s*([A-Z]?)(\d{2,4}[A-Z]?)\b', (nom or '').upper())
-        return (salles.get(m.group(1) + m.group(2)) or salles.get(m.group(2))) if m else None
+    salle_id = _hp_salle_resolveur(db)
     # Cours déjà repris d'Hyperplanning : (enseignant, semaine, jour, début, séance) -> figé ?
     deja = {}
     for r in db.execute("""SELECT teacher_id, week_number, day_of_week, start_time, course_session_id,
@@ -5376,7 +5608,18 @@ def _ical_preparer(db, cours, bornes, associations, libres):
             continue
         for n in c['enseignants']:
             par_nom[n].append(c)
+        if c['gim']:
+            c['cle'] = _ical_cle_cours(c)
     rapport, ecritures = [], {}
+    repris_uids = set()         # cours GIM repris dans l'EDT (sous l'un de leurs enseignants)
+
+    def tids_du_cours(c):       # enseignants de l'année d'un cours, dans l'ordre du fichier
+        out = []
+        for n in c['enseignants']:
+            t = (choix.get(n) or [None])[0]
+            if t is not None and t not in out:
+                out.append(t)
+        return out
     for qui in sorted(noms_fichier, key=lambda q: hp_pdf.cle_nom(hp_pdf.nom_sans_civilite(q))):
         tid, how = choix[qui]
         lst = par_nom.get(qui, [])
@@ -5390,7 +5633,7 @@ def _ical_preparer(db, cours, bornes, associations, libres):
         ecr = ecritures.setdefault(tid, {'cours': [], 'occupe': []})
         cands = par_ens.get(tid, [])
         nb_repris = defaultdict(int)         # (séance, groupe) -> cours déjà rapprochés dans l'année
-        gim, non_rap, autres = [], [], 0
+        gim, autres = [], 0
         lus = []
         for c in lst:
             d = c['debut'].date()
@@ -5401,15 +5644,45 @@ def _ical_preparer(db, cours, bornes, associations, libres):
             typ = _ICAL_TYPES.get(cle_type)
             unites = [(cl, g) for cl, g in c['unites'] if 'GIM' in cl.upper()] or [('', None)]
             lu = {'c': c, 'd': d, 'w': w, 'j': d.weekday(), 'a': a, 'b': b, 'unites': unites, 'repris': [],
-                  'texte': c['matiere'] + (f" · {c['type']}" if c['type'] else '')}
+                  'texte': c['matiere'] + (f" · {c['type']}" if c['type'] else ''), 'nature': None, 'regle': False}
             lus.append(lu)
-            if not (c['gim'] and (typ or cle_type in _ICAL_TYPES_LIBRES)) or _hors_repartition(c['matiere']) \
+            if not c['gim']:
+                continue
+            # Défini dans le Planning : séance(s) choisie(s), autre, ou à définir. Une séance
+            # va à celui des enseignants du cours qui l'a dans l'appli (sinon au premier) ;
+            # les autres enseignants du cours en sont « couverts ».
+            regle = _hp_regle_de(regles, c['cle'], w, d.weekday(), hm(a))
+            if regle and regle['nature'] == 'matiere':
+                es = [catalogue[k] for k in regle['seances'] if k in catalogue]
+                if es:
+                    tids_c = tids_du_cours(c) or [tid]
+                    for i, e in enumerate(es):
+                        if (e.enseignant if e.enseignant in tids_c else tids_c[0]) == tid:
+                            lu['repris'].append((100 + i, e, False))
+                    lu['regle'] = True
+                    if not lu['repris']:
+                        lu['nature'] = 'couvert'
+                    continue
+                regle = None                 # séances disparues de l'appli : rapprochement ordinaire
+            if regle:
+                lu['nature'] = regle['nature']
+                continue
+            e = ligne_ds(c, w)          # DS posé en aide à la réussite : la ligne DS de sa matière
+            if e is not None:
+                tids_c = tids_du_cours(c) or [tid]
+                if (e.enseignant if e.enseignant in tids_c else tids_c[0]) == tid:
+                    lu['repris'].append((200, e, False))
+                else:
+                    lu['nature'] = 'couvert'
+                continue
+            if not (typ or cle_type in _ICAL_TYPES_LIBRES) or _hors_repartition(c['matiere']) \
                     or hp_pdf.cle_nom(c['matiere']).startswith(_ICAL_PAS_COURS):
                 continue                     # aide à la réussite, réservation… : jamais une séance de l'appli
             dans_ce_cours = set()            # une séance par unité du cours, pas deux fois la même
             for k, (cl, g) in enumerate(unites):
                 u = {'classe': cl, 'groupe': g, 'type': typ, 'matiere': c['matiere'], 'duree': b - a,
-                     'sans_type': c.get('sans_type'), 'pair': pair_de(w)}
+                     'sans_type': c.get('sans_type'), 'pair': pair_de(w),
+                     'examen': cle_type in ('CONTROLE', 'EXAMEN', 'DS', 'EVALUATION')}
                 # à égalité, la séance qui n'a pas encore tout son volume (nb de séances)
                 remplis = {k2 for k2, n in nb_repris.items() if n >= volume.get(k2[0], 0)}
                 e, ambigu = _ical_rapprocher(
@@ -5422,37 +5695,68 @@ def _ical_preparer(db, cours, bornes, associations, libres):
                 lu['repris'].append((k, e, ambigu))
         for lu in lus:
             c, d, w, j, a, b, texte = lu['c'], lu['d'], lu['w'], lu['j'], lu['a'], lu['b'], lu['texte']
+            classes = ', '.join(sorted({cl for cl, _ in c['unites']}))
+            libelle = f"{c['matiere']}{f' ({classes})' if classes else ''}"[:160]
+            # de quoi montrer le cours dans le Planning et le définir (clic droit)
+            hp = {'matiere': c['matiere'][:200], 'type_hp': (c['type'] or '')[:60], 'salle': (c['salle'] or '')[:120],
+                  'unites': json.dumps([[cl, g] for cl, g in c['unites'] if 'GIM' in cl.upper()], ensure_ascii=False),
+                  'cle': c.get('cle'), 'libelle': libelle, 'fin': hm(b), 'memo': (c.get('memo') or '')[:200]}
+            if c.get('memo'):
+                texte = f"{texte} ({c['memo']})"
             for k, e, ambigu in sorted(lu['repris'], key=lambda x: x[0]):
-                cl, g = lu['unites'][k]
+                cl, g = lu['unites'][k] if k < len(lu['unites']) else lu['unites'][0]
                 cle = f"{tid}|{c['uid']}|{k}"
                 groupe = g or (cl.replace('BUT ', '') if cl else '')
                 gim.append({'cle': cle, 'semaine': w, 'jour': j, 'date': d.isoformat(),
                             'debut': hm(a), 'fin': hm(b), 'texte': f"{texte} · {groupe}" if groupe else texte,
-                            'seance': f"{e.code} {_lib_groupe(e, tp_types.get(e.course_id))}",
-                            'ambigu': ambigu, 'salle': c['salle'],
-                            'deja': deja.get((tid, w, j, hm(a), e.session_id))})
+                            'seance': f"{e.code} {_lib_groupe(e, tp_types.get(e.course_id))}"
+                                      + (' (ligne DS à créer)' if e.session_id is None else ''),
+                            'ambigu': ambigu, 'regle': lu['regle'], 'ds': k == 200, 'salle': c['salle'],
+                            'deja': deja.get((tid, w, j, hm(a), e.session_id)) if e.session_id else None})
                 ecr['cours'].append({'semaine': w, 'jour': j, 'debut': hm(a), 'fin': hm(b),
                                      'session_id': e.session_id, 'groupe': e.groupe, 'nb_groupes': e.nb_groupes,
                                      'formation': e.formation, 'room_id': salle_id(c['salle']),
-                                     'fige': cle not in libres})
+                                     'fige': cle not in libres,
+                                     # ligne DS à créer à l'enregistrement : (matière, face, durée de séance)
+                                     'creer': None if e.session_id else (e.course_id, e.formation, e.lon * don.reg.pas / 60),
+                                     'hp': dict(hp, nature='matiere' if lu['regle'] else 'repris')})
             if lu['repris']:
+                repris_uids.add(c['uid'])
                 continue
-            # pas dans l'EDT de l'appli : le créneau est pris pour l'enseignant
-            classes = ', '.join(sorted({cl for cl, _ in c['unites']}))
-            libelle = f"{c['matiere']}{f' ({classes})' if classes else ''}"
-            ecr['occupe'].append({'semaine': w, 'jour': j, 'debut': hm(a), 'fin': hm(b),
-                                  'libelle': libelle[:160], 'gim': c['gim']})
-            if c['gim']:
-                non_rap.append(f"S{w} {_ICAL_JOURS[j]} {hm(a)} {texte}")
-            else:
+            # pas dans l'EDT de l'appli : le créneau est pris pour l'enseignant ; la nature
+            # d'un cours GIM ('?') se fixe une fois tous les enseignants vus (couvert ?)
+            ecr['occupe'].append(dict(hp, semaine=w, jour=j, debut=hm(a), gim=c['gim'], uid=c['uid'], texte=texte,
+                                      nature=(lu['nature'] or '?') if c['gim'] else None))
+            if not c['gim']:
                 autres += 1
-
-        ligne.update({'cours_gim': gim, 'nb_autres': autres, 'nb_non_rapproches': len(non_rap),
-                      'non_rapproches': non_rap[:60], 'exemples_bloques': [
+        ligne.update({'cours_gim': gim, 'nb_autres': autres})
+    # Cours GIM sans séance : repris sous un autre de leurs enseignants (couvert), autre
+    # d'office (aide à la réussite, réunion…) ou à définir dans le Planning
+    for ecr in ecritures.values():
+        for o in ecr['occupe']:
+            if o['nature'] == '?':
+                o['nature'] = 'couvert' if o['uid'] in repris_uids else _ical_nature_auto(o['matiere'], o['type_hp'])
+    for ligne in rapport:
+        ecr = ecritures.get(ligne['teacher_id']) if ligne['teacher_id'] else None
+        if ecr is None:
+            continue
+        sans = [o for o in ecr['occupe'] if o['gim'] and o['nature'] != 'couvert']
+        quoi = {'incertain': 'à définir', 'autre': 'autre'}
+        ligne.update({'nb_non_rapproches': len(sans),
+                      'nb_incertains': sum(1 for o in sans if o['nature'] == 'incertain'),
+                      'nb_couverts': sum(1 for o in ecr['occupe'] if o['nature'] == 'couvert'),
+                      'non_rapproches': [f"S{o['semaine']} {_ICAL_JOURS[o['jour']]} {o['debut']} {o['texte']}"
+                                         f" ({quoi.get(o['nature'], o['nature'])})" for o in sans[:60]],
+                      'exemples_bloques': [
                           f"S{o['semaine']} {_ICAL_JOURS[o['jour']]} {o['debut']}–{o['fin']} {o['libelle']}"
                           for o in ecr['occupe'][:4]]})
     vus = {tid for tid, _ in choix.values() if tid is not None}
+    a_creer = sorted({f"{infos_cours[r['creer'][0]]['code']} {_WISH_FORMATIONS.get(r['creer'][1], '')}"
+                      for e in ecritures.values() for r in e['cours'] if r['creer'] and r['creer'][0] in infos_cours})
     return ({'annee': get_current_year(), 'enseignants': rapport,
+             # DS posés en aide à la réussite, rattachés à la ligne DS de leur matière
+             'ds': sum(1 for l in rapport for x in l.get('cours_gim', []) if x.get('ds')),
+             'lignes_ds_a_creer': a_creer,
              'absents': [n for i, n in profs if i not in vus],
              'profs': [{'id': i, 'name': n} for i, n in profs],
              'semaines': sorted(couvertes, key=ordre), 'nb_cours': len(cours), 'hors_annee': hors,
@@ -5545,14 +5849,31 @@ def planning_hp_importer():
     sems = sorted(couvertes)
     pl = ','.join('?' * len(sems))
     figes = libres_n = remplaces = bloques = 0
+    # Lignes DS des DS posés en aide à la réussite, créées si elles manquent (enseignant :
+    # celui qui fait le DS ; volume nul : les heures se posent dans la Répartition)
+    lignes_creees = {}
+    for tid, ecr in ecritures.items():
+        for r in ecr['cours']:
+            if r['creer'] and r['session_id'] is None:
+                cid, ft, slot = r['creer']
+                if (cid, ft) not in lignes_creees:
+                    db.execute('''INSERT INTO course_sessions (course_id, formation_type, teaching_type, total_hours,
+                                      slot_duration, nb_sessions, teacher_id) VALUES (?, ?, 'DS', 0, ?, 0, ?)
+                                  ON CONFLICT(course_id, formation_type, teaching_type) DO NOTHING''', (cid, ft, slot, tid))
+                    lignes_creees[(cid, ft)] = db.execute('''SELECT id FROM course_sessions WHERE course_id = ?
+                        AND formation_type = ? AND teaching_type = 'DS' ''', (cid, ft)).fetchone()[0]
+                r['session_id'] = lignes_creees[(cid, ft)]
     for tid, ecr in ecritures.items():
         db.execute(f'DELETE FROM teacher_busy_hp WHERE teacher_id = ? AND week_number IN ({pl})', (tid, *sems))
         db.execute(f"DELETE FROM timetable_slots WHERE origine = 'hp' AND teacher_id = ? AND week_number IN ({pl})",
                    (tid, *sems))
-        db.executemany('''INSERT INTO teacher_busy_hp (teacher_id, week_number, day_of_week, start_time, end_time,
-                              libelle, gim, source, imported_at) VALUES (?,?,?,?,?,?,?,?,?)''',
-                       [(tid, o['semaine'], o['jour'], o['debut'], o['fin'], o['libelle'], int(o['gim']),
-                         source, maintenant) for o in ecr['occupe']])
+        # créneaux bloqués, et pour chaque cours repris ce qu'Hyperplanning en dit (nature
+        # 'repris' / 'matiere' : ne bloque rien, sert à le redéfinir d'un clic droit)
+        db.executemany(f'INSERT INTO teacher_busy_hp ({_HP_BUSY_COLS}) VALUES ({_HP_BUSY_PH})',
+                       [_hp_busy_valeurs(tid, o, source, maintenant) for o in ecr['occupe']]
+                       + [_hp_busy_valeurs(tid, dict(r['hp'], semaine=r['semaine'], jour=r['jour'], debut=r['debut'],
+                                                     gim=True, session_id=r['session_id'], group_index=r['groupe']),
+                                           source, maintenant) for r in ecr['cours']])
         bloques += len(ecr['occupe'])
         touches = set()         # (semaine, séance, groupe) repris d'Hyperplanning
         for r in ecr['cours']:
@@ -5610,14 +5931,265 @@ def _planning_hp_etat(db):
     try:
         r = db.execute("""SELECT COUNT(*), SUM(COALESCE(fige, 0)) FROM timetable_slots
                           WHERE origine = 'hp'""").fetchone()
-        o = db.execute('SELECT COUNT(*), COUNT(DISTINCT teacher_id) FROM teacher_busy_hp').fetchone()
+        o = db.execute(f'''SELECT COUNT(*), COUNT(DISTINCT teacher_id) FROM teacher_busy_hp
+                           WHERE {_HP_BLOQUE}''').fetchone()
         d = db.execute('''SELECT source, imported_at FROM teacher_busy_hp
                           ORDER BY imported_at DESC LIMIT 1''').fetchone()
+        # cours GIM montrés dans le Planning sans séance : à définir, autres (un cours à
+        # plusieurs enseignants compte une fois)
+        n = {k: v for k, v in db.execute('''SELECT nature, COUNT(DISTINCT cle || '|' || week_number || '|' || day_of_week
+                                                   || '|' || start_time) FROM teacher_busy_hp
+                                            WHERE nature IN ('incertain', 'autre') GROUP BY nature''')}
+        w = db.execute('''SELECT DISTINCT week_number FROM teacher_busy_hp WHERE nature = 'incertain' ''').fetchall()
     except sqlite3.OperationalError:
         return None
     return {'cours': r[0] or 0, 'figes': r[1] or 0, 'libres': (r[0] or 0) - (r[1] or 0),
             'bloques': o[0] or 0, 'enseignants_bloques': o[1] or 0,
+            'incertains': n.get('incertain', 0), 'autres': n.get('autre', 0),
+            'semaines_incertains': sorted(x[0] for x in w),
             'source': d[0] if d else None, 'date': d[1] if d else None}
+
+
+def _hp_cle_creneau(jour, debut, session_id, groupe):
+    return (int(jour), str(debut or '')[:5], session_id, int(groupe or 1))
+
+
+def _hp_planning_semaine(db, semaine, slots):
+    """Cours GIM d'Hyperplanning de la semaine, pour le Planning. Chaque cours de l'EDT
+    repris d'Hyperplanning reçoit `hp` = {id, nature, matiere, type_hp} (clic droit : le
+    redéfinir). Renvoie les cours sans séance (à définir, autres), un par cours quel que
+    soit le nombre de ses enseignants : [{id, ids, nature, day_of_week, start_time,
+    end_time, matiere, type_hp, unites [[classe, groupe]], salle, room_id,
+    teachers [{id, name}], publics [[année, 'FTP'|'ALT']]}]."""
+    try:
+        lignes = db.execute('''SELECT b.*, t.name AS teacher_name FROM teacher_busy_hp b
+                               LEFT JOIN teachers t ON t.id = b.teacher_id
+                               WHERE b.week_number = ? AND b.nature IN ('incertain', 'autre', 'repris', 'matiere')
+                               ORDER BY b.id''', (semaine,)).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    du_creneau = {_hp_cle_creneau(s['day_of_week'], s['start_time'], s['course_session_id'], s.get('group_index')): s
+                  for s in slots if s.get('origine') == 'hp'}
+    salle_id = _hp_salle_resolveur(db)
+    hors = {}
+    for r in lignes:
+        if r['nature'] in ('repris', 'matiere'):
+            s = du_creneau.get(_hp_cle_creneau(r['day_of_week'], r['start_time'], r['session_id'], r['group_index']))
+            if s is not None and 'hp' not in s:
+                s['hp'] = {'id': r['id'], 'nature': r['nature'], 'matiere': r['matiere'], 'type_hp': r['type_hp'],
+                           'memo': r['memo'] or ''}
+            continue
+        k = (r['cle'] or r['libelle'], r['day_of_week'], str(r['start_time'])[:5])
+        h = hors.get(k)
+        if h is None:
+            try:
+                unites = json.loads(r['unites'] or '[]')
+            except ValueError:
+                unites = []
+            h = hors[k] = {'id': r['id'], 'ids': [], 'nature': r['nature'], 'day_of_week': r['day_of_week'],
+                           'start_time': str(r['start_time'])[:5], 'end_time': str(r['end_time'])[:5],
+                           'matiere': r['matiere'] or r['libelle'] or '', 'type_hp': r['type_hp'] or '',
+                           'memo': r['memo'] or '',
+                           'unites': unites, 'salle': r['salle'] or '', 'room_id': salle_id(r['salle']),
+                           'teachers': [], 'publics': _ical_publics(unites)}
+        h['ids'].append(r['id'])
+        if all(t['id'] != r['teacher_id'] for t in h['teachers']):
+            h['teachers'].append({'id': r['teacher_id'], 'name': r['teacher_name'] or '?'})
+    return list(hors.values())
+
+
+def _hp_occurrence(db, cle, semaine, jour, debut):
+    """Lignes de teacher_busy_hp d'un cours d'Hyperplanning (une par enseignant, et par
+    séance s'il est repris dans plusieurs)."""
+    return db.execute('''SELECT * FROM teacher_busy_hp WHERE cle = ? AND week_number = ? AND day_of_week = ?
+                         AND substr(start_time, 1, 5) = ? ORDER BY id''', (cle, semaine, jour, debut)).fetchall()
+
+
+def _hp_appliquer_definition(db, cle, semaine, jour, debut, nature, seances, catalogue, fige, salle_id):
+    """Applique une définition à un cours d'Hyperplanning (toutes ses lignes) : retire
+    les cours de l'EDT qu'il portait ; 'matiere' : un cours de l'EDT par séance choisie,
+    à sa place Hyperplanning (porté par celui de ses enseignants qui a la séance dans
+    l'appli, sinon par le premier ; il remplace la même séance non figée placée par
+    l'appli cette semaine-là), ses autres enseignants en sont « couverts » ; 'autre' ou
+    'incertain' (à définir : la nature d'office, cf. `_ical_nature_auto`) : il bloque
+    ses enseignants et se montre dans le Planning. -> nombre de cours de l'EDT créés."""
+    lignes = _hp_occurrence(db, cle, semaine, jour, debut)
+    if not lignes:
+        return 0
+    base = dict(lignes[0])
+    tids = []
+    for l in lignes:
+        if l['teacher_id'] not in tids:
+            tids.append(l['teacher_id'])
+        if l['nature'] in ('repris', 'matiere') and l['session_id'] is not None:
+            db.execute('''DELETE FROM timetable_slots WHERE origine = 'hp' AND week_number = ? AND day_of_week = ?
+                          AND substr(start_time, 1, 5) = ? AND course_session_id = ?
+                          AND COALESCE(group_index, 1) = ?''',
+                       (semaine, jour, debut, l['session_id'], int(l['group_index'] or 1)))
+    db.executemany('DELETE FROM teacher_busy_hp WHERE id = ?', [(l['id'],) for l in lignes])
+    nouvelles, crees = [], 0
+    if nature == 'matiere':
+        porteurs = set()
+        for sid, g in seances:
+            e = catalogue[(sid, g)]
+            p = e.enseignant if e.enseignant in tids else tids[0]
+            porteurs.add(p)
+            db.execute('''DELETE FROM timetable_slots WHERE week_number = ? AND course_session_id = ?
+                          AND COALESCE(group_index, 1) = ? AND COALESCE(fige, 0) = 0
+                          AND COALESCE(origine, '') <> 'hp' ''', (semaine, sid, g))
+            db.execute('''INSERT INTO timetable_slots (course_session_id, week_number, day_of_week, start_time, end_time,
+                              room_id, teacher_id, formation_type, group_index, fige, origine)
+                          VALUES (?,?,?,?,?,?,?,?,?,?,'hp')''',
+                       (sid, semaine, jour, debut, str(base['end_time'])[:5], salle_id(base['salle']), p,
+                        e.formation, g if e.nb_groupes > 1 else None, 1 if fige else 0))
+            nouvelles.append((p, 'matiere', sid, g))
+            crees += 1
+        nouvelles += [(t, 'couvert', None, None) for t in tids if t not in porteurs]
+    else:
+        nat = 'autre' if nature == 'autre' else _ical_nature_auto(base['matiere'], base['type_hp'])
+        nouvelles = [(t, nat, None, None) for t in tids]
+    o = {'semaine': semaine, 'jour': jour, 'debut': debut, 'fin': str(base['end_time'])[:5], 'gim': True,
+         **{k: base[k] for k in ('libelle', 'matiere', 'type_hp', 'unites', 'salle', 'cle', 'memo')}}
+    db.executemany(f'INSERT INTO teacher_busy_hp ({_HP_BUSY_COLS}) VALUES ({_HP_BUSY_PH})',
+                   [_hp_busy_valeurs(t, dict(o, nature=n, session_id=sid, group_index=g),
+                                     base['source'], base['imported_at']) for t, n, sid, g in nouvelles])
+    return crees
+
+
+def _hp_catalogue(db):
+    import solveur_edt
+    don = solveur_edt.Donnees(db, solveur_edt.lire_reglages({'annee_universitaire': get_current_year()}))
+    return don, solveur_edt.catalogue_seances(db, don)
+
+
+@app.route('/api/planning/hp/definir/<int:bid>', methods=['GET'])
+def planning_hp_definir_lire(bid):
+    """Ce qu'il faut pour définir un cours d'Hyperplanning d'un clic droit dans le
+    Planning (ligne `bid` de teacher_busy_hp) : le cours, les cours semblables (même
+    matière, type, groupes et enseignants), la définition qui vaut pour lui, et les
+    séances de l'appli des années de ses classes (celles de ses enseignants d'abord)."""
+    import hp_pdf
+    err = _hp_droit(('svc:planning',))
+    if err:
+        return err
+    db = get_db()
+    r = db.execute('SELECT * FROM teacher_busy_hp WHERE id = ?', (bid,)).fetchone()
+    if not r or not r['cle']:
+        return error_response('Cours introuvable : rechargez la semaine (ou réimportez l\'EDT d\'Hyperplanning)', 404)
+    w, j, debut = r['week_number'], r['day_of_week'], str(r['start_time'])[:5]
+    lignes = _hp_occurrence(db, r['cle'], w, j, debut)
+    noms = {x[0]: x[1] for x in db.execute('SELECT id, name FROM teachers')}
+    tids = list(dict.fromkeys(l['teacher_id'] for l in lignes))
+    try:
+        unites = json.loads(r['unites'] or '[]')
+    except ValueError:
+        unites = []
+    cfg = get_year_config()
+    ordre = lambda x: (x < cfg['academic_start_week'], x)   # noqa: E731
+    occ = {}
+    for x in db.execute('''SELECT week_number, day_of_week, substr(start_time, 1, 5), nature FROM teacher_busy_hp
+                           WHERE cle = ?''', (r['cle'],)):
+        occ.setdefault((x[0], x[1], x[2]), set()).add(x[3])
+    regle = None
+    for (sem_, jour_, deb_), portee in (((w, j, debut), 'cours'), ((0, -1, ''), 'semblables')):
+        q = db.execute('''SELECT nature, seances FROM planning_hp_regles WHERE cle = ? AND semaine = ? AND jour = ?
+                          AND debut = ?''', (r['cle'], sem_, jour_, deb_)).fetchone()
+        if q:
+            regle = {'portee': portee, 'nature': q[0], 'seances': json.loads(q[1] or '[]')}
+            break
+    don, catalogue = _hp_catalogue(db)
+    annees = {p[0] for p in _ical_publics(unites)}
+    noms_cours = {x[0]: x[1] or '' for x in db.execute('SELECT id, name FROM courses')}
+    tp_types = {x[0]: x[1] for x in db.execute('SELECT id, tp_type FROM courses')}
+    mots, sigle = _ical_mots(r['matiere']), _ical_sigle(r['matiere'])
+    publics = {tuple(p) for p in _ical_publics(unites)}
+    type_hp = _ICAL_TYPES.get(hp_pdf.cle_nom(r['type_hp']))
+    # sien : séance d'un enseignant du cours ; public : elle s'adresse à sa promotion
+    # (FTP / ALT) ; meme_type : CM, TD, TP, PT comme dans Hyperplanning ; score : nom ressemblant
+    seances = [{'sid': e.session_id, 'g': e.groupe, 'code': e.code, 'nom': noms_cours.get(e.course_id, ''),
+                'lib': _lib_groupe(e, tp_types.get(e.course_id)), 'type': e.type, 'semestre': e.semestre,
+                'annee': e.annee, 'formation': e.formation, 'duree': e.lon * don.reg.pas,
+                'enseignant_id': e.enseignant, 'enseignant': noms.get(e.enseignant) if e.enseignant else None,
+                'sien': e.enseignant in tids,
+                'public': not publics or any((p[0], p[1]) in publics for p in e.public),
+                'meme_type': bool(type_hp) and e.type[:2] == type_hp,
+                'score': round(_ical_nom_score(mots, sigle, noms_cours.get(e.course_id, '')), 2)}
+               for e in catalogue.values() if not annees or e.annee in annees]
+    return jsonify({
+        'cours': {'id': bid, 'cle': r['cle'], 'semaine': w, 'jour': j, 'debut': debut,
+                  'fin': str(r['end_time'])[:5], 'matiere': r['matiere'] or '', 'type_hp': r['type_hp'] or '',
+                  'memo': r['memo'] or '',
+                  'unites': unites, 'salle': r['salle'] or '',
+                  'enseignants': [{'id': t, 'name': noms.get(t, '?')} for t in tids],
+                  'nature': next((l['nature'] for l in lignes if l['nature'] in ('matiere', 'repris')),
+                                 lignes[0]['nature'] if lignes else r['nature']),
+                  'seances': [[l['session_id'], l['group_index']] for l in lignes
+                              if l['nature'] in ('repris', 'matiere') and l['session_id'] is not None]},
+        'semblables': [{'semaine': k[0], 'jour': k[1], 'debut': k[2], 'natures': sorted(n - {None})}
+                       for k, n in sorted(occ.items(), key=lambda kv: (ordre(kv[0][0]), kv[0][1], kv[0][2]))],
+        'regle': regle, 'seances': seances})
+
+
+@app.route('/api/planning/hp/definir', methods=['POST'])
+def planning_hp_definir():
+    """Définit un cours d'Hyperplanning depuis le Planning (clic droit). Corps : {id
+    (ligne de teacher_busy_hp), nature: 'matiere' | 'autre' | 'incertain' (retirer la
+    définition), seances: [[séance, groupe]] (matière), portee: 'cours' | 'semblables',
+    fige}. La définition est retenue (planning_hp_regles) pour les imports suivants et
+    appliquée aussitôt au cours, ou à tous les cours semblables de l'année."""
+    err = _hp_droit(('svc:planning',))
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    nature, portee = data.get('nature'), data.get('portee')
+    if nature not in ('matiere', 'autre', 'incertain') or portee not in ('cours', 'semblables'):
+        return error_response('Corps attendu : {id, nature: matiere | autre | incertain, portee: cours | semblables}', 400)
+    try:
+        bid = int(data.get('id'))
+    except (TypeError, ValueError):
+        return error_response('Cours invalide', 400)
+    db = get_db()
+    r = db.execute('SELECT * FROM teacher_busy_hp WHERE id = ?', (bid,)).fetchone()
+    if not r or not r['cle']:
+        return error_response('Cours introuvable : rechargez la semaine', 404)
+    don, catalogue = _hp_catalogue(db)
+    seances = []
+    if nature == 'matiere':
+        for x in (data.get('seances') or [])[:20]:
+            try:
+                k = (int(x[0]), int(x[1]))
+            except (TypeError, ValueError, IndexError):
+                return error_response('Séance invalide', 400)
+            if k not in catalogue:
+                return error_response('Séance inconnue de l\'appli cette année : rechargez la page', 400)
+            if k not in seances:
+                seances.append(k)
+        if not seances:
+            return error_response('Choisissez au moins une séance', 400)
+    cle, w, j, debut = r['cle'], r['week_number'], r['day_of_week'], str(r['start_time'])[:5]
+    regle = (nature, json.dumps([list(k) for k in seances]), (r['matiere'] or '')[:200], session.get('user'))
+    if portee == 'semblables':
+        db.execute('DELETE FROM planning_hp_regles WHERE cle = ?', (cle,))
+        if nature != 'incertain':
+            db.execute('''INSERT INTO planning_hp_regles (cle, nature, seances, libelle, created_by)
+                          VALUES (?,?,?,?,?)''', (cle, *regle))
+        occs = [tuple(x) for x in db.execute('''SELECT DISTINCT week_number, day_of_week, substr(start_time, 1, 5)
+                                                FROM teacher_busy_hp WHERE cle = ?''', (cle,))]
+    else:
+        db.execute('DELETE FROM planning_hp_regles WHERE cle = ? AND semaine = ? AND jour = ? AND debut = ?',
+                   (cle, w, j, debut))
+        generale = db.execute("SELECT 1 FROM planning_hp_regles WHERE cle = ? AND semaine = 0", (cle,)).fetchone()
+        if nature != 'incertain' or generale:   # « à définir » malgré la définition de tous les semblables
+            db.execute('''INSERT INTO planning_hp_regles (cle, semaine, jour, debut, nature, seances, libelle, created_by)
+                          VALUES (?,?,?,?,?,?,?,?)''', (cle, w, j, debut, *regle))
+        occs = [(w, j, debut)]
+    salle_id = _hp_salle_resolveur(db)
+    fige = data.get('fige') is not False
+    crees = sum(_hp_appliquer_definition(db, cle, *o, nature, seances, catalogue, fige, salle_id) for o in occs)
+    db.commit()
+    _audit('PLANNING_HP_DEFINIR', ip=_client_ip(), user=session.get('user'), matiere=r['matiere'], nature=nature,
+           portee=portee, cours=len(occs), seances=';'.join(f'{s}/{g}' for s, g in seances))
+    return jsonify({'cours': len(occs), 'crees': crees, 'nature': nature})
 
 # ======================= NOTIFICATIONS =======================
 # Onglet Notifications : ce que le site signale à chaque utilisateur connecté avec
@@ -18840,7 +19412,10 @@ def update_course_constraints(course_id):
 # souhaite semaine après semaine, dans l'ordre : la grille de la répartition
 # calendaire, SANS numéro de semaine — la place dans le calendrier est décidée par
 # l'admin ou le responsable FTP. Simple indication : rien n'est placé dans la répartition.
-_WISH_TYPES = ('CM', 'TD', 'TP', 'PT')
+# DS : l'enseignant y place ses devoirs surveillés dans l'enchaînement des séances ; la
+# ligne existe même sans ligne DS dans la répartition (une par face de la matière, ou
+# une MUT), son nombre de séances est libre
+_WISH_TYPES = ('CM', 'TD', 'TP', 'PT', 'DS')
 _WISH_FORMATIONS = {2: 'MUT', 0: 'FTP', 1: 'ALT'}   # ordre d'affichage : MUT, FTP, ALT
 _WISH_MAX_WEEKS = 40
 _WISH_MAX_PER_WEEK = 9
@@ -18913,18 +19488,18 @@ def get_course_wishes():
         dispo = {code: {f: len(ws) for f, ws in faces.items()} for code, faces in listes.items()}
         out = {}
         for r in db.execute('''
-                SELECT c.id AS course_id, c.tp_type, s.code AS semester_code,
+                SELECT c.id AS course_id, c.tp_type, c.name AS course_name, s.code AS semester_code,
                        cs.formation_type, cs.teaching_type, cs.nb_sessions,
                        cs.total_hours, cs.slot_duration, t.name AS teacher_name
                 FROM course_sessions cs
                 JOIN courses c ON c.id = cs.course_id
                 JOIN semesters s ON s.id = c.semester_id
                 LEFT JOIN teachers t ON t.id = cs.teacher_id
-                WHERE cs.nb_sessions > 0 OR cs.total_hours > 0''').fetchall():
+                WHERE cs.nb_sessions > 0 OR cs.total_hours > 0 OR UPPER(cs.teaching_type) = 'DS' ''').fetchall():
             ft, tt = r['formation_type'], (r['teaching_type'] or '').upper()
             if ft not in _WISH_FORMATIONS or tt not in _WISH_TYPES:
                 continue
-            entry = out.setdefault(r['course_id'], {'sessions': [], 'wish': None,
+            entry = out.setdefault(r['course_id'], {'sessions': [], 'wish': None, 'nom': r['course_name'] or '',
                                                     'semestre': r['semester_code'],
                                                     'limites': dispo.get(r['semester_code']),
                                                     'semaines': listes.get(r['semester_code'])})
@@ -18938,8 +19513,21 @@ def get_course_wishes():
             entry['sessions'].append({
                 'key': f'{ft}:{tt}', 'ft': ft, 'formation': _WISH_FORMATIONS[ft],
                 'type': tt, 'tp_type': r['tp_type'] or 'TP12', 'nb': nb, 'slot': slot,
-                'groups': max(1, groups), 'teacher': r['teacher_name'] or '',
+                'groups': 1 if tt == 'DS' else max(1, groups), 'teacher': r['teacher_name'] or '',
+                # DS sans heures dans la répartition : autant de DS que l'enseignant en place
+                'libre': tt == 'DS' and not nb,
             })
+        # Ligne DS de chaque matière, même sans ligne DS dans la répartition : une MUT si la
+        # matière a des séances mutualisées, sinon une par face
+        slots = _slots_aar(db)
+        for entry in out.values():
+            fts = {s['ft'] for s in entry['sessions']}
+            if any(s['type'] == 'DS' for s in entry['sessions']) or not fts or _hors_repartition(entry['nom']):
+                continue
+            for ft in ([2] if 2 in fts else sorted(fts)):
+                entry['sessions'].append({'key': f'{ft}:DS', 'ft': ft, 'formation': _WISH_FORMATIONS[ft], 'type': 'DS',
+                                          'tp_type': '', 'nb': 0, 'slot': slots.get((entry['semestre'], ft), 1.5),
+                                          'groups': 1, 'teacher': '', 'libre': True})
         for entry in out.values():
             entry['sessions'].sort(key=lambda s: (rank_ft[s['ft']], _WISH_TYPES.index(s['type'])))
         for r in db.execute('SELECT * FROM course_wishes').fetchall():
@@ -18972,8 +19560,11 @@ def save_course_wishes(course_id):
         # Seules les séances existantes de la matière sont retenues
         valid_keys = {f"{r['formation_type']}:{(r['teaching_type'] or '').upper()}"
                       for r in db.execute('''SELECT formation_type, teaching_type FROM course_sessions
-                                             WHERE course_id = ? AND (nb_sessions > 0 OR total_hours > 0)''',
+                                             WHERE course_id = ? AND (nb_sessions > 0 OR total_hours > 0
+                                                                      OR UPPER(teaching_type) = 'DS')''',
                                           (course_id,)).fetchall()}
+        # Ligne DS (cf. get_course_wishes) : sur toute face de la matière, ou MUT
+        valid_keys |= {f"{k.split(':')[0]}:DS" for k in valid_keys}
         rows = {}
         for key, counts in (data.get('rows') or {}).items():
             if key not in valid_keys or not isinstance(counts, list):
@@ -19595,6 +20186,7 @@ def upsert_weekly_hours(session_id, week_number):
                 (session_id, week_number, group_index)
             )
             hours = 0
+        _sync_lignes_aar(db)
         db.commit()
         return jsonify({'session_id': session_id, 'week_number': week_number,
                         'group_index': group_index, 'hours': hours}), 200
@@ -19657,6 +20249,7 @@ def save_weekly_cells():
     db = get_db()
     try:
         written, skipped = _write_weekly_cells(db, cells)
+        _sync_lignes_aar(db)        # volume des lignes DS / AaR = heures posées
         db.commit()
     except Exception as e:
         db.rollback()
@@ -20040,7 +20633,7 @@ def _service_rows(db):
                             'cm_hours': 0, 'td_hours': 0, 'tp_hours': 0, 'pt_hours': 0}
             if tt == 'CM':
                 agg[tid]['cm_hours'] += h
-            elif tt == 'TD':
+            elif tt == 'TD' or tt in _LIGNES_AAR:     # lignes DS / AaR d'une matière : comptées en TD
                 agg[tid]['td_hours'] += h
             elif tt.startswith('TP'):
                 agg[tid]['tp_hours'] += h
@@ -20378,7 +20971,8 @@ def compare_repartition_planning():
     attendu, nb_attendu, info, libs = defaultdict(int), defaultdict(int), {}, {}
     tp_types = {r[0]: r[1] for r in db.execute('SELECT id, tp_type FROM courses')}
     for w in semaines:
-        for e in solveur_edt.evenements_semaine(db, don, w, []):
+        # lignes DS / AaR comprises : le calcul ne les place pas, mais la répartition les prévoit
+        for e in solveur_edt.evenements_semaine(db, don, w, [], hors_calcul=True):
             k = (w, e.session_id, e.groupe)
             attendu[k] += e.lon * pas
             nb_attendu[k] += 1
@@ -20959,6 +21553,7 @@ def get_timetable_week(week_number):
 def get_timetable_weeks():
     """Semaines de l'année (ordre scolaire), nombre de créneaux de l'EDT de chacune,
     et ce qu'a laissé l'import de l'EDT d'Hyperplanning (hp)."""
+    from collections import defaultdict
     db = get_db()
     cfg = get_year_config()
     debut = cfg['academic_start_week']
@@ -20967,9 +21562,20 @@ def get_timetable_weeks():
     for r in db.execute('''SELECT week_number, COUNT(*), SUM(COALESCE(fige, 0)) FROM timetable_slots
                            GROUP BY week_number'''):
         n[r[0]], figes[r[0]] = r[1], r[2] or 0
+    # cours GIM d'Hyperplanning sans séance montrés dans le Planning (à définir, autres)
+    hors = defaultdict(dict)
+    try:
+        for r in db.execute('''SELECT week_number, nature, COUNT(DISTINCT cle || '|' || day_of_week || '|' || start_time)
+                               FROM teacher_busy_hp WHERE nature IN ('incertain', 'autre')
+                               GROUP BY week_number, nature'''):
+            hors[r[0]][r[1]] = r[2]
+    except sqlite3.OperationalError:
+        pass
     toutes = sorted(get_valid_school_weeks(debut, cfg['academic_end_week'], cfg['academic_max_week']) | set(n), key=ordre)
     return jsonify({'annee': get_current_year(), 'debut_annee': debut,
-                    'semaines': [{'semaine': w, 'creneaux': n.get(w, 0), 'figes': figes.get(w, 0)} for w in toutes],
+                    'semaines': [{'semaine': w, 'creneaux': n.get(w, 0), 'figes': figes.get(w, 0),
+                                  'incertains': hors[w].get('incertain', 0) if w in hors else 0,
+                                  'autres': hors[w].get('autre', 0) if w in hors else 0} for w in toutes],
                     'hp': _planning_hp_etat(db)})
 
 @app.route('/api/timetable/reinitialiser', methods=['POST'])
@@ -21032,7 +21638,9 @@ def get_timetable_planning(week_number):
         solveur_edt.publics_creneaux(db, slots)
     except Exception as e:      # base ancienne : l'affichage retombe sur l'année et la formation
         app.logger.warning('publics_creneaux : %s', e)
-    return jsonify({'semaine': week_number, 'slots': slots})
+    # cours GIM d'Hyperplanning : sans séance (à définir, autres), et ce qu'il dit de
+    # ceux qu'il a mis dans l'EDT (clic droit : les définir)
+    return jsonify({'semaine': week_number, 'slots': slots, 'hp_hors': _hp_planning_semaine(db, week_number, slots)})
 
 @app.route('/api/timetable/slots/<int:slot_id>/fige', methods=['PUT'])
 def set_timetable_slot_fige(slot_id):
@@ -21263,6 +21871,158 @@ def _hors_repartition(nom):
     n = (nom or '').strip().lower()
     return n.startswith('aar') or n.startswith('aide à la réussite')
 
+# Lignes « DS » et « AaR » d'une matière (Répartition Calendaire, clic droit) : ses
+# devoirs surveillés et son aide à la réussite, pris sur le total « Aide à la réussite »
+# du semestre (matière AaR n, sans enseignant). Séances de type 'DS' / 'AAR', une par
+# matière et par face, d'un seul groupe (toute la promotion) ; leur volume est celui des
+# heures posées semaine par semaine (_sync_lignes_aar) ; comptées comme du TD dans le
+# service ; jamais placées par « Optimiser l'EDT » (le solveur garde celles posées,
+# repris d'Hyperplanning). Les DS posés dans Hyperplanning en aide à la réussite (mémo
+# « DS MECA 3 ») vont à la ligne DS de leur matière, créée à l'import si elle manque.
+_LIGNES_AAR = ('DS', 'AAR')
+_LIGNES_AAR_SQL = "UPPER(cs.teaching_type) IN ('DS', 'AAR')"
+_FACES_CODE = {'FTP': 0, 'ALT': 1, 'MUT': 2}
+
+
+def _sync_lignes_aar(db):
+    """Volume (heures, nombre de séances) des lignes DS / AaR = heures posées dans la
+    Répartition Calendaire. L'appelant valide."""
+    somme = '''COALESCE((SELECT SUM(wh.hours) FROM weekly_hours wh WHERE wh.course_session_id = course_sessions.id
+                         AND COALESCE(wh.group_index, 1) = 1), 0)'''
+    db.execute(f'''UPDATE course_sessions SET total_hours = {somme},
+                       nb_sessions = CAST(ROUND({somme} / COALESCE(NULLIF(slot_duration, 0), 1.5)) AS INTEGER)
+                   WHERE UPPER(teaching_type) IN ('DS', 'AAR')''')
+
+
+def _slots_aar(db):
+    """Durée de séance de l'aide à la réussite de chaque semestre : {(semestre, face 0/1/2): h}
+    (la durée d'une face vaut pour les autres quand elles n'en ont pas)."""
+    out = {}
+    for r in db.execute(f'''SELECT s.code, cs.formation_type, cs.slot_duration FROM course_sessions cs
+                            JOIN courses c ON c.id = cs.course_id JOIN semesters s ON s.id = c.semester_id
+                            WHERE NOT ({_HORS_REPARTITION_SQL}) AND cs.slot_duration > 0'''):
+        out[(r[0], r[1] if r[1] is not None else 0)] = float(r[2])
+    for (sem, _), h in list(out.items()):
+        for ft in (0, 1, 2):
+            out.setdefault((sem, ft), h)
+    return out
+
+
+def _budget_aar(db, semestre):
+    """Total « Aide à la réussite » d'un semestre, par face : [{course_id, code, nom,
+    formation 'FTP'|'ALT'|'MUT', total (h), slot}] — ce que les lignes DS / AaR des
+    matières se partagent."""
+    return [{'course_id': r[0], 'code': r[1], 'nom': r[2], 'formation': {0: 'FTP', 1: 'ALT', 2: 'MUT'}.get(r[3], 'FTP'),
+             'total': r[4] or 0, 'slot': r[5] or 1.5}
+            for r in db.execute(f'''SELECT c.id, c.code, c.name, cs.formation_type, cs.total_hours, cs.slot_duration
+                                    FROM course_sessions cs JOIN courses c ON c.id = cs.course_id
+                                    JOIN semesters s ON s.id = c.semester_id
+                                    WHERE s.code = ? AND NOT ({_HORS_REPARTITION_SQL}) AND cs.total_hours > 0
+                                    ORDER BY cs.formation_type''', (semestre,))]
+
+
+@app.route('/api/repartition/lignes', methods=['POST'])
+def ajouter_ligne_aar():
+    """Ajoute à une matière sa ligne DS ou AaR (Répartition Calendaire, clic droit).
+    Corps {course_id, type: 'DS' | 'AAR', formation: 'FTP' | 'ALT' | 'MUT'}. Enseignant :
+    celui de la matière (son CM de la face, sinon une autre de ses séances) ; durée de
+    séance : celle de l'aide à la réussite du semestre. Les heures se posent ensuite
+    dans la répartition (brouillon, « Enregistrer »)."""
+    data = request.get_json(silent=True) or {}
+    typ = str(data.get('type') or '').upper()
+    ft = _FACES_CODE.get(str(data.get('formation') or '').upper())
+    try:
+        cid = int(data.get('course_id'))
+    except (TypeError, ValueError):
+        return error_response('Matière invalide', 400)
+    if typ not in _LIGNES_AAR or ft is None:
+        return error_response('Corps attendu : {course_id, type: DS | AAR, formation: FTP | ALT | MUT}', 400)
+    db = get_db()
+    c = db.execute('''SELECT c.id, c.code, c.name, s.code AS sem FROM courses c
+                      JOIN semesters s ON s.id = c.semester_id WHERE c.id = ?''', (cid,)).fetchone()
+    if not c:
+        return error_response('Matière introuvable', 404)
+    if _hors_repartition(c['name']):
+        return error_response('L\'aide à la réussite elle-même ne prend pas de ligne DS / AaR', 400)
+    if db.execute('SELECT 1 FROM course_sessions WHERE course_id = ? AND formation_type = ? AND UPPER(teaching_type) = ?',
+                  (cid, ft, typ)).fetchone():
+        return error_response(f'{c["code"]} a déjà une ligne {typ} {data.get("formation")}', 409)
+    # enseignant : le CM de la face, puis celui du mutualisé, puis toute autre séance
+    ens = db.execute('''SELECT teacher_id FROM course_sessions WHERE course_id = ? AND teacher_id IS NOT NULL
+                        ORDER BY (formation_type = ?) DESC, (formation_type = 2) DESC,
+                                 CASE UPPER(teaching_type) WHEN 'CM' THEN 0 WHEN 'TD' THEN 1 WHEN 'TP' THEN 2 ELSE 3 END
+                        LIMIT 1''', (cid, ft)).fetchone()
+    slot = _slots_aar(db).get((c['sem'], ft), 1.5)
+    db.execute('''INSERT INTO course_sessions (course_id, formation_type, teaching_type, total_hours, slot_duration,
+                      nb_sessions, teacher_id) VALUES (?, ?, ?, 0, ?, 0, ?)''', (cid, ft, typ, slot, ens[0] if ens else None))
+    sid = db.execute('SELECT id FROM course_sessions WHERE course_id = ? AND formation_type = ? AND teaching_type = ?',
+                     (cid, ft, typ)).fetchone()[0]
+    db.commit()
+    _audit('REPARTITION_LIGNE_ADD', ip=_client_ip(), user=session.get('user'), matiere=c['code'], type=typ,
+           formation=data.get('formation'))
+    return jsonify({'session_id': sid, 'slot_duration': slot, 'teacher_id': ens[0] if ens else None}), 201
+
+
+def _ligne_aar(db, sid):
+    r = db.execute('''SELECT cs.*, c.code FROM course_sessions cs JOIN courses c ON c.id = cs.course_id
+                      WHERE cs.id = ?''', (sid,)).fetchone()
+    return r if r and (r['teaching_type'] or '').upper() in _LIGNES_AAR else None
+
+
+@app.route('/api/repartition/lignes/<int:sid>', methods=['PUT'])
+def modifier_ligne_aar(sid):
+    """Enseignant ou durée de séance d'une ligne DS / AaR. Corps {teacher_id: id | null,
+    slot_duration: heures} (l'un ou l'autre)."""
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    r = _ligne_aar(db, sid)
+    if not r:
+        return error_response('Ligne DS / AaR introuvable', 404)
+    if 'teacher_id' in data:
+        tid = data.get('teacher_id')
+        if tid is not None:
+            try:
+                tid = int(tid)
+            except (TypeError, ValueError):
+                return error_response('Enseignant invalide', 400)
+            if not db.execute('SELECT 1 FROM teachers WHERE id = ?', (tid,)).fetchone():
+                return error_response('Enseignant introuvable', 404)
+        db.execute('UPDATE course_sessions SET teacher_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', (tid, sid))
+    if 'slot_duration' in data:
+        try:
+            slot = float(data.get('slot_duration'))
+        except (TypeError, ValueError):
+            return error_response('Durée invalide', 400)
+        if not 0.5 <= slot <= 8:
+            return error_response('Durée de séance entre 0,5 et 8 h', 400)
+        db.execute('UPDATE course_sessions SET slot_duration = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', (slot, sid))
+        _sync_lignes_aar(db)
+    db.commit()
+    _audit('REPARTITION_LIGNE_EDIT', ip=_client_ip(), user=session.get('user'), session=sid, matiere=r['code'])
+    return jsonify({'session_id': sid})
+
+
+@app.route('/api/repartition/lignes/<int:sid>', methods=['DELETE'])
+def retirer_ligne_aar(sid):
+    """Retire une ligne DS / AaR vide (sans heures dans la répartition ni cours dans l'EDT)."""
+    db = get_db()
+    r = _ligne_aar(db, sid)
+    if not r:
+        return error_response('Ligne DS / AaR introuvable', 404)
+    if db.execute('SELECT 1 FROM weekly_hours WHERE course_session_id = ? AND hours > 0', (sid,)).fetchone():
+        return error_response('La ligne a encore des heures : videz-la et enregistrez d\'abord', 409)
+    n = db.execute('SELECT COUNT(*) FROM timetable_slots WHERE course_session_id = ?', (sid,)).fetchone()[0]
+    if n:
+        return error_response(f'{n} cours de l\'EDT y sont rattachés (repris d\'Hyperplanning) : redéfinissez-les '
+                              'd\'abord dans le Planning (clic droit)', 409)
+    db.execute('DELETE FROM weekly_hours WHERE course_session_id = ?', (sid,))
+    db.execute('DELETE FROM course_group_teachers WHERE course_session_id = ?', (sid,))
+    db.execute('DELETE FROM course_sessions WHERE id = ?', (sid,))
+    db.commit()
+    _audit('REPARTITION_LIGNE_DELETE', ip=_client_ip(), user=session.get('user'), matiere=r['code'],
+           type=r['teaching_type'])
+    return jsonify({'deleted': sid})
+
 def _repartition_payload(semester_code):
     """Lignes de la Répartition annuelle d'un semestre (une par séance, ou par groupe
     pour les TD et les TP), avec colonnes et semaines spéciales : ce qu'affiche
@@ -21326,9 +22086,10 @@ def _repartition_payload(semester_code):
             JOIN semesters s ON c.semester_id = s.id
             LEFT JOIN teachers t ON cs.teacher_id = t.id
             LEFT JOIN weekly_hours wh ON wh.course_session_id = cs.id
-            WHERE s.code = ? AND (cs.nb_sessions > 0 OR cs.total_hours > 0) AND {_HORS_REPARTITION_SQL}
+            WHERE s.code = ? AND (cs.nb_sessions > 0 OR cs.total_hours > 0 OR {_LIGNES_AAR_SQL}) AND {_HORS_REPARTITION_SQL}
             ORDER BY c.code,
-                     CASE cs.teaching_type WHEN 'CM' THEN 0 WHEN 'TD' THEN 1 WHEN 'TP' THEN 2 WHEN 'PT' THEN 3 ELSE 4 END,
+                     CASE UPPER(cs.teaching_type) WHEN 'CM' THEN 0 WHEN 'TD' THEN 1 WHEN 'TP' THEN 2 WHEN 'PT' THEN 3
+                                               WHEN 'DS' THEN 4 WHEN 'AAR' THEN 5 ELSE 6 END,
                      cs.formation_type, wh.week_number
         ''', (semester_code,))
     else:
@@ -21347,9 +22108,10 @@ def _repartition_payload(semester_code):
             JOIN semesters s ON c.semester_id = s.id
             LEFT JOIN teachers t ON cs.teacher_id = t.id
             LEFT JOIN weekly_hours wh ON wh.course_session_id = cs.id
-            WHERE (cs.nb_sessions > 0 OR cs.total_hours > 0) AND {_HORS_REPARTITION_SQL}
+            WHERE (cs.nb_sessions > 0 OR cs.total_hours > 0 OR {_LIGNES_AAR_SQL}) AND {_HORS_REPARTITION_SQL}
             ORDER BY s.code, c.code,
-                     CASE cs.teaching_type WHEN 'CM' THEN 0 WHEN 'TD' THEN 1 WHEN 'TP' THEN 2 WHEN 'PT' THEN 3 ELSE 4 END,
+                     CASE UPPER(cs.teaching_type) WHEN 'CM' THEN 0 WHEN 'TD' THEN 1 WHEN 'TP' THEN 2 WHEN 'PT' THEN 3
+                                               WHEN 'DS' THEN 4 WHEN 'AAR' THEN 5 ELSE 6 END,
                      cs.formation_type, wh.week_number
         ''')
     raw = cursor.fetchall()
@@ -21407,7 +22169,7 @@ def _repartition_payload(semester_code):
     # Une ligne par session (CM/PT) ou une ligne par groupe (TP et TD à plusieurs groupes)
     _BASE = ('session_id', 'course_id', 'course_code', 'course_name', 'semester', 'type',
              'tp_type', 'formation', 'total_hours', 'nb_sessions', 'slot_duration',
-             'teacher', 'room', 'group_count')
+             'teacher', 'teacher_id', 'room', 'group_count')
     out_rows = []
     for sid in order:
         s = sessions[sid]
@@ -21462,10 +22224,18 @@ def _repartition_payload(semester_code):
                                  'by_week': dict(s['by_group'].get(g, {})),
                                  'alt_group': is_alt, 'group_label': label})
 
+    # Lignes DS / AaR : leur volume est ce qui est posé (rien « à placer ») ; elles se
+    # partagent le total d'aide à la réussite du semestre (`aar`)
+    for r in out_rows:
+        if (r['type'] or '').upper() in _LIGNES_AAR:
+            r['ligne_aar'] = True
+            r['total_hours'] = round(sum(r['by_week'].values()), 2)
+
     return {
         'weeks': weeks,
         'rows': out_rows,
         'special_weeks': special_weeks,
+        'aar': _budget_aar(db, semester_code) if semester_code else [],
     }
 
 # ===== Poids de l'optimiseur de la répartition (optim_repartition) =====
@@ -22653,7 +23423,7 @@ def import_repartition_excel():
                     JOIN courses c ON cs.course_id = c.id
                     JOIN semesters s ON c.semester_id = s.id
                     WHERE c.code = ? AND s.code = ?
-                      AND cs.teaching_type = ? AND cs.formation_type = ?
+                      AND UPPER(cs.teaching_type) = UPPER(?) AND cs.formation_type = ?
                 ''', (current_code, current_sem, teaching_type, formation_type))
 
                 row_result = cursor.fetchone()
@@ -22706,6 +23476,7 @@ def import_repartition_excel():
                     if hours > 0:
                         imported += 1
 
+        _sync_lignes_aar(db)        # volume des lignes DS / AaR = heures posées
         db.commit()
         return jsonify({
             'imported': imported,

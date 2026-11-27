@@ -130,6 +130,9 @@
         .badge-td { background: #dcfce7; color: #166534; }
         .badge-tp { background: #ffedd5; color: #9a3412; }
         .badge-pt { background: #f3e8ff; color: #6b21a8; }
+        /* lignes DS et AaR d'une matière (Répartition Calendaire), prises sur l'aide à la réussite */
+        .badge-ds { background: #fee2e2; color: #991b1b; }
+        .badge-aar { background: #fef3c7; color: #92400e; }
         .badge-res { background: #e0f2fe; color: #0369a1; }
         .badge-sae { background: #fef9c3; color: #854d0e; }
 
@@ -222,6 +225,27 @@
         .pl-hp-etat { font-size: .82rem; color: #334155; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
                       padding: 6px 10px; margin: 0 0 8px; }
         .pl-hp-etat .btn { margin-left: 10px; }
+        /* Planning : cours GIM d'Hyperplanning sans séance de l'appli — à définir (?), autres */
+        .pl-cours.pl-inc { background: #fff7ed; border: 1px dashed #f59e0b; border-left: 4px solid #f59e0b; }
+        .pl-cours.pl-aut { background: repeating-linear-gradient(45deg, #f8fafc 0 5px, #eef2f6 5px 10px);
+                           border: 1px dashed #94a3b8; border-left: 4px solid #94a3b8; color: #475569; }
+        .pl-cours.pl-inc .pl-grp { color: #b45309; }
+        .pl-cours .pl-memo { font-style: italic; color: #7c2d12; }   /* mémo d'Hyperplanning (« DS MECA 3 ») */
+        .pl-cours.pl-aut .pl-grp { color: #475569; }
+        .pl-q { display: inline-block; min-width: 13px; text-align: center; font-size: .66rem; font-weight: 800; color: #fff;
+                background: #f59e0b; border-radius: 999px; line-height: 1.35; }
+        .pl-promo-btn.inc.on { background: #fff7ed; border-color: #f59e0b; color: #b45309; }
+        .pl-promo-btn.aut.on { background: #f1f5f9; border-color: #94a3b8; color: #334155; }
+        .pl-sem.inc { position: relative; }
+        .pl-sem.inc::after { content: ''; position: absolute; top: -3px; right: -3px; width: 8px; height: 8px;
+                             border-radius: 50%; background: #f59e0b; border: 1px solid #fff; }
+        .pl-def-info { font-size: .84rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; }
+        .pl-def-liste { max-height: 260px; overflow: auto; border: 1px solid #e2e8f0; border-radius: 6px; margin-top: 6px; font-size: .8rem; }
+        .pl-def-liste .t { position: sticky; top: 0; background: #f1f5f9; font-weight: 700; padding: 3px 8px; color: #334155; }
+        .pl-def-liste label { display: flex; gap: 6px; align-items: baseline; padding: 2px 8px; font-weight: 400; cursor: pointer; }
+        .pl-def-liste label:hover { background: #eef2ff; }
+        .pl-def-liste label.loin { color: #94a3b8; }
+        .pl-def-choix label { display: block; font-weight: 400; margin: 4px 0; }
         .ical-choix { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; vertical-align: middle; }
         .ical-choix button { border: 0; background: #fff; color: #475569; font: inherit; font-size: .74rem; padding: 2px 8px; cursor: pointer; }
         .ical-choix button + button { border-left: 1px solid #cbd5e1; }
@@ -2107,6 +2131,28 @@
     </div>
 </div>
 
+<!-- ===== MODAL LIGNE DS / AaR D'UNE MATIÈRE (Répartition Calendaire, clic droit) ===== -->
+<div class="modal-backdrop" id="modal-rep-ligne">
+    <div class="modal" style="max-width:480px">
+        <h2 style="font-size:1.05rem;margin-bottom:6px" id="rep-ligne-titre">Ligne DS</h2>
+        <div class="form-group">
+            <label for="rep-ligne-ens">Enseignant</label>
+            <select id="rep-ligne-ens"></select>
+        </div>
+        <div class="form-group">
+            <label for="rep-ligne-slot">Durée d'une séance (h)</label>
+            <input type="number" id="rep-ligne-slot" min="0.5" max="8" step="0.25" style="width:110px">
+        </div>
+        <p class="edtg-note" style="margin:0">Ses heures comptent comme du TD dans le service de l'enseignant, et se prennent
+            sur l'aide à la réussite du semestre (colonne Reste). « Optimiser l'EDT » ne les place pas : les DS se posent dans
+            Hyperplanning.</p>
+        <div class="form-actions" style="margin-top:14px">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-rep-ligne')">Annuler</button>
+            <button type="button" class="btn btn-primary" onclick="repLigneEnregistrer()">Enregistrer</button>
+        </div>
+    </div>
+</div>
+
 <!-- ===== MODAL RÉINITIALISER L'EDT (Planning) ===== -->
 <div class="modal-backdrop" id="modal-pl-reinit">
     <div class="modal" style="max-width:760px">
@@ -2137,6 +2183,41 @@
     </div>
 </div>
 
+<!-- ===== MODAL DÉFINIR UN COURS D'HYPERPLANNING (clic droit dans le Planning) =====
+     Un cours GIM que l'import n'a rapproché d'aucune séance (ou repris, à corriger) :
+     une ou des séances de la maquette, ou « autre » ; pour ce cours ou tous les cours
+     semblables ; retenu pour les imports suivants. -->
+<div class="modal-backdrop" id="modal-pl-def">
+    <div class="modal" style="max-width:820px">
+        <h2 style="font-size:1.05rem;margin-bottom:6px">Définir ce cours d'Hyperplanning</h2>
+        <div id="pl-def-info" class="pl-def-info"></div>
+        <div class="form-group pl-def-choix">
+            <label><input type="radio" name="pl-def-nature" value="matiere" onchange="plDefMaj()">
+                <b>Une matière de la maquette</b> : la ou les séances de l'appli que ce cours fait</label>
+            <div id="pl-def-mat" style="margin:2px 0 8px 22px">
+                <input type="search" id="pl-def-q" oninput="plDefListe()" placeholder="Chercher : code, matière, groupe, enseignant…"
+                       style="width:100%;padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font:inherit;font-size:.84rem">
+                <div id="pl-def-liste" class="pl-def-liste"></div>
+                <div id="pl-def-sel" class="edtg-note" style="margin-top:4px"></div>
+                <label style="margin-top:6px"><input type="checkbox" id="pl-def-fige" checked> Figé 📌 à sa place Hyperplanning
+                    (« Optimiser l'EDT » ne le bouge pas)</label>
+            </div>
+            <label><input type="radio" name="pl-def-nature" value="autre" onchange="plDefMaj()">
+                <b>Autre</b> : pas un cours de la maquette (réunion, aide à la réussite, réservation, conférence…) ; il reste
+                dans le Planning et bloque ses enseignants</label>
+            <label id="pl-def-inc-l"><input type="radio" name="pl-def-nature" value="incertain" onchange="plDefMaj()">
+                <b>À définir</b> : retirer la définition (le prochain import le rapprochera d'une séance s'il le peut)</label>
+        </div>
+        <div class="form-group pl-def-choix" id="pl-def-portee"></div>
+        <p class="edtg-note" style="margin:0">La définition est retenue : les imports suivants de l'EDT d'Hyperplanning
+            l'appliquent à ce cours (même matière, type, groupes et enseignants).</p>
+        <div class="form-actions" style="margin-top:14px">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-pl-def')">Annuler</button>
+            <button type="button" class="btn btn-primary" id="pl-def-ok" onclick="plDefEnregistrer()">Enregistrer</button>
+        </div>
+    </div>
+</div>
+
 <!-- ===== MODAL IMPORT DE L'EMPLOI DU TEMPS D'HYPERPLANNING (iCal, Planning) ===== -->
 <div class="modal-backdrop" id="modal-ical-import">
     <div class="modal" style="max-width:1080px">
@@ -2150,7 +2231,10 @@
             qu'il est, et <strong>Service › Comparaison</strong> montre ensuite où il s'écarte de la répartition. Chaque cours
             est <strong>figé</strong> (« Optimiser l'EDT » ne le bouge plus) ou <strong>libre</strong> (posé là, mais le calcul
             peut le déplacer). Les autres cours (autres départements, cours GIM sans séance dans l'appli, aide à la réussite,
-            réunions…) rendent le créneau <strong>indisponible</strong> pour leurs enseignants.</p>
+            réunions…) rendent le créneau <strong>indisponible</strong> pour leurs enseignants. Les cours GIM sans séance
+            restent visibles dans le Planning — <span class="pl-q">?</span> <strong>à définir</strong>, ou « autres » — et s'y
+            définissent d'un <strong>clic droit</strong> (une matière de la maquette, ou autre) ; ces définitions sont
+            reprises aux imports suivants.</p>
         <p style="color:#6b7280;font-size:.84rem;margin:0 0 8px">
             Pour chaque enseignant du fichier, un nouvel import remplace les semaines qu'il couvre ; les indisponibilités
             (hachures) restent celles de Contraintes Enseignant. <strong>Rien n'est écrit avant votre confirmation.</strong></p>
@@ -6336,7 +6420,7 @@ function mcWishGridHtml(cid) {
     if (!e || !(e.sessions || []).length)
         return `<div class="mc-wish-none">Aucune séance n'est encore définie pour cette matière.</div>`;
     const wk = _mcWorking(cid), n = wk.n, sess = e.sessions;
-    const badge = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' };
+    const badge = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt', DS: 'badge-ds' };
     // Colonnes sans numéro : une colonne = une semaine disponible de la face, la semaine
     // de début revient à l'administration / au responsable FTP (et à l'optimiseur)
     let h = `<div class="mc-wish-scroll"><table class="mc-wish-table"
@@ -6358,11 +6442,16 @@ function mcWishGridHtml(cid) {
         const horsTitre = `Au-delà des ${lim} semaine${lim > 1 ? 's' : ''} disponible${lim > 1 ? 's' : ''} en ${semLbl} pour ${_MC_QUI[f.label] || f.label}`;
         f.list.forEach((s, j) => {
             const counts = wk.rows[s.key] || [];
-            // Les séances au-delà des semaines disponibles restent à répartir
-            const rest = s.nb - counts.reduce((a, b, i) => a + (i < lim ? b : 0), 0);
+            // Les séances au-delà des semaines disponibles restent à répartir ; DS sans ligne
+            // dans la répartition (s.libre) : autant de DS que l'enseignant en place
+            const places = counts.reduce((a, b, i) => a + (i < lim ? b : 0), 0);
+            const rest = s.libre ? 0 : s.nb - places;
             const tLbl = s.type === 'TP' ? (s.tp_type === 'TP8' ? 'TP8' : 'TP12') : s.type;
             const grp = s.type !== 'CM' && s.groups > 1;
-            const title = `Séances de ${_mcFmtDur(s.slot)}`
+            const title = (s.type === 'DS'
+                ? `Devoirs surveillés : placez-les dans l'enchaînement des séances (pris sur l'aide à la réussite du semestre${
+                    s.libre ? ' ; leurs heures se posent dans la Répartition Calendaire' : ''}) · `
+                : '') + `Séances de ${_mcFmtDur(s.slot)}`
                 + (grp ? ` · ${s.groups} groupes (même rythme pour chaque groupe)` : '')
                 + (s.teacher ? ` · ${s.teacher}` : '');
             const form = j === 0
@@ -6375,8 +6464,8 @@ function mcWishGridHtml(cid) {
                     : `<td class="mc-cell mc-off" title="${esc(horsTitre)}"></td>`).join('');
             h += `<tr>${form}
                 <td class="mc-type" title="${esc(title)}"><span class="badge ${badge[s.type] || 'badge-cm'}">${tLbl}</span><span class="mc-dur">${_mcFmtDur(s.slot)}</span>${grp ? `<span class="mc-grp">× ${s.groups} gr.</span>` : ''}</td>
-                <td>${s.nb}</td>
-                <td class="${rest ? 'mc-rest-bad' : ''}">${rest}</td>${cells}</tr>`;
+                <td${s.libre ? ' title="Nombre libre : les DS que vous placez"' : ''}>${s.libre ? places : s.nb}</td>
+                <td class="${rest ? 'mc-rest-bad' : ''}">${s.libre ? '' : rest}</td>${cells}</tr>`;
         });
     });
     // Heures par semaine vues d'un étudiant (un seul groupe), côté FTP et côté ALT
@@ -17863,8 +17952,10 @@ function _ttKey(tt) {
     return u.startsWith('TP') ? 'TP' : u;
 }
 
-// Ordre d'affichage des types d'enseignement : CM - TD - TP - PT (partout)
-const _TT_ORDER = { CM: 0, TD: 1, TP: 2, PT: 3 };
+// Ordre d'affichage des types d'enseignement : CM - TD - TP - PT (partout), puis les
+// lignes DS et AaR d'une matière (Répartition Calendaire), comptées comme du TD
+const _TT_ORDER = { CM: 0, TD: 1, TP: 2, PT: 3, DS: 4, AAR: 5 };
+const _TT_COMME_TD = ['DS', 'AAR'];
 function _ttOrder(tt) {
     const o = _TT_ORDER[_ttKey(tt)];
     return o === undefined ? 4 : o;
@@ -17891,9 +17982,8 @@ const _STATUTORY_HETD = { MCF: 192, PRAG: 384, PRCE: 384, PLP: 384 };
 
 // Libellé de type affiché : TP → TP12/TP8 selon la matière
 function _ttDisplay(s) {
-    return _ttKey(s.teaching_type) === 'TP'
-        ? (s.tp_type === 'TP8' ? 'TP8' : 'TP12')
-        : (s.teaching_type || '');
+    const k = _ttKey(s.teaching_type);
+    return k === 'TP' ? (s.tp_type === 'TP8' ? 'TP8' : 'TP12') : k === 'AAR' ? 'AaR' : (s.teaching_type || '');
 }
 
 function populateTeacherRepFilter() {
@@ -18029,11 +18119,12 @@ function renderTeacherRepartition() {
             const brut = parseFloat(s.total_hours) || 0;
             const mult = s._groups;
             const pond = brut * mult;
-            const coef = _HETD_COEFS[_ttKey(s.teaching_type)] || 1.0;
+            // lignes DS / AaR d'une matière (Répartition Calendaire) : comptées comme du TD
+            const k = _ttKey(s.teaching_type), kHetd = _TT_COMME_TD.includes(k) ? 'TD' : k;
+            const coef = _HETD_COEFS[kHetd] || 1.0;
             const hetd = pond * coef;
             tBrut += brut; tPond += pond; tHetd += hetd;
-            const k = _ttKey(s.teaching_type);
-            if (sumByType[k] !== undefined) sumByType[k] += pond;
+            if (sumByType[kHetd] !== undefined) sumByType[kHetd] += pond;
 
             const courseKey = `${s.semester_code||''}|${s.course_code||''}`;
             let cur = courseGroups[courseGroups.length - 1];
@@ -20085,8 +20176,11 @@ async function loadRepartition() {
         // Charge hebdomadaire des promotions (lignes FTP1, ALT1…) : parties d'effectif de
         // chaque promotion, sur les semestres affichés et leurs pairs (promoStructure)
         const promoStruct = promoStructure(allRows);
+        // Aide à la réussite de chaque semestre : ce que se partagent les lignes DS / AaR
+        const aarBySem = {};
+        promoSet.forEach(s => { aarBySem[s] = datas[s].aar || []; });
 
-        _repartitionData = { weeks, rows, allRows, special_weeks, specialBySem, promoStruct, selected: sems };
+        _repartitionData = { weeks, rows, allRows, special_weeks, specialBySem, promoStruct, aarBySem, selected: sems };
         renderRepartition(_repartitionData); // repeuple aussi les filtres Enseignant/Salle
     } catch(e) {
         if (seq !== _repLoadSeq) return;
@@ -20114,7 +20208,128 @@ function rowTeacherGroups(r, who) {
 function typeDisp(r) {
     const t = (r.type || '').toUpperCase();
     if (t === 'TP') return (r.tp_type || '').toUpperCase() === 'TP8' ? 'TP8' : 'TP12';
+    if (t === 'AAR') return 'AaR';
     return r.type || '';
+}
+
+// ----- Lignes DS / AaR d'une matière (clic droit dans la répartition annuelle) -----
+// Ses devoirs surveillés et son aide à la réussite, pris sur le total « Aide à la
+// réussite » du semestre (matière AaR n, hors répartition) : `aarBySem[sem]` = [{formation
+// FTP | ALT | MUT, total, slot, code, nom}]. Une ligne MUT compte pour les deux faces.
+// Leur volume est ce qui est posé ; la colonne Reste donne ce qui reste d'aide à la réussite.
+function repEstLigneAar(r) { return !!r && ['DS', 'AAR'].includes((r.type || '').toUpperCase()); }
+
+function _repFacesDe(f) { return f === 'MUT' ? ['FTP', 'ALT'] : [f]; }
+
+// Reste d'aide à la réussite pour une ligne DS / AaR (copie de travail) :
+// { reste, total, pris, texte (détail par face) } ; null si le semestre n'en a pas
+function repAarReste(r) {
+    const d = _repartitionData;
+    const budget = ((d && d.aarBySem) || {})[r.semester] || [];
+    if (!budget.length) return null;
+    const lignes = ((d && (d.allRows || d.rows)) || []).filter(x => x.semester === r.semester && repEstLigneAar(x));
+    const pose = x => Object.values(x.by_week || {}).reduce((s, v) => s + v, 0);
+    const fmt = h => String(Math.round(h * 100) / 100).replace('.', ',');
+    const mut = budget.find(b => b.formation === 'MUT');
+    const parts = (mut ? [['', mut.total, lignes]]
+        : _repFacesDe(r.formation).map(f => {
+            const b = budget.find(x => x.formation === f);
+            return [f + ' ', b ? b.total : 0, lignes.filter(x => _repFacesDe(x.formation).includes(f))];
+        })).map(([lib, total, ls]) => {
+            const pris = ls.reduce((s, x) => s + pose(x), 0);
+            return { lib, total, pris, reste: Math.round((total - pris) * 100) / 100 };
+        });
+    const pire = parts.reduce((a, p) => (p.reste < a.reste ? p : a), parts[0]);
+    const code = budget[0].code || 'AaR';
+    return { reste: pire.reste, total: pire.total, pris: pire.pris,
+             texte: parts.map(p => `${code} ${p.lib}: ${fmt(p.total)} h, dont ${fmt(p.pris)} h prises par les lignes DS / AaR`
+                                   + ` des matières, reste ${fmt(p.reste)} h`).join('\n') };
+}
+
+// Réaffiche la colonne Reste (aide à la réussite) des lignes DS / AaR d'un semestre
+function repAarRafraichir(sem) {
+    document.querySelectorAll(`#repartition-table td[data-aar-sem="${sem}"]`).forEach(td => {
+        const tr = td.closest('tr');
+        const r = repRowFor(parseInt(tr.dataset.sid), parseInt(tr.dataset.group) || 1);
+        const a = r && repAarReste(r);
+        td.textContent = a ? a.reste + 'h' : '';
+        td.title = a ? a.texte : "Ce semestre n'a pas d'aide à la réussite (matière AaR) : rien à partager";
+        td.classList.toggle('col-total-bad', !!a && a.reste < 0);
+    });
+}
+
+// Faces où la matière peut recevoir une ligne `type` : celles de l'aide à la réussite du
+// semestre (MUT s'il est commun), parmi les faces de la matière, sans ligne déjà posée
+function _repFacesLigne(cid, sem, type) {
+    const d = _repartitionData;
+    const rows = ((d && (d.allRows || d.rows)) || []).filter(r => r.course_id === cid);
+    const budget = ((d && d.aarBySem) || {})[sem] || [];
+    const faces = budget.some(b => b.formation === 'MUT') ? ['MUT']
+        : ['FTP', 'ALT'].filter(f => budget.some(b => b.formation === f) || !budget.length)
+            .filter(f => rows.some(r => _repFacesDe(r.formation).includes(f)));
+    return faces.filter(f => !rows.some(r => (r.type || '').toUpperCase() === type && r.formation === f));
+}
+
+// Choix du menu (clic droit) : ajouter les lignes DS / AaR d'une matière
+function _repMenuLignes(cid, sem, code) {
+    if (!cid || !editUI('rep:annuelle')) return [];
+    const out = [];
+    [['DS', 'une ligne DS'], ['AAR', 'une ligne AaR']].forEach(([t, lib]) => {
+        _repFacesLigne(cid, sem, t).forEach(f => out.push({
+            label: `Ajouter ${lib} · ${f}`, note: 'prise sur l\'aide à la réussite',
+            action: () => repLigneAjouter(cid, t, f, code) }));
+    });
+    return out;
+}
+
+async function repLigneAjouter(cid, type, face, code) {
+    try {
+        await api('/repartition/lignes' + svcQ(), { method: 'POST',
+            body: JSON.stringify({ course_id: cid, type, formation: face }) });
+        toast(`${code} : ligne ${type === 'AAR' ? 'AaR' : 'DS'} ${face} ajoutée — posez ses heures, puis « Enregistrer »`);
+        await loadRepartition();
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+let _repLigne = null;     // ligne DS / AaR dont l'enseignant / la durée se modifie
+
+function repLigneOuvrir(r) {
+    _repLigne = r;
+    document.getElementById('rep-ligne-titre').textContent = `${r.course_code} · ligne ${typeDisp(r)} ${r.formation}`;
+    const ens = (state.teachers || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    document.getElementById('rep-ligne-ens').innerHTML = '<option value="">— sans enseignant —</option>'
+        + ens.map(t => `<option value="${t.id}"${t.id === r.teacher_id ? ' selected' : ''}>${esc(t.name || '')}</option>`).join('');
+    document.getElementById('rep-ligne-slot').value = r.slot_duration || 1.5;
+    openModal('modal-rep-ligne');
+}
+
+async function repLigneEnregistrer() {
+    const r = _repLigne;
+    if (!r) return;
+    const v = document.getElementById('rep-ligne-ens').value;
+    const slot = parseFloat(String(document.getElementById('rep-ligne-slot').value).replace(',', '.'));
+    try {
+        await api(`/repartition/lignes/${r.session_id}` + svcQ(), { method: 'PUT',
+            body: JSON.stringify({ teacher_id: v ? parseInt(v) : null, slot_duration: slot }) });
+        closeModal('modal-rep-ligne');
+        toast(`${r.course_code} · ${typeDisp(r)} ${r.formation} : enregistré`);
+        await loadRepartition();
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+}
+
+async function repLigneRetirer(r) {
+    if (!confirm(`Retirer la ligne ${typeDisp(r)} ${r.formation} de ${r.course_code} ?`)) return;
+    try {
+        await api(`/repartition/lignes/${r.session_id}` + svcQ(), { method: 'DELETE' });
+        toast(`${r.course_code} : ligne ${typeDisp(r)} ${r.formation} retirée`);
+        await loadRepartition();
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
 }
 
 // Libellé de type pour la répartition journalière : les TP portent leur numéro
@@ -20806,6 +21021,7 @@ function plGroupe(s) {
     const base = tt === 'TP' ? (String(s.tp_type || '').toUpperCase() === 'TP8' ? 'TP8' : 'TP12') : tt;
     const g = s.group_index;
     if (tt === 'CM') return 'CM';
+    if (tt === 'DS' || tt === 'AAR') return tt === 'DS' ? 'DS' : 'AaR';   // lignes DS / AaR : toute la promotion
     const alt = s.form_type === 1 || (tt === 'TP' && Array.isArray(s.publics) && s.publics.length
                                       && s.publics.every(p => p[1] === 'ALT'));
     if (alt && tt !== 'TD') return `${base}_ALT${s.form_type === 1 && g != null ? g : ''}`;
@@ -20821,26 +21037,67 @@ function plPromoLib(s) {
     return Object.keys(par).sort().map(a => `${a}A ${par[a].size > 1 ? 'MUT' : [...par[a]][0]}`).join(', ');
 }
 
+// Groupes d'un cours d'Hyperplanning sans séance (« TD_1, TD_2 », « FTP »), sinon « promo »
+function _plGroupesHp(h) {
+    const g = [...new Set((h.unites || []).map(u => u[1]).filter(Boolean))];
+    return g.length ? g.join(', ') : 'promo';
+}
+
+// Cours GIM d'Hyperplanning sans séance de l'appli : à définir (?) ou autre. Clic ou clic
+// droit (droit « modifier ») : le définir — une matière de la maquette, ou autre.
+function _plBlocHors(x, o) {
+    const s = x.s, h = s.hors, H = _PL_H, larg = 100 / x.nb;
+    const inc = h.nature === 'incertain', cliquable = o.clic;
+    const ens = (h.teachers || []).map(t => t.name).join(', ');
+    const promo = (h.publics || []).length ? plPromoLib(s) : 'GIM';
+    const info = [`${h.matiere}${h.type_hp ? ' · ' + h.type_hp : ''}`, h.memo ? `Mémo : ${h.memo}` : '',
+        `${_plGroupesHp(h)} · ${(h.unites || []).map(u => u[0]).join(', ') || promo} · ${h.start_time}–${h.end_time}`,
+        ens || 'sans enseignant', h.salle ? 'Salle ' + h.salle : '',
+        inc ? '? Cours d\'Hyperplanning qu\'aucune séance de l\'appli ne reprend : à définir'
+            : 'Autre : pas un cours de la maquette (aide à la réussite, réunion, réservation…)',
+        'Il bloque ses enseignants pour « Optimiser l\'EDT »',
+        ...(cliquable ? ['Clic ou clic droit : le définir (une matière de la maquette, ou autre)'] : [])].filter(Boolean).join('\n');
+    const act = cliquable ? ` onclick="plDefinir(event, ${h.id})" oncontextmenu="return plDefinir(event, ${h.id})"` : '';
+    return `<div class="pl-cours ${inc ? 'pl-inc' : 'pl-aut'}${cliquable ? ' pl-clic' : ''}"${act} title="${esc(info)}" `
+        + `style="top:${(x.d - _PL_DEBUT) / 30 * H}px;height:${(x.f - x.d) / 30 * H - 1}px;`
+        + `left:calc(${x.voie * larg}% + 1px);width:calc(${larg}% - 2px)">
+        <div>${inc ? '<span class="pl-q">?</span> ' : ''}<b>${esc(h.matiere)}</b></div>
+        ${h.memo ? `<div class="pl-memo">${esc(h.memo)}</div>` : ''}
+        ${o.tous ? `<div class="pl-c4">${esc(promo)}</div>` : ''}
+        <div class="pl-grp">${esc([h.type_hp, _plGroupesHp(h)].filter(Boolean).join(' · '))}</div>
+        <div class="pl-c3">${esc(ens || '—')}</div>
+        <div class="pl-c3">${esc(h.salle || '')}</div></div>`;
+}
+
 // o.clic : le cours se fige ou se libère d'un clic (Planning, droit « modifier » ; cours
-// enregistré) ; o.tous : grille d'un enseignant ou d'une salle, la promotion est écrite
+// enregistré), et un cours repris d'Hyperplanning se redéfinit d'un clic droit ; o.tous :
+// grille d'un enseignant ou d'une salle, la promotion est écrite
 function _plBloc(x, o = {}) {
     const s = x.s, H = _PL_H;
+    if (s.hors) return _plBlocHors(x, o);
     const groupe = plGroupe(s);
     const larg = 100 / x.nb;
     const cliquable = o.clic && s.id != null;
+    const redef = cliquable && s.hp && s.hp.id != null;
     const info = [`${s.course_code || ''}${s.course_name ? ' — ' + s.course_name : ''}`,
         `${groupe} · ${plPromoLib(s)} · ${s.start_time}–${s.end_time}`, s.teacher_name || 'sans enseignant',
         s.room_name ? 'Salle ' + s.room_name : 'salle à choisir',
-        ...(s.origine === 'hp' ? ['Repris d\'Hyperplanning' + (s.fige ? '' : ' : libre, « Optimiser l\'EDT » peut le déplacer')] : []),
+        ...(s.origine === 'hp' ? ['Repris d\'Hyperplanning' + (s.hp ? ` (« ${s.hp.matiere || ''}${s.hp.type_hp ? ' · ' + s.hp.type_hp : ''} »${
+            s.hp.nature === 'matiere' ? ', défini dans le Planning' : ''})` : '')
+            + (s.fige ? '' : ' : libre, « Optimiser l\'EDT » peut le déplacer')] : []),
+        ...(s.hp && s.hp.memo ? [`Mémo : ${s.hp.memo}`] : []),
         ...(s.fige ? ['📌 Figé : gardé à sa place au prochain « Optimiser l\'EDT »'] : []),
         ...(cliquable ? [s.fige ? 'Clic : le libérer (« Optimiser l\'EDT » pourra le déplacer)'
-                                : 'Clic : le figer à cette place'] : [])].join('\n');
+                                : 'Clic : le figer à cette place'] : []),
+        ...(redef ? ['Clic droit : redéfinir ce cours d\'Hyperplanning (autre séance, ou autre)'] : [])].join('\n');
     const repere = s.fige ? '📌 ' : (s.origine === 'hp' ? '<span class="pl-hp-libre">HP</span> ' : '');
     return `<div class="pl-cours${cliquable ? ' pl-clic' : ''}${s.fige ? ' pl-fige' : ''}"${
-        cliquable ? ` data-slot="${s.id}" onclick="plBasculerFige(${s.id})"` : ''} title="${esc(info)}" `
+        cliquable ? ` data-slot="${s.id}" onclick="plBasculerFige(${s.id})"` : ''}${
+        redef ? ` oncontextmenu="return plDefinir(event, ${s.hp.id})"` : ''} title="${esc(info)}" `
         + `style="--pl-t:${_plTeinte(s.course_code)};top:${(x.d - _PL_DEBUT) / 30 * H}px;`
         + `height:${(x.f - x.d) / 30 * H - 1}px;left:calc(${x.voie * larg}% + 1px);width:calc(${larg}% - 2px)">
         <div>${repere}<b>${esc(s.course_code || '')}</b></div>
+        ${s.hp && s.hp.memo ? `<div class="pl-memo">${esc(s.hp.memo)}</div>` : ''}
         ${o.tous ? `<div class="pl-c4">${esc(plPromoLib(s))}</div>` : ''}
         ${s.course_name ? `<div class="pl-c2">${esc(s.course_name)}</div>` : ''}
         <div class="pl-grp">${esc(groupe)}</div>
@@ -20882,10 +21139,17 @@ function plEdtHtml(slots, o) {
 // jour férié ou pont), puis une grille par promotion choisie ; impression d'une
 // promotion par page. L'EDT vient de « Optimiser l'EDT » ou de l'import de celui
 // d'Hyperplanning (iCal : cours GIM figés 📌 ou libres « HP »).
-let _pl = { semaines: [], semaine: null, slots: [], fermes: null, annee: '', promos: null, hp: null,
-            // filtres de l'affichage : types montrés, groupe, enseignant, salle, matière (« m:R1.03 ») ou sous-matière (« c:R1.03a »)
-            f: { types: new Set(['CM', 'TD', 'TP', 'PT']), groupe: '', ens: '', salle: '', mat: '' } };
+// hors : cours GIM d'Hyperplanning de la semaine sans séance de l'appli (à définir, autres),
+// en pseudo-cours de la grille ({hors: cours du serveur, day_of_week, start_time, end_time, publics})
+let _pl = { semaines: [], semaine: null, slots: [], hors: [], fermes: null, annee: '', promos: null, hp: null,
+            // filtres de l'affichage : types montrés (INC : à définir, AUT : autres cours d'Hyperplanning),
+            // groupe, enseignant, salle, matière (« m:R1.03 ») ou sous-matière (« c:R1.03a »)
+            f: { types: new Set(['CM', 'TD', 'TP', 'PT', 'INC', 'AUT']), groupe: '', ens: '', salle: '', mat: '' } };
 const _PL_TYPES = ['CM', 'TD', 'TP', 'PT'];
+const _PL_TYPES_TOUS = [..._PL_TYPES, 'INC', 'AUT'];
+
+// Cours de l'EDT et cours d'Hyperplanning sans séance, ensemble
+function _plTous() { return _pl.slots.concat(_pl.hors || []); }
 
 // Matière d'une sous-matière : le code sans sa lettre finale (R1.03a -> R1.03)
 function _plRacine(code) { return String(code || '').replace(/[a-z]$/, ''); }
@@ -20893,6 +21157,13 @@ function _plRacine(code) { return String(code || '').replace(/[a-z]$/, ''); }
 // Cours gardé par les filtres ? Le filtre de groupe garde aussi les cours de toute la promotion (CM…)
 function _plGarde(s) {
     const f = _pl.f, tt = String(s.teaching_type || '').toUpperCase();
+    if (s.hors) {               // cours d'Hyperplanning sans séance : pas de matière de l'appli
+        const h = s.hors, gs = (h.unites || []).map(u => u[1]).filter(Boolean);
+        return f.types.has(h.nature === 'incertain' ? 'INC' : 'AUT') && !f.mat
+            && (!f.groupe || !gs.length || gs.includes(f.groupe))
+            && (!f.ens || (h.teachers || []).some(t => String(t.id) === f.ens))
+            && (!f.salle || String(h.room_id) === f.salle);
+    }
     if (_PL_TYPES.includes(tt) && !f.types.has(tt)) return false;
     if (f.groupe) {
         const lab = plGroupe(s);
@@ -20910,14 +21181,24 @@ function _plGarde(s) {
 
 function _plFiltreActif() {
     const f = _pl.f;
-    return f.types.size < _PL_TYPES.length || f.groupe || f.ens || f.salle || f.mat;
+    return f.types.size < _PL_TYPES_TOUS.length || f.groupe || f.ens || f.salle || f.mat;
 }
 
 // Listes des filtres, d'après les cours de la semaine (le choix en cours reste proposé)
 function _plRendreFiltres() {
     const f = _pl.f;
+    const nInc = (_pl.hors || []).filter(s => s.hors.nature === 'incertain').length;
+    const nAut = (_pl.hors || []).length - nInc;
     document.getElementById('pl-f-types').innerHTML = _PL_TYPES.map(t => `<button type="button"
-        class="pl-promo-btn${f.types.has(t) ? ' on' : ''}" onclick="plType('${t}')" title="${t} : afficher / masquer">${t}</button>`).join('');
+        class="pl-promo-btn${f.types.has(t) ? ' on' : ''}" onclick="plType('${t}')" title="${t} : afficher / masquer">${t}</button>`).join('')
+        + `<button type="button" class="pl-promo-btn inc${f.types.has('INC') ? ' on' : ''}" onclick="plType('INC')"
+            title="Cours GIM d'Hyperplanning qu'aucune séance de l'appli ne reprend, à définir d'un clic droit : afficher / masquer"
+            ><span class="pl-q">?</span> À définir${nInc ? ` (${nInc})` : ''}</button>`
+        + `<button type="button" class="pl-promo-btn aut${f.types.has('AUT') ? ' on' : ''}" onclick="plType('AUT')"
+            title="Cours GIM d'Hyperplanning qui ne sont pas des cours de la maquette (aide à la réussite, réunion, réservation…) : afficher / masquer"
+            >Autres${nAut ? ` (${nAut})` : ''}</button>`
+        + (nInc ? `<button type="button" class="pl-promo-btn" onclick="plSeulsIncertains()"
+            title="Ne montrer que les cours à définir de la semaine">seuls les ?</button>` : '');
     const remplir = (id, vide, paires, val) => {
         const el = document.getElementById(id);
         const vus = new Map(paires);
@@ -20935,6 +21216,10 @@ function _plRendreFiltres() {
         const r = _plRacine(s.course_code);
         if (r) mats.set('m:' + r, r);
         if (s.course_code && s.course_code !== r) mats.set('c:' + s.course_code, `   ${s.course_code}${s.course_name ? ' — ' + s.course_name : ''}`);
+    });
+    (_pl.hors || []).forEach(({ hors: h }) => {
+        (h.teachers || []).forEach(t => { if (t.id != null && !ens.has(String(t.id))) ens.set(String(t.id), t.name || '?'); });
+        if (h.room_id != null && !salles.has(String(h.room_id))) salles.set(String(h.room_id), h.salle || '?');
     });
     // libellés retenus d'une semaine à l'autre (un choix absent de la semaine reste lisible)
     _pl.libelles = _pl.libelles || {};
@@ -20964,7 +21249,13 @@ function plFiltrer() {
 }
 
 function plFiltresRaz() {
-    _pl.f = { types: new Set(_PL_TYPES), groupe: '', ens: '', salle: '', mat: '' };
+    _pl.f = { types: new Set(_PL_TYPES_TOUS), groupe: '', ens: '', salle: '', mat: '' };
+    _plRendre();
+}
+
+// Les seuls cours à définir de la semaine (« Tout afficher » rend les autres)
+function plSeulsIncertains() {
+    _pl.f.types = new Set(['INC']);
     _plRendre();
 }
 
@@ -21004,7 +21295,7 @@ async function loadPlanning() {
         _pl.fermes = fermes;
         _pl.hp = sem.hp || null;
         _plHpEtat();
-        const avec = _pl.semaines.filter(s => s.creneaux > 0).map(s => s.semaine);
+        const avec = _pl.semaines.filter(_plAContenu).map(s => s.semaine);
         let w = _pl.semaine;
         const voulue = _pl.forcer;  // semaine demandée d'ailleurs (Comparaison), même sans EDT
         _pl.forcer = null;
@@ -21020,16 +21311,21 @@ async function loadPlanning() {
     }
 }
 
+// Semaine qui a quelque chose à montrer : un EDT, ou des cours d'Hyperplanning sans séance
+function _plAContenu(s) { return !!s && (s.creneaux > 0 || s.incertains > 0 || s.autres > 0); }
+
 async function plSemaine(w) {
     _pl.semaine = w;
     _plRendreSemaines();
     const s = _pl.semaines.find(x => x.semaine === w);
-    if (!s || !s.creneaux) { _pl.slots = []; _plRendre(); return; }
+    if (!_plAContenu(s)) { _pl.slots = []; _pl.hors = []; _plRendre(); return; }
     document.getElementById('pl-content').innerHTML = '<div class="spinner">Chargement…</div>';
     try {
         const r = await api('/timetable/planning/' + w + svcQ());
         if (_pl.semaine !== w) return;           // une autre semaine a été choisie entre-temps
         _pl.slots = r.slots || [];
+        _pl.hors = (r.hp_hors || []).map(h => ({ hors: h, id: null, day_of_week: h.day_of_week, start_time: h.start_time,
+                                                end_time: h.end_time, publics: h.publics || [], room_id: h.room_id }));
         _plRendre();
     } catch (e) {
         document.getElementById('pl-content').innerHTML = `<div class="empty">Erreur : ${esc(e.message)}</div>`;
@@ -21039,16 +21335,18 @@ async function plSemaine(w) {
 function _plRendreSemaines() {
     const ss = _pl.semaines, i = ss.findIndex(s => s.semaine === _pl.semaine);
     const fer = new Set(((_pl.fermes && _pl.fermes.jours) || []).filter(j => j.jour <= 5).map(j => j.semaine));
-    const prec = ss.slice(0, Math.max(i, 0)).reverse().find(s => s.creneaux > 0);
-    const suiv = ss.slice(i + 1).find(s => s.creneaux > 0);
+    const prec = ss.slice(0, Math.max(i, 0)).reverse().find(_plAContenu);
+    const suiv = ss.slice(i + 1).find(_plAContenu);
     const nav = (s, sens) => `<button type="button" class="pl-nav" ${s ? `onclick="plSemaine(${s.semaine})"` : 'disabled'}
         title="Semaine ${sens} qui a un EDT">${sens === 'précédente' ? '◀' : '▶'}</button>`;
+    // pastille orange : des cours d'Hyperplanning y sont à définir
     document.getElementById('pl-semaines').innerHTML = nav(prec, 'précédente') + ss.map(s => {
         const d = _plDates(s.semaine, _pl.fermes);
         const t = `S${s.semaine}${d ? ' · du ' + _plJJMM(d[0]) + ' au ' + _plJJMM(d[5]) : ''}`
-            + (s.creneaux ? ` · ${s.creneaux} créneaux` : " · pas d'EDT généré") + (fer.has(s.semaine) ? ' · jour férié ou pont' : '');
+            + (s.creneaux ? ` · ${s.creneaux} créneaux` : " · pas d'EDT généré") + (fer.has(s.semaine) ? ' · jour férié ou pont' : '')
+            + (s.incertains ? ` · ${s.incertains} cours d'Hyperplanning à définir` : '');
         return `<button type="button" class="pl-sem${s.creneaux ? ' edt' : ''}${fer.has(s.semaine) ? ' fer' : ''}${
-            s.semaine === _pl.semaine ? ' sel' : ''}" title="${t}" onclick="plSemaine(${s.semaine})">${s.semaine}</button>`;
+            s.incertains ? ' inc' : ''}${s.semaine === _pl.semaine ? ' sel' : ''}" title="${t}" onclick="plSemaine(${s.semaine})">${s.semaine}</button>`;
     }).join('') + nav(suiv, 'suivante');
 }
 
@@ -21056,24 +21354,28 @@ function _plRendre() {
     const zone = document.getElementById('pl-content'), w = _pl.semaine;
     const dates = _plDates(w, _pl.fermes), fermes = _plFermes(w, _pl.fermes);
     _plRendreFiltres();
+    const modif = adminPower('svc:planning'), tous = _plTous();
+    const nInc = (_pl.hors || []).filter(s => s.hors.nature === 'incertain').length;
     let html = `<div class="pl-titre">Semaine ${w}${dates ? ` — du ${_plJJMM(dates[0])} au ${_plJJMM(dates[5])}/${dates[5].getUTCFullYear()}` : ''}
         <span class="edtg-note">· EDT enregistré${_pl.annee ? ' · ' + esc(_pl.annee) : ''}${
-            adminPower('svc:planning') ? ' · clic sur un cours : le figer 📌 ou le libérer' : ''}</span></div>`;
-    if (!_pl.slots.length) {
+            modif ? ' · clic sur un cours : le figer 📌 ou le libérer' : ''}${
+            nInc ? ` · <b style="color:#b45309"><span class="pl-q">?</span> ${nInc} cours d'Hyperplanning à définir</b>${
+                modif ? ' (clic droit : une matière de la maquette, ou autre)' : ''}` : ''}</span></div>`;
+    if (!tous.length) {
         zone.innerHTML = html + `<div class="empty">Pas d'EDT enregistré pour cette semaine. Il se calcule avec
             « Optimiser l'EDT… » (« Aperçu seulement » décoché), ou se reprend d'Hyperplanning avec « Importer l'EDT
             d'Hyperplanning… ».</div>`;
         return;
     }
-    const f = _pl.f, o = { dates, fermes, clic: adminPower('svc:planning'), filtre: _plGarde };
+    const f = _pl.f, o = { dates, fermes, clic: modif, filtre: _plGarde };
     const vide = `<div class="empty" style="padding:10px">Aucun cours cette semaine${_plFiltreActif() ? ' avec ces filtres' : ''}.</div>`;
     // Enseignant ou salle choisi : une seule grille, tous ses cours, toutes promotions
     if (f.ens || f.salle) {
         const qui = [f.ens && `Enseignant : ${_pl.libelles['pl-f-ens|' + f.ens] || ''}`,
                      f.salle && `Salle : ${_pl.libelles['pl-f-salle|' + f.salle] || ''}`].filter(Boolean).join(' · ');
-        const n = _pl.slots.filter(_plGarde).length;
+        const n = tous.filter(_plGarde).length;
         zone.innerHTML = html + `<div class="pl-promo"><div class="pl-promo-t">${esc(qui)} <span class="edtg-note">${n} cours,
-            toutes promotions</span></div>${n ? plEdtHtml(_pl.slots, { ...o, tous: true }) : vide}</div>`;
+            toutes promotions</span></div>${n ? plEdtHtml(tous, { ...o, tous: true }) : vide}</div>`;
         return;
     }
     const choisies = _PL_PROMOS.filter(([yg, c]) => _pl.promos.has(yg + '-' + c));
@@ -21091,10 +21393,10 @@ function _plRendre() {
     // les promotions sans cours (avec ces filtres) n'ont pas de grille : une ligne les cite
     const sans = [];
     html += grilles.map(([yg, c]) => {
-        const n = _pl.slots.filter(s => plDansPromo(s, yg, c) && _plGarde(s)).length;
+        const n = tous.filter(s => plDansPromo(s, yg, c) && _plGarde(s)).length;
         if (!n) { sans.push(`${yg}A ${c}`); return ''; }
         return `<div class="pl-promo"><div class="pl-promo-t">${_PL_ANNEES[yg]} — ${c === 'MUT' ? 'FTP + ALT (promotion mutualisée)' : c}
-            <span class="edtg-note">${n} cours</span></div>${plEdtHtml(_pl.slots, { ...o, yg, cohorte: c })}</div>`;
+            <span class="edtg-note">${n} cours</span></div>${plEdtHtml(tous, { ...o, yg, cohorte: c })}</div>`;
     }).join('');
     if (sans.length === grilles.length) html += vide;
     else if (sans.length) html += `<p class="edtg-note">Sans cours cette semaine${_plFiltreActif() ? ' avec ces filtres' : ''} :
@@ -21124,6 +21426,147 @@ async function plBasculerFige(id) {
         toast('Erreur : ' + e.message, 'error');
     }
     _plRendre();
+}
+
+// Semaine suivante (dans l'ordre de l'année, en repartant du début) qui a des cours à définir
+function plIncertainSuivant() {
+    const ss = _pl.semaines, i = ss.findIndex(s => s.semaine === _pl.semaine);
+    const s = ss.slice(i + 1).concat(ss.slice(0, i + 1)).find(x => x.incertains > 0);
+    if (!s) { toast('Plus aucun cours d\'Hyperplanning à définir'); return; }
+    plSemaine(s.semaine);
+}
+
+// ----- Planning › Définir un cours d'Hyperplanning (clic droit) -----
+// Un cours GIM qu'aucune séance de l'appli ne reprend (à définir ?, autre), ou un cours
+// repris à corriger : une ou des séances de la maquette, ou « autre » ; pour ce cours ou
+// tous les cours semblables (même matière, type, groupes et enseignants) ; retenu pour les
+// imports suivants (POST /planning/hp/definir).
+let _plDef = null;          // { id, d (réponse du serveur), choix: Set('séance|groupe') }
+const _PL_FACES = { 0: 'FTP', 1: 'ALT', 2: 'MUT' };
+
+function _plNorm(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
+function _plDuree(min) { const h = Math.floor(min / 60), m = min % 60; return `${h}h${m ? String(m).padStart(2, '0') : ''}`; }
+
+async function plDefinir(ev, id) {
+    if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+    if (!adminPower('svc:planning')) return false;
+    try {
+        const d = await api(`/planning/hp/definir/${id}` + svcQ());
+        _plDef = { id, d, choix: new Set((d.cours.seances || []).map(([s, g]) => s + '|' + g)) };
+        _plDefOuvrir();
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+    }
+    return false;
+}
+
+function _plDefSeanceLib(d, sid, g) {
+    const s = d.seances.find(x => x.sid === sid && x.g === g);
+    return s ? `${s.code} ${s.lib}` : `séance ${sid}`;
+}
+
+function _plDefOuvrir() {
+    const d = _plDef.d, c = d.cours;
+    const dates = _plDates(c.semaine, _pl.fermes);
+    const groupes = (c.unites || []).map(([cl, g]) => g ? `${cl} › ${g}` : cl).join(', ') || 'GIM';
+    const actuel = c.nature === 'repris' ? `Rapproché à l'import de : <b>${c.seances.map(([s, g]) => esc(_plDefSeanceLib(d, s, g))).join(', ')}</b>`
+        : c.nature === 'matiere' ? `Défini comme : <b>${c.seances.map(([s, g]) => esc(_plDefSeanceLib(d, s, g))).join(', ')}</b>`
+        : c.nature === 'autre' ? (d.regle ? 'Défini « autre »' : '« Autre » d\'office (aide à la réussite, réunion, réservation, conférence…)')
+        : '<span class="pl-q">?</span> Aucune séance de l\'appli ne le reprend : à définir';
+    document.getElementById('pl-def-info').innerHTML = `<b>${esc(c.matiere)}</b>${c.type_hp ? ' · ' + esc(c.type_hp) : ''}
+        · ${esc(groupes)}${c.memo ? ` · mémo <i>« ${esc(c.memo)} »</i>` : ''}<br>S${c.semaine} ${_EDTG_JOURS[c.jour] || ''}${dates ? ' ' + _plJJMM(dates[c.jour]) : ''}
+        ${esc(c.debut)}–${esc(c.fin)} · ${esc(c.enseignants.map(t => t.name).join(', ') || 'sans enseignant')}${
+        c.salle ? ' · ' + esc(c.salle) : ''}<br><span class="edtg-note">${actuel}${d.regle ? ` — votre définition, pour ${
+            d.regle.portee === 'cours' ? 'ce cours seulement' : 'tous les cours semblables'}` : ''}</span>`;
+    const nat = c.nature === 'autre' ? 'autre' : 'matiere';
+    document.querySelectorAll('input[name="pl-def-nature"]').forEach(r => { r.checked = r.value === nat; });
+    document.getElementById('pl-def-inc-l').style.display = d.regle ? '' : 'none';
+    document.getElementById('pl-def-q').value = '';
+    document.getElementById('pl-def-fige').checked = true;
+    // Portée : tous les semblables, sauf une « Matière à préciser » (nom passe-partout)
+    const n = d.semblables.length;
+    const sems = [...new Set(d.semblables.map(x => x.semaine))].map(w => 'S' + w).join(', ');
+    const tous = d.regle ? d.regle.portee === 'semblables' : !/^mati[eè]re [aà] pr[eé]ciser/i.test(c.matiere);
+    document.getElementById('pl-def-portee').innerHTML = `
+        <label><input type="radio" name="pl-def-portee" value="semblables"${tous ? ' checked' : ''}>
+            <b>Tous les cours semblables</b> de l'année (même matière, type, groupes et enseignants) : ${n} cours
+            <span class="edtg-note">(${esc(sems)})</span>, et ceux des prochains imports</label>
+        <label><input type="radio" name="pl-def-portee" value="cours"${tous ? '' : ' checked'}>
+            <b>Ce cours seulement</b> (S${c.semaine} ${_EDTG_JOURS[c.jour] || ''} ${esc(c.debut)})</label>`;
+    plDefListe();
+    plDefMaj();
+    openModal('modal-pl-def');
+}
+
+// Séances proposées : celles des enseignants du cours d'abord ; dans chaque bloc, celles
+// de sa promotion (FTP / ALT), de son type, au nom ressemblant ; en gris, celles d'une autre face
+function plDefListe() {
+    const d = _plDef.d, q = _plNorm(document.getElementById('pl-def-q').value.trim());
+    const tri = (a, b) => (b.public - a.public) || (b.meme_type - a.meme_type) || (b.score - a.score)
+        || a.code.localeCompare(b.code, 'fr', { numeric: true }) || a.lib.localeCompare(b.lib, 'fr', { numeric: true });
+    const garde = s => _plDef.choix.has(s.sid + '|' + s.g)
+        || !q || _plNorm(`${s.code} ${s.lib} ${s.nom} ${s.enseignant || ''} ${s.semestre} ${_PL_FACES[s.formation]}`).includes(q);
+    const ligne = s => {
+        const k = s.sid + '|' + s.g;
+        return `<label class="${s.public ? '' : 'loin'}" title="${esc(s.public ? '' : 'Séance d\'une autre face (FTP / ALT) que la promotion du cours')}">
+            <input type="checkbox" data-k="${k}"${_plDef.choix.has(k) ? ' checked' : ''} onchange="plDefCocher(this)">
+            <span><b>${esc(s.code)}</b> ${esc(s.lib)} — ${esc(s.nom)} <span class="edtg-note">· ${esc(s.semestre || '')}
+            · ${_PL_FACES[s.formation] || ''} · ${_plDuree(s.duree)} · ${esc(s.enseignant || 'sans enseignant')}</span></span></label>`;
+    };
+    const siens = d.seances.filter(s => s.sien && garde(s)).sort(tri);
+    const autres = d.seances.filter(s => !s.sien && garde(s)).sort(tri);
+    const annees = [...new Set(d.seances.map(s => s.annee))].sort().map(a => a + 'A').join(', ');
+    const MAX = 250;
+    document.getElementById('pl-def-liste').innerHTML = (siens.length || autres.length)
+        ? (siens.length ? `<div class="t">Séances de ${esc(d.cours.enseignants.map(t => t.name).join(', '))}</div>`
+            + siens.slice(0, MAX).map(ligne).join('') : '')
+          + (autres.length ? `<div class="t">Autres séances${annees ? ' (' + annees + ')' : ''}${
+            autres.length > MAX ? ` — ${MAX} premières sur ${autres.length}, précisez la recherche` : ''}</div>`
+            + autres.slice(0, MAX).map(ligne).join('') : '')
+        : '<div class="edtg-note" style="padding:6px 8px">Aucune séance avec ce texte.</div>';
+    _plDefSel();
+}
+
+function plDefCocher(cb) {
+    if (cb.checked) _plDef.choix.add(cb.dataset.k); else _plDef.choix.delete(cb.dataset.k);
+    const r = document.querySelector('input[name="pl-def-nature"][value="matiere"]');
+    if (cb.checked && !r.checked) { r.checked = true; }
+    _plDefSel();
+    plDefMaj();
+}
+
+function _plDefSel() {
+    const d = _plDef.d, ks = [..._plDef.choix].map(k => k.split('|').map(Number));
+    document.getElementById('pl-def-sel').innerHTML = ks.length
+        ? `Choisi : <b>${ks.map(([s, g]) => esc(_plDefSeanceLib(d, s, g))).join(', ')}</b>${
+            ks.length > 1 ? ' — un cours de l\'EDT par séance (cours à plusieurs groupes)' : ''}`
+        : 'Cochez la séance que fait ce cours (plusieurs pour un cours qui réunit plusieurs groupes).';
+}
+
+function plDefMaj() {
+    const nat = (document.querySelector('input[name="pl-def-nature"]:checked') || {}).value;
+    document.getElementById('pl-def-mat').style.opacity = nat === 'matiere' ? 1 : .5;
+    document.getElementById('pl-def-ok').disabled = !nat || (nat === 'matiere' && !_plDef.choix.size);
+}
+
+async function plDefEnregistrer() {
+    const nature = (document.querySelector('input[name="pl-def-nature"]:checked') || {}).value;
+    const portee = (document.querySelector('input[name="pl-def-portee"]:checked') || {}).value || 'cours';
+    const btn = document.getElementById('pl-def-ok');
+    btn.disabled = true;
+    try {
+        const r = await api('/planning/hp/definir' + svcQ(), { method: 'POST', body: JSON.stringify({
+            id: _plDef.id, nature, portee, fige: document.getElementById('pl-def-fige').checked,
+            seances: nature === 'matiere' ? [..._plDef.choix].map(k => k.split('|').map(Number)) : [] }) });
+        toast(nature === 'matiere' ? `${r.cours} cours défini(s) : ${r.crees} cours placé(s) dans l'EDT`
+            : nature === 'autre' ? `${r.cours} cours défini(s) « autre »` : `${r.cours} cours à nouveau à définir`);
+        closeModal('modal-pl-def');
+        _pl.forcer = _pl.semaine;
+        await loadPlanning();
+    } catch (e) {
+        toast('Erreur : ' + e.message, 'error');
+        btn.disabled = false;
+    }
 }
 
 // ----- Planning › Réinitialiser l'EDT : toute l'année ou des semaines choisies -----
@@ -21193,7 +21636,7 @@ async function plReinitAppliquer() {
 
 // Impression : la semaine affichée, une promotion par page (A4 paysage), dans une fenêtre à part
 function plImprimer() {
-    if (!_pl.slots.length) { toast('Rien à imprimer pour cette semaine', 'error'); return; }
+    if (!_plTous().length) { toast('Rien à imprimer pour cette semaine', 'error'); return; }
     const f = window.open('', '_blank');
     if (!f) { toast('Fenêtre bloquée par le navigateur : autorisez les fenêtres pour ce site', 'error'); return; }
     let css = '';
@@ -21209,7 +21652,7 @@ function plImprimer() {
         .pl-promo:last-child { break-after: auto; }`;
     f.document.write(`<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>EDT S${_pl.semaine} ${esc(_pl.annee || '')}</title>
         <style>${css}</style></head><body>${document.getElementById('pl-content').innerHTML
-            .replace(/ onclick="[^"]*"/g, '').replace(/ pl-clic/g, '')}</body></html>`);
+            .replace(/ on(click|contextmenu)="[^"]*"/g, '').replace(/ pl-clic/g, '')}</body></html>`);
     f.document.close();
     f.focus();
     setTimeout(() => f.print(), 300);
@@ -21229,11 +21672,15 @@ function _plHpEtat() {
     const outil = adminPower('svc:planning');
     document.querySelectorAll('.pl-hp-outil').forEach(b => { b.style.display = outil ? '' : 'none'; });
     const el = document.getElementById('pl-hp-etat'), hp = _pl.hp;
-    if (!hp || !(hp.cours || hp.bloques)) { el.style.display = 'none'; return; }
+    if (!hp || !(hp.cours || hp.bloques || hp.incertains || hp.autres)) { el.style.display = 'none'; return; }
     el.style.display = '';
     el.innerHTML = `<b>Repris d'Hyperplanning</b> : ${hp.cours} cours GIM (${hp.figes} figés 📌, ${hp.libres} libres
         <span class="pl-hp-libre">HP</span>) · ${hp.bloques} créneaux bloqués pour ${hp.enseignants_bloques} enseignant(s)
         <span class="edtg-note">(autres départements, cours GIM sans séance dans l'appli)</span>${
+        hp.incertains ? ` · <b style="color:#b45309"><span class="pl-q">?</span> ${hp.incertains} cours GIM à définir</b>
+            <button type="button" class="btn btn-secondary btn-sm" style="margin-left:4px" onclick="plIncertainSuivant()"
+                title="Aller à la semaine suivante qui a des cours d'Hyperplanning à définir (pastille orange)">Voir ▶</button>` : ''}${
+        hp.autres ? ` · ${hp.autres} autre(s) <span class="edtg-note">(aide à la réussite, réunions…)</span>` : ''}${
         hp.source ? ` · « ${esc(hp.source)} »` : ''}${hp.date ? ` le ${_dateFr(hp.date)}` : ''}${outil
         ? `<button type="button" class="btn btn-secondary btn-sm" onclick="icalRetirer()"
               title="Retirer les cours repris et les créneaux bloqués par l'import">Retirer l'import</button>` : ''}`;
@@ -21322,7 +21769,7 @@ function _icalRapportHtml(imp) {
     const principaux = rap.enseignants.filter(aVoir).sort((a, b) => (!a.teacher_id) - (!b.teacher_id));
     const autres = rap.enseignants.filter(e => !aVoir(e));
     const nGim = retenus.reduce((s, e) => s + (e.cours_gim || []).length, 0);
-    const nBloq = retenus.reduce((s, e) => s + (e.nb_autres || 0) + (e.nb_non_rapproches || 0), 0);
+    const nBloq = retenus.reduce((s, e) => s + (e.nb_autres || 0) + (e.nb_non_rapproches || 0) + (e.nb_couverts || 0), 0);
     const ligne = e => {
         const how = { approché: 'nom rapproché : à vérifier', homonyme: 'homonyme : celui qui a des cours GIM, à vérifier',
                       conflit: '<b style="color:#b45309">deux noms du fichier pour le même enseignant : choisissez</b>' }[e.how] || '';
@@ -21356,6 +21803,10 @@ function _icalRapportHtml(imp) {
                 <button type="button" data-m="libre" onclick="icalChoixTout('libre')" title="Posés à leur place, mais « Optimiser l'EDT » peut les déplacer">Tous libres</button>
             </span> <span class="edtg-note" id="ical-compte-tout"></span>
             · <b>${nBloq}</b> autres cours bloquent le créneau de leur enseignant.</p>
+        ${rap.ds ? `<p style="font-size:.85rem;margin:0 0 8px">📝 <b>${rap.ds} DS</b> posés en « Aide à la réussite » (mémo « DS … »)
+            rattachés à la <b>ligne DS</b> de leur matière (Répartition Calendaire)${(rap.lignes_ds_a_creer || []).length
+                ? ` — lignes DS créées à l'import : ${rap.lignes_ds_a_creer.map(esc).join(', ')} (sans heures : posez-les dans la
+                  Répartition Calendaire ; Service › Comparaison montre l'écart)` : ''}.</p>` : ''}
         <table class="pn-table hp-rap">${tete}<tbody>${principaux.map(ligne).join('')}</tbody></table>
         ${autres.length ? `<details style="margin-top:8px"><summary class="edtg-note" style="cursor:pointer">${autres.length}
             autre(s) nom(s) du fichier, sans enseignant de l'année ni cours GIM (autres départements) : rien n'est importé pour eux</summary>
@@ -21394,6 +21845,8 @@ function icalDetail(det, tid) {
             <option value="fige">📌 figé</option><option value="libre">libre</option></select>
         S${c.semaine} ${_HP_JOURS[c.jour] || ''} ${esc(c.debut)}–${esc(c.fin)} · ${esc(c.texte)} → <b>${esc(c.seance)}</b>${
         c.ambigu ? ' <span style="color:#b45309" title="Plusieurs séances possibles : la plus proche (durée, nom de la matière) a été retenue">?</span>' : ''}${
+        c.regle ? ' <span class="edtg-note">(défini dans le Planning)</span>' : ''}${
+        c.ds ? ' <span class="edtg-note">(DS d\'après le mémo)</span>' : ''}${
         c.deja != null ? ` <span class="edtg-note">(déjà repris${c.deja ? ', figé' : ', libre'})</span>` : ''}</div>`).join('');
     _icalMajChoix();
 }
@@ -21401,9 +21854,13 @@ function icalDetail(det, tid) {
 function _icalBloquesHtml(e) {
     const t = [];
     if (e.nb_autres) t.push(`${e.nb_autres} d'autres départements`);
-    if (e.nb_non_rapproches) t.push(`<span title="${esc('Cours GIM sans séance correspondante dans l’appli (aide à la '
-        + 'réussite, réunion, séminaire, type ou groupe que la matière n’a pas…) :\n' + (e.non_rapproches || []).join('\n'))}"
-        style="text-decoration:underline dotted">${e.nb_non_rapproches} GIM sans séance dans l'appli</span>`);
+    if (e.nb_non_rapproches) t.push(`<span title="${esc('Cours GIM sans séance correspondante dans l’appli : ils restent '
+        + 'visibles dans le Planning, à définir d’un clic droit (une matière de la maquette, ou autre) ; aide à la réussite, '
+        + 'réunion, réservation, conférence… y sont « autres » d’office :\n' + (e.non_rapproches || []).join('\n'))}"
+        style="text-decoration:underline dotted">${e.nb_non_rapproches} GIM sans séance dans l'appli${
+        e.nb_incertains ? `, dont <b style="color:#b45309">${e.nb_incertains} à définir</b>` : ''}</span>`);
+    if (e.nb_couverts) t.push(`<span title="Cours GIM à plusieurs enseignants, repris dans l'EDT sous un autre d'entre eux">${
+        e.nb_couverts} GIM repris sous un co-enseignant</span>`);
     if (!t.length) return 'aucun';
     return t.join(' · ') + (e.exemples_bloques.length ? `<br>${e.exemples_bloques.map(esc).join('<br>')}` : '');
 }
@@ -22428,7 +22885,7 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
     const spBy = specialBySem || {};
     // Semaines spéciales applicables à une matière, selon SON semestre (calendrier par année).
     const spFor = sem => spBy[sem] || special_weeks || emptySp;
-    const typeColors = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt' };
+    const typeColors = { CM: 'badge-cm', TD: 'badge-td', TP: 'badge-tp', PT: 'badge-pt', DS: 'badge-ds', AAR: 'badge-aar' };
     const selected = (_repartitionData && _repartitionData.selected) || [];
     const showSem = selected.length > 1; // affiche le code semestre dès que plusieurs semestres
     // Colonne où débute le semestre pair → double barre de séparation
@@ -22571,19 +23028,24 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
                      : `<td class="cell-empty ${cls}" ${attrs}>·</td>`;
         }).join('');
         const formTag = formCls === 'row-ftp' ? 'FTP' : formCls === 'row-alt' ? 'ALT' : formCls === 'row-mut' ? 'MUT' : '';
-        const totalCls = remaining !== 0 ? ' col-total-bad' : '';
-        const totalTxt = r.total_hours > 0 ? remaining + 'h' : '';
+        // Ligne DS / AaR : volume = ce qui est posé ; Reste = ce qui reste d'aide à la réussite au semestre
+        const aar = r.ligne_aar ? repAarReste(r) : null;
+        const totalCls = r.ligne_aar ? (aar && aar.reste < 0 ? ' col-total-bad' : '') : (remaining !== 0 ? ' col-total-bad' : '');
+        const totalTxt = r.ligne_aar ? (aar ? aar.reste + 'h' : '') : (r.total_hours > 0 ? remaining + 'h' : '');
+        const totalAttr = r.ligne_aar ? ` data-aar-sem="${esc(r.semester)}" title="${esc(aar ? aar.texte
+            : "Ce semestre n'a pas d'aide à la réussite (matière AaR) : rien à partager")}"` : '';
+        const modTitle = r.ligne_aar ? ` title="${esc(`Heures posées (${typeDisp(r)}, comptées en TD au service) : clic droit sur la ligne pour son enseignant ou la durée d'une séance`)}"` : '';
         // Colonne Formation fusionnée (rowspan) sur la 1re ligne du groupe uniquement
         const formColTd = formCell
             ? `<td class="s-col form-col form-${formCell.kind}" rowspan="${formCell.span}" style="left:0;z-index:2">${formCell.label}</td>`
             : '';
-        return `<tr class="row-data ${formCls}" data-sid="${sid}" data-group="${grp}" data-formation="${formTag}" data-teacher="${esc(r.teacher)}" data-slot="${slot}" data-total-hours="${r.total_hours}">
+        return `<tr class="row-data ${formCls}${r.ligne_aar ? ' row-aar' : ''}" data-sid="${sid}" data-group="${grp}" data-formation="${formTag}" data-teacher="${esc(r.teacher)}" data-slot="${slot}" data-total-hours="${r.total_hours}">
             ${formColTd}
             ${sCol(fixedCols[0], badge)}
             ${sCol(fixedCols[1], esc(r.teacher))}
             ${sCol(fixedCols[2], esc(r.room || ''))}
-            <td class="col-module s-col" style="left:${moduleFixedLeft}px">${r.total_hours > 0 ? r.total_hours + 'h' : ''}</td>
-            <td class="col-total s-col${totalCls}" style="left:${totalFixedLeft}px" data-row-total="${rowKey}">${totalTxt}</td>
+            <td class="col-module s-col" style="left:${moduleFixedLeft}px" data-row-mod="${rowKey}"${modTitle}>${r.total_hours > 0 ? r.total_hours + 'h' : ''}</td>
+            <td class="col-total s-col${totalCls}" style="left:${totalFixedLeft}px" data-row-total="${rowKey}"${totalAttr}>${totalTxt}</td>
             ${cells}
         </tr>`;
     }
@@ -22599,7 +23061,7 @@ function renderRepartition({ weeks, rows, special_weeks, specialBySem }) {
         // En-tête matière
         const semLabel = showSem ? ` <span class="mat-sem">· ${esc(block.sem)}</span>` : '';
         // Repère d'ordonnancement (🔗) à droite du nom, rempli par repOrdRefresh()
-        bodyRows += `<tr class="row-mat">
+        bodyRows += `<tr class="row-mat" data-cid="${block.courseId}" data-sem="${esc(block.sem)}">
             <td class="s-col" colspan="${fixedSpan}" style="left:0;z-index:2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
                 <div class="mat-head"><span class="mat-title"><strong>${esc(block.code)}</strong> — ${esc(block.name)}${semLabel}</span><span class="wish-badge" data-wish-cid="${block.courseId}" onclick="repOrdBadgeClick(event, this, 'voeu')"></span><span class="ord-badge" data-ord-cid="${block.courseId}" onclick="repOrdBadgeClick(event, this, 'ord')"></span></div>
             </td><td colspan="${weeks.length}"></td>
@@ -22893,6 +23355,16 @@ function repRowMenu(tr) {
     if (groupRows.length > 1)
         items.push({ label: 'Vider la séance, tous les groupes', cells: repCellsOf(groupRows),
                      what: `${row.course_code} ${typeDisp(row)} ${row.formation}, tous les groupes` });
+    // Ligne DS / AaR : son enseignant et sa durée de séance ; la retirer quand elle est vide
+    if (repEstLigneAar(row)) {
+        const vide = !Object.values(row.by_week).some(h => h > 0)
+            && ![..._repDraft.cells.values()].some(c => c.sid === sid);
+        items.push({ label: 'Enseignant, durée de séance…', note: row.teacher || 'sans enseignant',
+                     action: () => repLigneOuvrir(row) });
+        items.push({ label: 'Retirer la ligne', note: vide ? '' : 'videz-la et enregistrez d\'abord',
+                     disabled: !vide, action: () => repLigneRetirer(row) });
+    }
+    items.push(..._repMenuLignes(row.course_id, row.semester, row.course_code));
     return { title: repRowName(row), items };
 }
 
@@ -22904,6 +23376,7 @@ function repFormMenu(tr) {
                      what: `${code} ${form}` }];
     if (rows.some(t => t.dataset.formation !== form))
         items.push({ label: 'Vider la matière', cells: repCellsOf(rows), what: code });
+    items.push(..._repMenuLignes(parseInt(mat.dataset.cid), mat.dataset.sem, code));
     return { title: `${code} · ${form}`, items };
 }
 
@@ -22915,6 +23388,7 @@ function repMatMenu(trMat) {
     if (forms.length > 1)
         forms.forEach(f => items.push({ label: `Vider seulement ${f}`,
             cells: repCellsOf(rows.filter(t => t.dataset.formation === f)), what: `${code} ${f}` }));
+    items.push(..._repMenuLignes(parseInt(trMat.dataset.cid), trMat.dataset.sem, code));
     return { title: code, items };
 }
 
@@ -22936,10 +23410,17 @@ function repOpenMenu(x, y, menu) {
     head.textContent = menu.title;
     m.appendChild(head);
     menu.items.forEach(it => {
-        const n = it.cells.length, h = it.cells.reduce((a, p) => a + p.from, 0);
         const b = document.createElement('button');
         b.type = 'button';
         b.setAttribute('role', 'menuitem');
+        if (it.action) {          // ligne DS / AaR : ajouter, modifier, retirer
+            b.innerHTML = `${esc(it.label)}<span>${esc(it.note || '')}</span>`;
+            b.disabled = !!it.disabled;
+            b.addEventListener('click', () => { repCloseMenu(); it.action(); });
+            m.appendChild(b);
+            return;
+        }
+        const n = it.cells.length, h = it.cells.reduce((a, p) => a + p.from, 0);
         b.innerHTML = `${esc(it.label)}<span>${n ? `${n} case${n > 1 ? 's' : ''} · ${fmt(h)} h` : 'rien à vider'}</span>`;
         b.disabled = !n;
         b.addEventListener('click', () => { repCloseMenu(); repClearCells(it.cells, it.what); });
@@ -23277,7 +23758,7 @@ function repWishEvaluate() {
                 if (+f !== ft && +f !== 2) return;
                 if (!typeKey[t] || +f !== 2) typeKey[t] = k;
             });
-            const types = _MC_TYPES.filter(t => typeKey[t]);
+            const types = [..._MC_TYPES, 'DS'].filter(t => typeKey[t]);    // DS : placés par l'enseignant
             if (!types.length) return;
             const allMut = types.every(t => typeKey[t].startsWith('2:'));
             if (side === 'ALT' && allMut) return;     // redirait le côté FTP
@@ -23504,7 +23985,14 @@ function repApplyCell(sid, week, group, newHours) {
             // seulement celles affichées ; arrondi pour éviter le bruit flottant).
             const rowKey = sid + '_' + group;
             const totalTd = document.querySelector(`td[data-row-total="${rowKey}"]`);
-            if (totalTd) {
+            if (repEstLigneAar(row)) {
+                // Ligne DS / AaR : son volume suit ce qui est posé ; le reste d'aide à la
+                // réussite du semestre change pour toutes ses lignes
+                row.total_hours = Math.round(Object.values(row.by_week).reduce((s, v) => s + v, 0) * 100) / 100;
+                const mod = document.querySelector(`td[data-row-mod="${rowKey}"]`);
+                if (mod) mod.textContent = row.total_hours > 0 ? row.total_hours + 'h' : '';
+                repAarRafraichir(row.semester);
+            } else if (totalTd) {
                 const placed = Object.values(row.by_week).reduce((s, v) => s + v, 0);
                 const remaining = Math.round((row.total_hours - placed) * 100) / 100;
                 totalTd.textContent = row.total_hours > 0 ? remaining + 'h' : '';
